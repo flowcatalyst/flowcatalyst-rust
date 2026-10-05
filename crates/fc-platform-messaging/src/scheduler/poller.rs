@@ -52,7 +52,7 @@
 //! group is literally `default`: Go's quirk, kept.
 
 use crate::dispatch_job::lifecycle;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::pin::pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -60,7 +60,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use sqlx::PgPool;
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
@@ -119,29 +119,48 @@ impl PausedConnectionCache {
 /// (id, `created_at`, `updated_at` as claimed): one row to mark QUEUED.
 pub(crate) type MarkKey = (String, DateTime<Utc>, DateTime<Utc>);
 
+/// What one claim returned.
+#[derive(Debug, Default)]
+pub(crate) struct ClaimOutcome {
+    /// The claimed jobs that may be published, in claim order.
+    pub jobs: Vec<ClaimedJob>,
+    /// Groups in which the claim found a job held back (their rows are back
+    /// in the queue): the poller skips them for a few seconds.
+    pub held_groups: Vec<String>,
+    /// Rows the claim took in all, held ones included.
+    pub taken: usize,
+}
+
 /// The database side of the pipeline, so the loop can be tested without one.
 #[async_trait]
 pub(crate) trait JobStore: Send + Sync {
-    /// Up to `limit` due, unclaimed jobs in claim order, minus paused
-    /// subscriptions and held successors, now claimed.
-    async fn claim(&self, limit: usize) -> Result<Vec<ClaimedJob>, SchedulerError>;
+    /// Claim up to `limit` due jobs in claim order, minus paused
+    /// subscriptions and the groups in `skip_groups`: the claim DELETES their
+    /// queue rows. Jobs held back by an earlier job of their group are
+    /// restored to the queue and reported by group, not returned.
+    async fn claim(
+        &self,
+        limit: usize,
+        skip_groups: &[String],
+    ) -> Result<ClaimOutcome, SchedulerError>;
 
     /// Mark the given jobs QUEUED where they are still PENDING; returns how
     /// many rows changed.
     async fn mark_queued(&self, jobs: &[MarkKey]) -> Result<u64, SchedulerError>;
 
-    /// Give the claims of `ids` back, so the jobs are claimed again.
-    async fn release_claims(&self, ids: &[String]) -> Result<u64, SchedulerError>;
+    /// Put claimed jobs back in the queue, from the job table: only those
+    /// still PENDING, and never over an existing row.
+    async fn restore(&self, jobs: &[(String, DateTime<Utc>)]) -> Result<u64, SchedulerError>;
 
-    /// Release the claims this process does not hold (`held` are the ids it
-    /// does); only those made before `claimed_before` when given.
-    async fn release_unheld_claims(
-        &self,
-        claimed_before: Option<DateTime<Utc>>,
-        held: &[String],
-    ) -> Result<u64, SchedulerError>;
+    /// Leader start: restore every PENDING job that has no queue row (what a
+    /// dead leader had claimed), except `exclude`, with no age guard.
+    async fn restore_missing_at_start(&self, exclude: &[String]) -> Result<u64, SchedulerError>;
 
-    /// Unclaimed due rows in the queue and the age of the oldest.
+    /// The periodic reconcile pass (age guards; `exclude` is the in-flight
+    /// set, which must not be queued again).
+    async fn reconcile(&self, exclude: &[String]) -> Result<lifecycle::Reconciled, SchedulerError>;
+
+    /// Due rows in the queue and the age of the oldest.
     async fn backlog(&self) -> Result<Option<lifecycle::QueueBacklog>, SchedulerError> {
         Ok(None)
     }
@@ -155,11 +174,36 @@ struct PgJobStore {
 
 #[async_trait]
 impl JobStore for PgJobStore {
-    async fn claim(&self, limit: usize) -> Result<Vec<ClaimedJob>, SchedulerError> {
+    async fn claim(
+        &self,
+        limit: usize,
+        skip_groups: &[String],
+    ) -> Result<ClaimOutcome, SchedulerError> {
         let paused = self.paused.paused_subscription_ids().await?;
-        let rows = lifecycle::claim(&self.pool, limit as i64, &paused).await?;
+        let rows = lifecycle::claim(&self.pool, limit as i64, &paused, skip_groups).await?;
+        let taken = rows.len();
+        // The hold-back: one batched query. The rows are already out of the
+        // queue, so a failure here puts them all back.
+        let held_ids: HashSet<String> = match lifecycle::held_among(&self.pool, &rows).await {
+            Ok(ids) => ids.into_iter().collect(),
+            Err(e) => {
+                self.restore_rows(&rows).await;
+                return Err(e.into());
+            }
+        };
+        let mut held_rows = Vec::new();
+        let mut held_groups: Vec<String> = Vec::new();
         let mut jobs = Vec::with_capacity(rows.len());
         for c in rows {
+            if held_ids.contains(&c.job_id) {
+                if let Some(g) = c.message_group.as_deref() {
+                    if !held_groups.iter().any(|h| h == g) {
+                        held_groups.push(g.to_string());
+                    }
+                }
+                held_rows.push(c);
+                continue;
+            }
             let pool_code = self
                 .pool_codes
                 .resolve(c.dispatch_pool_id.as_deref(), c.client_id.as_deref())
@@ -178,7 +222,15 @@ impl JobStore for PgJobStore {
                 },
             });
         }
-        Ok(jobs)
+        if !held_rows.is_empty() {
+            metrics::counter!("scheduler.jobs.held_total").increment(held_rows.len() as u64);
+            self.restore_rows(&held_rows).await;
+        }
+        Ok(ClaimOutcome {
+            jobs,
+            held_groups,
+            taken,
+        })
     }
 
     /// Marks exactly the published ids QUEUED, on a pooled connection, and
@@ -193,20 +245,56 @@ impl JobStore for PgJobStore {
         Ok(done.len() as u64)
     }
 
-    async fn release_claims(&self, ids: &[String]) -> Result<u64, SchedulerError> {
-        Ok(lifecycle::release_claims(&self.pool, ids).await?)
+    async fn restore(&self, jobs: &[(String, DateTime<Utc>)]) -> Result<u64, SchedulerError> {
+        Ok(lifecycle::restore_to_queue(&self.pool, jobs).await?)
     }
 
-    async fn release_unheld_claims(
-        &self,
-        claimed_before: Option<DateTime<Utc>>,
-        held: &[String],
-    ) -> Result<u64, SchedulerError> {
-        Ok(lifecycle::release_unheld_claims(&self.pool, claimed_before, held).await?)
+    async fn restore_missing_at_start(&self, exclude: &[String]) -> Result<u64, SchedulerError> {
+        Ok(lifecycle::restore_all_missing(&self.pool, exclude).await?)
+    }
+
+    async fn reconcile(&self, exclude: &[String]) -> Result<lifecycle::Reconciled, SchedulerError> {
+        let started = Instant::now();
+        let done = lifecycle::reconcile_queue(
+            &self.pool,
+            lifecycle::ReconcileGuards::production(),
+            exclude,
+        )
+        .await?;
+        metrics::histogram!("scheduler.queue_reconcile.duration_seconds").record(started.elapsed());
+        metrics::counter!("scheduler.queue_reconcile.inserted_total").increment(done.inserted);
+        metrics::counter!("scheduler.queue_reconcile.deleted_total").increment(done.deleted);
+        metrics::counter!("scheduler.queue_reconcile.refreshed_total").increment(done.refreshed);
+        if done.total() > 0 {
+            warn!(
+                inserted = done.inserted,
+                deleted = done.deleted,
+                refreshed = done.refreshed,
+                "msg_dispatch_queue was out of step with msg_dispatch_jobs and was repaired \
+                 (a claim lost to a crash, a bug, or an older binary writing the jobs table)"
+            );
+        }
+        Ok(done)
     }
 
     async fn backlog(&self) -> Result<Option<lifecycle::QueueBacklog>, SchedulerError> {
         Ok(Some(lifecycle::queue_backlog(&self.pool).await?))
+    }
+}
+
+impl PgJobStore {
+    /// Best effort: put claimed rows back (the reconcile sweep is the
+    /// backstop when this fails).
+    async fn restore_rows(&self, rows: &[lifecycle::QueueClaim]) {
+        let jobs: Vec<(String, DateTime<Utc>)> = rows
+            .iter()
+            .map(|c| (c.job_id.clone(), c.job_created_at))
+            .collect();
+        match lifecycle::restore_to_queue(&self.pool, &jobs).await {
+            Ok(n) => metrics::counter!("scheduler.claims.restored_total").increment(n),
+            Err(e) => warn!(jobs = jobs.len(), error = %e,
+                "restoring held dispatch queue rows failed; the reconcile sweep will"),
+        }
     }
 }
 
@@ -270,16 +358,20 @@ fn describe_metrics() {
         "Published jobs the QUEUED update left alone because they had already moved past PENDING."
     );
     describe_counter!(
-        "scheduler.claims.released_total",
-        "Queue claims given back because the job was not published (failed publish, dropped as poisoned, withheld, or not marked QUEUED), so it is claimed again in order."
+        "scheduler.claims.restored_total",
+        "Queue rows put back (from the job table) because the claimed job was not published, not marked QUEUED, dropped as poisoned, withheld or held back: it is claimed again in order."
     );
     describe_counter!(
-        "scheduler.claims.released_at_start_total",
-        "Claims released when this instance became leader (left by a previous leader that died between claim and publish)."
+        "scheduler.claims.restored_at_start_total",
+        "Queue rows restored when this instance became leader (PENDING jobs with no queue row: claimed by a leader that died before publishing them)."
     );
     describe_counter!(
-        "scheduler.claims.stale_released_total",
-        "Claims older than 5 minutes that this process did not hold, released by the leader's sweep. Non-zero is logged at WARN."
+        "scheduler.jobs.held_total",
+        "Claimed jobs found held back by an earlier job of their group (FAILED / ERROR, or in a retry backoff); their queue rows are restored."
+    );
+    describe_gauge!(
+        "scheduler.held_groups",
+        "Groups the poller currently remembers as held and skips in its claim (5 seconds each)."
     );
     describe_counter!(
         "scheduler.jobs.withheld_total",
@@ -370,53 +462,126 @@ fn lane_for_group(group: &str, lanes: usize) -> usize {
     (h % lanes as u64) as usize
 }
 
+/// How long a group found held is skipped by the claim.
+const HELD_GROUP_TTL: Duration = Duration::from_secs(5);
+/// The most groups remembered as held; the oldest are dropped first.
+const HELD_GROUP_CAP: usize = 10_000;
+
+/// Groups the poller has just found held, each remembered for
+/// [`HELD_GROUP_TTL`]: the claim skips them, so a batch-full of held rows at
+/// the head of the order is not claimed and put back on every pass while the
+/// groups behind it wait (the starvation a claim that filters after its
+/// `LIMIT` would have).
+struct HeldGroups {
+    until: Mutex<HashMap<String, time::Instant>>,
+    ttl: Duration,
+    cap: usize,
+}
+
+impl HeldGroups {
+    fn new(ttl: Duration, cap: usize) -> Self {
+        Self {
+            until: Mutex::new(HashMap::new()),
+            ttl,
+            cap,
+        }
+    }
+
+    /// The groups to skip now; expired ones are forgotten.
+    fn active(&self) -> Vec<String> {
+        let now = time::Instant::now();
+        let mut map = self.until.lock();
+        map.retain(|_, until| *until > now);
+        metrics::gauge!("scheduler.held_groups").set(map.len() as f64);
+        map.keys().cloned().collect()
+    }
+
+    fn remember(&self, groups: &[String]) {
+        if groups.is_empty() {
+            return;
+        }
+        let until = time::Instant::now() + self.ttl;
+        let mut map = self.until.lock();
+        for g in groups {
+            map.insert(g.clone(), until);
+        }
+        // Over the cap: drop the ones that expire first.
+        while map.len() > self.cap {
+            let Some(oldest) = map.iter().min_by_key(|(_, u)| **u).map(|(g, _)| g.clone()) else {
+                break;
+            };
+            map.remove(&oldest);
+        }
+        metrics::gauge!("scheduler.held_groups").set(map.len() as f64);
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.until.lock().len()
+    }
+}
+
 /// The claim half of a pass: generation, snapshot, query, in-flight set.
 struct ClaimStage {
     store: Arc<dyn JobStore>,
     pipeline: Arc<Pipeline>,
+    held: HeldGroups,
 }
 
 impl ClaimStage {
+    fn new(store: Arc<dyn JobStore>, pipeline: Arc<Pipeline>) -> Self {
+        Self {
+            store,
+            pipeline,
+            held: HeldGroups::new(HELD_GROUP_TTL, HELD_GROUP_CAP),
+        }
+    }
+
     /// Claim up to `want` jobs, holding `want` permits. The jobs come back
     /// stamped and already in the in-flight set; the permits for the rest
     /// are released. A failed claim releases them all. A job the claim took
     /// but this pass does not submit (behind a doomed job, or already in
-    /// flight) has its claim released again.
+    /// flight) has its queue row restored.
     async fn claim(&self, want: usize) -> Result<(Vec<LaneJob>, usize), SchedulerError> {
+        // From the first statement until the jobs are in flight or restored:
+        // the periodic reconcile must not run in this window.
+        let _gate = self.pipeline.claim_gate.lock().await;
         // The generation BEFORE the snapshot: the ordering rule in `lane`
         // depends on it.
         let generation = self.pipeline.next_generation();
         self.pipeline.race_point();
         let snapshot = self.pipeline.snapshot_in_flight();
+        let skip = self.held.active();
         let started = Instant::now();
-        let claimed = self.store.claim(want).await;
+        let claimed = self.store.claim(want, &skip).await;
         metrics::histogram!("scheduler.claim.duration_seconds").record(started.elapsed());
-        let rows = match claimed {
-            Ok(rows) => rows,
+        let outcome = match claimed {
+            Ok(o) => o,
             Err(e) => {
                 self.pipeline.release(want);
                 return Err(e);
             }
         };
-        let claimed = rows.len();
-        let mut jobs = Vec::with_capacity(claimed);
+        self.held.remember(&outcome.held_groups);
+        let taken = outcome.taken;
+        let mut jobs = Vec::with_capacity(outcome.jobs.len());
         // Jobs taken but not submitted, and the groups they belong to: a
         // later job of such a group would overtake them.
-        let mut withheld: Vec<String> = Vec::new();
+        let mut withheld: Vec<(String, DateTime<Utc>)> = Vec::new();
         let mut withheld_groups: HashSet<String> = HashSet::new();
-        for job in rows {
+        for job in outcome.jobs {
             let group = job.group().map(str::to_string);
             // The claim skipped a job of this group that is doomed (it will be
-            // dropped): this one is behind it. Its claim is given back; it is
+            // dropped): this one is behind it. Its queue row is put back; it is
             // claimed again, in order, once the doomed job has gone.
             let behind = group.as_deref().is_some_and(|g| {
                 withheld_groups.contains(g) || self.pipeline.skipped_a_doomed_job(&snapshot, g)
             });
-            // Already in flight: this claim ran between a lane's release of
+            // Already in flight: this claim ran between a lane's restore of
             // the job and the lane removing it. Not submitted twice, and
             // nothing behind it goes first.
             if behind || !self.pipeline.add_in_flight(&job, generation) {
-                withheld.push(job.id().to_string());
+                withheld.push((job.id().to_string(), job.created_at));
                 withheld_groups.extend(group);
                 continue;
             }
@@ -424,65 +589,69 @@ impl ClaimStage {
         }
         if !withheld.is_empty() {
             metrics::counter!("scheduler.jobs.withheld_total").increment(withheld.len() as u64);
-            self.release_unsubmitted(&withheld).await;
+            self.restore_unsubmitted(&withheld).await;
         }
         self.pipeline.release(want.saturating_sub(jobs.len()));
-        Ok((jobs, claimed))
+        Ok((jobs, taken))
     }
 
-    /// Give back the claims of jobs that were claimed but not submitted to a
-    /// lane. A failure is retried (see [`Self::retry_releases`]); until then
+    /// Put back the queue rows of jobs that were claimed but not submitted to
+    /// a lane. A failure is retried (see [`Self::retry_restores`]); until then
     /// the jobs are not claimable, which only delays them.
-    async fn release_unsubmitted(&self, ids: &[String]) {
-        if ids.is_empty() {
+    async fn restore_unsubmitted(&self, jobs: &[(String, DateTime<Utc>)]) {
+        if jobs.is_empty() {
             return;
         }
-        match self.store.release_claims(ids).await {
-            Ok(n) => metrics::counter!("scheduler.claims.released_total").increment(n),
+        match self.store.restore(jobs).await {
+            Ok(n) => metrics::counter!("scheduler.claims.restored_total").increment(n),
             Err(e) => {
-                warn!(jobs = ids.len(), error = %e, "releasing unsubmitted dispatch claims failed; retrying");
+                warn!(jobs = jobs.len(), error = %e, "restoring unsubmitted dispatch queue rows failed; retrying");
                 self.pipeline
-                    .defer_release(ids.iter().map(|id| (id.clone(), None)));
+                    .defer_restore(jobs.iter().map(|(id, c)| (id.clone(), *c, None)));
             }
         }
     }
 
-    /// Retry the claims whose release failed (a lane's, or this stage's), once
-    /// per pass before the next claim. A lane's job leaves the in-flight set
-    /// only when its claim is released.
-    async fn retry_releases(&self) {
-        let pending = self.pipeline.take_unreleased();
+    /// Retry the restores that failed (a lane's, or this stage's), once per
+    /// pass before the next claim. A lane's job leaves the in-flight set only
+    /// when its row is restored.
+    async fn retry_restores(&self) {
+        let pending = self.pipeline.take_unrestored();
         if pending.is_empty() {
             return;
         }
-        let ids: Vec<String> = pending.iter().map(|(id, _)| id.clone()).collect();
-        match self.store.release_claims(&ids).await {
+        let jobs: Vec<(String, DateTime<Utc>)> = pending
+            .iter()
+            .map(|(id, created, _)| (id.clone(), *created))
+            .collect();
+        match self.store.restore(&jobs).await {
             Ok(n) => {
-                metrics::counter!("scheduler.claims.released_total").increment(n);
+                metrics::counter!("scheduler.claims.restored_total").increment(n);
                 self.pipeline.remove_in_flight(
                     pending
                         .iter()
-                        .filter_map(|(id, generation)| generation.map(|g| (id.as_str(), g))),
+                        .filter_map(|(id, _, generation)| generation.map(|g| (id.as_str(), g))),
                 );
             }
             Err(e) => {
-                warn!(jobs = ids.len(), error = %e, "retrying the release of dispatch claims failed");
-                self.pipeline.defer_release(pending);
+                warn!(jobs = jobs.len(), error = %e, "retrying the restore of dispatch queue rows failed");
+                self.pipeline.defer_restore(pending);
             }
         }
     }
 
-    /// When this instance starts polling as leader: release every claim it
-    /// does not hold (at process start, all of them: a previous leader's
-    /// unpublished claims).
-    async fn release_claims_at_start(&self) -> Result<(), SchedulerError> {
+    /// When this instance starts polling as leader: restore every PENDING job
+    /// without a queue row that it does not hold (at process start, all of
+    /// them: what a previous leader had claimed and not published).
+    async fn restore_missing_at_start(&self) -> Result<(), SchedulerError> {
+        let _gate = self.pipeline.claim_gate.lock().await;
         let held = self.pipeline.held_ids();
-        let released = self.store.release_unheld_claims(None, &held).await?;
-        metrics::counter!("scheduler.claims.released_at_start_total").increment(released);
-        if released > 0 {
+        let restored = self.store.restore_missing_at_start(&held).await?;
+        metrics::counter!("scheduler.claims.restored_at_start_total").increment(restored);
+        if restored > 0 {
             info!(
-                released,
-                "released dispatch claims left by a previous leader"
+                restored,
+                "restored dispatch queue rows lost with a previous leader"
             );
         }
         Ok(())
@@ -537,7 +706,7 @@ impl Claimer {
                         .remove_in_flight([(job.job.id(), job.generation)]);
                     self.stage.pipeline.release(1);
                     self.stage
-                        .release_unsubmitted(&[job.job.id().to_string()])
+                        .restore_unsubmitted(&[(job.job.id().to_string(), job.job.created_at)])
                         .await;
                 }
             }
@@ -589,7 +758,7 @@ impl PollSource for Claimer {
     /// Retry pending releases, block for permits (cancellable), re-check
     /// leadership, claim, route.
     async fn poll(&self, ctl: &PollCtl) -> Result<PassReport, SchedulerError> {
-        self.stage.retry_releases().await;
+        self.stage.retry_restores().await;
         let pipeline = &self.stage.pipeline;
         let want = tokio::select! {
             biased;
@@ -605,7 +774,7 @@ impl PollSource for Claimer {
     }
 
     async fn on_start_leading(&self) -> Result<(), SchedulerError> {
-        self.stage.release_claims_at_start().await
+        self.stage.restore_missing_at_start().await
     }
 }
 
@@ -655,15 +824,26 @@ pub(crate) async fn drive<S: PollSource>(source: &S, interval: Duration, ctl: &P
 
 /// How often the leader samples the queue backlog.
 const BACKLOG_EVERY: Duration = Duration::from_secs(15);
-/// How often the leader looks for claims nobody holds.
-const STALE_CLAIMS_EVERY: Duration = Duration::from_secs(60);
-/// A claim older than this that this process does not hold is released.
-const STALE_CLAIM_AFTER: Duration = Duration::from_secs(5 * 60);
+/// How often the leader runs the reconcile sweep.
+const RECONCILE_EVERY: Duration = Duration::from_secs(60);
+
+/// One periodic reconcile pass: no claim runs while the in-flight ids are
+/// read and the statements run, so a job being claimed right now is either
+/// still in the queue or already in the in-flight set (excluded).
+async fn reconcile_pass(
+    store: &dyn JobStore,
+    pipeline: &Pipeline,
+) -> Result<lifecycle::Reconciled, SchedulerError> {
+    let _gate = pipeline.claim_gate.lock().await;
+    let held = pipeline.held_ids();
+    store.reconcile(&held).await
+}
 
 /// The leader's housekeeping, off the claim path: the backlog gauge every 15
-/// s, and every 60 s the release of claims older than five minutes that this
-/// process does not hold (the process that made them died between the claim
-/// and the publish, or a lane died holding them). Counted; WARN when any.
+/// s, and every 60 s the reconcile sweep, which is also the periodic crash
+/// recovery (a PENDING job with no queue row is queued again once it is old
+/// enough). The sweep must not queue the jobs this process is publishing:
+/// their ids are excluded. Repairs are counted and logged at WARN.
 async fn maintain(
     store: Arc<dyn JobStore>,
     pipeline: Arc<Pipeline>,
@@ -671,17 +851,14 @@ async fn maintain(
     cancel: CancellationToken,
 ) {
     let mut backlog = time::interval_at(time::Instant::now() + BACKLOG_EVERY, BACKLOG_EVERY);
-    let mut stale = time::interval_at(
-        time::Instant::now() + STALE_CLAIMS_EVERY,
-        STALE_CLAIMS_EVERY,
-    );
+    let mut reconcile = time::interval_at(time::Instant::now() + RECONCILE_EVERY, RECONCILE_EVERY);
     backlog.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
-    stale.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
+    reconcile.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
     loop {
         let sample_backlog = tokio::select! {
             () = cancel.cancelled() => break,
             _ = backlog.tick() => true,
-            _ = stale.tick() => false,
+            _ = reconcile.tick() => false,
         };
         if !is_leader() {
             continue;
@@ -700,21 +877,8 @@ async fn maintain(
             }
             continue;
         }
-        let cutoff = Utc::now()
-            - chrono::Duration::from_std(STALE_CLAIM_AFTER).unwrap_or(chrono::Duration::minutes(5));
-        match store
-            .release_unheld_claims(Some(cutoff), &pipeline.held_ids())
-            .await
-        {
-            Ok(0) => {}
-            Ok(n) => {
-                metrics::counter!("scheduler.claims.stale_released_total").increment(n);
-                warn!(
-                    released = n,
-                    "released stale dispatch claims (older than 5 minutes, not held by this process)"
-                );
-            }
-            Err(e) => warn!(error = %e, "releasing stale dispatch claims failed"),
+        if let Err(e) = reconcile_pass(&*store, &pipeline).await {
+            warn!(error = %e, "dispatch queue reconcile failed");
         }
     }
 }
@@ -756,16 +920,13 @@ impl PendingJobPoller {
     /// One pass, synchronously: claim, publish through one lane, mark the
     /// published jobs QUEUED, return. For tests and tooling; the scheduler
     /// itself runs [`Self::run`]. Each call starts as a new process would:
-    /// an empty in-flight set, and every claim left in the queue released.
+    /// an empty in-flight set, and every PENDING job without a queue row restored.
     pub async fn poll_once(&self) -> Result<PollReport, SchedulerError> {
         let pipeline = Arc::new(Pipeline::new(self.settings.buffer_capacity));
-        let stage = ClaimStage {
-            store: self.store.clone(),
-            pipeline: pipeline.clone(),
-        };
-        // A fresh process: whatever is still claimed was claimed by one that
-        // is gone.
-        stage.release_claims_at_start().await?;
+        let stage = ClaimStage::new(self.store.clone(), pipeline.clone());
+        // A fresh process: a PENDING job with no queue row was claimed by one
+        // that is gone.
+        stage.restore_missing_at_start().await?;
         let want = pipeline.acquire_up_to(self.settings.batch_size).await;
         let (jobs, claimed) = stage.claim(want).await.inspect_err(|_| {
             metrics::counter!("scheduler.poll.errors_total").increment(1);
@@ -782,6 +943,13 @@ impl PendingJobPoller {
             claimed,
             published: report.published,
         })
+    }
+
+    /// One reconcile pass with the production guards and no in-flight ids,
+    /// for tests and tooling (the scheduler runs it every minute, leader only,
+    /// excluding what it is publishing).
+    pub async fn reconcile_once(&self) -> Result<lifecycle::Reconciled, SchedulerError> {
+        self.store.reconcile(&[]).await
     }
 
     /// Run the poller and its lanes until cancelled, claiming only while
@@ -822,10 +990,7 @@ impl PendingJobPoller {
             senders.push(tx);
         }
         let claimer = Claimer {
-            stage: ClaimStage {
-                store: self.store.clone(),
-                pipeline,
-            },
+            stage: ClaimStage::new(self.store.clone(), pipeline),
             lanes: senders,
             next_ungrouped: AtomicUsize::new(0),
             batch_size: self.settings.batch_size,
@@ -1537,10 +1702,7 @@ mod tests {
         let store = Arc::new(FixedStore(Mutex::new(rows)));
         let pipeline = Arc::new(Pipeline::new(64));
         let claimer = Claimer {
-            stage: ClaimStage {
-                store,
-                pipeline: pipeline.clone(),
-            },
+            stage: ClaimStage::new(store, pipeline.clone()),
             lanes: senders,
             next_ungrouped: AtomicUsize::new(0),
             batch_size: 64,
@@ -1571,21 +1733,29 @@ mod tests {
 
     #[async_trait]
     impl JobStore for FixedStore {
-        async fn claim(&self, _limit: usize) -> Result<Vec<ClaimedJob>, SchedulerError> {
-            Ok(mem::take(&mut *lock(&self.0)))
+        async fn claim(
+            &self,
+            _limit: usize,
+            _skip_groups: &[String],
+        ) -> Result<ClaimOutcome, SchedulerError> {
+            let jobs = mem::take(&mut *lock(&self.0));
+            Ok(ClaimOutcome {
+                taken: jobs.len(),
+                jobs,
+                held_groups: Vec::new(),
+            })
         }
         async fn mark_queued(&self, jobs: &[MarkKey]) -> Result<u64, SchedulerError> {
             Ok(jobs.len() as u64)
         }
-        async fn release_claims(&self, ids: &[String]) -> Result<u64, SchedulerError> {
-            Ok(ids.len() as u64)
+        async fn restore(&self, jobs: &[(String, DateTime<Utc>)]) -> Result<u64, SchedulerError> {
+            Ok(jobs.len() as u64)
         }
-        async fn release_unheld_claims(
-            &self,
-            _claimed_before: Option<DateTime<Utc>>,
-            _held: &[String],
-        ) -> Result<u64, SchedulerError> {
+        async fn restore_missing_at_start(&self, _: &[String]) -> Result<u64, SchedulerError> {
             Ok(0)
+        }
+        async fn reconcile(&self, _: &[String]) -> Result<lifecycle::Reconciled, SchedulerError> {
+            Ok(lifecycle::Reconciled::default())
         }
     }
 
@@ -1619,10 +1789,7 @@ mod tests {
         let r = rig(FakeStore::with_jobs(ids), settings(10, 1, 2));
         lock(&r.publisher.fail_once).insert("j1".into());
         let pipeline = Arc::new(Pipeline::new(10));
-        let stage = ClaimStage {
-            store: r.store.clone(),
-            pipeline: pipeline.clone(),
-        };
+        let stage = ClaimStage::new(r.store.clone(), pipeline.clone());
         let mut lane = Lane::new(
             0,
             pipeline.clone(),
@@ -1687,10 +1854,7 @@ mod tests {
             .collect();
         let r = rig(FakeStore::with_jobs(ids), settings(10, 1, 3));
         let pipeline = Arc::new(Pipeline::new(10));
-        let stage = ClaimStage {
-            store: r.store.clone(),
-            pipeline: pipeline.clone(),
-        };
+        let stage = ClaimStage::new(r.store.clone(), pipeline.clone());
         // j1 is in flight under an older claim of this process.
         let g0 = pipeline.next_generation();
         assert!(pipeline.add_in_flight(&claimed("j1", Some("g")), g0));
@@ -1716,10 +1880,7 @@ mod tests {
         let r = rig(FakeStore::with_jobs(ids), settings(10, 1, 2));
         lock(&r.publisher.fail_once).insert("j1".into());
         let pipeline = Arc::new(Pipeline::new(10));
-        let stage = ClaimStage {
-            store: r.store.clone(),
-            pipeline: pipeline.clone(),
-        };
+        let stage = ClaimStage::new(r.store.clone(), pipeline.clone());
         let mut lane = Lane::new(
             0,
             pipeline.clone(),
@@ -1736,7 +1897,7 @@ mod tests {
                 }
             }
         };
-        r.store.fail_release.store(true, Ordering::SeqCst);
+        r.store.fail_restore.store(true, Ordering::SeqCst);
 
         take(2).await;
         let (mut a, _) = stage.claim(2).await.unwrap();
@@ -1756,11 +1917,11 @@ mod tests {
         assert!(pipeline.take_failure());
 
         // The database comes back: the retry releases them all.
-        r.store.fail_release.store(false, Ordering::SeqCst);
-        stage.retry_releases().await;
+        r.store.fail_restore.store(false, Ordering::SeqCst);
+        stage.retry_restores().await;
         assert_eq!(r.store.claimed_count(), 0);
         assert_eq!(pipeline.in_flight_len(), 0);
-        assert_eq!(pipeline.unreleased_len(), 0);
+        assert_eq!(pipeline.unrestored_len(), 0);
 
         take(3).await;
         let (c, _) = stage.claim(3).await.unwrap();
@@ -1784,10 +1945,7 @@ mod tests {
         let r = rig(FakeStore::with_jobs(ids), settings(10, 1, 3));
         lock(&r.publisher.fail_once).insert("j1".into());
         let pipeline = Arc::new(Pipeline::new(10));
-        let stage = ClaimStage {
-            store: r.store.clone(),
-            pipeline: pipeline.clone(),
-        };
+        let stage = ClaimStage::new(r.store.clone(), pipeline.clone());
         let mut lane = Lane::new(
             0,
             pipeline.clone(),
@@ -1799,14 +1957,14 @@ mod tests {
         let (first, _) = stage.claim(2).await.unwrap();
         assert_eq!(first.len(), 2);
         let (released, proceed) = (Arc::new(Notify::new()), Arc::new(Semaphore::new(0)));
-        *lock(&r.store.release_gate) = Some((released.clone(), proceed.clone()));
+        *lock(&r.store.restore_gate) = Some((released.clone(), proceed.clone()));
 
         let lane_task = lane.process(first);
         let interleave = async {
             // The batch's claims are released; the lane has not yet removed it.
             released.notified().await;
             assert_eq!(pipeline.in_flight_len(), 2);
-            *lock(&r.store.release_gate) = None;
+            *lock(&r.store.restore_gate) = None;
             // A claim now sees j1, j2, j3 unclaimed.
             assert_eq!(pipeline.acquire_up_to(3).await, 3);
             let (jobs, taken) = stage.claim(3).await.unwrap();
@@ -1842,17 +2000,14 @@ mod tests {
             .collect();
         let r = rig(FakeStore::with_jobs(ids), settings(10, 1, 3));
         let pipeline = Arc::new(Pipeline::new(10));
-        let stage = ClaimStage {
-            store: r.store.clone(),
-            pipeline: pipeline.clone(),
-        };
+        let stage = ClaimStage::new(r.store.clone(), pipeline.clone());
         let now = Utc::now();
         for id in ["a", "b"] {
             r.store.claim_by_hand(id, now);
         }
         // b is held by this process.
         assert!(pipeline.add_in_flight(&claimed("b", None), 1));
-        stage.release_claims_at_start().await.unwrap();
+        stage.restore_missing_at_start().await.unwrap();
         assert!(!r.store.is_claimed("a"), "a stranger's claim is released");
         assert!(r.store.is_claimed("b"), "this process's own is not");
     }
@@ -1903,11 +2058,11 @@ mod tests {
         assert!(source.polls.load(Ordering::SeqCst) >= 4);
     }
 
-    /// The leader's sweep releases claims older than five minutes that this
-    /// process does not hold; younger ones and held ones stay; a non-leader
-    /// releases nothing.
+    /// The leader's periodic reconcile restores the queue rows that have been
+    /// missing for over a minute, never the ones of jobs this process is
+    /// publishing (its in-flight set), and a non-leader does nothing.
     #[tokio::test(start_paused = true)]
-    async fn the_stale_claim_sweep_releases_only_old_unheld_claims_and_only_as_leader() {
+    async fn the_periodic_reconcile_restores_old_missing_rows_but_never_the_in_flight_ones() {
         let ids: Vec<(String, Option<String>)> = ["old", "young", "held"]
             .iter()
             .map(|i| (i.to_string(), None))
@@ -1916,8 +2071,9 @@ mod tests {
             let store = FakeStore::with_jobs(ids.clone());
             let pipeline = Arc::new(Pipeline::new(10));
             let now = Utc::now();
+            // "No queue row" in the fake: claimed since.
             store.claim_by_hand("old", now - chrono::Duration::minutes(10));
-            store.claim_by_hand("young", now - chrono::Duration::minutes(1));
+            store.claim_by_hand("young", now - chrono::Duration::seconds(10));
             store.claim_by_hand("held", now - chrono::Duration::minutes(10));
             assert!(pipeline.add_in_flight(&claimed("held", None), 1));
             let cancel = CancellationToken::new();
@@ -1931,9 +2087,136 @@ mod tests {
             cancel.cancel();
             task.await.unwrap();
             assert_eq!(store.is_claimed("old"), !leading, "old, leading={leading}");
-            assert!(store.is_claimed("young"), "young is never released");
-            assert!(store.is_claimed("held"), "held is never released");
+            assert!(store.is_claimed("young"), "young is not drift yet");
+            assert!(store.is_claimed("held"), "an in-flight job is never queued");
         }
+    }
+
+    /// The CLAIM WINDOW: between the claim's DELETE and the moment its jobs
+    /// are in the in-flight set a claimed job is PENDING with no queue row and
+    /// not yet in flight. A periodic reconcile that ran now would queue it
+    /// again (a backlog job is far older than the age guard). The claim gate
+    /// keeps the reconcile out of the window; without it the job is re-queued.
+    #[tokio::test]
+    async fn the_periodic_reconcile_cannot_requeue_a_job_in_the_claim_window() {
+        let r = rig(
+            FakeStore::with_jobs(vec![("j1".to_string(), None)]),
+            settings(10, 1, 5),
+        );
+        r.store.reconcile_ignores_age.store(true, Ordering::SeqCst);
+        let (taken_signal, proceed) = (Arc::new(Notify::new()), Arc::new(Semaphore::new(0)));
+        *lock(&r.store.post_claim_gate) = Some((taken_signal.clone(), proceed.clone()));
+        let pipeline = Arc::new(Pipeline::new(10));
+        let stage = ClaimStage::new(r.store.clone(), pipeline.clone());
+        assert_eq!(pipeline.acquire_up_to(5).await, 5);
+
+        let window = async {
+            // j1's queue row is gone (claimed); it is not in flight yet.
+            taken_signal.notified().await;
+            assert!(r.store.is_claimed("j1"));
+            assert_eq!(pipeline.in_flight_len(), 0);
+            let reconcile = reconcile_pass(&*r.store, &pipeline);
+            tokio::pin!(reconcile);
+            let early = time::timeout(Duration::from_millis(100), &mut reconcile).await;
+            assert!(early.is_err(), "the reconcile ran inside the claim window");
+            proceed.add_permits(1);
+            reconcile.await.unwrap()
+        };
+        let (claim, done) = tokio::join!(stage.claim(5), window);
+        let (jobs, _) = claim.unwrap();
+        assert_eq!(jobs.len(), 1, "j1 was claimed");
+        assert_eq!(done.inserted, 0, "{done:?}");
+        assert!(
+            r.store.is_claimed("j1"),
+            "its queue row was not re-inserted"
+        );
+    }
+
+    /// STARVATION: more than a batch of held rows at the head of the order
+    /// must not keep the jobs behind them from being claimed. The poller
+    /// remembers the held group and skips it for a few seconds; without that
+    /// every claim would take, find held and put back the same head rows.
+    #[tokio::test(start_paused = true)]
+    async fn a_batch_full_of_held_rows_at_the_head_does_not_starve_the_groups_behind() {
+        let mut jobs: Vec<(String, Option<String>)> = (0..100)
+            .map(|n| (format!("a-{n:03}"), Some("a".to_string())))
+            .collect();
+        jobs.push(("z-000".into(), Some("z".into())));
+        let r = rig(FakeStore::with_jobs(jobs), settings(50, 2, 10));
+        lock(&r.store.hold_groups).insert("a".into());
+        run_until(
+            &r,
+            Arc::new(Pipeline::new(50)),
+            true,
+            Duration::from_secs(30),
+            || r.store.status_of("z-000") == Status::Queued,
+        )
+        .await;
+        assert_eq!(r.store.status_of("z-000"), Status::Queued, "z was starved");
+        assert_eq!(
+            r.store.count(Status::Pending),
+            100,
+            "the held rows are back"
+        );
+        assert_eq!(r.store.claimed_count(), 0, "and restored to the queue");
+        let skips: Vec<usize> = lock(&r.store.claims).iter().map(|c| c.skip.len()).collect();
+        assert!(
+            skips.contains(&1),
+            "a later claim skipped the held group: {skips:?}"
+        );
+    }
+
+    /// A held group is remembered for 5 seconds and then tried again; the
+    /// memory is capped and drops the oldest first.
+    #[tokio::test(start_paused = true)]
+    async fn the_held_group_memory_expires_after_five_seconds_and_is_capped() {
+        let held = HeldGroups::new(HELD_GROUP_TTL, HELD_GROUP_CAP);
+        held.remember(&["a".to_string()]);
+        time::advance(Duration::from_secs(4)).await;
+        assert_eq!(held.active(), vec!["a".to_string()]);
+        time::advance(Duration::from_secs(2)).await;
+        assert!(held.active().is_empty(), "retried after 5 seconds");
+
+        let capped = HeldGroups::new(Duration::from_secs(60), 3);
+        for g in ["g1", "g2", "g3", "g4", "g5"] {
+            capped.remember(&[g.to_string()]);
+            time::advance(Duration::from_millis(10)).await;
+        }
+        assert_eq!(capped.len(), 3);
+        let mut now: Vec<String> = capped.active();
+        now.sort();
+        assert_eq!(now, ["g3", "g4", "g5"], "the oldest were dropped");
+        assert_eq!(HELD_GROUP_CAP, 10_000);
+    }
+
+    /// The claim stage skips what the memory holds, and asks again after 5 s.
+    #[tokio::test(start_paused = true)]
+    async fn the_claim_skips_remembered_groups_until_they_expire() {
+        let ids: Vec<(String, Option<String>)> = vec![
+            ("a-0".into(), Some("a".into())),
+            ("b-0".into(), Some("b".into())),
+        ];
+        let r = rig(FakeStore::with_jobs(ids), settings(10, 1, 5));
+        lock(&r.store.hold_groups).insert("a".into());
+        let pipeline = Arc::new(Pipeline::new(10));
+        let stage = ClaimStage::new(r.store.clone(), pipeline.clone());
+        let take = || async { assert_eq!(pipeline.acquire_up_to(5).await, 5) };
+        take().await;
+        let (jobs, taken) = stage.claim(5).await.unwrap();
+        assert_eq!((jobs.len(), taken), (1, 2), "b claimed, a found held");
+        take().await;
+        let (jobs, taken) = stage.claim(5).await.unwrap();
+        assert_eq!(
+            (jobs.len(), taken),
+            (0, 0),
+            "a is skipped: nothing else to take"
+        );
+        time::advance(Duration::from_secs(6)).await;
+        take().await;
+        let (_, taken) = stage.claim(5).await.unwrap();
+        assert_eq!(taken, 1, "a is tried again after 5 s");
+        let skips: Vec<usize> = lock(&r.store.claims).iter().map(|c| c.skip.len()).collect();
+        assert_eq!(skips, vec![0, 1, 0]);
     }
 
     /// Real threads, real time, random publish and mark failures, a small

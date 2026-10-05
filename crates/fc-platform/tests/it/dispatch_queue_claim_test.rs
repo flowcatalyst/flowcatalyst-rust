@@ -1,7 +1,8 @@
 //! The dispatch queue table as the scheduler reads it, against a real
-//! PostgreSQL: the claim (order, what it skips, concurrent claims), its
-//! release, the hold-back (claim time and delivery time), the stale-claim
-//! release, the backlog, the reconcile sweep, and migration 065. Requires
+//! PostgreSQL: the claim (two plain statements, delete at claim: order, what
+//! it skips, concurrent claimers), the restore, the hold-back (claim time and
+//! delivery time), crash recovery, the backlog, the reconcile sweep, and
+//! migration 065. Requires
 //! Docker, or a local PostgreSQL through `FC_TEST_PG_BIN` (see
 //! `support/db.rs`):
 //!   cargo test -p fc-platform --test it dispatch_queue_claim_test:: -- --ignored
@@ -98,14 +99,6 @@ fn ids(rows: &[lifecycle::QueueClaim]) -> Vec<String> {
     rows.iter().map(|r| r.job_id.clone()).collect()
 }
 
-async fn claimed_at(pool: &PgPool, id: &str) -> Option<DateTime<Utc>> {
-    sqlx::query_scalar("SELECT claimed_at FROM msg_dispatch_queue WHERE job_id = $1")
-        .bind(id)
-        .fetch_one(pool)
-        .await
-        .unwrap()
-}
-
 async fn queue_ids(pool: &PgPool) -> Vec<String> {
     sqlx::query_scalar("SELECT job_id FROM msg_dispatch_queue ORDER BY job_id")
         .fetch_all(pool)
@@ -113,14 +106,23 @@ async fn queue_ids(pool: &PgPool) -> Vec<String> {
         .unwrap()
 }
 
+fn statement(name: &str) -> &'static str {
+    lifecycle::queue_statements()
+        .into_iter()
+        .find(|(n, _)| *n == name)
+        .unwrap()
+        .1
+}
+
 // ── The claim ───────────────────────────────────────────────────────────
 
 /// The claim returns rows in the total order (group, NULLS LAST; sequence;
-/// created_at; id); skips claimed, not-yet-due and paused rows; does not
-/// return a claimed row again until it is released or re-enters PENDING.
+/// created_at; id); skips not-yet-due and paused rows and the groups it is
+/// told to skip; DELETES the rows it takes (so nothing is returned twice) and
+/// leaves the jobs PENDING.
 #[tokio::test]
 #[ignore = "requires Docker"]
-async fn the_claim_returns_rows_in_order_and_skips_claimed_not_due_and_paused() {
+async fn the_claim_returns_rows_in_order_deletes_them_and_skips_not_due_paused_and_held_groups() {
     let (pool, _c) = setup_db().await;
     let mut a = spec(1);
     a.group = Some("b");
@@ -137,22 +139,17 @@ async fn the_claim_returns_rows_in_order_and_skips_claimed_not_due_and_paused() 
     let mut f = spec(6);
     f.group = Some("c");
     f.subscription_id = Some("sub_paused");
-    let mut g = spec(7);
-    g.group = Some("a");
-    g.sequence = 4; // already claimed
+    let mut h = spec(7);
+    h.group = Some("held");
     let mut done = spec(8);
     done.status = "QUEUED"; // not in the queue at all
-    for s in [&a, &b, &c, &d, &e, &f, &g, &done] {
+    for s in [&a, &b, &c, &d, &e, &f, &h, &done] {
         put(&pool, s).await;
     }
-    sqlx::query("UPDATE msg_dispatch_queue SET claimed_at = NOW() WHERE job_id = $1")
-        .bind(&g.id)
-        .execute(&pool)
-        .await
-        .unwrap();
 
     let paused = vec!["sub_paused".to_string()];
-    let first = lifecycle::claim(&pool, 100, &paused).await.unwrap();
+    let skip = vec!["held".to_string()];
+    let first = lifecycle::claim(&pool, 100, &paused, &skip).await.unwrap();
     assert_eq!(
         ids(&first),
         vec![c.id.clone(), b.id.clone(), a.id.clone(), d.id.clone()],
@@ -162,55 +159,60 @@ async fn the_claim_returns_rows_in_order_and_skips_claimed_not_due_and_paused() 
     assert_eq!(first[0].version, c.updated_at);
     assert_eq!(first[0].job_created_at, c.created_at);
     assert_eq!(first[0].mode, "IMMEDIATE");
-    for row in &first {
-        assert!(claimed_at(&pool, &row.job_id).await.is_some());
-    }
-
+    // The rows are gone; the jobs are still PENDING.
+    let left = queue_ids(&pool).await;
+    let mut want = vec![e.id.clone(), f.id.clone(), h.id.clone()];
+    want.sort();
+    assert_eq!(left, want);
+    let status: String = sqlx::query_scalar("SELECT status FROM msg_dispatch_jobs WHERE id = $1")
+        .bind(&c.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "PENDING");
     // Nothing is returned twice.
-    assert!(lifecycle::claim(&pool, 100, &paused)
+    assert!(lifecycle::claim(&pool, 100, &paused, &skip)
         .await
         .unwrap()
         .is_empty());
+    // The skipped group, and the unpaused subscription, are there to claim.
+    assert_eq!(
+        ids(&lifecycle::claim(&pool, 100, &[], &[]).await.unwrap()),
+        vec![f.id.clone(), h.id.clone()]
+    );
+}
 
-    // Released: it is claimable again, and only it.
-    assert_eq!(
-        lifecycle::release_claims(&pool, &[c.id.clone()])
-            .await
-            .unwrap(),
-        1
-    );
-    assert_eq!(claimed_at(&pool, &c.id).await, None);
-    assert_eq!(
-        ids(&lifecycle::claim(&pool, 100, &paused).await.unwrap()),
-        vec![c.id.clone()]
-    );
-    // Releasing what is not claimed, or not there, changes nothing.
-    let ghost = "ghost0000000".to_string();
-    assert_eq!(
-        lifecycle::release_claims(&pool, &[e.id.clone(), ghost])
-            .await
-            .unwrap(),
-        0
-    );
-
-    // Re-entering PENDING (a retry, a deferral, a hold) resets the claim.
-    assert!(lifecycle::defer(
-        &pool,
-        &c.id,
-        c.created_at,
-        Utc::now() - Duration::seconds(1)
-    )
-    .await
-    .unwrap());
-    assert_eq!(claimed_at(&pool, &c.id).await, None);
-    assert_eq!(
-        ids(&lifecycle::claim(&pool, 100, &paused).await.unwrap()),
-        vec![c.id.clone()]
-    );
-    // With the connection no longer paused, f is claimable too.
-    assert_eq!(
-        ids(&lifecycle::claim(&pool, 100, &[]).await.unwrap()),
-        vec![f.id.clone()]
+/// A row made not-due between the claim's two statements is not claimed: the
+/// DELETE re-checks the due filter.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn a_row_made_not_due_between_the_two_statements_is_not_claimed() {
+    let (pool, _c) = setup_db().await;
+    let (a, b) = (spec(1), spec(2));
+    put(&pool, &a).await;
+    put(&pool, &b).await;
+    // The first statement, by hand.
+    let picked: Vec<String> = sqlx::query_scalar(statement("claim_select"))
+        .bind(10_i64)
+        .bind(Vec::<String>::new())
+        .bind(Vec::<String>::new())
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(picked.len(), 2);
+    // A retry refreshes `a` to a future time.
+    lifecycle::defer(&pool, &a.id, a.created_at, Utc::now() + Duration::hours(1))
+        .await
+        .unwrap();
+    let rows: Vec<lifecycle::QueueClaim> = sqlx::query_as(statement("claim_delete"))
+        .bind(&picked)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(ids(&rows), vec![b.id.clone()], "only the still-due row");
+    assert!(
+        queue_ids(&pool).await.contains(&a.id),
+        "the deferred row stays"
     );
 }
 
@@ -225,20 +227,20 @@ async fn the_claim_takes_the_head_of_the_order_up_to_its_limit() {
         s.sequence = (11 - n) as i32; // sequence descending in creation order
         put(&pool, &s).await;
     }
-    let got = lifecycle::claim(&pool, 4, &[]).await.unwrap();
+    let got = lifecycle::claim(&pool, 4, &[], &[]).await.unwrap();
     let want: Vec<String> = (7..=10).rev().map(|n| spec(n).id).collect();
     assert_eq!(ids(&got), want, "lowest sequence first");
-    let rest = lifecycle::claim(&pool, 100, &[]).await.unwrap();
+    let rest = lifecycle::claim(&pool, 100, &[], &[]).await.unwrap();
     assert_eq!(rest.len(), 6);
     assert!(rest
         .windows(2)
         .all(|w| w[0].order_key() <= w[1].order_key()));
 }
 
-/// Concurrent claims never return the same row, and together take them all.
+/// Concurrent claimers get disjoint rows and together all of them.
 #[tokio::test]
 #[ignore = "requires Docker"]
-async fn concurrent_claims_never_return_the_same_row() {
+async fn concurrent_claimers_get_disjoint_rows_and_together_all_of_them() {
     let (pool, _c) = setup_db().await;
     for n in 1..=300 {
         let mut s = spec(n);
@@ -252,7 +254,7 @@ async fn concurrent_claims_never_return_the_same_row() {
         tasks.push(tokio::spawn(async move {
             let mut mine = Vec::new();
             loop {
-                let got = lifecycle::claim(&pool, 25, &[]).await.unwrap();
+                let got = lifecycle::claim(&pool, 25, &[], &[]).await.unwrap();
                 if got.is_empty() {
                     break;
                 }
@@ -269,15 +271,105 @@ async fn concurrent_claims_never_return_the_same_row() {
     let unique: HashSet<&String> = all.iter().collect();
     assert_eq!(all.len(), 300, "every row claimed");
     assert_eq!(unique.len(), 300, "and none twice");
+    assert!(queue_ids(&pool).await.is_empty());
+}
+
+// ── The restore ─────────────────────────────────────────────────────────
+
+/// A claimed job is put back from the job table: same values, same version;
+/// it is claimed again, in order. A job that is no longer PENDING is not
+/// resurrected; a newer queue row is not overwritten.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn restore_puts_a_claimed_job_back_from_the_job_table_and_nothing_else() {
+    let (pool, _c) = setup_db().await;
+    let mut a = spec(1);
+    a.group = Some("g");
+    let mut b = spec(2);
+    b.group = Some("g");
+    b.sequence = 2;
+    let mut moved_on = spec(3);
+    moved_on.group = Some("g");
+    moved_on.sequence = 3;
+    let mut refreshed = spec(4);
+    refreshed.group = Some("g");
+    refreshed.sequence = 4;
+    for s in [&a, &b, &moved_on, &refreshed] {
+        put(&pool, s).await;
+    }
+    let claimed = lifecycle::claim(&pool, 100, &[], &[]).await.unwrap();
+    assert_eq!(claimed.len(), 4);
+    assert!(queue_ids(&pool).await.is_empty());
+    // While claimed: one job moved on (completed), one re-entered PENDING
+    // (a retry), which writes a NEW queue row.
+    assert!(
+        lifecycle::complete(&pool, &moved_on.id, moved_on.created_at, 1)
+            .await
+            .unwrap()
+    );
+    assert!(lifecycle::defer(
+        &pool,
+        &refreshed.id,
+        refreshed.created_at,
+        Utc::now() - Duration::seconds(1)
+    )
+    .await
+    .unwrap());
+    let newer: DateTime<Utc> =
+        sqlx::query_scalar("SELECT version FROM msg_dispatch_queue WHERE job_id = $1")
+            .bind(&refreshed.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    let all: Vec<(String, DateTime<Utc>)> = [&a, &b, &moved_on, &refreshed]
+        .iter()
+        .map(|s| (s.id.clone(), s.created_at))
+        .collect();
+    let restored = lifecycle::restore_to_queue(&pool, &all).await.unwrap();
+    assert_eq!(restored, 2, "a and b only");
+    let mut want = vec![a.id.clone(), b.id.clone(), refreshed.id.clone()];
+    want.sort();
+    assert_eq!(queue_ids(&pool).await, want, "moved_on is not resurrected");
+    let version: DateTime<Utc> =
+        sqlx::query_scalar("SELECT version FROM msg_dispatch_queue WHERE job_id = $1")
+            .bind(&refreshed.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(version, newer, "a newer row is not overwritten");
+    // The restored row mirrors the job.
+    let (v, seq): (DateTime<Utc>, i32) =
+        sqlx::query_as("SELECT version, sequence FROM msg_dispatch_queue WHERE job_id = $1")
+            .bind(&b.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((v, seq), (b.updated_at, 2));
+    assert_eq!(
+        lifecycle::queue_drift(&pool).await.unwrap(),
+        lifecycle::QueueDrift {
+            missing_or_stale: 0,
+            orphaned: 0
+        }
+    );
+    // Claimed again, in order.
+    let again = lifecycle::claim(&pool, 100, &[], &[]).await.unwrap();
+    assert_eq!(
+        ids(&again),
+        vec![a.id.clone(), b.id.clone(), refreshed.id.clone()]
+    );
+    // Restoring nothing, or a job that is not there, is fine.
+    assert_eq!(lifecycle::restore_to_queue(&pool, &[]).await.unwrap(), 0);
 }
 
 // ── The hold-back ───────────────────────────────────────────────────────
 
-/// At claim time a BLOCK_ON_ERROR job is held by an earlier FAILED / ERROR
-/// job of its group, or by an earlier PENDING job in a retry backoff; the
-/// holder itself is not held; IMMEDIATE jobs and other groups are free; a
-/// job whose holder is QUEUED, or in the past, is free. The delivery-time
-/// check (`group_held_before`) answers the same.
+/// A claimed BLOCK_ON_ERROR job is held by an earlier FAILED / ERROR job of
+/// its group, or by an earlier PENDING job in a retry backoff (which is
+/// still in the queue, not due); the holder itself is not held; IMMEDIATE
+/// jobs and other groups are free; a job whose holder is QUEUED, or due, is
+/// free. The delivery-time check (`group_held_before`) answers the same.
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn a_blocked_group_is_held_at_claim_time_and_at_delivery_from_both_sources() {
@@ -290,23 +382,17 @@ async fn a_blocked_group_is_held_at_claim_time_and_at_delivery_from_both_sources
         s.mode = "BLOCK_ON_ERROR";
         s
     };
-    // g1: a FAILED head; its BLOCK_ON_ERROR successors are held, an
-    // IMMEDIATE one is not.
     let g1_failed = hold(1, "g1", 1, "FAILED");
     let g1_held = hold(2, "g1", 2, "PENDING");
     let mut g1_free = hold(3, "g1", 3, "PENDING");
     g1_free.mode = "IMMEDIATE";
-    // g2: an ERROR head holds as well.
     let g2_error = hold(4, "g2", 1, "ERROR");
     let g2_held = hold(5, "g2", 2, "PENDING");
-    // g3: a PENDING head in a retry backoff holds; it is itself not due.
     let mut g3_backoff = hold(6, "g3", 1, "PENDING");
     g3_backoff.scheduled_for = Some(Utc::now() + Duration::hours(1));
     let g3_held = hold(7, "g3", 2, "PENDING");
-    // g4: a QUEUED head and a COMPLETED one hold nothing.
     let g4_queued = hold(8, "g4", 1, "QUEUED");
     let g4_free = hold(9, "g4", 2, "PENDING");
-    // g5: a FAILED job LATER than the pending one does not hold it.
     let g5_first = hold(10, "g5", 1, "PENDING");
     let g5_failed = hold(11, "g5", 2, "FAILED");
     // Ungrouped BLOCK_ON_ERROR jobs are held only by a group named `default`.
@@ -331,16 +417,24 @@ async fn a_blocked_group_is_held_at_claim_time_and_at_delivery_from_both_sources
         put(&pool, s).await;
     }
 
-    let got: HashSet<String> = ids(&lifecycle::claim(&pool, 100, &[]).await.unwrap())
+    let claimed = lifecycle::claim(&pool, 100, &[], &[]).await.unwrap();
+    let got: HashSet<String> = lifecycle::held_among(&pool, &claimed)
+        .await
+        .unwrap()
         .into_iter()
         .collect();
-    let want: HashSet<String> = [&g1_free, &g4_free, &g5_first]
+    let want: HashSet<String> = [&g1_held, &g2_held, &g3_held, &loose]
         .iter()
         .map(|s| s.id.clone())
         .collect();
-    assert_eq!(got, want, "claimed: only the jobs nothing holds");
+    assert_eq!(got, want, "held: behind a FAILED/ERROR/backoff holder");
+    // The backoff holder is not due: it was not claimed, and is in the queue.
+    assert!(!ids(&claimed).contains(&g3_backoff.id));
+    assert!(queue_ids(&pool).await.contains(&g3_backoff.id));
+    assert!(lifecycle::held_among(&pool, &[]).await.unwrap().is_empty());
 
-    // The delivery-time check, for every PENDING or QUEUED BLOCK_ON_ERROR job.
+    // The delivery-time check, for the BLOCK_ON_ERROR jobs that are not held
+    // by a FAILED job and the held ones.
     for (s, held) in [
         (&g1_held, true),
         (&g2_held, true),
@@ -360,86 +454,99 @@ async fn a_blocked_group_is_held_at_claim_time_and_at_delivery_from_both_sources
             s.id
         );
     }
-    // Once the backoff has expired the holder is due and holds nothing; the
-    // successor is free.
-    lifecycle::defer(
-        &pool,
-        &g3_backoff.id,
-        g3_backoff.created_at,
-        Utc::now() - Duration::seconds(1),
-    )
-    .await
-    .unwrap();
-    assert!(
-        !lifecycle::group_held_before(&pool, "g3", 2, g3_held.created_at, &g3_held.id)
-            .await
-            .unwrap()
-    );
-    let got: HashSet<String> = ids(&lifecycle::claim(&pool, 100, &[]).await.unwrap())
-        .into_iter()
-        .collect();
-    let want: HashSet<String> = [&g3_backoff, &g3_held]
-        .iter()
-        .map(|s| s.id.clone())
-        .collect();
-    assert_eq!(got, want, "the due holder and its successor");
 }
 
-// ── Stale claims, backlog ───────────────────────────────────────────────
+// ── Crash recovery, the backlog ─────────────────────────────────────────
 
-/// The release of claims nobody holds: all of them (leader start), or only
-/// the old ones (the periodic sweep); the caller's own are never touched.
+/// A PENDING job whose claimer died has no queue row. At leader start such
+/// jobs are restored with no age guard (in bounded batches, until none are
+/// left); the periodic pass restores them only after the age guard and never
+/// the ids it is told are in flight.
 #[tokio::test]
 #[ignore = "requires Docker"]
-async fn unheld_claims_are_released_but_never_the_callers() {
+async fn crash_recovery_restores_missing_rows_at_leader_start_and_periodically() {
     let (pool, _c) = setup_db().await;
-    let (old, young, held) = (spec(1), spec(2), spec(3));
-    for s in [&old, &young, &held] {
+    let mut old1 = spec(1);
+    old1.updated_at = Utc::now() - Duration::minutes(10);
+    let mut old2 = spec(2);
+    old2.updated_at = Utc::now() - Duration::minutes(10);
+    let mut young = spec(3);
+    young.updated_at = Utc::now();
+    let in_flight = spec(4);
+    let intact = spec(5);
+    let mut done = spec(6);
+    done.status = "COMPLETED";
+    for s in [&old1, &old2, &young, &in_flight, &intact, &done] {
         put(&pool, s).await;
     }
-    for (id, ago) in [(&old.id, 10), (&young.id, 1), (&held.id, 10)] {
-        sqlx::query("UPDATE msg_dispatch_queue SET claimed_at = $2 WHERE job_id = $1")
-            .bind(id)
-            .bind(Utc::now() - Duration::minutes(ago))
-            .execute(&pool)
-            .await
-            .unwrap();
-    }
-    let mine = vec![held.id.clone()];
-    let cutoff = Some(Utc::now() - Duration::minutes(5));
-    assert_eq!(
-        lifecycle::release_unheld_claims(&pool, cutoff, &mine)
-            .await
-            .unwrap(),
-        1,
-        "only the old, unheld one"
-    );
-    assert_eq!(claimed_at(&pool, &old.id).await, None);
-    assert!(claimed_at(&pool, &young.id).await.is_some());
-    assert!(claimed_at(&pool, &held.id).await.is_some());
+    // Everything but `intact` was claimed by a process that died.
+    sqlx::query("DELETE FROM msg_dispatch_queue WHERE job_id <> $1")
+        .bind(&intact.id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
+    // The periodic pass: the age guard keeps `young`, the in-flight id is
+    // never queued, the old ones come back.
+    let exclude = vec![in_flight.id.clone()];
+    let done_once = lifecycle::reconcile_queue(&pool, ReconcileGuards::production(), &exclude)
+        .await
+        .unwrap();
+    assert_eq!(done_once.inserted, 2, "{done_once:?}");
+    let mut want = vec![old1.id.clone(), old2.id.clone(), intact.id.clone()];
+    want.sort();
+    assert_eq!(queue_ids(&pool).await, want);
+
+    // Leader start: no age guard, but still not the ids it holds.
+    let n = lifecycle::restore_all_missing(&pool, &exclude)
+        .await
+        .unwrap();
+    assert_eq!(n, 1, "young");
+    assert!(queue_ids(&pool).await.contains(&young.id));
+    assert!(!queue_ids(&pool).await.contains(&in_flight.id));
+    // A new process holds nothing: the last one comes back too.
+    assert_eq!(lifecycle::restore_all_missing(&pool, &[]).await.unwrap(), 1);
+    assert_eq!(lifecycle::restore_all_missing(&pool, &[]).await.unwrap(), 0);
     assert_eq!(
-        lifecycle::release_unheld_claims(&pool, None, &mine)
-            .await
-            .unwrap(),
-        1,
-        "at leader start every claim it does not hold"
+        lifecycle::queue_drift(&pool).await.unwrap(),
+        lifecycle::QueueDrift {
+            missing_or_stale: 0,
+            orphaned: 0
+        }
     );
-    assert_eq!(claimed_at(&pool, &young.id).await, None);
-    assert!(claimed_at(&pool, &held.id).await.is_some());
+    // The drift check can ignore the in-flight ids.
+    sqlx::query("DELETE FROM msg_dispatch_queue WHERE job_id = $1")
+        .bind(&in_flight.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        lifecycle::queue_drift_ignoring(&pool, &exclude)
+            .await
+            .unwrap()
+            .missing_or_stale,
+        0
+    );
+    assert_eq!(
+        lifecycle::queue_drift(&pool)
+            .await
+            .unwrap()
+            .missing_or_stale,
+        1
+    );
 }
 
-/// The backlog counts unclaimed, due rows and reports the oldest.
+/// The backlog counts due rows and reports the oldest.
 #[tokio::test]
 #[ignore = "requires Docker"]
-async fn the_backlog_is_the_unclaimed_due_rows() {
+async fn the_backlog_is_the_due_rows() {
     let (pool, _c) = setup_db().await;
     let empty = lifecycle::queue_backlog(&pool).await.unwrap();
     assert_eq!((empty.depth, empty.oldest_enqueued_at), (0, None));
-    let (a, b, c, d) = (spec(1), spec(2), spec(3), spec(4));
+    let (a, b, d) = (spec(1), spec(2), spec(4));
     let mut later = d.clone();
     later.scheduled_for = Some(Utc::now() + Duration::hours(1));
-    for s in [&a, &b, &c, &later] {
+    for s in [&a, &b, &later] {
         put(&pool, s).await;
     }
     sqlx::query(
@@ -449,13 +556,8 @@ async fn the_backlog_is_the_unclaimed_due_rows() {
     .execute(&pool)
     .await
     .unwrap();
-    sqlx::query("UPDATE msg_dispatch_queue SET claimed_at = NOW() WHERE job_id = $1")
-        .bind(&c.id)
-        .execute(&pool)
-        .await
-        .unwrap();
     let backlog = lifecycle::queue_backlog(&pool).await.unwrap();
-    assert_eq!(backlog.depth, 2, "a and b: c is claimed, d is not due");
+    assert_eq!(backlog.depth, 2, "a and b: d is not due");
     let age = Utc::now() - backlog.oldest_enqueued_at.unwrap();
     assert!(age >= Duration::minutes(10) && age < Duration::minutes(11));
 }
@@ -474,41 +576,30 @@ async fn queue_snapshot(pool: &PgPool) -> Vec<String> {
 
 /// Each of (a) insert, (b) delete, (c) refresh repairs a hand-made
 /// corruption and reports it; a consistent table reports zero and changes
-/// nothing; a just-created job and a young claim are left alone.
+/// nothing; a just-created job is left alone, and so is an in-flight id.
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn reconcile_repairs_each_kind_of_drift_and_leaves_a_consistent_table_alone() {
     let (pool, _c) = setup_db().await;
     let (p1, p2, p3) = (spec(1), spec(2), spec(3));
-    let mut done_unclaimed = spec(4);
-    done_unclaimed.status = "COMPLETED";
-    let mut done_old_claim = spec(5);
-    done_old_claim.status = "COMPLETED";
-    let mut done_young_claim = spec(6);
-    done_young_claim.status = "COMPLETED";
+    let mut done_job = spec(4);
+    done_job.status = "COMPLETED";
     let mut young = spec(7);
     young.updated_at = Utc::now(); // created a moment ago
-    for s in [
-        &p1,
-        &p2,
-        &p3,
-        &done_unclaimed,
-        &done_old_claim,
-        &done_young_claim,
-    ] {
+    let in_flight = spec(8);
+    for s in [&p1, &p2, &p3, &done_job, &young, &in_flight] {
         put(&pool, s).await;
     }
-    // `young` is a PENDING job whose queue row was never written.
-    put(&pool, &young).await;
-    sqlx::query("DELETE FROM msg_dispatch_queue WHERE job_id = $1")
-        .bind(&young.id)
+    sqlx::query("DELETE FROM msg_dispatch_queue WHERE job_id = ANY($1)")
+        .bind(vec![young.id.clone(), in_flight.id.clone()])
         .execute(&pool)
         .await
         .unwrap();
+    let exclude = vec![in_flight.id.clone()];
 
-    // A consistent table: nothing to report, nothing changes.
+    // A consistent table (the missing rows are protected): nothing to report.
     let before = queue_snapshot(&pool).await;
-    let none = lifecycle::reconcile_queue(&pool, ReconcileGuards::production())
+    let none = lifecycle::reconcile_queue(&pool, ReconcileGuards::production(), &exclude)
         .await
         .unwrap();
     assert_eq!(none, Reconciled::default(), "{none:?}");
@@ -523,95 +614,79 @@ async fn reconcile_repairs_each_kind_of_drift_and_leaves_a_consistent_table_alon
     // (c) a row whose version is not the job's.
     sqlx::query(
         "UPDATE msg_dispatch_queue SET version = version - INTERVAL '1 second', \
-         sequence = 77, claimed_at = NOW() - INTERVAL '10 minutes' WHERE job_id = $1",
+         sequence = 77 WHERE job_id = $1",
     )
     .bind(&p2.id)
     .execute(&pool)
     .await
     .unwrap();
-    // (b) rows whose job is gone, not PENDING, or does not exist.
-    for (id, created_at, claimed) in [
-        (&done_unclaimed.id, done_unclaimed.created_at, None),
-        (
-            &done_old_claim.id,
-            done_old_claim.created_at,
-            Some(Utc::now() - Duration::minutes(10)),
-        ),
-        (
-            &done_young_claim.id,
-            done_young_claim.created_at,
-            Some(Utc::now() - Duration::minutes(1)),
-        ),
-        (&"ghost0000000".to_string(), Utc::now(), None),
+    // (b) rows whose job is not PENDING, or does not exist.
+    for (id, created_at) in [
+        (&done_job.id, done_job.created_at),
+        (&"ghost0000000".to_string(), Utc::now()),
     ] {
         sqlx::query(
-            "INSERT INTO msg_dispatch_queue (job_id, job_created_at, sequence, mode, version, \
-             claimed_at) VALUES ($1, $2, 1, 'IMMEDIATE', NOW(), $3)",
+            "INSERT INTO msg_dispatch_queue (job_id, job_created_at, sequence, mode, version) \
+             VALUES ($1, $2, 1, 'IMMEDIATE', NOW())",
         )
         .bind(id)
         .bind(created_at)
-        .bind(claimed)
         .execute(&pool)
         .await
         .unwrap();
     }
 
-    // Production guards: `young` (updated a moment ago) and the young claim
-    // are not drift yet.
-    let done = lifecycle::reconcile_queue(&pool, ReconcileGuards::production())
+    let done = lifecycle::reconcile_queue(&pool, ReconcileGuards::production(), &exclude)
         .await
         .unwrap();
     assert_eq!(
         done,
         Reconciled {
             inserted: 1,  // p1
-            deleted: 3,   // done_unclaimed, done_old_claim, ghost
+            deleted: 2,   // done_job, ghost
             refreshed: 1, // p2
         }
     );
     let rows = queue_ids(&pool).await;
     assert!(rows.contains(&p1.id), "(a) p1 is back");
     assert!(!rows.contains(&"ghost0000000".to_string()), "(b)");
-    assert!(!rows.contains(&done_unclaimed.id), "(b)");
-    assert!(!rows.contains(&done_old_claim.id), "(b)");
-    assert!(rows.contains(&done_young_claim.id), "a young claim is left");
+    assert!(!rows.contains(&done_job.id), "(b)");
     assert!(!rows.contains(&young.id), "a young job is left alone");
-    let (seq, claimed): (i32, Option<DateTime<Utc>>) =
-        sqlx::query_as("SELECT sequence, claimed_at FROM msg_dispatch_queue WHERE job_id = $1")
-            .bind(&p2.id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!((seq, claimed), (1, None), "(c) p2 mirrors its job again");
+    assert!(
+        !rows.contains(&in_flight.id),
+        "an in-flight job is never queued"
+    );
+    let seq: i32 = sqlx::query_scalar("SELECT sequence FROM msg_dispatch_queue WHERE job_id = $1")
+        .bind(&p2.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(seq, 1, "(c) p2 mirrors its job again");
 
-    // A second pass has nothing left but the two things the guards protect.
-    let again = lifecycle::reconcile_queue(&pool, ReconcileGuards::production())
+    // A second pass has nothing left but what the guards protect.
+    let again = lifecycle::reconcile_queue(&pool, ReconcileGuards::production(), &exclude)
         .await
         .unwrap();
     assert_eq!(again, Reconciled::default());
-    let drift = lifecycle::queue_drift(&pool).await.unwrap();
     assert_eq!(
-        drift,
+        lifecycle::queue_drift_ignoring(&pool, &exclude)
+            .await
+            .unwrap(),
         lifecycle::QueueDrift {
             missing_or_stale: 1, // young
-            orphaned: 1,         // done_young_claim
+            orphaned: 0,
         }
     );
 
-    // Without the guards they go too, and the table is exact.
-    let rest = lifecycle::reconcile_queue(&pool, ReconcileGuards::immediate())
+    // Without the age guard `young` goes too, and the table is exact.
+    let rest = lifecycle::reconcile_queue(&pool, ReconcileGuards::immediate(), &exclude)
         .await
         .unwrap();
+    assert_eq!(rest.inserted, 1);
     assert_eq!(
-        rest,
-        Reconciled {
-            inserted: 1,
-            deleted: 1,
-            refreshed: 0
-        }
-    );
-    assert_eq!(
-        lifecycle::queue_drift(&pool).await.unwrap(),
+        lifecycle::queue_drift_ignoring(&pool, &exclude)
+            .await
+            .unwrap(),
         lifecycle::QueueDrift {
             missing_or_stale: 0,
             orphaned: 0
@@ -633,11 +708,17 @@ async fn reconcile_is_bounded_per_pass() {
         .unwrap();
     let mut guards = ReconcileGuards::immediate();
     guards.limit = 8;
-    let first = lifecycle::reconcile_queue(&pool, guards).await.unwrap();
+    let first = lifecycle::reconcile_queue(&pool, guards, &[])
+        .await
+        .unwrap();
     assert_eq!(first.inserted, 8);
-    let second = lifecycle::reconcile_queue(&pool, guards).await.unwrap();
+    let second = lifecycle::reconcile_queue(&pool, guards, &[])
+        .await
+        .unwrap();
     assert_eq!(second.inserted, 8);
-    let third = lifecycle::reconcile_queue(&pool, guards).await.unwrap();
+    let third = lifecycle::reconcile_queue(&pool, guards, &[])
+        .await
+        .unwrap();
     assert_eq!(third.inserted, 4);
     assert_eq!(queue_ids(&pool).await.len(), 20);
 }
@@ -802,4 +883,34 @@ async fn migration_065_repairs_drift_and_is_recognised_when_already_applied() {
         !queue_ids(&pool).await.contains(&p1.id),
         "the probe did not run the migration's repair"
     );
+}
+
+// ── The scheduler's pool ────────────────────────────────────────────────
+
+/// Every connection of the scheduler's own pool runs with
+/// `plan_cache_mode = force_custom_plan` and `enable_sort = off`; the
+/// platform's pool keeps the server's defaults.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn only_the_schedulers_pool_sets_the_planner_options() {
+    use fc_platform::shared::database::create_scheduler_pool;
+    let (_c, url) = start_db("fc").await;
+    let scheduler = create_scheduler_pool(&url, 3).await.unwrap();
+    let platform = create_pool(&url).await.unwrap();
+    for _ in 0..6 {
+        // Several connections of the pool, not just the first.
+        let (a, b): (String, String) = sqlx::query_as(
+            "SELECT current_setting('plan_cache_mode'), current_setting('enable_sort')",
+        )
+        .fetch_one(&scheduler)
+        .await
+        .unwrap();
+        assert_eq!((a.as_str(), b.as_str()), ("force_custom_plan", "off"));
+    }
+    let (a, b): (String, String) =
+        sqlx::query_as("SELECT current_setting('plan_cache_mode'), current_setting('enable_sort')")
+            .fetch_one(&platform)
+            .await
+            .unwrap();
+    assert_eq!((a.as_str(), b.as_str()), ("auto", "on"));
 }

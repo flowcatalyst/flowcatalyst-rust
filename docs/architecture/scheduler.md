@@ -59,29 +59,31 @@ All three respect a shared shutdown channel; `stop()` flips it and the loops exi
 
 ## The poller
 
-The poller claims from `msg_dispatch_queue`, which holds one row per PENDING job (kept exact by the dispatch-job lifecycle, in the same statement as every job write; see [../operations/postgres.md](../operations/postgres.md)). `lifecycle::claim` is one statement, no transaction held open:
+The poller claims from `msg_dispatch_queue`, which holds one row per PENDING job waiting to be claimed (kept exact by the dispatch-job lifecycle, in the same statement as every job write; see [../operations/postgres.md](../operations/postgres.md)). `lifecycle::claim` is two plain statements, autocommit, no transaction, no locking clause:
 
 ```sql
-WITH c AS (
-    SELECT job_id FROM msg_dispatch_queue q
-     WHERE claimed_at IS NULL AND (scheduled_for IS NULL OR scheduled_for <= NOW())
-       AND (subscription_id IS NULL OR subscription_id <> ALL($paused))
-       AND NOT (mode = 'BLOCK_ON_ERROR' AND (<an earlier job of the group is FAILED/ERROR, or PENDING in a backoff>))
-     ORDER BY message_group NULLS LAST, sequence, job_created_at, job_id
-     LIMIT $n
-     FOR UPDATE SKIP LOCKED)
-UPDATE msg_dispatch_queue q SET claimed_at = NOW() FROM c WHERE q.job_id = c.job_id
-RETURNING ...
+-- S1: the ids, in claim order
+SELECT job_id FROM msg_dispatch_queue
+ WHERE (scheduled_for IS NULL OR scheduled_for <= NOW())
+   AND (subscription_id IS NULL OR subscription_id <> ALL($paused))
+   AND (message_group IS NULL OR message_group <> ALL($held_groups))
+ ORDER BY message_group NULLS LAST, sequence, job_created_at, job_id
+ LIMIT $n;
+-- S2: delete by primary key; what it returns IS the claim
+DELETE FROM msg_dispatch_queue WHERE job_id = ANY($ids) AND (scheduled_for IS NULL OR scheduled_for <= NOW())
+RETURNING ...;
 ```
 
 Key points:
 
-- **A claim stamps `claimed_at`**; a stamped row is not claimed again. A job that is published is marked QUEUED (its queue row is deleted by the same statement). A job that is NOT published (a failed publish, a drop as poisoned, a withhold by the poller's doomed check, a failed mark) has its claim **released**, so it is claimed again in order. A process that dies between claim and publish leaves claims behind: the new leader releases every claim it does not hold when it starts, and the leader releases claims older than 5 minutes that it does not hold every minute.
+- **A claim deletes the rows it takes**, so two claimers can never both get a row. The claimed job is PENDING with no queue row until it is marked QUEUED. A job that is NOT published (a failed publish, a drop as poisoned, a withhold by the poller's doomed check, a failed mark, a hold-back) has its row **restored** from the job table (only if still PENDING, never over an existing row), where the lane removes its in-flight entry and before the poison generation is read. A process that dies between claim and publish leaves PENDING jobs without a queue row: a new leader restores every such job before its first claim, and the leader's reconcile pass (every minute, excluding the jobs it is publishing) is the backstop.
+- **The claim window.** Between the claim's DELETE and the moment its jobs are in the in-flight set a claimed job is PENDING with no queue row and not yet in flight. A claim gate (an async mutex in the pipeline) is held by a claim from its first statement until its jobs are in flight or restored, and by the periodic reconcile around "read the in-flight ids, insert the missing rows", so the reconcile cannot queue a job that is being claimed.
 - **Batch size** comes from `SchedulerConfig::batch_size`, default 500. Tunable via `FC_SCHEDULER_BATCH_SIZE`.
-- **Ordering matters.** The claim's total order `(message_group NULLS LAST, sequence, created_at, id)` is what gives the rest of the pipeline FIFO ordering within a group; it is the order of `idx_dispatch_queue_order`, so the claim walks the index and stops early. The rows come back unordered from `RETURNING` and are sorted in memory.
-- **The hold-back is inside the claim** (Rust keeps it there; Go and Java run a second query after the claim): FAILED / ERROR holders are read from `msg_dispatch_jobs` through `idx_dispatch_jobs_status_group`, backoff holders from the queue table.
+- **Ordering matters.** The claim's total order `(message_group NULLS LAST, sequence, created_at, id)` is what gives the rest of the pipeline FIFO ordering within a group; it is the order of `idx_dispatch_queue_order`, so S1 walks the index and stops early. The rows come back unordered from `RETURNING` and are sorted in memory.
+- **The hold-back is one batched query after the claim** (`lifecycle::held_among`): per candidate group its EARLIEST holder, FAILED / ERROR jobs from `msg_dispatch_jobs` through `idx_dispatch_jobs_status_group` and the first backed-off row from the queue (one ordered `LATERAL ... LIMIT 1` probe of `idx_dispatch_queue_order` per group, so it does not seq-scan a deep queue); a claimed job is held when its group's holder is before it. Held rows are restored. So that a batch-full of held rows at the head of the order is not claimed and put back on every pass while the groups behind it wait, the poller remembers each held group for 5 seconds (at most 10,000 groups) and passes them to S1 as `$held_groups`.
+- **The scheduler's pool** sets `plan_cache_mode = force_custom_plan` and `enable_sort = off` (see [postgres.md](../operations/postgres.md#the-schedulers-own-connection-pool)).
 
-Two filters apply inside the claim:
+Two filters apply to the claim:
 
 ### Paused-connection filter
 
@@ -258,7 +260,7 @@ Read by `bin/fc-server/src/main.rs::load_scheduler_config`:
 | `FC_SCHEDULER_DEFAULT_POOL_CODE` | — | `DISPATCH-POOL` | Pool used when `dispatch_pool_id` is null |
 | `FC_SCHEDULER_PROCESSING_ENDPOINT` | `DISPATCH_SCHEDULER_PROCESSING_ENDPOINT` | `http://localhost:8080/api/dispatch/process` | Where the router calls back |
 
-The lane batch (100), the stale thresholds (QUEUED 15 minutes, PROCESSING 75 minutes), the stale-claim release (5 minutes) and the reconcile sweep are fixed; see [../operations/configuration.md](../operations/configuration.md).
+The lane batch (100), the stale thresholds (QUEUED 15 minutes, PROCESSING 75 minutes), the held-group memory (5 seconds) and the reconcile sweep are fixed; see [../operations/configuration.md](../operations/configuration.md).
 
 Plus the cluster-level standby vars (`FC_STANDBY_ENABLED`, `FC_STANDBY_REDIS_URL`, `FC_STANDBY_LOCK_KEY`) — see [high-availability.md](../operations/high-availability.md).
 

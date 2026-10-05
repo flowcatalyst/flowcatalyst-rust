@@ -1,6 +1,6 @@
 //! Dispatcher lanes, and the state they share with the poller.
 //!
-//! The poller claims queue rows (`claimed_at` is stamped, so a claimed row is
+//! The poller claims queue rows (the claim DELETES them, so a claimed row is
 //! not claimed again) and hands each to a lane; a lane publishes what it is
 //! given and marks it QUEUED, in bulk, with no transaction and no row lock
 //! held anywhere. The poller never waits for a publish. Three things bound
@@ -10,9 +10,9 @@
 //!   batch. The poller blocks when none are free, so a slow broker holds back
 //!   the claim instead of growing a buffer.
 //! - **The in-flight set**: ids claimed and not yet finished by a lane. It is
-//!   no longer passed to the claim (the claim stamp does that job); it is how
-//!   the poller recognises a doomed job (below) and what a stale-claim
-//!   release must not touch.
+//!   not an input of the claim (a claimed job has no queue row); it is how the
+//!   poller recognises a doomed job (below), what the periodic reconcile must
+//!   not queue again, and what a lane settles when its batch is done.
 //! - **Generations and poison** (below): the per-group order under failure.
 //!
 //! # Ordering under failure
@@ -25,24 +25,27 @@
 //!
 //! - every claim takes a generation (an increment of a shared counter)
 //!   **before** it snapshots the in-flight set, and stamps its jobs with it;
-//! - a lane that leaves jobs of `g` unpublished RELEASES their claims (so
-//!   they are claimed again), removes the batch's ids from the in-flight set
-//!   and **then** reads the counter, `P`, and records `poison[g] = P`;
+//! - a lane that leaves jobs of `g` unpublished RESTORES their queue rows
+//!   (from the job table, so they are claimed again), removes the batch's own
+//!   in-flight entries and **then** reads the counter, `P`, and records
+//!   `poison[g] = P`;
 //! - a job of `g` with `generation <= poison[g]` is dropped when it reaches
-//!   the lane (its claim is released and it stays PENDING; it is claimed
+//!   the lane (its queue row is restored and it stays PENDING; it is claimed
 //!   again later);
 //! - a claim whose generation is `> P` incremented the counter after `P` was
-//!   read, hence after the release committed, so its statement sees `j`
-//!   unclaimed: it claims `j` again, in order. Its jobs pass, and the first
+//!   read, hence after the restore committed, so its first statement sees `j`
+//!   in the queue: it claims `j` again, in order. Its jobs pass, and the first
 //!   one clears the poison. A claim whose statement started before the
-//!   release took its generation before it, so its generation is `<= P` and
+//!   restore took its generation before it, so its generation is `<= P` and
 //!   its jobs of `g` are dropped.
-//! - a claim that returns a job still in the in-flight set (the release ran,
+//! - a claim that returns a job still in the in-flight set (the restore ran,
 //!   the removal has not yet) withholds that job and the rest of its group,
-//!   and releases them.
-//! - a release that FAILS leaves the ids in the in-flight set, poisons the
+//!   and restores them. A lane removes only an in-flight entry that still
+//!   carries the generation of the claim it is settling.
+//! - a restore that FAILS leaves the ids in the in-flight set, poisons the
 //!   groups, and is retried by the poller before its next claim; until it
-//!   succeeds the group is held back by the "doomed" check below.
+//!   succeeds the group is held back by the "doomed" check below. The
+//!   reconcile sweep is the backstop.
 //!
 //! # The claim must not skip a doomed job
 //!
@@ -53,7 +56,7 @@
 //! poller therefore checks every claim against the in-flight set it
 //! snapshotted: if the snapshot holds a job of `g` that is doomed (its
 //! generation is `<=` the group's poison), the claim's jobs of `g` are not
-//! submitted; their claims are released and they are claimed again, in
+//! submitted; their queue rows are restored and they are claimed again, in
 //! order, once the doomed jobs have been dropped.
 //!
 //! (Making a *drop* poison the group again, at the generation read after the
@@ -72,7 +75,7 @@ use std::thread;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use tokio::sync::{mpsc, Semaphore};
+use tokio::sync::{mpsc, Mutex as AsyncMutex, Semaphore};
 use tokio::time::{self, Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
@@ -137,10 +140,10 @@ struct Poison {
 struct State {
     in_flight: HashMap<String, InFlight>,
     poison: HashMap<String, Poison>,
-    /// Claims whose release failed, to retry: `id -> the generation of the
-    /// in-flight entry that leaves once its claim is released (None: not in
+    /// Restores that failed, to retry: `id -> (created_at, the generation of
+    /// the in-flight entry that leaves once the row is restored; None: not in
     /// the in-flight set)`.
-    unreleased: HashMap<String, Option<u64>>,
+    unrestored: HashMap<String, (DateTime<Utc>, Option<u64>)>,
 }
 
 /// The in-flight set as a claim saw it (what its doomed check needs).
@@ -156,6 +159,14 @@ pub(crate) struct Pipeline {
     state: Mutex<State>,
     permits: Semaphore,
     failed: AtomicBool,
+    /// Held by a claim from its first statement until its jobs are in the
+    /// in-flight set (or restored), and by the periodic reconcile around
+    /// "read the in-flight ids, insert the missing queue rows". Between the
+    /// claim's DELETE and the in-flight set a claimed job is PENDING with no
+    /// queue row and not yet in flight: without this the reconcile would
+    /// queue it again (a backlog job is far older than its age guard). An
+    /// async mutex: it is held across awaits.
+    pub claim_gate: AsyncMutex<()>,
     /// Test only: the longest pause [`Self::race_point`] takes, in us.
     #[cfg(test)]
     race_pause_us: AtomicU32,
@@ -171,6 +182,7 @@ impl Pipeline {
             state: Mutex::new(State::default()),
             permits: Semaphore::new(capacity),
             failed: AtomicBool::new(false),
+            claim_gate: AsyncMutex::new(()),
             #[cfg(test)]
             race_pause_us: AtomicU32::new(0),
             #[cfg(test)]
@@ -262,15 +274,15 @@ impl Pipeline {
         metrics::gauge!("scheduler.in_flight.size").set(state.in_flight.len() as f64);
     }
 
-    /// Every id this process holds a claim on that it knows of: the in-flight
-    /// set and the claims whose release is being retried. A stale-claim
-    /// release must leave exactly these alone.
+    /// Every id this process is publishing or is restoring, that has no queue
+    /// row: the in-flight set and the restores being retried. The reconcile
+    /// sweep must not queue exactly these.
     pub fn held_ids(&self) -> Vec<String> {
         let state = locked(&self.state);
         let mut ids: Vec<String> = state.in_flight.keys().cloned().collect();
         ids.extend(
             state
-                .unreleased
+                .unrestored
                 .keys()
                 .filter(|id| !state.in_flight.contains_key(*id))
                 .cloned(),
@@ -278,24 +290,31 @@ impl Pipeline {
         ids
     }
 
-    /// Remember claims whose release failed (`Some(generation)`: the id is in
-    /// the in-flight set under that generation and is removed once released).
-    pub fn defer_release(&self, ids: impl IntoIterator<Item = (String, Option<u64>)>) {
+    /// Remember restores that failed (`Some(generation)`: the id is in the
+    /// in-flight set under that generation and is removed once restored).
+    pub fn defer_restore(
+        &self,
+        jobs: impl IntoIterator<Item = (String, DateTime<Utc>, Option<u64>)>,
+    ) {
         let mut state = locked(&self.state);
-        for (id, owned) in ids {
-            state.unreleased.insert(id, owned);
+        for (id, created_at, owned) in jobs {
+            state.unrestored.insert(id, (created_at, owned));
         }
     }
 
-    /// The claims to retry releasing, removed from the list (a failed retry
-    /// puts them back with [`Self::defer_release`]).
-    pub fn take_unreleased(&self) -> Vec<(String, Option<u64>)> {
-        locked(&self.state).unreleased.drain().collect()
+    /// The restores to retry, removed from the list (a failed retry puts them
+    /// back with [`Self::defer_restore`]).
+    pub fn take_unrestored(&self) -> Vec<(String, DateTime<Utc>, Option<u64>)> {
+        locked(&self.state)
+            .unrestored
+            .drain()
+            .map(|(id, (created, owned))| (id, created, owned))
+            .collect()
     }
 
     #[cfg(test)]
-    pub fn unreleased_len(&self) -> usize {
-        locked(&self.state).unreleased.len()
+    pub fn unrestored_len(&self) -> usize {
+        locked(&self.state).unrestored.len()
     }
 
     #[cfg(test)]
@@ -447,7 +466,7 @@ impl Lane {
     }
 
     /// Publish one batch and finish it: drop what is poisoned, publish the
-    /// rest, mark the published ids QUEUED, release the claims of every job
+    /// rest, mark the published ids QUEUED, restore the queue row of every job
     /// that is not QUEUED, then remove every id from the in-flight set,
     /// record the poison, and release the permits, in that order (see the
     /// module docs for why the order matters).
@@ -461,6 +480,10 @@ impl Lane {
         let gen_of: HashMap<String, u64> = batch
             .iter()
             .map(|j| (j.job.id().to_string(), j.generation))
+            .collect();
+        let created_of: HashMap<String, DateTime<Utc>> = batch
+            .iter()
+            .map(|j| (j.job.id().to_string(), j.job.created_at))
             .collect();
         let entries = |filter: &dyn Fn(&str) -> bool| -> Vec<(String, u64)> {
             ids.iter()
@@ -552,53 +575,61 @@ impl Lane {
         }
 
         // Every job of the batch that is not now QUEUED (not published,
-        // dropped as poisoned, published but not marked) gets its claim
-        // released, so that it is claimed again, in order. Then the ids leave
-        // the in-flight set, THEN the generation is read, THEN the permits go
-        // back: see the module docs for why the order matters.
+        // dropped as poisoned, published but not marked) has its queue row
+        // RESTORED from the job table, so that it is claimed again, in order.
+        // Then the ids leave the in-flight set, THEN the generation is read,
+        // THEN the permits go back: see the module docs for why the order
+        // matters.
         let marked_ids: HashSet<&str> = if marked {
             to_mark.iter().map(|(id, _, _)| id.as_str()).collect()
         } else {
             HashSet::new()
         };
-        let to_release: Vec<String> = ids
+        let to_restore: Vec<(String, DateTime<Utc>)> = ids
             .iter()
             .filter(|id| !marked_ids.contains(id.as_str()))
-            .cloned()
+            .map(|id| (id.clone(), created_of[id]))
             .collect();
-        let mut release_failed = false;
-        if !to_release.is_empty() {
-            match time::timeout(MARK_TIMEOUT, self.store.release_claims(&to_release)).await {
-                Ok(Ok(released)) => {
-                    metrics::counter!("scheduler.claims.released_total").increment(released);
+        let mut restore_failed = false;
+        if !to_restore.is_empty() {
+            match time::timeout(MARK_TIMEOUT, self.store.restore(&to_restore)).await {
+                Ok(Ok(restored)) => {
+                    metrics::counter!("scheduler.claims.restored_total").increment(restored);
                 }
                 Ok(Err(e)) => {
-                    warn!(lane = self.index, jobs = to_release.len(), error = %e,
-                        "releasing dispatch claims failed; retrying");
-                    release_failed = true;
+                    warn!(lane = self.index, jobs = to_restore.len(), error = %e,
+                        "restoring dispatch queue rows failed; retrying");
+                    restore_failed = true;
                 }
                 Err(_) => {
                     warn!(
                         lane = self.index,
-                        jobs = to_release.len(),
-                        "releasing dispatch claims timed out; retrying"
+                        jobs = to_restore.len(),
+                        "restoring dispatch queue rows timed out; retrying"
                     );
-                    release_failed = true;
+                    restore_failed = true;
                 }
             }
         }
         self.pipeline.race_point();
-        if release_failed {
-            // Still claimed in the database: they stay in the in-flight set
-            // (so the group stays held back), poisoned, until the poller's
-            // retry releases them.
-            let kept: HashSet<&str> = to_release.iter().map(String::as_str).collect();
+        if restore_failed {
+            // No queue row yet: they stay in the in-flight set (so the group
+            // stays held back), poisoned, until the poller's retry restores
+            // them.
+            let kept: HashSet<&str> = to_restore.iter().map(|(id, _)| id.as_str()).collect();
             let settled = entries(&|id| !kept.contains(id));
             self.pipeline
                 .remove_in_flight(settled.iter().map(|(id, g)| (id.as_str(), *g)));
-            self.pipeline
-                .defer_release(to_release.iter().map(|id| (id.clone(), Some(gen_of[id]))));
-            failed_groups.extend(to_release.iter().filter_map(|id| group_of.get(id).cloned()));
+            self.pipeline.defer_restore(
+                to_restore
+                    .iter()
+                    .map(|(id, created)| (id.clone(), *created, Some(gen_of[id]))),
+            );
+            failed_groups.extend(
+                to_restore
+                    .iter()
+                    .filter_map(|(id, _)| group_of.get(id).cloned()),
+            );
         } else {
             let settled = entries(&|_| true);
             self.pipeline
@@ -609,7 +640,7 @@ impl Lane {
             let generation = self.pipeline.current_generation();
             self.pipeline.poison(failed_groups, generation);
         }
-        if failed || release_failed {
+        if failed || restore_failed {
             self.pipeline.note_failure();
         }
         self.pipeline.release(ids.len());
@@ -786,7 +817,7 @@ mod tests {
         ]);
         lock(&h.publisher.fail_once).insert("bad".into());
         // The store holds all four as claimed, as a claim would have left them.
-        let claimed = h.store.claim(10).await.unwrap();
+        let claimed = h.store.claim(10, &[]).await.unwrap().jobs;
         assert_eq!(claimed.len(), 4);
         let g1 = h.pipeline.next_generation();
         let failing = h.submit(&[("bad", Some("g")), ("ok", None)], g1).await;
@@ -800,7 +831,7 @@ mod tests {
         assert!(!h.store.is_claimed("bad"), "the failed publish is released");
         assert_eq!(h.store.status_of("ok"), Status::Queued);
         assert_eq!(
-            lock(&h.store.releases).clone(),
+            lock(&h.store.restores).clone(),
             vec![vec!["bad".to_string()]],
             "the marked job is not released"
         );
@@ -821,15 +852,15 @@ mod tests {
     async fn a_failed_release_keeps_the_ids_in_flight_and_poisons_the_group() {
         let mut h = harness(&[("a", Some("g")), ("b", None)]);
         lock(&h.publisher.fail_once).insert("a".into());
-        h.store.fail_release.store(true, Ordering::SeqCst);
-        h.store.claim(10).await.unwrap();
+        h.store.fail_restore.store(true, Ordering::SeqCst);
+        h.store.claim(10, &[]).await.unwrap();
         let g1 = h.pipeline.next_generation();
         let jobs = h.submit(&[("a", Some("g")), ("b", None)], g1).await;
         let r = h.lane.process(jobs).await;
         assert_eq!((r.published, r.unpublished), (1, 1));
         assert!(h.store.is_claimed("a"), "still claimed in the database");
         assert_eq!(h.pipeline.in_flight_len(), 1, "a stays in flight, b is out");
-        assert_eq!(h.pipeline.unreleased_len(), 1);
+        assert_eq!(h.pipeline.unrestored_len(), 1);
         assert_eq!(h.pipeline.available(), CAP, "permits still go back");
         assert!(h.pipeline.take_failure());
         // The group is poisoned: an older claim's job is dropped.
@@ -895,7 +926,7 @@ mod tests {
         h.store.fail_mark.store(true, Ordering::SeqCst);
         let g1 = h.pipeline.next_generation();
         let jobs = h.submit(&[("a", Some("g")), ("b", Some("g"))], g1).await;
-        h.store.claim(10).await.unwrap();
+        h.store.claim(10, &[]).await.unwrap();
         let r = h.lane.process(jobs).await;
         assert_eq!(r.published, 2);
         assert_eq!(h.store.count(Status::Pending), 2);
@@ -916,7 +947,7 @@ mod tests {
     #[tokio::test]
     async fn a_job_rescheduled_before_the_mark_is_not_queued() {
         let mut h = harness(&[("a", None), ("b", None)]);
-        let claimed = h.store.claim(10).await.unwrap();
+        let claimed = h.store.claim(10, &[]).await.unwrap().jobs;
         let g = h.pipeline.next_generation();
         let mut jobs = Vec::new();
         for c in claimed {

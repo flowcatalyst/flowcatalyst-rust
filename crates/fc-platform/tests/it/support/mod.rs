@@ -25,7 +25,7 @@ pub use db::{start_db, TestDb};
 /// write call this: it is the production reconcile pass with no age guard.
 pub async fn sync_dispatch_queue(pool: &sqlx::PgPool) {
     use fc_platform::dispatch_job::lifecycle::{reconcile_queue, ReconcileGuards};
-    reconcile_queue(pool, ReconcileGuards::immediate())
+    reconcile_queue(pool, ReconcileGuards::immediate(), &[])
         .await
         .expect("sync the dispatch queue to the fixture");
 }

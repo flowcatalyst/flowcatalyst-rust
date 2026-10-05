@@ -15,9 +15,10 @@ use tokio::time;
 use super::auth::DispatchAuthService;
 use super::dispatcher::{DispatchJobToken, MessageGroupDispatcher};
 use super::lane::{ClaimedJob, LaneJob};
-use super::poller::{JobStore, MarkKey, PendingJobPoller, PollerSettings};
+use super::poller::{ClaimOutcome, JobStore, MarkKey, PendingJobPoller, PollerSettings};
 use super::publisher::{DispatchPublisher, PublishItem, PublishOutcome};
 use super::SchedulerError;
+use crate::dispatch_job::lifecycle::Reconciled;
 
 /// A cheap deterministic pseudo-random number from a counter (splitmix64).
 pub(crate) fn mix(counter: &AtomicU64) -> u64 {
@@ -55,8 +56,10 @@ type ClaimGate = (usize, Arc<Notify>, Arc<Semaphore>);
 /// One claim the fake saw.
 #[derive(Debug, Clone)]
 pub(crate) struct ClaimLog {
-    /// Rows claimed (and not released or marked) before this claim.
+    /// Rows claimed (and not restored or marked) before this claim.
     pub held_before: usize,
+    /// The groups the poller asked this claim to skip.
+    pub skip: Vec<String>,
     pub returned: Vec<String>,
 }
 
@@ -69,13 +72,22 @@ pub(crate) struct FakeStore {
     pub claims: Mutex<Vec<ClaimLog>>,
     pub fail_claim: AtomicBool,
     pub fail_mark: AtomicBool,
-    /// Releasing claims fails while set.
-    pub fail_release: AtomicBool,
-    /// Every release call, in order.
-    pub releases: Mutex<Vec<Vec<String>>>,
-    /// When set, a release announces on `.0` once it has taken effect and
+    /// Restoring queue rows fails while set.
+    pub fail_restore: AtomicBool,
+    /// Every restore call, in order.
+    pub restores: Mutex<Vec<Vec<String>>>,
+    /// Groups whose BLOCK_ON_ERROR-style hold applies: a claimed row of one of
+    /// these is held back (restored, reported by group, not returned).
+    pub hold_groups: Mutex<HashSet<String>>,
+    /// When set, a claim announces on `.0` once it has taken its rows (its
+    /// DELETE has run) and waits for a permit on `.1` before it returns.
+    pub post_claim_gate: Mutex<Option<(Arc<Notify>, Arc<Semaphore>)>>,
+    /// The periodic reconcile restores every row it finds missing, whatever
+    /// its age (a backlog job is older than the age guard).
+    pub reconcile_ignores_age: AtomicBool,
+    /// When set, a restore announces on `.0` once it has taken effect and
     /// then waits for a permit on `.1` before it returns.
-    pub release_gate: Mutex<Option<(Arc<Notify>, Arc<Semaphore>)>>,
+    pub restore_gate: Mutex<Option<(Arc<Notify>, Arc<Semaphore>)>>,
     pub claim_calls: AtomicUsize,
     /// Chance in 1000 that a status update fails (stress test).
     pub mark_fail_per_mille: AtomicU32,
@@ -199,7 +211,11 @@ impl FakeStore {
 
 #[async_trait]
 impl JobStore for FakeStore {
-    async fn claim(&self, limit: usize) -> Result<Vec<ClaimedJob>, SchedulerError> {
+    async fn claim(
+        &self,
+        limit: usize,
+        skip_groups: &[String],
+    ) -> Result<ClaimOutcome, SchedulerError> {
         let call = self.claim_calls.fetch_add(1, Ordering::SeqCst) + 1;
         // A poller that claims in a hot loop never lets paused time advance,
         // so a test would hang instead of failing.
@@ -224,30 +240,60 @@ impl JobStore for FakeStore {
             return Err(SchedulerError::ConfigError("claim failed".into()));
         }
         let now = Utc::now();
-        let mut rows = lock(&self.rows);
-        let held_before = rows
-            .iter()
-            .filter(|r| r.status == Status::Pending && r.claimed_at.is_some())
-            .count();
-        let mut returned: Vec<ClaimedJob> = Vec::new();
-        for r in rows.iter_mut() {
-            if returned.len() == limit {
-                break;
-            }
-            if r.status == Status::Pending && r.claimed_at.is_none() {
+        let hold = lock(&self.hold_groups).clone();
+        let (returned, held_groups, taken, held_before) = {
+            let mut rows = lock(&self.rows);
+            let held_before = rows
+                .iter()
+                .filter(|r| r.status == Status::Pending && r.claimed_at.is_some())
+                .count();
+            let mut returned: Vec<ClaimedJob> = Vec::new();
+            let mut held_groups: Vec<String> = Vec::new();
+            let mut taken = 0;
+            for r in rows.iter_mut() {
+                if taken == limit {
+                    break;
+                }
+                if r.status != Status::Pending || r.claimed_at.is_some() {
+                    continue;
+                }
+                if r.job
+                    .group()
+                    .is_some_and(|g| skip_groups.iter().any(|s| s == g))
+                {
+                    continue;
+                }
+                taken += 1;
+                // The hold-back: taken, found held, put straight back.
+                if let Some(g) = r.job.group().filter(|g| hold.contains(*g)) {
+                    if !held_groups.iter().any(|h| h == g) {
+                        held_groups.push(g.to_string());
+                    }
+                    continue;
+                }
                 r.claimed_at = Some(now);
                 returned.push(ClaimedJob {
                     updated_at: r.updated_at,
                     ..r.job.clone()
                 });
             }
+            (returned, held_groups, taken, held_before)
+        };
+        let gate = lock(&self.post_claim_gate).clone();
+        if let Some((taken_signal, proceed)) = gate {
+            taken_signal.notify_one();
+            proceed.acquire().await.unwrap().forget();
         }
-        drop(rows);
         lock(&self.claims).push(ClaimLog {
             held_before,
+            skip: skip_groups.to_vec(),
             returned: returned.iter().map(|j| j.id().to_string()).collect(),
         });
-        Ok(returned)
+        Ok(ClaimOutcome {
+            jobs: returned,
+            held_groups,
+            taken,
+        })
     }
 
     async fn mark_queued(&self, jobs: &[MarkKey]) -> Result<u64, SchedulerError> {
@@ -268,41 +314,67 @@ impl JobStore for FakeStore {
         Ok(n)
     }
 
-    async fn release_claims(&self, ids: &[String]) -> Result<u64, SchedulerError> {
-        lock(&self.releases).push(ids.to_vec());
-        if self.fail_release.load(Ordering::SeqCst) {
-            return Err(SchedulerError::ConfigError("release failed".into()));
+    async fn restore(&self, jobs: &[(String, DateTime<Utc>)]) -> Result<u64, SchedulerError> {
+        let ids: Vec<String> = jobs.iter().map(|j| j.0.clone()).collect();
+        lock(&self.restores).push(ids.clone());
+        if self.fail_restore.load(Ordering::SeqCst) {
+            return Err(SchedulerError::ConfigError("restore failed".into()));
         }
         let wanted: HashSet<&str> = ids.iter().map(String::as_str).collect();
         let mut n = 0;
         for r in lock(&self.rows).iter_mut() {
-            if wanted.contains(r.job.id()) && r.claimed_at.take().is_some() {
+            if wanted.contains(r.job.id())
+                && r.status == Status::Pending
+                && r.claimed_at.take().is_some()
+            {
                 n += 1;
             }
         }
-        let gate = lock(&self.release_gate).clone();
-        if let Some((released, proceed)) = gate {
-            released.notify_one();
+        let gate = lock(&self.restore_gate).clone();
+        if let Some((restored, proceed)) = gate {
+            restored.notify_one();
             proceed.acquire().await.unwrap().forget();
         }
         Ok(n)
     }
 
-    async fn release_unheld_claims(
-        &self,
-        claimed_before: Option<DateTime<Utc>>,
-        held: &[String],
-    ) -> Result<u64, SchedulerError> {
-        let held: HashSet<&str> = held.iter().map(String::as_str).collect();
+    async fn restore_missing_at_start(&self, exclude: &[String]) -> Result<u64, SchedulerError> {
+        Ok(self.restore_missing(exclude, None))
+    }
+
+    async fn reconcile(&self, exclude: &[String]) -> Result<Reconciled, SchedulerError> {
+        // The periodic pass: only what has been missing for 60 s.
+        let age = if self.reconcile_ignores_age.load(Ordering::SeqCst) {
+            -3600
+        } else {
+            60
+        };
+        let before = Utc::now() - chrono::Duration::seconds(age);
+        Ok(Reconciled {
+            inserted: self.restore_missing(exclude, Some(before)),
+            ..Reconciled::default()
+        })
+    }
+}
+
+impl FakeStore {
+    /// PENDING rows with no queue row (claimed, as far as the fake goes),
+    /// restored: all of them, or those claimed before `before`; never the
+    /// ids in `exclude`.
+    fn restore_missing(&self, exclude: &[String], before: Option<DateTime<Utc>>) -> u64 {
+        let exclude: HashSet<&str> = exclude.iter().map(String::as_str).collect();
         let mut n = 0;
         for r in lock(&self.rows).iter_mut() {
             let Some(at) = r.claimed_at else { continue };
-            if !held.contains(r.job.id()) && claimed_before.is_none_or(|before| at < before) {
+            if r.status == Status::Pending
+                && !exclude.contains(r.job.id())
+                && before.is_none_or(|b| at < b)
+            {
                 r.claimed_at = None;
                 n += 1;
             }
         }
-        Ok(n)
+        n
     }
 }
 

@@ -48,9 +48,13 @@
 //! `msg_dispatch_queue` (migration 064) holds exactly one row for every job
 //! whose status is PENDING, mirroring the job's current values (`version` is
 //! the job's `updated_at`), and none for any other job. The scheduler claims
-//! from it ([`claim`], by `claimed_at`, released by [`release_claims`]); the
-//! hold-back looks at it ([`group_held_before`]); [`reconcile_queue`] repairs
-//! drift. It is written ONLY here, by explicit application writes
+//! from it ([`claim`]: two plain statements, the claim DELETES the rows it
+//! takes); a claimed job that is not published is put back ([`restore_to_queue`],
+//! from the job table); the hold-back looks at it ([`group_held_before`],
+//! [`held_among`]); [`reconcile_queue`] repairs drift and is the crash
+//! recovery (a PENDING job whose process died after claiming it has no queue
+//! row). The `claimed_at` column is unused and always NULL. The table is
+//! written ONLY here, by explicit application writes
 //! (no triggers), each fused with the job write into ONE statement through a
 //! data-modifying CTE, so the pair is atomic with no new transaction and no
 //! extra round trip (a caller's transaction is still honoured):
@@ -60,9 +64,9 @@
 //!   msg_dispatch_queue ... FROM ins ON CONFLICT (job_id) DO NOTHING`. Every
 //!   created job is PENDING.
 //! * [`enter_pending`]: `WITH moved AS (UPDATE ... RETURNING ...) INSERT INTO
-//!   msg_dispatch_queue ... FROM moved ON CONFLICT (job_id) DO UPDATE ...,
-//!   claimed_at = NULL`. Entering (or re-entering) PENDING refreshes
-//!   `version` and `scheduled_for` and resets `claimed_at`.
+//!   msg_dispatch_queue ... FROM moved ON CONFLICT (job_id) DO UPDATE ...`.
+//!   Entering (or re-entering) PENDING refreshes
+//!   `version` and `scheduled_for`.
 //! * [`leave_pending`]: `WITH moved AS (UPDATE ... RETURNING ...), gone AS
 //!   (DELETE FROM msg_dispatch_queue ...) SELECT ... FROM moved`. Delete if
 //!   exists: complete / fail / claim may or may not find the job PENDING.
@@ -73,7 +77,8 @@
 //!   the claim) is left alone.
 //! * a partition drop removes that partition's queue rows (fc-stream's
 //!   partition manager).
-//! * the claim and its release write only `claimed_at`.
+//! * the claim deletes the rows it takes; the restore and the reconcile
+//!   sweep insert them back.
 //!
 //! Transitions with PENDING on neither side (reclaim, operator cancel /
 //! complete) do not touch the queue.
@@ -95,6 +100,7 @@
 
 use chrono::{DateTime, Utc};
 use sqlx::{Error, Executor, FromRow, Postgres, QueryBuilder};
+use std::collections::HashMap;
 use tracing::{debug, warn};
 
 use crate::DispatchStatus;
@@ -506,8 +512,8 @@ macro_rules! select_moved {
 }
 
 /// Enter: upsert the queue row from the moved rows. Entering (or
-/// re-entering) PENDING refreshes everything the job carries and resets
-/// `claimed_at`. Returns the queue rows in [`Transitioned`] shape.
+/// re-entering) PENDING refreshes everything the job carries. Returns the
+/// queue rows in [`Transitioned`] shape.
 const ENTER_TAIL: &str = concat!(
     " ) INSERT INTO msg_dispatch_queue (",
     queue_cols!(),
@@ -518,7 +524,7 @@ const ENTER_TAIL: &str = concat!(
      sequence = EXCLUDED.sequence, scheduled_for = EXCLUDED.scheduled_for, \
      subscription_id = EXCLUDED.subscription_id, dispatch_pool_id = EXCLUDED.dispatch_pool_id, \
      client_id = EXCLUDED.client_id, mode = EXCLUDED.mode, queue = EXCLUDED.queue, \
-     version = EXCLUDED.version, claimed_at = NULL \
+     version = EXCLUDED.version \
      RETURNING job_id AS id, job_created_at AS created_at, message_group, sequence, \
      scheduled_for, subscription_id, dispatch_pool_id, client_id, mode, queue, \
      version AS updated_at"
@@ -1368,119 +1374,189 @@ impl QueueClaim {
     }
 }
 
-/// The queue table's claim: up to `$1` unclaimed, due rows, minus paused
-/// subscriptions (`$2`) and held BLOCK_ON_ERROR successors (`$3` are the
-/// holding statuses), in claim order, stamped `claimed_at = NOW()`. One
-/// statement, no transaction held open, and the claim never reads a job row
-/// except to look for a FAILED / ERROR holder of the candidate's group.
-///
-/// A job is held when an EARLIER job of its group (by sequence, `created_at`,
-/// id) is FAILED / ERROR (read from `msg_dispatch_jobs` through
-/// `idx_dispatch_jobs_status_group`), or is PENDING in a retry backoff (a
-/// queue row of the group with a future `scheduled_for`, read through
-/// `idx_dispatch_queue_order`). An ungrouped job is held only by a group
-/// literally named `default`.
-///
-/// `RETURNING` has no order: [`claim`] sorts. `claimed_at` is in no index.
-///
-/// `claimed_at > '-infinity' IS NOT TRUE` is `claimed_at IS NULL` (a NULL
-/// compares to NULL, a stamped time is later than -infinity) written so that
-/// the planner's estimate of it is "most rows" when the table has no
-/// statistics (a new table, or one analysed while empty), where
-/// `IS NULL` would be estimated as 0.5% and make a sequential scan plus a
-/// sort of the whole queue look cheaper than walking `idx_dispatch_queue_order`
-/// (measured: 6 s per claim at 200,000 rows with the hold-back). With
-/// statistics it is estimated from them either way.
-const CLAIM_SQL: &str = "\
-WITH c AS ( \
-    SELECT q.job_id FROM msg_dispatch_queue q \
-     WHERE q.claimed_at > '-infinity'::timestamptz IS NOT TRUE \
-       AND (q.scheduled_for IS NULL OR q.scheduled_for <= NOW()) \
-       AND (q.subscription_id IS NULL OR q.subscription_id <> ALL($2::text[])) \
-       AND NOT (q.mode = 'BLOCK_ON_ERROR' AND ( \
-            EXISTS (SELECT 1 FROM msg_dispatch_jobs h \
-                     WHERE h.status = ANY($3::text[]) \
-                       AND h.message_group = COALESCE(q.message_group, 'default') \
-                       AND (h.sequence, h.created_at, h.id) \
-                           < (q.sequence, q.job_created_at, q.job_id)) \
-         OR EXISTS (SELECT 1 FROM msg_dispatch_queue h \
-                     WHERE h.message_group = COALESCE(q.message_group, 'default') \
-                       AND h.scheduled_for > NOW() \
-                       AND (h.sequence, h.job_created_at, h.job_id) \
-                           < (q.sequence, q.job_created_at, q.job_id)))) \
-     ORDER BY q.message_group NULLS LAST, q.sequence, q.job_created_at, q.job_id \
-     LIMIT $1 \
-     FOR UPDATE SKIP LOCKED) \
-UPDATE msg_dispatch_queue q SET claimed_at = NOW() \
-  FROM c WHERE q.job_id = c.job_id \
-RETURNING q.job_id, q.job_created_at, q.message_group, q.sequence, q.scheduled_for, \
-          q.subscription_id, q.dispatch_pool_id, q.client_id, q.mode, q.queue, q.version";
+/// The claim's first statement: the ids of up to `$1` due rows in claim
+/// order, minus paused subscriptions (`$2`) and groups the poller currently
+/// remembers as held (`$3`). A plain `ORDER BY ... LIMIT` over
+/// `idx_dispatch_queue_order`; no locking clause, no sub-query, no
+/// `claimed_at`.
+const CLAIM_SELECT_SQL: &str = "\
+SELECT job_id FROM msg_dispatch_queue \
+ WHERE (scheduled_for IS NULL OR scheduled_for <= NOW()) \
+   AND (subscription_id IS NULL OR subscription_id <> ALL($2::text[])) \
+   AND (message_group IS NULL OR message_group <> ALL($3::text[])) \
+ ORDER BY message_group NULLS LAST, sequence, job_created_at, job_id \
+ LIMIT $1";
 
-/// The scheduler's claim (see [`CLAIM_SQL`]), the rows sorted in memory by
-/// the claim's order.
-pub async fn claim<'e, E>(ex: E, limit: i64, paused: &[String]) -> Result<Vec<QueueClaim>, Error>
-where
-    E: Executor<'e, Database = Postgres>,
-{
-    let statuses: Vec<String> = HOLDING_STATUSES.iter().map(|s| (*s).to_string()).collect();
-    let mut rows: Vec<QueueClaim> = sqlx::query_as(CLAIM_SQL)
+/// The claim's second statement: DELETE the rows by primary key. What it
+/// RETURNS is the claim: two claimers can never both get a row, and a row
+/// refreshed to a future `scheduled_for` since the first statement is not
+/// taken.
+const CLAIM_DELETE_SQL: &str = "\
+DELETE FROM msg_dispatch_queue \
+ WHERE job_id = ANY($1::text[]) \
+   AND (scheduled_for IS NULL OR scheduled_for <= NOW()) \
+RETURNING job_id, job_created_at, message_group, sequence, scheduled_for, \
+          subscription_id, dispatch_pool_id, client_id, mode, queue, version";
+
+/// The scheduler's claim: [`CLAIM_SELECT_SQL`] then [`CLAIM_DELETE_SQL`] (not
+/// run when the first found nothing), autocommit, the rows the second returns
+/// sorted in memory by the claim's order. Run it on the scheduler's pool
+/// (`plan_cache_mode = force_custom_plan`, `enable_sort = off`). The claimed
+/// job is PENDING without a queue row until it is marked QUEUED (the row is
+/// already gone) or [`restore_to_queue`] puts it back.
+pub async fn claim(
+    pool: &sqlx::PgPool,
+    limit: i64,
+    paused_subscriptions: &[String],
+    held_groups: &[String],
+) -> Result<Vec<QueueClaim>, Error> {
+    let ids: Vec<String> = sqlx::query_scalar(CLAIM_SELECT_SQL)
         .bind(limit)
-        .bind(paused)
-        .bind(&statuses)
-        .fetch_all(ex)
+        .bind(paused_subscriptions)
+        .bind(held_groups)
+        .fetch_all(pool)
+        .await?;
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut rows: Vec<QueueClaim> = sqlx::query_as(CLAIM_DELETE_SQL)
+        .bind(&ids)
+        .fetch_all(pool)
         .await?;
     rows.sort_by(|a, b| a.order_key().cmp(&b.order_key()));
     Ok(rows)
 }
 
-/// Gives claims back so the jobs are claimed again, in order: a job that was
-/// not published (failed, dropped as poisoned, withheld by the poller). One
-/// statement. A row the lifecycle refreshed since the claim already has no
-/// claim, and a row that is gone (the job moved on) matches nothing. Returns
-/// how many claims were released.
-pub async fn release_claims<'e, E>(ex: E, ids: &[String]) -> Result<u64, Error>
-where
-    E: Executor<'e, Database = Postgres>,
-{
-    if ids.is_empty() {
+/// Puts claimed jobs back in the queue: re-creates the queue row of each
+/// `(id, created_at)` from the JOB TABLE, only when the job is still PENDING
+/// (a job that has moved on is not resurrected) and only when it has no queue
+/// row (a row the lifecycle wrote since the claim is newer and stays). One
+/// statement. Returns how many rows were inserted.
+pub async fn restore_to_queue(
+    pool: &sqlx::PgPool,
+    jobs: &[(String, DateTime<Utc>)],
+) -> Result<u64, Error> {
+    if jobs.is_empty() {
         return Ok(0);
     }
-    let done = sqlx::query(
-        "UPDATE msg_dispatch_queue SET claimed_at = NULL \
-          WHERE job_id = ANY($1::text[]) AND claimed_at IS NOT NULL",
-    )
-    .bind(ids)
-    .execute(ex)
-    .await?;
+    let ids: Vec<String> = jobs.iter().map(|j| j.0.clone()).collect();
+    let created: Vec<DateTime<Utc>> = jobs.iter().map(|j| j.1).collect();
+    let done = sqlx::query(RESTORE_SQL)
+        .bind(&ids)
+        .bind(&created)
+        .execute(pool)
+        .await?;
     Ok(done.rows_affected())
 }
 
-/// Releases the claims no live scheduler holds: every claim not in `held`
-/// (the caller's in-flight ids), and, when `claimed_before` is given, only
-/// those made before it (a claim that young may be in the window between the
-/// claim and the caller recording it). At leader start that is every claim
-/// the process does not hold; the periodic sweep passes a 5 minute cutoff.
-/// Returns how many were released.
-pub async fn release_unheld_claims<'e, E>(
-    ex: E,
-    claimed_before: Option<DateTime<Utc>>,
-    held: &[String],
-) -> Result<u64, Error>
-where
-    E: Executor<'e, Database = Postgres>,
-{
-    let done = sqlx::query(
-        "UPDATE msg_dispatch_queue SET claimed_at = NULL \
-          WHERE claimed_at IS NOT NULL \
-            AND ($1::timestamptz IS NULL OR claimed_at < $1) \
-            AND job_id <> ALL($2::text[])",
-    )
-    .bind(claimed_before)
-    .bind(held)
-    .execute(ex)
-    .await?;
-    Ok(done.rows_affected())
+/// The job rows are read through a lateral sub-query that cannot be pulled
+/// up into a join (`OFFSET 0`), so the planner can only probe the jobs table
+/// by primary key, once per `(id, created_at)`; the PENDING test is outside
+/// it. Written as a plain `(id, created_at) IN (SELECT * FROM unnest(...))`
+/// (or with the status test inside), the planner, without statistics on the
+/// job table, walked the status index for every PENDING job (44 to 49 ms for
+/// 500 jobs) instead of 500 primary-key probes (about 1 ms).
+const RESTORE_SQL: &str = "\
+INSERT INTO msg_dispatch_queue (job_id, job_created_at, message_group, sequence, scheduled_for, \
+        subscription_id, dispatch_pool_id, client_id, mode, queue, version) \
+SELECT j.id, j.created_at, j.message_group, j.sequence, j.scheduled_for, j.subscription_id, \
+       j.dispatch_pool_id, j.client_id, j.mode, j.queue, j.updated_at \
+  FROM unnest($1::varchar[], $2::timestamptz[]) AS u(id, created_at) \
+ CROSS JOIN LATERAL (SELECT * FROM msg_dispatch_jobs \
+                      WHERE id = u.id AND created_at = u.created_at \
+                      OFFSET 0) j \
+ WHERE j.status = 'PENDING' \
+ON CONFLICT (job_id) DO NOTHING";
+
+/// Which of the claimed BLOCK_ON_ERROR rows are held: those with an EARLIER
+/// job in their group (by sequence, `created_at`, id) that is FAILED / ERROR
+/// (`msg_dispatch_jobs`, `idx_dispatch_jobs_status_group`) or PENDING in a
+/// retry backoff (a queue row of the group with a future `scheduled_for`).
+/// One batched statement per claim returns, per candidate group, its EARLIEST
+/// holder ([`GROUP_HOLDERS_SQL`]); a candidate is held when that holder is
+/// before it. An ungrouped row is held only by a group literally named
+/// `default` (Go's quirk, kept). Returns the held job ids.
+pub async fn held_among(pool: &sqlx::PgPool, claims: &[QueueClaim]) -> Result<Vec<String>, Error> {
+    let candidates: Vec<&QueueClaim> = claims
+        .iter()
+        .filter(|c| c.mode == "BLOCK_ON_ERROR")
+        .collect();
+    if candidates.is_empty() {
+        return Ok(Vec::new());
+    }
+    let group_of = |c: &QueueClaim| c.message_group.clone().unwrap_or_else(|| "default".into());
+    // Each group's LAST candidate in position order: only a holder positioned
+    // before a candidate matters, so it bounds the queue probe.
+    let mut last: HashMap<String, (i32, DateTime<Utc>, &str)> = HashMap::new();
+    for c in &candidates {
+        let pos = (c.sequence, c.job_created_at, c.job_id.as_str());
+        last.entry(group_of(c))
+            .and_modify(|l| {
+                if *l < pos {
+                    *l = pos;
+                }
+            })
+            .or_insert(pos);
+    }
+    let mut groups: Vec<&String> = last.keys().collect();
+    groups.sort();
+    let sequences: Vec<i32> = groups.iter().map(|g| last[*g].0).collect();
+    let created: Vec<DateTime<Utc>> = groups.iter().map(|g| last[*g].1).collect();
+    let last_ids: Vec<&str> = groups.iter().map(|g| last[*g].2).collect();
+    let statuses: Vec<&str> = HOLDING_STATUSES.to_vec();
+    let holders: Vec<(String, i32, DateTime<Utc>, String)> = sqlx::query_as(GROUP_HOLDERS_SQL)
+        .bind(statuses)
+        .bind(&groups)
+        .bind(sequences)
+        .bind(created)
+        .bind(last_ids)
+        .fetch_all(pool)
+        .await?;
+    let earliest: HashMap<&str, (i32, DateTime<Utc>, &str)> = holders
+        .iter()
+        .map(|(g, seq, at, id)| (g.as_str(), (*seq, *at, id.as_str())))
+        .collect();
+    Ok(candidates
+        .into_iter()
+        .filter(|c| {
+            earliest
+                .get(group_of(c).as_str())
+                .is_some_and(|h| *h < (c.sequence, c.job_created_at, c.job_id.as_str()))
+        })
+        .map(|c| c.job_id.clone())
+        .collect())
 }
+
+/// Per candidate group (`$2`), its EARLIEST holder as `(message_group,
+/// sequence, created_at, id)`: FAILED / ERROR jobs (`$1`) from the jobs table
+/// by status and group, and the first backed-off row of the group from the
+/// queue. `$3..$5` are each group's LAST candidate `(sequence, created_at,
+/// id)`, aligned with `$2`. The queue half is one ordered index probe per
+/// group (`LATERAL ... LIMIT 1` over `idx_dispatch_queue_order`), BOUNDED by
+/// the position of the group's last candidate: only a holder positioned before
+/// a candidate matters, and the due rows before it are few (the claim has just
+/// deleted the candidates themselves). As a filter on the whole queue a custom
+/// plan seq-scanned a 100,000-row queue; as an unbounded probe it walks every
+/// due row of a group looking for one that is not due (45 to 150 ms for 500
+/// groups of 200 due rows at 100,000 queue rows).
+const GROUP_HOLDERS_SQL: &str = "\
+SELECT DISTINCT ON (message_group) message_group, sequence, created_at, id FROM ( \
+    SELECT message_group::text, sequence, created_at, id::text \
+      FROM msg_dispatch_jobs \
+     WHERE status = ANY($1::text[]) AND message_group = ANY($2::text[]) \
+    UNION ALL \
+    SELECT h.message_group::text, h.sequence, h.job_created_at, h.job_id::text \
+      FROM unnest($2::text[], $3::int[], $4::timestamptz[], $5::text[]) \
+           AS g(grp, seq, created, id) \
+     CROSS JOIN LATERAL ( \
+          SELECT message_group, sequence, job_created_at, job_id \
+            FROM msg_dispatch_queue \
+           WHERE message_group = g.grp AND scheduled_for > NOW() \
+             AND (sequence, job_created_at, job_id) < (g.seq, g.created, g.id) \
+           ORDER BY sequence, job_created_at, job_id \
+           LIMIT 1) h \
+) h2 \
+ORDER BY message_group, sequence, created_at, id";
 
 /// The delivery-time half of the hold-back (same meaning as the claim's): an
 /// EARLIER job of `group` (by sequence, `created_at`, id) is FAILED / ERROR,
@@ -1516,7 +1592,7 @@ SELECT EXISTS (SELECT 1 FROM msg_dispatch_jobs \
                 WHERE message_group = $1 AND scheduled_for > NOW() \
                   AND (sequence, job_created_at, job_id) < ($2, $3, $4))";
 
-/// How far the queue is behind: unclaimed rows that are due, and when the
+/// How far the queue is behind: due rows, and when the
 /// oldest of them was enqueued. A read; the leader samples it for a gauge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QueueBacklog {
@@ -1530,7 +1606,7 @@ where
 {
     let (depth, oldest_enqueued_at): (i64, Option<DateTime<Utc>>) = sqlx::query_as(
         "SELECT COUNT(*), MIN(enqueued_at) FROM msg_dispatch_queue \
-          WHERE claimed_at IS NULL AND (scheduled_for IS NULL OR scheduled_for <= NOW())",
+          WHERE scheduled_for IS NULL OR scheduled_for <= NOW()",
     )
     .fetch_one(ex)
     .await?;
@@ -1564,19 +1640,15 @@ pub struct ReconcileGuards {
     /// A PENDING job without a queue row is repaired only when its
     /// `updated_at` is older than this (a write in flight is not drift).
     pub job_older_than: chrono::Duration,
-    /// A queue row is deleted or refreshed only when it is unclaimed or its
-    /// claim is older than this.
-    pub claim_older_than: chrono::Duration,
     /// At most this many rows repaired by each of the three steps.
     pub limit: i64,
 }
 
 impl ReconcileGuards {
-    /// The production pass: 60 s / 5 min, 5,000 rows.
+    /// The production pass: 60 s, 5,000 rows.
     pub fn production() -> Self {
         Self {
             job_older_than: chrono::Duration::seconds(60),
-            claim_older_than: chrono::Duration::minutes(5),
             limit: 5_000,
         }
     }
@@ -1585,7 +1657,6 @@ impl ReconcileGuards {
     pub fn immediate() -> Self {
         Self {
             job_older_than: chrono::Duration::zero(),
-            claim_older_than: chrono::Duration::zero(),
             limit: 1_000_000,
         }
     }
@@ -1595,8 +1666,10 @@ impl ReconcileGuards {
 /// PENDING job, mirroring the job. (a) inserts the missing rows, (b) deletes
 /// the rows whose job is missing or not PENDING, (c) refreshes the rows whose
 /// `version` differs from the job's `updated_at`. The lifecycle keeps the
-/// table exact, so a non-zero count is a bug, or an older binary writing the
-/// jobs table.
+/// table exact, so (b) and (c) repairs are a bug or an older binary writing
+/// the jobs table. (a) is also the crash recovery: a job whose claimer died
+/// has no queue row. `exclude` are the ids the caller is publishing right now
+/// (its in-flight set): (a) must not queue them.
 ///
 /// Three statements, each bounded by `guards.limit`, no transaction. Each
 /// reads `msg_dispatch_jobs` for PENDING through
@@ -1604,25 +1677,21 @@ impl ReconcileGuards {
 pub async fn reconcile_queue(
     pool: &sqlx::PgPool,
     guards: ReconcileGuards,
+    exclude: &[String],
 ) -> Result<Reconciled, Error> {
-    let now = Utc::now();
-    let job_before = now - guards.job_older_than;
-    let claim_before = now - guards.claim_older_than;
-
-    let inserted = sqlx::query(RECONCILE_INSERT_SQL)
-        .bind(job_before)
-        .bind(guards.limit)
-        .execute(pool)
-        .await?
-        .rows_affected();
+    let inserted = insert_missing_rows(
+        pool,
+        Utc::now() - guards.job_older_than,
+        exclude,
+        guards.limit,
+    )
+    .await?;
     let deleted = sqlx::query(RECONCILE_DELETE_SQL)
-        .bind(claim_before)
         .bind(guards.limit)
         .execute(pool)
         .await?
         .rows_affected();
     let refreshed = sqlx::query(RECONCILE_REFRESH_SQL)
-        .bind(claim_before)
         .bind(guards.limit)
         .execute(pool)
         .await?
@@ -1634,6 +1703,41 @@ pub async fn reconcile_queue(
     })
 }
 
+/// Reconcile (a) alone: inserts the queue rows of up to `limit` PENDING jobs
+/// that have none and were last updated before `job_before`, except `exclude`.
+pub async fn insert_missing_rows(
+    pool: &sqlx::PgPool,
+    job_before: DateTime<Utc>,
+    exclude: &[String],
+    limit: i64,
+) -> Result<u64, Error> {
+    Ok(sqlx::query(RECONCILE_INSERT_SQL)
+        .bind(job_before)
+        .bind(limit)
+        .bind(exclude)
+        .execute(pool)
+        .await?
+        .rows_affected())
+}
+
+/// Leader start: before its first claim a new leader restores every PENDING
+/// job that has no queue row (the claims a dead leader lost), with no age
+/// guard, in bounded batches until a batch inserts nothing. Returns the total.
+pub async fn restore_all_missing(pool: &sqlx::PgPool, exclude: &[String]) -> Result<u64, Error> {
+    const BATCH: i64 = 5_000;
+    let mut total = 0;
+    // A bound on the loop: 1,000 batches is 5 million rows.
+    for _ in 0..1_000 {
+        let n = insert_missing_rows(pool, Utc::now() + chrono::Duration::days(1), exclude, BATCH)
+            .await?;
+        total += n;
+        if n == 0 {
+            break;
+        }
+    }
+    Ok(total)
+}
+
 const RECONCILE_INSERT_SQL: &str = "\
 INSERT INTO msg_dispatch_queue (job_id, job_created_at, message_group, sequence, scheduled_for, \
         subscription_id, dispatch_pool_id, client_id, mode, queue, version) \
@@ -1641,6 +1745,7 @@ SELECT j.id, j.created_at, j.message_group, j.sequence, j.scheduled_for, j.subsc
        j.dispatch_pool_id, j.client_id, j.mode, j.queue, j.updated_at \
   FROM msg_dispatch_jobs j \
  WHERE j.status = 'PENDING' AND j.updated_at < $1 \
+   AND j.id <> ALL($3::text[]) \
    AND NOT EXISTS (SELECT 1 FROM msg_dispatch_queue q WHERE q.job_id = j.id) \
  LIMIT $2 \
 ON CONFLICT (job_id) DO NOTHING";
@@ -1649,25 +1754,23 @@ const RECONCILE_DELETE_SQL: &str = "\
 DELETE FROM msg_dispatch_queue d \
  WHERE d.job_id IN ( \
     SELECT q.job_id FROM msg_dispatch_queue q \
-     WHERE (q.claimed_at IS NULL OR q.claimed_at < $1) \
-       AND NOT EXISTS (SELECT 1 FROM msg_dispatch_jobs j \
+     WHERE NOT EXISTS (SELECT 1 FROM msg_dispatch_jobs j \
                         WHERE j.id = q.job_id AND j.created_at = q.job_created_at \
                           AND j.status = 'PENDING') \
-     LIMIT $2)";
+     LIMIT $1)";
 
 const RECONCILE_REFRESH_SQL: &str = "\
 UPDATE msg_dispatch_queue u \
    SET job_created_at = j.created_at, message_group = j.message_group, sequence = j.sequence, \
        scheduled_for = j.scheduled_for, subscription_id = j.subscription_id, \
        dispatch_pool_id = j.dispatch_pool_id, client_id = j.client_id, mode = j.mode, \
-       queue = j.queue, version = j.updated_at, claimed_at = NULL \
+       queue = j.queue, version = j.updated_at \
   FROM msg_dispatch_jobs j \
  WHERE u.job_id IN ( \
         SELECT q.job_id FROM msg_dispatch_queue q \
           JOIN msg_dispatch_jobs k ON k.id = q.job_id AND k.created_at = q.job_created_at \
          WHERE k.status = 'PENDING' AND q.version <> k.updated_at \
-           AND (q.claimed_at IS NULL OR q.claimed_at < $1) \
-         LIMIT $2) \
+         LIMIT $1) \
    AND j.id = u.job_id AND j.created_at = u.job_created_at AND j.status = 'PENDING' \
    AND u.version <> j.updated_at";
 
@@ -1747,7 +1850,10 @@ where
 #[doc(hidden)]
 pub fn queue_statements() -> Vec<(&'static str, &'static str)> {
     vec![
-        ("claim", CLAIM_SQL),
+        ("claim_select", CLAIM_SELECT_SQL),
+        ("claim_delete", CLAIM_DELETE_SQL),
+        ("restore", RESTORE_SQL),
+        ("group_holders", GROUP_HOLDERS_SQL),
         ("group_held_before", GROUP_HELD_BEFORE_SQL),
         ("reconcile_insert", RECONCILE_INSERT_SQL),
         ("reconcile_delete", RECONCILE_DELETE_SQL),
@@ -1772,7 +1878,19 @@ pub struct QueueDrift {
 /// queries). For tests and diagnostics: it scans, and is NOT called on any
 /// hot path.
 pub async fn queue_drift(pool: &sqlx::PgPool) -> Result<QueueDrift, Error> {
-    let (missing_or_stale,): (i64,) = sqlx::query_as(MISSING_OR_STALE_SQL).fetch_one(pool).await?;
+    queue_drift_ignoring(pool, &[]).await
+}
+
+/// [`queue_drift`] ignoring the jobs in `in_flight`: a PENDING job that is
+/// being published has no queue row.
+pub async fn queue_drift_ignoring(
+    pool: &sqlx::PgPool,
+    in_flight: &[String],
+) -> Result<QueueDrift, Error> {
+    let (missing_or_stale,): (i64,) = sqlx::query_as(MISSING_OR_STALE_SQL)
+        .bind(in_flight)
+        .fetch_one(pool)
+        .await?;
     let (orphaned,): (i64,) = sqlx::query_as(ORPHANED_SQL).fetch_one(pool).await?;
     Ok(QueueDrift {
         missing_or_stale,
@@ -1782,7 +1900,7 @@ pub async fn queue_drift(pool: &sqlx::PgPool) -> Result<QueueDrift, Error> {
 
 const MISSING_OR_STALE_SQL: &str = "SELECT COUNT(*) FROM msg_dispatch_jobs j \
      LEFT JOIN msg_dispatch_queue q ON q.job_id = j.id \
-     WHERE j.status = 'PENDING' \
+     WHERE j.status = 'PENDING' AND j.id <> ALL($1::text[]) \
        AND (q.job_id IS NULL \
             OR q.version IS DISTINCT FROM j.updated_at \
             OR q.scheduled_for IS DISTINCT FROM j.scheduled_for)";
@@ -2155,7 +2273,7 @@ mod tests {
 
     /// enterPending, exact: the job UPDATE is the `moved` CTE; the queue row
     /// is upserted from it; re-entering refreshes the version and
-    /// scheduled_for and resets claimed_at; the caller gets the queue row.
+    /// scheduled_for; the caller gets the queue row.
     #[test]
     fn enter_pending_statement_is_the_update_cte_and_the_queue_upsert() {
         let at = Utc::now();
@@ -2181,8 +2299,8 @@ mod tests {
             sequence = EXCLUDED.sequence, scheduled_for = EXCLUDED.scheduled_for, \
             subscription_id = EXCLUDED.subscription_id, \
             dispatch_pool_id = EXCLUDED.dispatch_pool_id, client_id = EXCLUDED.client_id, \
-            mode = EXCLUDED.mode, queue = EXCLUDED.queue, version = EXCLUDED.version, \
-            claimed_at = NULL RETURNING job_id AS id, job_created_at AS created_at, \
+            mode = EXCLUDED.mode, queue = EXCLUDED.queue, version = EXCLUDED.version \
+            RETURNING job_id AS id, job_created_at AS created_at, \
             message_group, sequence, scheduled_for, subscription_id, dispatch_pool_id, \
             client_id, mode, queue, version AS updated_at";
         assert_eq!(sql, flat(expected));
@@ -2295,56 +2413,66 @@ mod tests {
         assert!(flat(&create_fanned_out_sql()).contains("$24::jsonb[]"));
     }
 
-    /// The claim: one statement; the queue table's order, no sort needed;
-    /// `FOR UPDATE SKIP LOCKED`; the claim stamp is `claimed_at`; the jobs
-    /// table is read only for the FAILED / ERROR holders (one mention).
+    /// The claim is two plain statements: a `SELECT ... ORDER BY ... LIMIT`
+    /// over the queue table's order index, and a primary-key `DELETE ...
+    /// RETURNING` whose result is the claim. No locking clause, no sub-query,
+    /// no `claimed_at`.
     #[test]
-    fn the_claim_is_one_statement_over_the_queue_table() {
-        let sql = flat(CLAIM_SQL);
-        assert!(sql.starts_with("WITH c AS ( SELECT q.job_id FROM msg_dispatch_queue q"));
-        assert!(sql.contains(
-            "ORDER BY q.message_group NULLS LAST, q.sequence, q.job_created_at, q.job_id LIMIT $1 \
-             FOR UPDATE SKIP LOCKED)"
+    fn the_claim_is_two_plain_statements_over_the_queue_table() {
+        let select = flat(CLAIM_SELECT_SQL);
+        assert!(select.starts_with("SELECT job_id FROM msg_dispatch_queue WHERE"));
+        assert!(select.contains(
+            "ORDER BY message_group NULLS LAST, sequence, job_created_at, job_id LIMIT $1"
         ));
-        assert!(sql.contains(
-            "UPDATE msg_dispatch_queue q SET claimed_at = NOW() FROM c WHERE q.job_id = c.job_id"
-        ));
-        // Not claimed yet: written so the planner estimates it from
-        // statistics when it has them and as "most rows" when it has none.
-        assert!(sql.contains("q.claimed_at > '-infinity'::timestamptz IS NOT TRUE"));
-        assert!(sql.contains("(q.scheduled_for IS NULL OR q.scheduled_for <= NOW())"));
-        assert!(sql.contains("(q.subscription_id IS NULL OR q.subscription_id <> ALL($2::text[]))"));
-        // The only read of the jobs table is the holder lookup, by status
-        // bind and group.
-        assert_eq!(sql.matches("msg_dispatch_jobs").count(), 1, "{sql}");
-        assert!(sql.contains(
-            "h.status = ANY($3::text[]) AND h.message_group = COALESCE(q.message_group, 'default')"
-        ));
-        // The in-memory in-flight list is no longer an input.
-        assert!(!sql.contains("<> ALL($4"));
-        assert!(!sql.contains("j.status"));
+        assert!(select.contains("(scheduled_for IS NULL OR scheduled_for <= NOW())"));
+        assert!(select.contains("(subscription_id IS NULL OR subscription_id <> ALL($2::text[]))"));
+        assert!(select.contains("(message_group IS NULL OR message_group <> ALL($3::text[]))"));
+        let delete = flat(CLAIM_DELETE_SQL);
+        assert!(delete.starts_with("DELETE FROM msg_dispatch_queue WHERE job_id = ANY($1::text[])"));
+        assert!(delete
+            .contains("AND (scheduled_for IS NULL OR scheduled_for <= NOW()) RETURNING job_id,"));
+        for sql in [&select, &delete] {
+            for banned in [
+                "FOR UPDATE",
+                "SKIP LOCKED",
+                "claimed_at",
+                "msg_dispatch_jobs",
+                "WITH ",
+                "(SELECT",
+            ] {
+                assert!(!sql.contains(banned), "{banned}: {sql}");
+            }
+        }
+        assert!(!select.contains("IS NOT TRUE"));
     }
 
-    /// The claim and the delivery-time check hold on the same two things:
-    /// an earlier FAILED / ERROR job of the group (jobs table, the statuses
-    /// bound as an array) and an earlier PENDING job in a backoff (queue
-    /// table, a future `scheduled_for`), compared positionally.
+    /// The restore re-creates a queue row from the JOB TABLE, only for a job
+    /// that is still PENDING, and never over an existing row.
     #[test]
-    fn the_claim_and_the_delivery_check_hold_on_the_same_two_things() {
-        let claim = flat(CLAIM_SQL);
+    fn the_restore_reads_the_job_table_and_never_overwrites() {
+        let sql = flat(RESTORE_SQL);
+        assert!(sql.contains("FROM unnest($1::varchar[], $2::timestamptz[]) AS u(id, created_at) CROSS JOIN LATERAL (SELECT * FROM msg_dispatch_jobs WHERE id = u.id AND created_at = u.created_at OFFSET 0) j WHERE j.status = 'PENDING' ON CONFLICT (job_id) DO NOTHING"));
+        assert!(sql.contains("j.updated_at"));
+    }
+
+    /// The claim-time hold-back and the delivery-time check hold on the same
+    /// two things: an earlier FAILED / ERROR job of the group (jobs table,
+    /// the statuses bound as an array) and an earlier PENDING job in a backoff
+    /// (queue table, a future `scheduled_for`), compared positionally.
+    #[test]
+    fn the_batched_hold_back_and_the_delivery_check_hold_on_the_same_two_things() {
+        let batch = flat(GROUP_HOLDERS_SQL);
         let check = flat(GROUP_HELD_BEFORE_SQL);
-        for sql in [&claim, &check] {
+        for sql in [&batch, &check] {
             assert!(sql.contains("status = ANY($"), "{sql}");
             assert!(sql.contains("::text[]"), "{sql}");
             assert!(sql.contains("scheduled_for > NOW()"), "{sql}");
             assert!(sql.contains("FROM msg_dispatch_queue"), "{sql}");
         }
-        assert!(claim.contains(
-            "(h.sequence, h.created_at, h.id) < (q.sequence, q.job_created_at, q.job_id)"
-        ));
-        assert!(claim.contains(
-            "(h.sequence, h.job_created_at, h.job_id) < (q.sequence, q.job_created_at, q.job_id)"
-        ));
+        // Per group the EARLIEST holder; the queue half is one ordered index
+        // probe per group.
+        assert!(batch.contains("SELECT DISTINCT ON (message_group)"));
+        assert!(batch.contains("(sequence, job_created_at, job_id) < (g.seq, g.created, g.id) ORDER BY sequence, job_created_at, job_id LIMIT 1) h"));
         assert!(check.contains("(sequence, created_at, id) < ($2, $3, $4)"));
         assert!(check.contains("(sequence, job_created_at, job_id) < ($2, $3, $4)"));
         assert_eq!(HOLDING_STATUSES, ["FAILED", "ERROR"]);
@@ -2413,7 +2541,7 @@ mod tests {
             RECONCILE_REFRESH_SQL,
         ] {
             let sql = flat(sql);
-            assert!(sql.contains("LIMIT $2"), "{sql}");
+            assert!(sql.contains("LIMIT $"), "{sql}");
             assert!(!sql.contains("UPDATE msg_dispatch_jobs"), "{sql}");
             assert!(!sql.contains("DELETE FROM msg_dispatch_jobs"), "{sql}");
             assert!(!sql.contains("INSERT INTO msg_dispatch_jobs"), "{sql}");
@@ -2421,16 +2549,22 @@ mod tests {
         // PENDING jobs are read by status through the plain status index,
         // not by a partial-index-shaped predicate.
         assert!(flat(RECONCILE_INSERT_SQL).contains("j.status = 'PENDING' AND j.updated_at < $1"));
-        // Only a young job or claim is protected: the guards are bound.
-        assert!(flat(RECONCILE_DELETE_SQL).contains("(q.claimed_at IS NULL OR q.claimed_at < $1)"));
+        // The insert skips the caller's in-flight ids.
+        assert!(flat(RECONCILE_INSERT_SQL).contains("j.id <> ALL($3::text[])"));
+        for sql in [
+            RECONCILE_INSERT_SQL,
+            RECONCILE_DELETE_SQL,
+            RECONCILE_REFRESH_SQL,
+        ] {
+            assert!(!sql.contains("claimed_at"));
+        }
     }
 
-    /// The production reconcile pass: 60 s / 5 minutes / 5,000 rows.
+    /// The production reconcile pass: 60 s / 5,000 rows.
     #[test]
     fn the_production_reconcile_guards() {
         let g = ReconcileGuards::production();
         assert_eq!(g.job_older_than, chrono::Duration::seconds(60));
-        assert_eq!(g.claim_older_than, chrono::Duration::minutes(5));
         assert_eq!(g.limit, 5_000);
     }
 

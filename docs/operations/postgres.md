@@ -166,11 +166,27 @@ Expect partitions from `(this month - 1)` through `(this month + 3)`.
 
 ## The dispatch queue table
 
-`msg_dispatch_queue` holds exactly one row for every PENDING dispatch job (keyed by `job_id`, ordered by `idx_dispatch_queue_order` on `(message_group NULLS LAST, sequence, job_created_at, job_id)`). The dispatch-job lifecycle writes it in the same SQL statement as the job (migrations 064 and 065; the Go and Java platforms run the same DDL against the same database). The scheduler claims from it (`claimed_at` is stamped; it is in no index) and never scans `msg_dispatch_jobs` for PENDING. Anything other than the lifecycle writing either table is a bug; `scheduler.queue_reconcile` repairs and reports drift.
+`msg_dispatch_queue` holds exactly one row for every PENDING dispatch job that is waiting to be claimed (keyed by `job_id`, ordered by `idx_dispatch_queue_order` on `(message_group NULLS LAST, sequence, job_created_at, job_id)`). The dispatch-job lifecycle writes it in the same SQL statement as the job (migrations 064 and 065; the Go and Java platforms run the same DDL against the same database). The scheduler claims from it and never scans `msg_dispatch_jobs` for PENDING. Anything other than the lifecycle writing either table is a bug; the reconcile sweep repairs and reports drift.
+
+**The claim is two plain statements, and it deletes.** `SELECT job_id ... ORDER BY ... LIMIT` over the order index, then `DELETE ... WHERE job_id = ANY(...) RETURNING ...` by primary key; what the DELETE returns is the claim. A claimed job is PENDING with no queue row until it is marked QUEUED. A job that is not published (failed publish, failed mark, dropped as poisoned, withheld, held back by an earlier job of its group) has its row **restored** from the job table (`INSERT ... SELECT FROM msg_dispatch_jobs ... WHERE status = 'PENDING' ON CONFLICT DO NOTHING`), so a job that has moved on is not resurrected. `claimed_at` is unused and always NULL (it will be dropped).
+
+**Crash recovery is the reconcile "insert missing" pass.** A job whose claimer died has no queue row. A new leader restores every PENDING job without a queue row (no age guard, in batches of 5,000 until none are left) before its first claim; every minute the leader runs the reconcile pass with its age guards (jobs not updated for 60 s), excluding the ids it is publishing.
 
 Indexes on `msg_dispatch_jobs` after 065: the primary key, `idx_dispatch_jobs_status_group` on `(status, message_group, sequence, created_at, id)` (hold-back by FAILED / ERROR, the stale sweeps, the reaper, the reconcile sweep) and the projector's `idx_msg_dispatch_jobs_dirty` (the one partial index left on the table). No other dispatch index is partial except the projection feed's three.
 
-The queue table is small and churns: it has `fillfactor = 70` and vacuums and analyzes after 2,000 changes (`autovacuum_*_scale_factor = 0`), so its statistics follow its size within a minute. With no statistics at all (a brand-new table) or statistics taken while it was empty, PostgreSQL may claim with a sequential scan and a sort instead of walking `idx_dispatch_queue_order`: harmless while the queue is small (tens of ms at 5,000 rows) and healed by the first autovacuum analyze; if a restored or truncated database shows slow claims, run `ANALYZE msg_dispatch_queue;`.
+The queue table is small and churns: it has `fillfactor = 70` and vacuums and analyzes after 2,000 changes (`autovacuum_*_scale_factor = 0`).
+
+### The scheduler's own connection pool
+
+The scheduler's pool (`create_scheduler_pool`, used by `fc-server` and `fc-dev`; no other pool) sets `plan_cache_mode = force_custom_plan` and `enable_sort = off` on every connection, and keeps them across a credential refresh. Measured on PostgreSQL:
+
+- A single-statement claim (`WITH c AS (SELECT ... LIMIT) UPDATE/DELETE ... FROM c`) is planned as a quadratic nested loop when the queue was drained and then analysed with its pages still allocated (240 ms / 2.4 s / 10 s per claim at 5k / 50k / 200k rows). An idle queue followed by a burst is the normal case; hence two plain statements.
+- A cached GENERIC plan made while the queue is empty is a seq scan and is reused after a burst (about 0.5 s per claim at 100,000 rows) until the next autoanalyze. sqlx prepares and caches every statement per connection, so `force_custom_plan` is what prevents it.
+- With no statistics, or statistics taken while the queue was empty, the planner prefers a seq scan plus a sort of the whole queue for `ORDER BY ... LIMIT`; `enable_sort = off` makes it walk `idx_dispatch_queue_order`.
+
+Every statement on that pool (the claim, the restore, mark-QUEUED, the hold-back, the stale sweeps, the reaper, the reconcile sweep, the caches) is covered by the plan tests with these two settings applied (`dispatch_queue_plan_test`).
+
+---
 
 ---
 
@@ -241,7 +257,7 @@ The platform itself exposes a number of Postgres-touching metrics:
 | `fc_scheduler_poll_full_batches_total` | polls that filled the batch (a backlog is draining) |
 | `fc_scheduler_queued_jobs` | depth of QUEUED (gauge) |
 | `fc_scheduler_stale_jobs_recovered_total` | recovery firings (should usually be 0) |
-| `fc_scheduler_queue_backlog` | unclaimed, due rows in the dispatch queue (gauge): the dispatch backlog |
+| `fc_scheduler_queue_backlog` | due rows in the dispatch queue (gauge): the dispatch backlog |
 
 If `fc_scheduler_poll_full_batches_total` rises continuously and `fc_scheduler_jobs_queued_total` lags it: the publish path is slow or stuck (`fc_scheduler_pending_jobs` is capped at the batch size and cannot show a backlog).
 If `fc_scheduler_stale_jobs_recovered_total` increments routinely: the router isn't completing dispatches within the 15-minute window — investigate.

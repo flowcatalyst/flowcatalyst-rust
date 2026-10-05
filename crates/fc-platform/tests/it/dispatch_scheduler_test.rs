@@ -325,11 +325,11 @@ impl DispatchPublisher for DiesMidPublish {
     }
 }
 
-/// A job the publisher refused keeps its queue row with the claim RELEASED
-/// (so it is claimed again); a published job's queue row is gone.
+/// A job the publisher refused has its queue row RESTORED (so it is claimed
+/// again); a published job's queue row is gone.
 #[tokio::test]
 #[ignore = "requires Docker"]
-async fn a_job_that_is_not_published_has_its_claim_released() {
+async fn a_job_that_is_not_published_has_its_queue_row_restored() {
     let (pool, _c) = setup_db().await;
     let (a, b) = (job(1), job(2));
     insert(&pool, &a).await;
@@ -338,16 +338,12 @@ async fn a_job_that_is_not_published_has_its_claim_released() {
     publisher.fail.lock().unwrap().insert(b.id.clone());
     let s = scheduler(&pool, publisher.clone(), 100);
     s.poller().poll_once().await.unwrap();
-    let rows: Vec<(String, Option<DateTime<Utc>>)> =
-        sqlx::query_as("SELECT job_id, claimed_at FROM msg_dispatch_queue ORDER BY job_id")
+    let rows: Vec<String> =
+        sqlx::query_scalar("SELECT job_id FROM msg_dispatch_queue ORDER BY job_id")
             .fetch_all(&pool)
             .await
             .unwrap();
-    assert_eq!(
-        rows,
-        vec![(b.id.clone(), None)],
-        "only b is left, unclaimed"
-    );
+    assert_eq!(rows, vec![b.id.clone()], "only b is back in the queue");
 }
 
 /// The real loop, real lanes: a job whose publish fails is claimed again and
@@ -445,17 +441,19 @@ async fn a_failed_publish_is_claimed_again_and_the_group_stays_in_order() {
     );
 }
 
-/// When an instance starts polling as leader it releases every claim it does
-/// not hold: what a dead leader left claimed is published.
+/// When an instance starts polling as leader it restores every PENDING job
+/// that has no queue row (what a dead leader had claimed, deleting the row)
+/// with no age guard: those jobs are published.
 #[tokio::test]
 #[ignore = "requires Docker"]
-async fn a_new_leader_releases_the_claims_a_dead_one_left_and_publishes_them() {
+async fn a_new_leader_restores_the_jobs_a_dead_one_had_claimed_and_publishes_them() {
     let (pool, _c) = setup_db().await;
     let jobs: Vec<Job> = (1..=3).map(job).collect();
     for j in &jobs {
         insert(&pool, j).await;
     }
-    sqlx::query("UPDATE msg_dispatch_queue SET claimed_at = NOW() - INTERVAL '1 hour'")
+    // The dead leader claimed them: the queue rows are gone, the jobs PENDING.
+    sqlx::query("DELETE FROM msg_dispatch_queue")
         .execute(&pool)
         .await
         .unwrap();
@@ -498,7 +496,7 @@ async fn the_scheduler_reconciles_a_job_that_lost_its_queue_row() {
         .await
         .unwrap();
     let s = scheduler(&pool, Arc::new(RecordingPublisher::default()), 100);
-    let done = s.stale_recovery().reconcile_once().await.unwrap();
+    let done = s.poller().reconcile_once().await.unwrap();
     assert_eq!(done.inserted, 1, "{done:?}");
     let ids: Vec<String> = sqlx::query_scalar("SELECT job_id FROM msg_dispatch_queue")
         .fetch_all(&pool)
@@ -772,7 +770,18 @@ async fn a_backed_off_job_waits_and_holds_its_group_until_due() {
 
     let publisher = Arc::new(RecordingPublisher::default());
     let s = scheduler(&pool, publisher.clone(), 100);
-    assert_eq!(s.poller().poll_once().await.unwrap().claimed, 0);
+    // The head is not due; its successor is claimed, found held, and put back.
+    let report = s.poller().poll_once().await.unwrap();
+    assert_eq!((report.claimed, report.published), (1, 0));
+    assert!(publisher.ids().is_empty());
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM msg_dispatch_queue")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        2,
+        "both rows are in the queue"
+    );
 
     // The backoff expires: the head dispatches, and the successor with it
     // (QUEUED holds nothing; the router's FIFO keeps them in order).
@@ -789,9 +798,11 @@ async fn a_backed_off_job_waits_and_holds_its_group_until_due() {
     assert_eq!(publisher.ids(), vec![head.id.clone(), next.id.clone()]);
 }
 
-/// Held and paused jobs are excluded inside the claim query, so a full
-/// batch of them at the head of the order cannot stall other groups (Go
-/// filters after the LIMIT and does stall).
+/// Paused subscriptions are excluded by the claim, and held jobs are found
+/// held and put back; a full batch of held rows at the head of the order must
+/// not stall the groups behind it (the poller remembers the held group for a
+/// few seconds and skips it). The real loop, with a batch smaller than the
+/// held + paused rows ahead of `free`.
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn held_and_paused_jobs_do_not_stall_the_rest() {
@@ -822,13 +833,27 @@ async fn held_and_paused_jobs_do_not_stall_the_rest() {
     insert(&pool, &free).await;
 
     let publisher = Arc::new(RecordingPublisher::default());
-    // A batch smaller than the held + paused rows ahead of `free`.
-    scheduler(&pool, publisher.clone(), 2)
+    let s = scheduler(&pool, publisher.clone(), 2);
+    let cancel = CancellationToken::new();
+    let stop = cancel.clone();
+    let run = s
         .poller()
-        .poll_once()
+        .run(Duration::from_millis(50), Arc::new(|| true), cancel.clone());
+    let watch = async {
+        let deadline = time::Instant::now() + Duration::from_secs(30);
+        while publisher.ids().is_empty() && time::Instant::now() < deadline {
+            time::sleep(Duration::from_millis(50)).await;
+        }
+        stop.cancel();
+    };
+    tokio::join!(run, watch);
+    assert_eq!(publisher.ids(), vec![free.id.clone()]);
+    // The held rows are back in the queue, the paused ones never left it.
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM msg_dispatch_queue")
+        .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(publisher.ids(), vec![free.id.clone()]);
+    assert_eq!(left, 8);
 }
 
 // ── Stale recovery ──────────────────────────────────────────────────────

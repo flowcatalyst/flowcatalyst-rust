@@ -1,32 +1,42 @@
-//! Query plans of the dispatch queue's reads, against a real PostgreSQL with
-//! a seeded table (about 910,000 rows, mostly COMPLETED, 5,000 QUEUED, 5,000 PENDING, groups
-//! with FAILED holders, several populated monthly partitions), in the three
-//! statistics states a production table can be in:
+//! Query plans of the dispatch queue's reads and writes, against a real
+//! PostgreSQL, on the scheduler's own pool (`plan_cache_mode =
+//! force_custom_plan`, `enable_sort = off`).
 //!
-//! * `analysed`: ANALYZE after the load;
-//! * `analysed_while_empty`: ANALYZE ran on the empty tables, then the load
-//!   (autovacuum off, so the statistics stay the empty ones);
-//! * `never_analysed`: no statistics at all.
+//! 1. `claim_plans_*`: the claim's two statements (S1 the ordered SELECT, S2
+//!    the primary-key DELETE) on a queue table of about 5,000 and 100,000
+//!    rows, in the states a production queue can be in: never analysed;
+//!    analysed while brand-new and empty; DRAINED then ANALYZEd with its
+//!    pages still allocated, then a burst; freshly analysed; analysed when
+//!    every row was scheduled for the future. Shape only: S1 has no Sort and
+//!    no Seq Scan; S2 is an index scan (the primary key, or in the drained
+//!    state the order index) and never a Seq Scan at 100,000 rows.
+//! 2. `the_cached_plan_*`: statements prepared and run several times on an
+//!    empty, vacuumed queue on ONE connection, then a burst, then the claim
+//!    on that same connection. With the settings the plan is the good one;
+//!    without them (negative control) the cached plan is printed.
+//! 3. `plans_when_*`: a 910,000-row jobs table (see `seed`) in three
+//!    statistics states: the restore (jobs by primary key), the hold-back
+//!    queries, the reconcile statements and the sweeps do not seq-scan
+//!    `msg_dispatch_jobs`.
 //!
-//! For each statement the plan must use the intended index with bind
-//! parameters (both as a custom plan and as a GENERIC plan, which is what a
-//! cached prepared statement runs after a few executions), must not sort the
-//! claim, must stop the claim's index walk early, and must not seq-scan
-//! `msg_dispatch_jobs`. `-- --nocapture` prints every plan summary and its
-//! timing. Requires Docker, or a local PostgreSQL (`FC_TEST_PG_BIN`).
+//! `-- --nocapture` prints every plan summary and its timing. Requires
+//! Docker, or a local PostgreSQL (`FC_TEST_PG_BIN`).
 
 use std::collections::BTreeSet;
 use std::time::Instant;
 
 use serde_json::Value;
-use sqlx::postgres::PgArguments;
+use sqlx::postgres::{PgArguments, PgConnectOptions};
 use sqlx::query::QueryScalar;
-use sqlx::PgPool;
-use sqlx::Postgres;
+use sqlx::{Connection, PgConnection, PgPool, Postgres};
+use std::str::FromStr;
 
 use crate::support::{start_db, TestDb};
 use fc_platform::dispatch_job::lifecycle;
-use fc_platform::shared::database::{create_pool, run_migrations, MigrationProfile};
+use fc_platform::shared::database::{
+    create_pool, create_scheduler_pool, run_migrations, with_scheduler_planner_options,
+    MigrationProfile,
+};
 
 /// Rows by status in the seeded table.
 const COMPLETED: i64 = 900_000;
@@ -35,8 +45,6 @@ const COMPLETED: i64 = 900_000;
 const QUEUED: i64 = 5_000;
 const QUEUED_AT_SCALE: i64 = 100_000;
 const PENDING: i64 = 5_000;
-/// A deep queue, for the claim's plan with no statistics.
-const PENDING_DEEP: i64 = 150_000;
 
 /// FAILED holders: 100 of the 500 groups are held.
 const FAILED: i64 = 100;
@@ -168,15 +176,6 @@ async fn seed(pool: &PgPool, stats: Stats, queued: i64, pending: i64) -> TestDbS
            FROM msg_dispatch_jobs WHERE status = 'PENDING'",
     )
     .await;
-    // A realistic head of the claim: 800 claimed rows (in flight) at the
-    // front of the order.
-    exec(
-        pool,
-        "UPDATE msg_dispatch_queue SET claimed_at = now() WHERE job_id IN ( \
-           SELECT job_id FROM msg_dispatch_queue ORDER BY message_group NULLS LAST, sequence, \
-                  job_created_at, job_id LIMIT 800)",
-    )
-    .await;
     if matches!(stats, Stats::Analysed) {
         exec(
             pool,
@@ -184,15 +183,11 @@ async fn seed(pool: &PgPool, stats: Stats, queued: i64, pending: i64) -> TestDbS
         )
         .await;
     }
-    TestDbSizes {
-        pending,
-        claimed_head: 800,
-    }
+    TestDbSizes { pending }
 }
 
 struct TestDbSizes {
     pending: i64,
-    claimed_head: i64,
 }
 
 // ─── Plan inspection ────────────────────────────────────────────────────────
@@ -327,43 +322,20 @@ async fn explain_custom(pool: &PgPool, sql: &str, analyze: bool, binds: Binds) -
     canon(pool, plan).await
 }
 
-/// The same statement as a prepared statement planned GENERICALLY (no
-/// parameter values), executed as `EXPLAIN EXECUTE`.
-async fn explain_generic(
-    pool: &PgPool,
-    name: &str,
-    sql: &str,
-    types: &str,
-    args: &str,
-    analyze: bool,
-) -> Value {
-    let opts = if analyze {
-        "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)"
-    } else {
-        "EXPLAIN (FORMAT JSON)"
-    };
-    let mut tx = pool.begin().await.unwrap();
-    sqlx::raw_sql("SET LOCAL plan_cache_mode = force_generic_plan")
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-    sqlx::raw_sql(&format!("PREPARE {name}({types}) AS {sql}"))
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-    let plan: Value = sqlx::query_scalar(&format!("{opts} EXECUTE {name}({args})"))
-        .fetch_one(&mut *tx)
-        .await
-        .unwrap();
-    tx.rollback().await.unwrap();
-    canon(pool, plan).await
-}
-
 /// Bind values for [`explain_custom`].
 enum Binds {
-    Claim(i64),
+    ClaimSelect(i64),
+    ClaimDelete(Vec<String>),
+    Restore(Vec<String>, Vec<chrono::DateTime<chrono::Utc>>),
+    GroupHolders(
+        Vec<String>,
+        Vec<i32>,
+        Vec<chrono::DateTime<chrono::Utc>>,
+        Vec<String>,
+    ),
     HeldBefore(String, i32, chrono::DateTime<chrono::Utc>, String),
-    Reconcile(chrono::DateTime<chrono::Utc>, i64),
+    ReconcileInsert(chrono::DateTime<chrono::Utc>, i64),
+    Limit(i64),
 }
 
 type Q<'q> = QueryScalar<'q, Postgres, Value, PgArguments>;
@@ -375,9 +347,21 @@ impl Binds {
             .map(|s| (*s).to_string())
             .collect();
         match self {
-            Binds::Claim(n) => q.bind(n).bind(Vec::<String>::new()).bind(statuses),
+            Binds::ClaimSelect(n) => q
+                .bind(n)
+                .bind(Vec::<String>::new())
+                .bind(Vec::<String>::new()),
+            Binds::ClaimDelete(ids) => q.bind(ids),
+            Binds::Restore(ids, created) => q.bind(ids).bind(created),
+            Binds::GroupHolders(groups, seqs, created, ids) => q
+                .bind(statuses)
+                .bind(groups)
+                .bind(seqs)
+                .bind(created)
+                .bind(ids),
             Binds::HeldBefore(g, s, c, i) => q.bind(g).bind(s).bind(c).bind(i).bind(statuses),
-            Binds::Reconcile(at, n) => q.bind(at).bind(n),
+            Binds::ReconcileInsert(at, n) => q.bind(at).bind(n).bind(Vec::<String>::new()),
+            Binds::Limit(n) => q.bind(n),
         }
     }
 }
@@ -390,9 +374,350 @@ fn statement(name: &str) -> &'static str {
         .1
 }
 
-// ─── The test ───────────────────────────────────────────────────────────────
+// ─── The claim on a queue-only table ────────────────────────────────────────
 
-async fn plans_in(stats: Stats, queued: i64, pending: i64, claim_only: bool) {
+#[derive(Clone, Copy, Debug)]
+enum QState {
+    NeverAnalysed,
+    AnalysedWhileEmpty,
+    DrainedThenAnalysed,
+    FreshlyAnalysed,
+    AnalysedAllFuture,
+}
+
+fn insert_queue(n: i64, future: bool) -> String {
+    let sched = if future {
+        "now() + interval '1 day'"
+    } else {
+        "NULL"
+    };
+    format!(
+        "INSERT INTO msg_dispatch_queue (job_id, job_created_at, message_group, sequence, \
+                scheduled_for, mode, version) \
+         SELECT 'Q' || lpad(n::text, 12, '0'), now() - (n % 100000) * interval '1 second', \
+                CASE WHEN n % 7 = 0 THEN NULL ELSE 'g' || lpad((n % 500)::text, 4, '0') END, \
+                (n % 40)::int, {sched}, 'IMMEDIATE', now() \
+           FROM generate_series(1, {n}) n"
+    )
+}
+
+/// A migrated database with its scheduler pool, autovacuum off on the queue
+/// (the statistics stay what the test made them).
+async fn queue_db() -> (TestDb, String, PgPool) {
+    let (db, url) = start_db("plan").await;
+    let pool = create_pool(&url).await.unwrap();
+    run_migrations(&pool, MigrationProfile::Production)
+        .await
+        .unwrap();
+    exec(
+        &pool,
+        "ALTER TABLE msg_dispatch_queue SET (autovacuum_enabled = false)",
+    )
+    .await;
+    let scheduler = create_scheduler_pool(&url, 2).await.unwrap();
+    (db, url, scheduler)
+}
+
+async fn put_queue_in_state(pool: &PgPool, state: QState, n: i64) {
+    match state {
+        QState::NeverAnalysed => exec(pool, &insert_queue(n, false)).await,
+        QState::AnalysedWhileEmpty => {
+            exec(pool, "ANALYZE msg_dispatch_queue").await;
+            exec(pool, &insert_queue(n, false)).await;
+        }
+        QState::DrainedThenAnalysed => {
+            exec(pool, &insert_queue(n, false)).await;
+            exec(pool, "DELETE FROM msg_dispatch_queue").await;
+            // Pages stay allocated (no VACUUM); the planner then believes
+            // the table has one row.
+            exec(pool, "ANALYZE msg_dispatch_queue").await;
+            exec(pool, &insert_queue(n, false)).await;
+        }
+        QState::FreshlyAnalysed => {
+            exec(pool, &insert_queue(n, false)).await;
+            exec(pool, "ANALYZE msg_dispatch_queue").await;
+        }
+        QState::AnalysedAllFuture => {
+            exec(pool, &insert_queue(n, true)).await;
+            exec(pool, "ANALYZE msg_dispatch_queue").await;
+            exec(pool, "UPDATE msg_dispatch_queue SET scheduled_for = NULL").await;
+        }
+    }
+}
+
+/// The shape of the claim's two statements in `state` with `n` queue rows.
+async fn claim_plans(state: QState, n: i64) {
+    let (_db, url, spool) = queue_db().await;
+    put_queue_in_state(&spool, state, n).await;
+
+    let s1 = explain_custom(
+        &spool,
+        statement("claim_select"),
+        true,
+        Binds::ClaimSelect(500),
+    )
+    .await;
+    let ids: Vec<String> = sqlx::query_scalar(statement("claim_select"))
+        .bind(500_i64)
+        .bind(Vec::<String>::new())
+        .bind(Vec::<String>::new())
+        .fetch_all(&spool)
+        .await
+        .unwrap();
+    assert_eq!(ids.len(), 500);
+    let s2 = explain_custom(
+        &spool,
+        statement("claim_delete"),
+        true,
+        Binds::ClaimDelete(ids),
+    )
+    .await;
+    println!(
+        "[{state:?} @ {n}] {}\n[{state:?} @ {n}] {}",
+        summary("S1", &s1),
+        summary("S2", &s2)
+    );
+
+    // The hold-back's queue half: one ordered index probe per candidate
+    // group, however deep the queue is (scheduler pool); and the
+    // delivery-time check on the PLATFORM pool, which has no planner settings.
+    // The data shape: 500 groups, each with ~200 DUE rows and none scheduled
+    // for the future; the probe is bounded by each group's last candidate
+    // (here sequence 1, the head of the group).
+    let groups: Vec<String> = (0..500).map(|g| format!("g{g:04}")).collect();
+    let holders = explain_custom(
+        &spool,
+        statement("group_holders"),
+        true,
+        Binds::GroupHolders(
+            groups.clone(),
+            vec![1; groups.len()],
+            vec![chrono::Utc::now(); groups.len()],
+            vec!["Q999999999999".to_string(); groups.len()],
+        ),
+    )
+    .await;
+    let platform = create_pool(&url).await.unwrap();
+    let before = explain_custom(
+        &platform,
+        statement("group_held_before"),
+        true,
+        Binds::HeldBefore(
+            "g0123".into(),
+            20,
+            chrono::Utc::now(),
+            "Q999999999999".into(),
+        ),
+    )
+    .await;
+    println!(
+        "[{state:?} @ {n}] {}\n[{state:?} @ {n}] {} (platform pool)",
+        summary("group_holders", &holders),
+        summary("group_held_before", &before)
+    );
+    assert!(
+        seq_scans(&holders).is_empty() && indexes(&holders).contains("idx_dispatch_queue_order"),
+        "{state:?} @ {n}: the holders' queue half must probe the order index: {}",
+        compact(&holders)
+    );
+    assert!(
+        seq_scans(&before).is_empty(),
+        "{state:?} @ {n}: group_held_before (platform pool) must not seq-scan: {}",
+        compact(&before)
+    );
+    assert!(
+        !node_types(&s1).contains("Sort"),
+        "{state:?} @ {n}: S1 must not sort: {}",
+        compact(&s1)
+    );
+    assert!(
+        seq_scans(&s1).is_empty(),
+        "{state:?} @ {n}: S1 must not seq-scan: {}",
+        compact(&s1)
+    );
+    assert!(
+        indexes(&s1).contains("idx_dispatch_queue_order"),
+        "{state:?} @ {n}: S1 must walk the order index: {}",
+        compact(&s1)
+    );
+    // At 100,000 rows S2 must use an index (the primary key; only in the
+    // drained state may the order index stand in). A 5,000-row queue is a few
+    // dozen pages: a seq scan of it costs about what the probes would, and the
+    // spec only forbids it at 100,000.
+    if n >= 100_000 {
+        let used = indexes(&s2);
+        let allowed = ["msg_dispatch_queue_pkey", "idx_dispatch_queue_order"];
+        assert!(
+            !used.is_empty() && used.iter().all(|i| allowed.contains(&i.as_str())),
+            "{state:?} @ {n}: S2 must be an index scan: {}",
+            compact(&s2)
+        );
+        if !matches!(state, QState::DrainedThenAnalysed) {
+            assert!(
+                used.contains("msg_dispatch_queue_pkey"),
+                "{state:?} @ {n}: S2 must use the primary key: {}",
+                compact(&s2)
+            );
+        }
+        assert!(
+            seq_scans(&s2).is_empty(),
+            "{state:?} @ {n}: S2 must never seq-scan at {n} rows: {}",
+            compact(&s2)
+        );
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn claim_plans_never_analysed() {
+    for n in [5_000, 100_000] {
+        claim_plans(QState::NeverAnalysed, n).await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn claim_plans_analysed_while_empty() {
+    for n in [5_000, 100_000] {
+        claim_plans(QState::AnalysedWhileEmpty, n).await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn claim_plans_drained_then_analysed_then_a_burst() {
+    for n in [5_000, 100_000] {
+        claim_plans(QState::DrainedThenAnalysed, n).await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn claim_plans_freshly_analysed() {
+    for n in [5_000, 100_000] {
+        claim_plans(QState::FreshlyAnalysed, n).await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn claim_plans_analysed_when_every_row_was_scheduled_for_the_future() {
+    for n in [5_000, 100_000] {
+        claim_plans(QState::AnalysedAllFuture, n).await;
+    }
+}
+
+// ─── The cached plan ────────────────────────────────────────────────────────
+
+/// Statements prepared and run several times on an empty, vacuumed queue on
+/// ONE connection, then a burst of `n` rows, then the claim's two statements
+/// on that same connection (the plan cache decides which plan they get).
+/// Returns S1's and S2's plans.
+async fn cached_plan_after_a_burst(with_settings: bool, n: i64) -> (Value, Value) {
+    let (_db, url, _spool) = queue_db().await;
+    let mut opts = PgConnectOptions::from_str(&url).unwrap();
+    if with_settings {
+        opts = with_scheduler_planner_options(opts);
+    }
+    let mut conn = PgConnection::connect_with(&opts).await.unwrap();
+    let run = |sql: String| sqlx::raw_sql(Box::leak(sql.into_boxed_str()));
+    run("VACUUM (ANALYZE) msg_dispatch_queue".into())
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    run(format!(
+        "PREPARE s1(bigint, text[], text[]) AS {}",
+        statement("claim_select")
+    ))
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    run(format!(
+        "PREPARE s2(text[]) AS {}",
+        statement("claim_delete")
+    ))
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    for _ in 0..8 {
+        run("EXECUTE s1(500, ARRAY[]::text[], ARRAY[]::text[])".into())
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        run("EXECUTE s2(ARRAY['none'])".into())
+            .execute(&mut conn)
+            .await
+            .unwrap();
+    }
+    // The burst, on another connection (no ANALYZE: autovacuum is off).
+    let burst = PgConnection::connect_with(&PgConnectOptions::from_str(&url).unwrap())
+        .await
+        .unwrap();
+    let mut burst = burst;
+    run(insert_queue(n, false))
+        .execute(&mut burst)
+        .await
+        .unwrap();
+
+    let s1: Value = sqlx::query_scalar(
+        "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) EXECUTE s1(500, ARRAY[]::text[], ARRAY[]::text[])",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    let ids: Vec<String> = (1..=500).map(|i| format!("Q{i:012}")).collect();
+    let list = ids
+        .iter()
+        .map(|i| format!("'{i}'"))
+        .collect::<Vec<_>>()
+        .join(",");
+    run("BEGIN".into()).execute(&mut conn).await.unwrap();
+    let s2: Value = sqlx::query_scalar(&format!(
+        "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) EXECUTE s2(ARRAY[{list}])"
+    ))
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    run("ROLLBACK".into()).execute(&mut conn).await.unwrap();
+    (s1, s2)
+}
+
+/// With the scheduler's settings a plan cached while the queue was empty is
+/// not reused badly after a burst: S1 still walks the order index with no
+/// Sort, S2 uses the primary key.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn the_cached_plan_after_a_burst_is_good_with_the_schedulers_settings() {
+    let (s1, s2) = cached_plan_after_a_burst(true, 100_000).await;
+    println!(
+        "[cached, settings] {}\n[cached, settings] {}",
+        summary("S1", &s1),
+        summary("S2", &s2)
+    );
+    assert!(!node_types(&s1).contains("Sort"), "{}", compact(&s1));
+    assert!(seq_scans(&s1).is_empty(), "{}", compact(&s1));
+    assert!(seq_scans(&s2).is_empty(), "{}", compact(&s2));
+}
+
+/// NEGATIVE CONTROL: the same sequence on a connection WITHOUT the two
+/// settings. Whether it reproduces the bad cached plan on this PostgreSQL is
+/// printed; the test only requires that the good case above stays good.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn the_cached_plan_after_a_burst_without_the_settings_negative_control() {
+    let (s1, s2) = cached_plan_after_a_burst(false, 100_000).await;
+    let bad1 = node_types(&s1).contains("Sort") || !seq_scans(&s1).is_empty();
+    let bad2 = !seq_scans(&s2).is_empty();
+    println!(
+        "[cached, NO settings] bad S1 plan: {bad1}, bad S2 plan: {bad2}\n{}\n{}",
+        summary("S1", &s1),
+        summary("S2", &s2)
+    );
+}
+
+// ─── The jobs table ─────────────────────────────────────────────────────────
+
+async fn plans_in(stats: Stats, queued: i64, pending: i64) {
     let strict_sweeps = queued == QUEUED;
     let (_db, url): (TestDb, String) = start_db("plan").await;
     let pool = create_pool(&url).await.unwrap();
@@ -401,19 +726,6 @@ async fn plans_in(stats: Stats, queued: i64, pending: i64, claim_only: bool) {
         .unwrap();
     let started = Instant::now();
     let sizes = seed(&pool, stats, queued, pending).await;
-    // The queue rows a claim can have to skip besides the claimed head: the
-    // BLOCK_ON_ERROR rows of groups a FAILED job holds, or that have a job
-    // in a retry backoff (an upper bound: the later rows of such a group).
-    let held_upper: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM msg_dispatch_queue q WHERE q.mode = 'BLOCK_ON_ERROR' \
-           AND (q.message_group IN (SELECT message_group FROM msg_dispatch_jobs \
-                                     WHERE status = 'FAILED') \
-             OR q.message_group IN (SELECT message_group FROM msg_dispatch_queue \
-                                     WHERE scheduled_for > now()))",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
     println!("[{stats:?}] seeded in {:?}", started.elapsed());
     assert_eq!(
         lifecycle::queue_drift(&pool)
@@ -422,176 +734,115 @@ async fn plans_in(stats: Stats, queued: i64, pending: i64, claim_only: bool) {
             .missing_or_stale,
         0
     );
+    // Every statement below runs on the scheduler's pool.
+    let pool = create_scheduler_pool(&url, 3).await.unwrap();
 
     let mut report: Vec<String> = Vec::new();
     let now = chrono::Utc::now();
 
-    // ── the claim ──────────────────────────────────────────────────────
-    let sql = statement("claim");
-    let claim_args = "500, ARRAY[]::text[], ARRAY['FAILED','ERROR']::text[]";
-    let custom = explain_custom(&pool, sql, true, Binds::Claim(500)).await;
-    let generic = explain_generic(
+    // ── the restore: the claimed jobs read from the job table ─────────────
+    let pending_rows: Vec<(String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        "SELECT id, created_at FROM msg_dispatch_jobs WHERE status = 'PENDING' LIMIT 500",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert!(pending_rows.len() >= 500.min(sizes.pending as usize));
+    let ids: Vec<String> = pending_rows.iter().map(|r| r.0.clone()).collect();
+    let created: Vec<chrono::DateTime<chrono::Utc>> = pending_rows.iter().map(|r| r.1).collect();
+    let plan = explain_custom(
         &pool,
-        "p_claim",
-        sql,
-        "bigint, text[], text[]",
-        claim_args,
+        statement("restore"),
         true,
+        Binds::Restore(ids, created),
     )
     .await;
-    for (kind, plan) in [("claim custom", &custom), ("claim generic", &generic)] {
-        report.push(summary(kind, plan));
-        // With no usable statistics and a SMALL queue the planner rightly
-        // prefers a seq scan plus a sort (the queue is a few dozen pages: it
-        // took 25-30 ms in the run that found this); a deep queue, and
-        // every queue with statistics, must walk the index.
-        let small_without_stats = !matches!(stats, Stats::Analysed) && sizes.pending < 20_000;
-        if small_without_stats {
-            let exec = plan[0]["Execution Time"].as_f64().unwrap_or(0.0);
-            assert!(
-                exec < 250.0,
-                "{stats:?} {kind}: the claim took {exec} ms: {}",
-                compact(plan)
-            );
-            continue;
-        }
-        assert!(
-            indexes(plan).contains("idx_dispatch_queue_order"),
-            "{stats:?} {kind}: the claim must walk idx_dispatch_queue_order: {}",
-            compact(plan)
-        );
-        assert!(
-            !node_types(plan).contains("Sort"),
-            "{stats:?} {kind}: the claim must not sort: {}",
-            compact(plan)
-        );
-        assert!(
-            !seq_scans(plan)
-                .iter()
-                .any(|r| r.starts_with("msg_dispatch_jobs")),
-            "{stats:?} {kind}: the claim must not seq-scan msg_dispatch_jobs: {}",
-            compact(plan)
-        );
-        // Stops early: the queue index scan reads about LIMIT + the rows it
-        // skips (800 claimed at the head, the backoff holders' successors),
-        // not the whole 20,000.
-        let scanned: i64 = nodes(plan)
+    report.push(summary("restore", &plan));
+    assert!(
+        indexes(&plan).contains("msg_dispatch_jobs_pkey")
+            && !indexes(&plan).contains("idx_dispatch_jobs_status_group"),
+        "{stats:?} restore must read the jobs by primary key only: {}",
+        compact(&plan)
+    );
+    assert!(
+        !seq_scans(&plan)
             .iter()
-            .filter(|n| text(n, "Index Name") == "idx_dispatch_queue_order")
-            .filter(|n| text(n, "Parent Relationship") != "SubPlan")
-            .map(|n| {
-                let rows = n["Actual Rows"].as_f64().unwrap_or(0.0);
-                let loops = n["Actual Loops"].as_f64().unwrap_or(1.0);
-                let removed = n["Rows Removed by Filter"].as_f64().unwrap_or(0.0);
-                ((rows + removed) * loops.max(1.0)) as i64
-            })
-            .next()
-            .unwrap_or(i64::MAX);
-        let budget = 500 + sizes.claimed_head + held_upper + 100;
-        assert!(
-            scanned <= budget,
-            "{stats:?} {kind}: the claim read {scanned} queue rows (budget {budget} = LIMIT + \
-             {} claimed + at most {held_upper} held; {} PENDING): it must stop early: {}",
-            sizes.claimed_head,
-            sizes.pending,
-            compact(plan)
-        );
-    }
+            .any(|r| r.starts_with("msg_dispatch_jobs")),
+        "{stats:?} restore must not seq-scan the jobs: {}",
+        compact(&plan)
+    );
 
-    if claim_only {
-        println!("[{stats:?}] {pending} PENDING:\n  {}", report.join("\n  "));
-        return;
-    }
+    // ── the batched hold-back after the claim: the earliest holder per group ──
+    let groups: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT message_group FROM msg_dispatch_queue \
+          WHERE mode = 'BLOCK_ON_ERROR' AND message_group IS NOT NULL LIMIT 500",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let plan = explain_custom(
+        &pool,
+        statement("group_holders"),
+        true,
+        Binds::GroupHolders(
+            groups.clone(),
+            vec![1; groups.len()],
+            vec![chrono::Utc::now(); groups.len()],
+            vec!["Q999999999999".to_string(); groups.len()],
+        ),
+    )
+    .await;
+    report.push(summary("group_holders", &plan));
+    assert!(
+        indexes(&plan).contains("idx_dispatch_jobs_status_group"),
+        "{stats:?} the FAILED/ERROR lookup must use idx_dispatch_jobs_status_group: {}",
+        compact(&plan)
+    );
+    assert!(
+        !seq_scans(&plan)
+            .iter()
+            .any(|r| r.starts_with("msg_dispatch_jobs")),
+        "{stats:?} group_holders must not seq-scan the jobs: {}",
+        compact(&plan)
+    );
 
     // ── the delivery-time hold-back ────────────────────────────────────
-    let sql = statement("group_held_before");
-    let held_args = "'g0123', 10, now(), 'J000000000000', ARRAY['FAILED','ERROR']::text[]";
-    let custom = explain_custom(
+    let plan = explain_custom(
         &pool,
-        sql,
+        statement("group_held_before"),
         true,
         Binds::HeldBefore("g0123".into(), 10, now, "J000000000000".into()),
     )
     .await;
-    let generic = explain_generic(
-        &pool,
-        "p_held",
-        sql,
-        "text, int, timestamptz, text, text[]",
-        held_args,
-        true,
-    )
-    .await;
-    for (kind, plan) in [
-        ("group_held_before custom", &custom),
-        ("group_held_before generic", &generic),
-    ] {
-        report.push(summary(kind, plan));
-        let idx = indexes(plan);
-        assert!(
-            idx.contains("idx_dispatch_jobs_status_group"),
-            "{stats:?} {kind}: the FAILED/ERROR lookup must use idx_dispatch_jobs_status_group: {}",
-            compact(plan)
-        );
-        assert!(
-            idx.contains("idx_dispatch_queue_order"),
-            "{stats:?} {kind}: the backoff lookup must use the queue's order index: {}",
-            compact(plan)
-        );
-        assert!(
-            seq_scans(plan).is_empty(),
-            "{stats:?} {kind}: nothing may seq-scan: {}",
-            compact(plan)
-        );
-    }
+    report.push(summary("group_held_before", &plan));
+    assert!(
+        indexes(&plan).contains("idx_dispatch_jobs_status_group"),
+        "{stats:?} {}",
+        compact(&plan)
+    );
+    assert!(seq_scans(&plan).is_empty(), "{stats:?} {}", compact(&plan));
 
     // ── the reconcile sweep ────────────────────────────────────────────
-    for (name, args_generic, binds) in [
-        (
-            "reconcile_insert",
-            "now(), 5000",
-            Binds::Reconcile(now, 5000),
-        ),
-        (
-            "reconcile_delete",
-            "now(), 5000",
-            Binds::Reconcile(now, 5000),
-        ),
-        (
-            "reconcile_refresh",
-            "now(), 5000",
-            Binds::Reconcile(now, 5000),
-        ),
+    for (name, binds) in [
+        ("reconcile_insert", Binds::ReconcileInsert(now, 5000)),
+        ("reconcile_delete", Binds::Limit(5000)),
+        ("reconcile_refresh", Binds::Limit(5000)),
     ] {
-        let sql = statement(name);
-        let custom = explain_custom(&pool, sql, true, binds).await;
-        let generic = explain_generic(
-            &pool,
-            &format!("p_{name}"),
-            sql,
-            "timestamptz, bigint",
-            args_generic,
-            true,
-        )
-        .await;
-        for (kind, plan) in [("custom", &custom), ("generic", &generic)] {
-            report.push(summary(&format!("{name} {kind}"), plan));
-            // PENDING jobs are read through the plain status index, or by
-            // primary key; never by scanning a partition.
+        let plan = explain_custom(&pool, statement(name), true, binds).await;
+        report.push(summary(name, &plan));
+        assert!(
+            !seq_scans(&plan)
+                .iter()
+                .any(|r| r.starts_with("msg_dispatch_jobs")),
+            "{stats:?} {name}: must not seq-scan msg_dispatch_jobs: {}",
+            compact(&plan)
+        );
+        if name == "reconcile_insert" {
             assert!(
-                !seq_scans(plan)
-                    .iter()
-                    .any(|r| r.starts_with("msg_dispatch_jobs")),
-                "{stats:?} {name} {kind}: must not seq-scan msg_dispatch_jobs: {}",
-                compact(plan)
+                indexes(&plan).contains("idx_dispatch_jobs_status_group"),
+                "{stats:?} {name}: PENDING must be read through idx_dispatch_jobs_status_group: {}",
+                compact(&plan)
             );
-            if name == "reconcile_insert" {
-                assert!(
-                    indexes(plan).contains("idx_dispatch_jobs_status_group"),
-                    "{stats:?} {name} {kind}: PENDING must be read through idx_dispatch_jobs_status_group: {}",
-                    compact(plan)
-                );
-            }
         }
     }
 
@@ -637,37 +888,26 @@ async fn plans_in(stats: Stats, queued: i64, pending: i64, claim_only: bool) {
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn plans_when_freshly_analysed() {
-    plans_in(Stats::Analysed, QUEUED, PENDING, false).await;
+    plans_in(Stats::Analysed, QUEUED, PENDING).await;
 }
 
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn plans_when_analysed_while_empty() {
-    plans_in(Stats::AnalysedWhileEmpty, QUEUED, PENDING, false).await;
+    plans_in(Stats::AnalysedWhileEmpty, QUEUED, PENDING).await;
 }
 
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn plans_when_never_analysed() {
-    plans_in(Stats::NeverAnalysed, QUEUED, PENDING, false).await;
+    plans_in(Stats::NeverAnalysed, QUEUED, PENDING).await;
 }
 
-/// The sweeps at 100,000 QUEUED rows (a table of 400,000): the plan and the
-/// time are printed, and the sweeps must still not touch more than they have
-/// to: a seq scan is the planner's right choice when a quarter of the table
-/// is QUEUED, so only the result is checked here.
+/// The sweeps at 100,000 QUEUED rows (a table of 1,000,000): the plan and the
+/// time are printed (a seq scan is the planner's right choice when a tenth of
+/// the table is QUEUED).
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn sweeps_at_100k_queued() {
-    plans_in(Stats::Analysed, QUEUED_AT_SCALE, PENDING, false).await;
-}
-
-/// A deep queue and no usable statistics: the claim must still walk the order
-/// index and stop early (a seq scan plus a sort of the whole queue every
-/// second is what an unlucky plan costs).
-#[tokio::test]
-#[ignore = "requires Docker"]
-async fn the_claim_stops_early_in_a_deep_queue_without_statistics() {
-    plans_in(Stats::NeverAnalysed, QUEUED, PENDING_DEEP, true).await;
-    plans_in(Stats::AnalysedWhileEmpty, QUEUED, PENDING_DEEP, true).await;
+    plans_in(Stats::Analysed, QUEUED_AT_SCALE, PENDING).await;
 }

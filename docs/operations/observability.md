@@ -133,13 +133,14 @@ fc_scheduler_stale_jobs_processing_recovered_total   # the PROCESSING part
 fc_scheduler_active_groups                  # gauge
 
 # The dispatch queue table (msg_dispatch_queue), sampled by the leader every 15 s
-fc_scheduler_queue_backlog                  # gauge — unclaimed, due rows: the dispatch backlog
+fc_scheduler_queue_backlog                  # gauge — due rows in the queue: the dispatch backlog
 fc_scheduler_queue_oldest_age_seconds       # gauge — age of the oldest of them (0 when empty)
 
-# Claims (a claim stamps claimed_at; a job that is not published has it released)
-fc_scheduler_claims_released_total          # a job was not published / not marked QUEUED / withheld: claimed again in order
-fc_scheduler_claims_released_at_start_total # released when this instance became leader (a dead leader's)
-fc_scheduler_claims_stale_released_total    # > 5 min old, not held by this process (logged at WARN); should be flat at 0
+# Claims (a claim deletes the queue row; a job that is not published has it restored from the job table)
+fc_scheduler_claims_restored_total          # queue rows put back (job not published / not marked QUEUED / withheld / held back): claimed again in order
+fc_scheduler_claims_restored_at_start_total # restored when this instance became leader (a dead leader's claims)
+fc_scheduler_jobs_held_total                # claimed but found held back by an earlier job of their group (rows restored)
+fc_scheduler_held_groups                    # gauge — groups remembered as held (skipped by the claim for 5 s each)
 fc_scheduler_jobs_withheld_total            # claimed but not submitted (behind a doomed job, or already in flight)
 
 # The reconcile sweep (leader, every 60 s). Any non-zero count is a bug or an older binary writing msg_dispatch_jobs (logged at WARN)

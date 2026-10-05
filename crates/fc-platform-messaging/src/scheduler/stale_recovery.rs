@@ -1,4 +1,4 @@
-//! Stale job recovery, and the queue reconcile sweep.
+//! Stale job recovery.
 //!
 //! A port of Go's `StaleQueuedJobPoller` (`scheduler/stale_recovery.go`):
 //! a job QUEUED for longer than `queued_after` (15 minutes) since its
@@ -20,10 +20,8 @@
 //! blip after delivery) and would otherwise stay PROCESSING forever, as it
 //! does in Go. The price is at-least-once: such a job may be delivered again.
 //!
-//! The same loop (leader only, once a minute) reconciles
-//! `msg_dispatch_queue` against the jobs ([`lifecycle::reconcile_queue`]):
-//! the lifecycle keeps the table exact, so anything it repairs is a bug or an
-//! older binary writing the jobs table, and is counted and logged at WARN.
+//! (The queue reconcile sweep runs in the poller, which knows the in-flight
+//! set; see `poller.rs`.)
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -32,7 +30,7 @@ use chrono::Utc;
 use sqlx::PgPool;
 use tracing::{info, warn};
 
-use crate::dispatch_job::lifecycle::{self, ReconcileGuards, Reconciled};
+use crate::dispatch_job::lifecycle;
 use crate::scheduler::SchedulerError;
 use tokio::time;
 use tokio::time::Instant;
@@ -100,38 +98,6 @@ impl StaleQueuedJobPoller {
         Ok(StaleRecovery { queued, processing })
     }
 
-    /// One reconcile pass with `guards` (the production sweep uses
-    /// [`ReconcileGuards::production`]). Counts each repair and logs at WARN
-    /// when there was any: it means a bug, or an older binary writing the
-    /// jobs table.
-    #[tracing::instrument(name = "scheduler.queue_reconcile", skip_all)]
-    pub async fn reconcile_with(
-        &self,
-        guards: ReconcileGuards,
-    ) -> Result<Reconciled, SchedulerError> {
-        let started = Instant::now();
-        let done = lifecycle::reconcile_queue(&self.pool, guards).await?;
-        metrics::histogram!("scheduler.queue_reconcile.duration_seconds").record(started.elapsed());
-        metrics::counter!("scheduler.queue_reconcile.inserted_total").increment(done.inserted);
-        metrics::counter!("scheduler.queue_reconcile.deleted_total").increment(done.deleted);
-        metrics::counter!("scheduler.queue_reconcile.refreshed_total").increment(done.refreshed);
-        if done.total() > 0 {
-            warn!(
-                inserted = done.inserted,
-                deleted = done.deleted,
-                refreshed = done.refreshed,
-                "msg_dispatch_queue was out of step with msg_dispatch_jobs and was repaired \
-                 (a bug, or an older binary writing the jobs table)"
-            );
-        }
-        Ok(done)
-    }
-
-    /// The production reconcile pass: 60 s / 5 min age guards, 5,000 rows.
-    pub async fn reconcile_once(&self) -> Result<Reconciled, SchedulerError> {
-        self.reconcile_with(ReconcileGuards::production()).await
-    }
-
     /// Sweep every `interval` until cancelled, only while leader.
     pub async fn run(
         &self,
@@ -153,16 +119,13 @@ impl StaleQueuedJobPoller {
             if let Err(e) = self.recover_once().await {
                 warn!(error = %e, "stale recovery error");
             }
-            if let Err(e) = self.reconcile_once().await {
-                warn!(error = %e, "queue reconcile error");
-            }
         }
     }
 }
 
 /// Registers the sweeps' metric descriptions (idempotent).
 fn describe_metrics() {
-    use metrics::{describe_counter, describe_histogram, Unit};
+    use metrics::describe_counter;
     describe_counter!(
         "scheduler.stale_jobs.queued_recovered_total",
         "Jobs QUEUED for more than 15 minutes returned to PENDING."
@@ -170,22 +133,5 @@ fn describe_metrics() {
     describe_counter!(
         "scheduler.stale_jobs.processing_recovered_total",
         "Jobs PROCESSING for more than 75 minutes returned to PENDING."
-    );
-    describe_counter!(
-        "scheduler.queue_reconcile.inserted_total",
-        "Queue rows the reconcile sweep inserted for PENDING jobs that had none. Non-zero is a bug or an older binary."
-    );
-    describe_counter!(
-        "scheduler.queue_reconcile.deleted_total",
-        "Queue rows the reconcile sweep deleted (their job is missing or not PENDING). Non-zero is a bug or an older binary."
-    );
-    describe_counter!(
-        "scheduler.queue_reconcile.refreshed_total",
-        "Queue rows the reconcile sweep refreshed (their version differed from the job's updated_at). Non-zero is a bug or an older binary."
-    );
-    describe_histogram!(
-        "scheduler.queue_reconcile.duration_seconds",
-        Unit::Seconds,
-        "Wall time of one reconcile pass."
     );
 }
