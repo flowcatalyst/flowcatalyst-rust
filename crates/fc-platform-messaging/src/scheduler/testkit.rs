@@ -73,6 +73,9 @@ pub(crate) struct FakeStore {
     pub fail_release: AtomicBool,
     /// Every release call, in order.
     pub releases: Mutex<Vec<Vec<String>>>,
+    /// When set, a release announces on `.0` once it has taken effect and
+    /// then waits for a permit on `.1` before it returns.
+    pub release_gate: Mutex<Option<(Arc<Notify>, Arc<Semaphore>)>>,
     pub claim_calls: AtomicUsize,
     /// Chance in 1000 that a status update fails (stress test).
     pub mark_fail_per_mille: AtomicU32,
@@ -270,12 +273,17 @@ impl JobStore for FakeStore {
         if self.fail_release.load(Ordering::SeqCst) {
             return Err(SchedulerError::ConfigError("release failed".into()));
         }
-        let ids: HashSet<&str> = ids.iter().map(String::as_str).collect();
+        let wanted: HashSet<&str> = ids.iter().map(String::as_str).collect();
         let mut n = 0;
         for r in lock(&self.rows).iter_mut() {
-            if ids.contains(r.job.id()) && r.claimed_at.take().is_some() {
+            if wanted.contains(r.job.id()) && r.claimed_at.take().is_some() {
                 n += 1;
             }
+        }
+        let gate = lock(&self.release_gate).clone();
+        if let Some((released, proceed)) = gate {
+            released.notify_one();
+            proceed.acquire().await.unwrap().forget();
         }
         Ok(n)
     }

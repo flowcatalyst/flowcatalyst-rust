@@ -61,6 +61,7 @@
 //! faster than a lane drains: every claim made while a batch is being dropped
 //! is older than that batch's poison, so it is dropped in turn, without end.)
 
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 #[cfg(test)]
 use std::sync::atomic::AtomicU32;
@@ -136,9 +137,10 @@ struct Poison {
 struct State {
     in_flight: HashMap<String, InFlight>,
     poison: HashMap<String, Poison>,
-    /// Claims whose release failed, to retry: `id -> whether the id is in the
-    /// in-flight set and leaves it once its claim is released`.
-    unreleased: HashMap<String, bool>,
+    /// Claims whose release failed, to retry: `id -> the generation of the
+    /// in-flight entry that leaves once its claim is released (None: not in
+    /// the in-flight set)`.
+    unreleased: HashMap<String, Option<u64>>,
 }
 
 /// The in-flight set as a claim saw it (what its doomed check needs).
@@ -230,18 +232,32 @@ impl Pipeline {
             group: job.group().map(str::to_string),
             generation,
         };
-        let added = state
-            .in_flight
-            .insert(job.id().to_string(), entry)
-            .is_none();
+        // Never replace an existing entry: it belongs to an older claim of the
+        // id, whose lane will settle it.
+        let added = match state.in_flight.entry(job.id().to_string()) {
+            Entry::Occupied(_) => false,
+            Entry::Vacant(v) => {
+                v.insert(entry);
+                true
+            }
+        };
         metrics::gauge!("scheduler.in_flight.size").set(state.in_flight.len() as f64);
         added
     }
 
-    pub fn remove_in_flight<'a>(&self, ids: impl IntoIterator<Item = &'a str>) {
+    /// Settle in-flight entries: each `(id, generation)` is removed only while
+    /// the entry still carries that generation, i.e. only the claim being
+    /// settled is removed, never a newer claim of the same id.
+    pub fn remove_in_flight<'a>(&self, entries: impl IntoIterator<Item = (&'a str, u64)>) {
         let mut state = locked(&self.state);
-        for id in ids {
-            state.in_flight.remove(id);
+        for (id, generation) in entries {
+            if state
+                .in_flight
+                .get(id)
+                .is_some_and(|e| e.generation == generation)
+            {
+                state.in_flight.remove(id);
+            }
         }
         metrics::gauge!("scheduler.in_flight.size").set(state.in_flight.len() as f64);
     }
@@ -262,9 +278,9 @@ impl Pipeline {
         ids
     }
 
-    /// Remember claims whose release failed (`true`: the id is in the
-    /// in-flight set and is removed from it once released).
-    pub fn defer_release(&self, ids: impl IntoIterator<Item = (String, bool)>) {
+    /// Remember claims whose release failed (`Some(generation)`: the id is in
+    /// the in-flight set under that generation and is removed once released).
+    pub fn defer_release(&self, ids: impl IntoIterator<Item = (String, Option<u64>)>) {
         let mut state = locked(&self.state);
         for (id, owned) in ids {
             state.unreleased.insert(id, owned);
@@ -273,7 +289,7 @@ impl Pipeline {
 
     /// The claims to retry releasing, removed from the list (a failed retry
     /// puts them back with [`Self::defer_release`]).
-    pub fn take_unreleased(&self) -> Vec<(String, bool)> {
+    pub fn take_unreleased(&self) -> Vec<(String, Option<u64>)> {
         locked(&self.state).unreleased.drain().collect()
     }
 
@@ -441,6 +457,17 @@ impl Lane {
         }
         self.pipeline.evict_expired_poison();
         let ids: Vec<String> = batch.iter().map(|j| j.job.id().to_string()).collect();
+        // The claim each id belongs to: only these entries are settled below.
+        let gen_of: HashMap<String, u64> = batch
+            .iter()
+            .map(|j| (j.job.id().to_string(), j.generation))
+            .collect();
+        let entries = |filter: &dyn Fn(&str) -> bool| -> Vec<(String, u64)> {
+            ids.iter()
+                .filter(|id| filter(id))
+                .map(|id| (id.clone(), gen_of[id]))
+                .collect()
+        };
 
         // Groups with a job dropped in this batch: a later job of the group
         // must not overtake it. Groups whose publish failed are poisoned below.
@@ -566,17 +593,16 @@ impl Lane {
             // (so the group stays held back), poisoned, until the poller's
             // retry releases them.
             let kept: HashSet<&str> = to_release.iter().map(String::as_str).collect();
-            self.pipeline.remove_in_flight(
-                ids.iter()
-                    .map(String::as_str)
-                    .filter(|id| !kept.contains(id)),
-            );
+            let settled = entries(&|id| !kept.contains(id));
             self.pipeline
-                .defer_release(to_release.iter().map(|id| (id.clone(), true)));
+                .remove_in_flight(settled.iter().map(|(id, g)| (id.as_str(), *g)));
+            self.pipeline
+                .defer_release(to_release.iter().map(|id| (id.clone(), Some(gen_of[id]))));
             failed_groups.extend(to_release.iter().filter_map(|id| group_of.get(id).cloned()));
         } else {
+            let settled = entries(&|_| true);
             self.pipeline
-                .remove_in_flight(ids.iter().map(String::as_str));
+                .remove_in_flight(settled.iter().map(|(id, g)| (id.as_str(), *g)));
         }
         self.pipeline.race_point();
         if !failed_groups.is_empty() {
@@ -599,7 +625,9 @@ impl Lane {
 mod tests {
     use super::*;
     use crate::scheduler::poller::JobStore;
-    use crate::scheduler::testkit::{dispatcher, lane_job, lock, FakePublisher, FakeStore, Status};
+    use crate::scheduler::testkit::{
+        claimed, dispatcher, lane_job, lock, FakePublisher, FakeStore, Status,
+    };
 
     const CAP: usize = 10;
 
@@ -807,6 +835,29 @@ mod tests {
         // The group is poisoned: an older claim's job is dropped.
         let older = h.submit(&[("z", Some("g"))], g1).await;
         assert_eq!(h.lane.process(older).await.dropped, 1);
+    }
+
+    /// A lane settles only its OWN in-flight entry: an id's entry is removed
+    /// only while it still carries the generation of the claim being settled,
+    /// and adding an id that is already in flight never replaces its entry.
+    #[tokio::test]
+    async fn settling_removes_only_the_entry_of_its_own_claim() {
+        let h = harness(&[("a", Some("g"))]);
+        let job = claimed("a", Some("g"));
+        let (old, new) = (h.pipeline.next_generation(), h.pipeline.next_generation());
+        assert!(h.pipeline.add_in_flight(&job, old));
+        // The same id again (a newer claim): refused, and the entry stays the old one.
+        assert!(!h.pipeline.add_in_flight(&job, new));
+        let snap = h.pipeline.snapshot_in_flight();
+        assert_eq!(snap.min_generation.get("g"), Some(&old));
+        // The old claim settles, then a newer claim of the id enters.
+        h.pipeline.remove_in_flight([("a", old)]);
+        assert!(h.pipeline.add_in_flight(&job, new));
+        // A late settle of the OLD claim (its generation) must not remove it.
+        h.pipeline.remove_in_flight([("a", old)]);
+        assert_eq!(h.pipeline.in_flight_len(), 1, "the newer entry survives");
+        h.pipeline.remove_in_flight([("a", new)]);
+        assert_eq!(h.pipeline.in_flight_len(), 0);
     }
 
     /// Ungrouped jobs are never poisoned: nothing orders them.

@@ -442,7 +442,7 @@ impl ClaimStage {
             Err(e) => {
                 warn!(jobs = ids.len(), error = %e, "releasing unsubmitted dispatch claims failed; retrying");
                 self.pipeline
-                    .defer_release(ids.iter().map(|id| (id.clone(), false)));
+                    .defer_release(ids.iter().map(|id| (id.clone(), None)));
             }
         }
     }
@@ -462,8 +462,7 @@ impl ClaimStage {
                 self.pipeline.remove_in_flight(
                     pending
                         .iter()
-                        .filter(|(_, owned)| *owned)
-                        .map(|(id, _)| id.as_str()),
+                        .filter_map(|(id, generation)| generation.map(|g| (id.as_str(), g))),
                 );
             }
             Err(e) => {
@@ -533,7 +532,9 @@ impl Claimer {
                 Ok(()) => submitted += 1,
                 Err(e) => {
                     let job = e.into_inner();
-                    self.stage.pipeline.remove_in_flight([job.job.id()]);
+                    self.stage
+                        .pipeline
+                        .remove_in_flight([(job.job.id(), job.generation)]);
                     self.stage.pipeline.release(1);
                     self.stage
                         .release_unsubmitted(&[job.job.id().to_string()])
@@ -877,7 +878,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize};
     use std::sync::Mutex;
 
-    use tokio::sync::Semaphore;
+    use tokio::sync::{Notify, Semaphore};
     use tokio::time::Instant as TokioInstant;
 
     use super::*;
@@ -1768,6 +1769,67 @@ mod tests {
         assert_eq!(lane.process(c).await.published, 3);
         assert_eq!(r.publisher.published_ids(), vec!["j1", "j2", "j3"]);
         assert_eq!(pipeline.available(), 10);
+    }
+
+    /// A job released by a failed batch can be claimed AGAIN before the lane
+    /// removes that batch from the in-flight set. The new claim must not
+    /// take the job (nor the group's later jobs) past the lane, and settling
+    /// the old batch must leave the ordering intact.
+    #[tokio::test]
+    async fn a_job_claimed_again_between_its_release_and_its_removal_changes_nothing() {
+        let ids: Vec<(String, Option<String>)> = ["j1", "j2", "j3"]
+            .iter()
+            .map(|i| (i.to_string(), Some("g".to_string())))
+            .collect();
+        let r = rig(FakeStore::with_jobs(ids), settings(10, 1, 3));
+        lock(&r.publisher.fail_once).insert("j1".into());
+        let pipeline = Arc::new(Pipeline::new(10));
+        let stage = ClaimStage {
+            store: r.store.clone(),
+            pipeline: pipeline.clone(),
+        };
+        let mut lane = Lane::new(
+            0,
+            pipeline.clone(),
+            r.store.clone(),
+            dispatcher(r.publisher.clone()),
+            0,
+        );
+        assert_eq!(pipeline.acquire_up_to(2).await, 2);
+        let (first, _) = stage.claim(2).await.unwrap();
+        assert_eq!(first.len(), 2);
+        let (released, proceed) = (Arc::new(Notify::new()), Arc::new(Semaphore::new(0)));
+        *lock(&r.store.release_gate) = Some((released.clone(), proceed.clone()));
+
+        let lane_task = lane.process(first);
+        let interleave = async {
+            // The batch's claims are released; the lane has not yet removed it.
+            released.notified().await;
+            assert_eq!(pipeline.in_flight_len(), 2);
+            *lock(&r.store.release_gate) = None;
+            // A claim now sees j1, j2, j3 unclaimed.
+            assert_eq!(pipeline.acquire_up_to(3).await, 3);
+            let (jobs, taken) = stage.claim(3).await.unwrap();
+            assert_eq!(taken, 3);
+            assert!(
+                jobs.is_empty(),
+                "nothing may be submitted while the old batch is unsettled: {jobs:?}"
+            );
+            assert_eq!(r.store.claimed_count(), 0, "all withheld and released");
+            assert_eq!(pipeline.in_flight_len(), 2, "the old entries are untouched");
+            proceed.add_permits(1);
+        };
+        let (report, ()) = tokio::join!(lane_task, interleave);
+        assert_eq!(report.unpublished, 2);
+        assert_eq!(pipeline.in_flight_len(), 0);
+
+        // Afterwards the group is claimed and published in order.
+        assert_eq!(pipeline.acquire_up_to(3).await, 3);
+        let (c, _) = stage.claim(3).await.unwrap();
+        let order: Vec<&str> = c.iter().map(|j| j.job.id()).collect();
+        assert_eq!(order, vec!["j1", "j2", "j3"]);
+        assert_eq!(lane.process(c).await.published, 3);
+        assert_eq!(r.publisher.published_ids(), vec!["j1", "j2", "j3"]);
     }
 
     /// At leader start every claim the process does not hold is released;
