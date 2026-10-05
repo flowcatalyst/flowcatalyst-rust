@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::support::{start_db, TestDb};
+use crate::support::{start_db, sync_dispatch_queue, TestDb};
 use axum::body::{Body, Bytes};
 use axum::extract::State;
 use axum::http::{HeaderMap, Request, StatusCode};
@@ -184,6 +184,7 @@ impl Fixture {
         .execute(&self.pool)
         .await
         .expect("insert job");
+        sync_dispatch_queue(&self.pool).await;
     }
 
     async fn call(&self, path: &str, token: Option<&str>, body: Value) -> (StatusCode, Value) {
@@ -406,6 +407,7 @@ async fn a_retryable_failure_is_rescheduled_and_acked() {
         .execute(&f.pool)
         .await
         .unwrap();
+    sync_dispatch_queue(&f.pool).await;
     f.respond(Canned::status(503));
     f.process(&j.id).await;
     let row = f.row(&j.id).await;
@@ -552,6 +554,7 @@ impl Fixture {
         .execute(&self.pool)
         .await
         .unwrap();
+        sync_dispatch_queue(&self.pool).await;
     }
 }
 
@@ -670,6 +673,69 @@ async fn a_held_block_on_error_job_is_returned_undelivered() {
     assert_eq!(f.row(&noe.id).await.status, "COMPLETED");
 }
 
+/// A BLOCK_ON_ERROR job behind a PENDING job in a retry backoff (an earlier
+/// job of its group with a future `scheduled_for`, read from the queue
+/// table) is returned undelivered too; once the backoff is over it is
+/// delivered. The returned job is a queue row again, unclaimed.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn a_job_behind_a_backoff_holder_is_returned_undelivered() {
+    let f = fixture().await;
+    let mut head = job(1);
+    head.group = Some("g");
+    head.status = "PENDING";
+    head.mode = "BLOCK_ON_ERROR";
+    head.sequence = 1;
+    let mut boe = job(2);
+    boe.group = Some("g");
+    boe.mode = "BLOCK_ON_ERROR";
+    boe.sequence = 2;
+    for j in [&head, &boe] {
+        f.insert(j).await;
+    }
+    sqlx::query(
+        "UPDATE msg_dispatch_jobs SET scheduled_for = NOW() + INTERVAL '1 hour', \
+         updated_at = NOW() WHERE id = $1",
+    )
+    .bind(&head.id)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    sync_dispatch_queue(&f.pool).await;
+
+    assert_eq!(
+        f.process(&boe.id).await,
+        (
+            StatusCode::OK,
+            json!({"ack": true, "message": "group blocked"})
+        )
+    );
+    assert_eq!(f.calls(), 0);
+    let row = f.row(&boe.id).await;
+    assert_eq!((row.status.as_str(), row.attempt_count), ("PENDING", 0));
+    let claimed: Option<DateTime<Utc>> =
+        sqlx::query_scalar("SELECT claimed_at FROM msg_dispatch_queue WHERE job_id = $1")
+            .bind(&boe.id)
+            .fetch_one(&f.pool)
+            .await
+            .expect("the held job is a queue row again");
+    assert_eq!(claimed, None);
+
+    // The backoff is over: the holder is due, so the job is delivered.
+    sqlx::query(
+        "UPDATE msg_dispatch_jobs SET scheduled_for = NOW() - INTERVAL '1 second', \
+         updated_at = NOW() WHERE id = $1",
+    )
+    .bind(&head.id)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    sync_dispatch_queue(&f.pool).await;
+    f.process(&boe.id).await;
+    assert_eq!(f.calls(), 1);
+    assert_eq!(f.row(&boe.id).await.status, "COMPLETED");
+}
+
 /// An internal error answers 503 `ack:false`, which both routers retry,
 /// rather than Go's 500, which both ACK-drop (review R-57).
 #[tokio::test]
@@ -780,6 +846,7 @@ async fn the_reaper_resets_stranded_siblings() {
         .execute(&f.pool)
         .await
         .unwrap();
+    sync_dispatch_queue(&f.pool).await;
     let repo = DispatchJobRepository::new(&f.pool);
     let mut ids = reaper::sweep_once(&repo, reaper::DEFAULT_PROCESSING_LIVE_AFTER)
         .await

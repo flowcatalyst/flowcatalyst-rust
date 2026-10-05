@@ -3,11 +3,12 @@
 //! A port of Go's dispatch-job scheduler (`internal/platform/scheduler`),
 //! behaving as a drop-in for it:
 //!
-//! - [`PendingJobPoller`] claims due PENDING jobs (no lock, no transaction;
-//!   the in-memory in-flight ids are excluded from the next claim) and hands
-//!   them to a few dispatcher lanes, never waiting for a publish
-//!   (`poller.rs`). A lane publishes its jobs and marks the published ones
-//!   QUEUED in bulk (`lane.rs`). Unpublished jobs stay PENDING.
+//! - [`PendingJobPoller`] claims due jobs from `msg_dispatch_queue` (one
+//!   statement, no transaction held open; a claimed row is stamped and not
+//!   claimed again) and hands them to a few dispatcher lanes, never waiting
+//!   for a publish (`poller.rs`). A lane publishes its jobs and marks the
+//!   published ones QUEUED in bulk (`lane.rs`). The claim of a job that is not
+//!   published is released, so the job stays PENDING and is claimed again.
 //! - [`MessageGroupDispatcher`] renders each queue message (signed token,
 //!   resolved pool code, dispatch mode, message group), publishes a lane's
 //!   batch under a deadline and reports exactly the unpublished jobs
@@ -15,8 +16,9 @@
 //! - A [`DispatchPublisher`] sends to the configured queues: per-(tenant,
 //!   priority) SQS FIFO queues in production (`publisher.rs`,
 //!   `destination.rs`).
-//! - [`StaleQueuedJobPoller`] returns jobs QUEUED (or PROCESSING) for too
-//!   long to PENDING (`stale_recovery.rs`).
+//! - [`StaleQueuedJobPoller`] returns jobs QUEUED (15 minutes) or PROCESSING
+//!   (75 minutes) for too long to PENDING, and reconciles the queue table
+//!   against the jobs (`stale_recovery.rs`).
 //! - [`DispatchAuthService`] signs job ids with Go's HKDF-derived key
 //!   (`auth.rs`).
 //!
@@ -51,7 +53,7 @@ pub mod stale_recovery;
 
 pub use auth::DispatchAuthService;
 pub use dispatcher::MessageGroupDispatcher;
-pub use poller::{PausedConnectionCache, PendingJobPoller, GROUP_HOLDING_STATUS_SQL};
+pub use poller::{PausedConnectionCache, PendingJobPoller};
 pub use stale_recovery::StaleQueuedJobPoller;
 
 #[cfg(test)]
@@ -87,9 +89,14 @@ pub struct SchedulerConfig {
     pub lane_batch: usize,
     /// How long the paused-connection, pool-code and priority caches live.
     pub paused_cache_ttl: Duration,
-    /// QUEUED (and PROCESSING) longer than this goes back to PENDING.
-    pub stale_after: Duration,
-    /// How often stale recovery runs.
+    /// QUEUED longer than this goes back to PENDING (a published copy that
+    /// was never delivered; a duplicate this causes is dropped by the router
+    /// or skipped by the callback).
+    pub stale_queued_after: Duration,
+    /// PROCESSING longer than this goes back to PENDING (an outcome write that
+    /// was lost).
+    pub stale_processing_after: Duration,
+    /// How often stale recovery and the queue reconcile sweep run.
     pub stale_scan_interval: Duration,
     /// The URL stamped into every message's `mediationTarget`: the
     /// platform's `/api/dispatch/process`.
@@ -161,7 +168,8 @@ impl Default for SchedulerConfig {
             dispatchers: 10,
             lane_batch: 100,
             paused_cache_ttl: Duration::from_secs(60),
-            stale_after: Duration::from_secs(75 * 60),
+            stale_queued_after: Duration::from_secs(15 * 60),
+            stale_processing_after: Duration::from_secs(75 * 60),
             stale_scan_interval: Duration::from_secs(60),
             processing_endpoint: "http://localhost:8080/api/dispatch/process".to_string(),
         }
@@ -193,7 +201,11 @@ impl DispatchScheduler {
             config.processing_endpoint.clone(),
         ));
         let poller = PendingJobPoller::new(pool.clone(), &config, dispatcher, pool_codes);
-        let stale = StaleQueuedJobPoller::new(pool, config.stale_after);
+        let stale = StaleQueuedJobPoller::new(
+            pool,
+            config.stale_queued_after,
+            config.stale_processing_after,
+        );
         Self {
             config,
             poller,
@@ -256,7 +268,8 @@ impl DispatchScheduler {
             batch_size = self.config.batch_size,
             buffer_capacity = self.config.buffer_capacity,
             dispatchers = self.config.dispatchers,
-            stale_after_mins = self.config.stale_after.as_secs() / 60,
+            stale_queued_after_mins = self.config.stale_queued_after.as_secs() / 60,
+            stale_processing_after_mins = self.config.stale_processing_after.as_secs() / 60,
             processing_endpoint = %self.config.processing_endpoint,
             publisher = %self.publisher_description,
             "dispatch scheduler starting"
@@ -296,7 +309,8 @@ mod tests {
         assert_eq!(c.dispatchers, 10);
         assert_eq!(c.lane_batch, 100);
         assert_eq!(c.paused_cache_ttl, Duration::from_secs(60));
-        assert_eq!(c.stale_after, Duration::from_secs(75 * 60));
+        assert_eq!(c.stale_queued_after, Duration::from_secs(15 * 60));
+        assert_eq!(c.stale_processing_after, Duration::from_secs(75 * 60));
         assert_eq!(c.stale_scan_interval, Duration::from_secs(60));
     }
 

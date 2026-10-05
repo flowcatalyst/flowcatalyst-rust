@@ -1,5 +1,6 @@
-//! Fakes for the scheduler's unit tests: an in-memory job table that behaves
-//! like the claim and the QUEUED update, and a publisher that records.
+//! Fakes for the scheduler's unit tests: an in-memory queue table that behaves
+//! like the claim, its release and the QUEUED update, and a publisher that
+//! records.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
@@ -44,6 +45,8 @@ struct Row {
     status: Status,
     /// Bumped by [`FakeStore::touch`]: a status write by the callback.
     updated_at: DateTime<Utc>,
+    /// The queue row's `claimed_at`.
+    claimed_at: Option<DateTime<Utc>>,
 }
 
 /// (call number, entered, proceed): see [`FakeStore::gate_claim`].
@@ -52,19 +55,24 @@ type ClaimGate = (usize, Arc<Notify>, Arc<Semaphore>);
 /// One claim the fake saw.
 #[derive(Debug, Clone)]
 pub(crate) struct ClaimLog {
-    pub exclude: Vec<String>,
+    /// Rows claimed (and not released or marked) before this claim.
+    pub held_before: usize,
     pub returned: Vec<String>,
 }
 
-/// A job table in claim order. `claim` returns the first `limit` PENDING rows
-/// whose id is not excluded, like the real query; `mark_queued` moves only
-/// PENDING rows.
+/// A queue table in claim order. `claim` returns (and stamps) the first
+/// `limit` unclaimed PENDING rows, like the real query; `release_claims`
+/// unstamps; `mark_queued` moves only PENDING rows.
 #[derive(Default)]
 pub(crate) struct FakeStore {
     rows: Mutex<Vec<Row>>,
     pub claims: Mutex<Vec<ClaimLog>>,
     pub fail_claim: AtomicBool,
     pub fail_mark: AtomicBool,
+    /// Releasing claims fails while set.
+    pub fail_release: AtomicBool,
+    /// Every release call, in order.
+    pub releases: Mutex<Vec<Vec<String>>>,
     pub claim_calls: AtomicUsize,
     /// Chance in 1000 that a status update fails (stress test).
     pub mark_fail_per_mille: AtomicU32,
@@ -112,17 +120,45 @@ impl FakeStore {
                 job: claimed(&id, group.as_deref()),
                 status: Status::Pending,
                 updated_at: DateTime::<Utc>::UNIX_EPOCH,
+                claimed_at: None,
             });
         }
         Arc::new(store)
     }
 
     /// The callback wrote to the row (a reschedule back to PENDING, say):
-    /// its version moves on.
+    /// its version moves on and, as the lifecycle's enter does, the claim is
+    /// reset.
     pub fn touch(&self, id: &str) {
         for r in lock(&self.rows).iter_mut() {
             if r.job.id() == id {
                 r.updated_at += chrono::Duration::seconds(1);
+                r.claimed_at = None;
+            }
+        }
+    }
+
+    /// Whether the job's queue row is claimed.
+    pub fn is_claimed(&self, id: &str) -> bool {
+        lock(&self.rows)
+            .iter()
+            .find(|r| r.job.id() == id)
+            .is_some_and(|r| r.claimed_at.is_some())
+    }
+
+    /// How many PENDING rows are claimed.
+    pub fn claimed_count(&self) -> usize {
+        lock(&self.rows)
+            .iter()
+            .filter(|r| r.status == Status::Pending && r.claimed_at.is_some())
+            .count()
+    }
+
+    /// Stamp a claim by hand: a row claimed by a process that is gone.
+    pub fn claim_by_hand(&self, id: &str, at: DateTime<Utc>) {
+        for r in lock(&self.rows).iter_mut() {
+            if r.job.id() == id {
+                r.claimed_at = Some(at);
             }
         }
     }
@@ -160,11 +196,7 @@ impl FakeStore {
 
 #[async_trait]
 impl JobStore for FakeStore {
-    async fn claim(
-        &self,
-        limit: usize,
-        exclude: Vec<String>,
-    ) -> Result<Vec<ClaimedJob>, SchedulerError> {
+    async fn claim(&self, limit: usize) -> Result<Vec<ClaimedJob>, SchedulerError> {
         let call = self.claim_calls.fetch_add(1, Ordering::SeqCst) + 1;
         // A poller that claims in a hot loop never lets paused time advance,
         // so a test would hang instead of failing.
@@ -188,18 +220,28 @@ impl JobStore for FakeStore {
         if self.fail_claim.load(Ordering::SeqCst) {
             return Err(SchedulerError::ConfigError("claim failed".into()));
         }
-        let excluded: HashSet<&str> = exclude.iter().map(String::as_str).collect();
-        let returned: Vec<ClaimedJob> = lock(&self.rows)
+        let now = Utc::now();
+        let mut rows = lock(&self.rows);
+        let held_before = rows
             .iter()
-            .filter(|r| r.status == Status::Pending && !excluded.contains(r.job.id()))
-            .take(limit)
-            .map(|r| ClaimedJob {
-                updated_at: r.updated_at,
-                ..r.job.clone()
-            })
-            .collect();
+            .filter(|r| r.status == Status::Pending && r.claimed_at.is_some())
+            .count();
+        let mut returned: Vec<ClaimedJob> = Vec::new();
+        for r in rows.iter_mut() {
+            if returned.len() == limit {
+                break;
+            }
+            if r.status == Status::Pending && r.claimed_at.is_none() {
+                r.claimed_at = Some(now);
+                returned.push(ClaimedJob {
+                    updated_at: r.updated_at,
+                    ..r.job.clone()
+                });
+            }
+        }
+        drop(rows);
         lock(&self.claims).push(ClaimLog {
-            exclude,
+            held_before,
             returned: returned.iter().map(|j| j.id().to_string()).collect(),
         });
         Ok(returned)
@@ -216,6 +258,39 @@ impl JobStore for FakeStore {
         for r in lock(&self.rows).iter_mut() {
             if versions.get(r.job.id()) == Some(&r.updated_at) && r.status == Status::Pending {
                 r.status = Status::Queued;
+                r.claimed_at = None;
+                n += 1;
+            }
+        }
+        Ok(n)
+    }
+
+    async fn release_claims(&self, ids: &[String]) -> Result<u64, SchedulerError> {
+        lock(&self.releases).push(ids.to_vec());
+        if self.fail_release.load(Ordering::SeqCst) {
+            return Err(SchedulerError::ConfigError("release failed".into()));
+        }
+        let ids: HashSet<&str> = ids.iter().map(String::as_str).collect();
+        let mut n = 0;
+        for r in lock(&self.rows).iter_mut() {
+            if ids.contains(r.job.id()) && r.claimed_at.take().is_some() {
+                n += 1;
+            }
+        }
+        Ok(n)
+    }
+
+    async fn release_unheld_claims(
+        &self,
+        claimed_before: Option<DateTime<Utc>>,
+        held: &[String],
+    ) -> Result<u64, SchedulerError> {
+        let held: HashSet<&str> = held.iter().map(String::as_str).collect();
+        let mut n = 0;
+        for r in lock(&self.rows).iter_mut() {
+            let Some(at) = r.claimed_at else { continue };
+            if !held.contains(r.job.id()) && claimed_before.is_none_or(|before| at < before) {
+                r.claimed_at = None;
                 n += 1;
             }
         }

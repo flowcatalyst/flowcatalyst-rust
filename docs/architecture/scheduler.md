@@ -59,27 +59,29 @@ All three respect a shared shutdown channel; `stop()` flips it and the loops exi
 
 ## The poller
 
-`PendingJobPoller::find_pending_jobs()`:
+The poller claims from `msg_dispatch_queue`, which holds one row per PENDING job (kept exact by the dispatch-job lifecycle, in the same statement as every job write; see [../operations/postgres.md](../operations/postgres.md)). `lifecycle::claim` is one statement, no transaction held open:
 
 ```sql
-SELECT id, message_group, dispatch_pool_id, status, mode,
-       target_url, payload, sequence, created_at, updated_at,
-       queued_at, last_error, subscription_id
-FROM msg_dispatch_jobs
-WHERE status = 'PENDING'
-ORDER BY message_group ASC NULLS LAST,
-         sequence ASC,
-         created_at ASC
-LIMIT $1
+WITH c AS (
+    SELECT job_id FROM msg_dispatch_queue q
+     WHERE claimed_at IS NULL AND (scheduled_for IS NULL OR scheduled_for <= NOW())
+       AND (subscription_id IS NULL OR subscription_id <> ALL($paused))
+       AND NOT (mode = 'BLOCK_ON_ERROR' AND (<an earlier job of the group is FAILED/ERROR, or PENDING in a backoff>))
+     ORDER BY message_group NULLS LAST, sequence, job_created_at, job_id
+     LIMIT $n
+     FOR UPDATE SKIP LOCKED)
+UPDATE msg_dispatch_queue q SET claimed_at = NOW() FROM c WHERE q.job_id = c.job_id
+RETURNING ...
 ```
 
 Key points:
 
-- **No `FOR UPDATE SKIP LOCKED`.** Concurrency is bounded by leader election (one scheduler runs per cluster) and the in-process semaphore inside `MessageGroupDispatcher`. Adding the row-lock would buy nothing here and would block stale-recovery against the same partitions.
-- **Batch size** comes from `SchedulerConfig::batch_size`, default 200. Tunable via `FC_SCHEDULER_BATCH_SIZE`.
-- **Ordering matters.** Sorting by `(message_group, sequence, created_at)` is what gives the rest of the pipeline FIFO ordering within a group — the in-memory `MessageGroupQueue` relies on it.
+- **A claim stamps `claimed_at`**; a stamped row is not claimed again. A job that is published is marked QUEUED (its queue row is deleted by the same statement). A job that is NOT published (a failed publish, a drop as poisoned, a withhold by the poller's doomed check, a failed mark) has its claim **released**, so it is claimed again in order. A process that dies between claim and publish leaves claims behind: the new leader releases every claim it does not hold when it starts, and the leader releases claims older than 5 minutes that it does not hold every minute.
+- **Batch size** comes from `SchedulerConfig::batch_size`, default 500. Tunable via `FC_SCHEDULER_BATCH_SIZE`.
+- **Ordering matters.** The claim's total order `(message_group NULLS LAST, sequence, created_at, id)` is what gives the rest of the pipeline FIFO ordering within a group; it is the order of `idx_dispatch_queue_order`, so the claim walks the index and stops early. The rows come back unordered from `RETURNING` and are sorted in memory.
+- **The hold-back is inside the claim** (Rust keeps it there; Go and Java run a second query after the claim): FAILED / ERROR holders are read from `msg_dispatch_jobs` through `idx_dispatch_jobs_status_group`, backoff holders from the queue table.
 
-After the SQL fetch, two filters apply:
+Two filters apply inside the claim:
 
 ### Paused-connection filter
 
@@ -92,7 +94,7 @@ JOIN msg_connections   c ON c.id = s.connection_id
 WHERE c.status = 'PAUSED'
 ```
 
-Jobs whose `subscription_id` appears in the set are dropped from the batch and stay `PENDING`. They'll be picked up automatically once the connection is un-paused — no manual requeue needed.
+Jobs whose `subscription_id` appears in the set are not claimed and stay `PENDING`. They'll be picked up automatically once the connection is un-paused — no manual requeue needed.
 
 Pause is the way operators stop traffic to a misbehaving endpoint without losing work. Compare to circuit breakers in the router: pause is operator-initiated and persistent; CBs are automatic and transient.
 
@@ -189,10 +191,10 @@ Important: `mediation_target` is **the platform's dispatch-process endpoint**, n
 ```sql
 UPDATE msg_dispatch_jobs
 SET status = 'PENDING', queued_at = NULL, updated_at = NOW()
-WHERE status = 'QUEUED' AND queued_at < $1
+WHERE status = 'QUEUED' AND updated_at < $1
 ```
 
-Threshold = `now() - stale_threshold` (default 15 min). Runs every 60 s.
+Threshold = `now() - stale_queued_after` (15 min; PROCESSING jobs use 75 min). Runs every 60 s, together with the queue reconcile sweep.
 
 Why this exists: the router could die *after* the scheduler marks `QUEUED` but *before* it actually processes the SQS message — or SQS could lose the message (rare, but possible with FIFO content-based dedup misuse), or the router could be stuck waiting on a wedged downstream. In all those cases, the row sits in `QUEUED` forever without recovery.
 
@@ -256,7 +258,7 @@ Read by `bin/fc-server/src/main.rs::load_scheduler_config`:
 | `FC_SCHEDULER_DEFAULT_POOL_CODE` | — | `DISPATCH-POOL` | Pool used when `dispatch_pool_id` is null |
 | `FC_SCHEDULER_PROCESSING_ENDPOINT` | `DISPATCH_SCHEDULER_PROCESSING_ENDPOINT` | `http://localhost:8080/api/dispatch/process` | Where the router calls back |
 
-Batch size (100) and the stale-job threshold (15 minutes) are fixed.
+The lane batch (100), the stale thresholds (QUEUED 15 minutes, PROCESSING 75 minutes), the stale-claim release (5 minutes) and the reconcile sweep are fixed; see [../operations/configuration.md](../operations/configuration.md).
 
 Plus the cluster-level standby vars (`FC_STANDBY_ENABLED`, `FC_STANDBY_REDIS_URL`, `FC_STANDBY_LOCK_KEY`) — see [high-availability.md](../operations/high-availability.md).
 

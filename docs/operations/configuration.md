@@ -240,7 +240,7 @@ Router architecture: [../architecture/message-router.md](../architecture/message
 | `FC_SCHEDULER_DEFAULT_POOL_CODE` | — | `DISPATCH-POOL` | Pool used when `dispatch_pool_id` is null |
 | `FC_SCHEDULER_PROCESSING_ENDPOINT` | `DISPATCH_SCHEDULER_PROCESSING_ENDPOINT` | `http://localhost:8080/api/dispatch/process` | Where the router calls back |
 
-The poller claims jobs and hands them to dispatcher lanes that publish and mark them QUEUED in bulk; it never waits for a publish and blocks only when `FC_SCHEDULER_BUFFER_CAPACITY` jobs are already claimed and unfinished. A message group always uses one lane. A value that is unset, empty, unparseable or zero keeps the default.
+The poller claims jobs from the dispatch queue table (`msg_dispatch_queue`, one row per PENDING job) and hands them to dispatcher lanes that publish and mark them QUEUED in bulk; it never waits for a publish and blocks only when `FC_SCHEDULER_BUFFER_CAPACITY` jobs are already claimed and unfinished. A message group always uses one lane. A value that is unset, empty, unparseable or zero keeps the default.
 
 | Variable | Alias | Default | Description |
 |---|---|---|---|
@@ -249,7 +249,17 @@ The poller claims jobs and hands them to dispatcher lanes that publish and mark 
 | `FC_SCHEDULER_BATCH_SIZE` | `FLOWCATALYST_SCHEDULER_BATCH_SIZE` | `500` | Most rows one claim asks for |
 | `FC_SCHEDULER_DB_MAX_CONNECTIONS` | — | dispatchers + 2 (`12`) | Size of the scheduler's own database pool (one connection per lane for its status update, one for the claim, one spare). Opened only when the scheduler is enabled; the other `FC_DB_*` pool settings apply to it too. The API keeps `FC_DB_MAX_CONNECTIONS` to itself |
 
-The lane batch (100) and the stale-job threshold (75 minutes) are fixed.
+The lane batch (100) and the thresholds below are fixed:
+
+| What | Value |
+|---|---|
+| A job QUEUED longer than this goes back to PENDING (stale recovery) | 15 minutes |
+| A job PROCESSING longer than this goes back to PENDING | 75 minutes |
+| A claim older than this that the leader does not hold in memory is released (every 60 s, leader only; also logged at WARN) | 5 minutes |
+| Queue reconcile sweep (leader only, every 60 s): inserts missing queue rows of PENDING jobs not updated for 60 s, deletes / refreshes rows whose job is missing, not PENDING or whose version differs (unclaimed, or claimed over 5 minutes ago); at most 5,000 rows of each kind per pass; any repair is logged at WARN | 60 s / 5 minutes / 5,000 |
+| Backlog gauge sampled by the leader | every 15 s |
+
+When an instance becomes leader it releases every claim it does not hold (at process start, all of them): a previous leader that died between claiming and publishing leaves claimed rows behind.
 
 Scheduler architecture: [../architecture/scheduler.md](../architecture/scheduler.md).
 

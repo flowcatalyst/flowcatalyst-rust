@@ -6,7 +6,6 @@ use crate::dispatch_job::entity::{
 use crate::dispatch_job::entity::{parse_dispatch_mode, parse_dispatch_status};
 use crate::dispatch_job::entity::{DispatchJob, DispatchJobRead, DispatchStatus};
 use crate::dispatch_job::lifecycle;
-use crate::scheduler;
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::api_common::DecodedCursor;
 use fc_platform_core::shared::enum_str::{corrupt_value, decode};
@@ -415,29 +414,26 @@ impl DispatchJobRepository {
         }
     }
 
+    /// The due PENDING jobs, read through the queue table (one row per
+    /// PENDING job), not by scanning the jobs table for the status.
     pub async fn find_pending_for_dispatch(&self, limit: i64) -> Result<Vec<DispatchJob>> {
         let now = Utc::now();
-        if limit > 0 {
-            let rows = sqlx::query_as::<_, DispatchJobRow>(
-                "SELECT * FROM msg_dispatch_jobs \
-                 WHERE status = 'PENDING' AND (scheduled_for IS NULL OR scheduled_for <= $1) \
-                 LIMIT $2",
-            )
-            .bind(now)
-            .bind(limit)
-            .fetch_all(&self.pool)
-            .await?;
-            rows.into_iter().map(DispatchJob::try_from).collect()
+        let sql = "SELECT j.* FROM msg_dispatch_queue q \
+                   JOIN msg_dispatch_jobs j ON j.id = q.job_id AND j.created_at = q.job_created_at \
+                   WHERE (q.scheduled_for IS NULL OR q.scheduled_for <= $1)";
+        let rows = if limit > 0 {
+            sqlx::query_as::<_, DispatchJobRow>(&format!("{sql} LIMIT $2"))
+                .bind(now)
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await?
         } else {
-            let rows = sqlx::query_as::<_, DispatchJobRow>(
-                "SELECT * FROM msg_dispatch_jobs \
-                 WHERE status = 'PENDING' AND (scheduled_for IS NULL OR scheduled_for <= $1)",
-            )
-            .bind(now)
-            .fetch_all(&self.pool)
-            .await?;
-            rows.into_iter().map(DispatchJob::try_from).collect()
-        }
+            sqlx::query_as::<_, DispatchJobRow>(sql)
+                .bind(now)
+                .fetch_all(&self.pool)
+                .await?
+        };
+        rows.into_iter().map(DispatchJob::try_from).collect()
     }
 
     pub async fn find_stale_in_progress(
@@ -1247,7 +1243,9 @@ impl DispatchJobRepository {
     /// Whether an EARLIER job of `group` is holding it (failed, or in a
     /// retry backoff) — the delivery-time half of the scheduler's hold (Go
     /// `GroupHeldBefore`). Positional, so the holder itself is never held
-    /// by its own presence.
+    /// by its own presence. FAILED/ERROR holders are read from the jobs
+    /// table (`idx_dispatch_jobs_status_group`), backoff holders from the
+    /// queue table.
     pub async fn group_held_before(
         &self,
         group: &str,
@@ -1255,20 +1253,7 @@ impl DispatchJobRepository {
         created_at: DateTime<Utc>,
         id: &str,
     ) -> Result<bool> {
-        let sql = format!(
-            "SELECT EXISTS (SELECT 1 FROM msg_dispatch_jobs \
-              WHERE message_group = $1 AND ({}) \
-                AND (sequence, created_at, id) < ($2, $3, $4))",
-            scheduler::GROUP_HOLDING_STATUS_SQL
-        );
-        let (held,): (bool,) = sqlx::query_as(&sql)
-            .bind(group)
-            .bind(sequence)
-            .bind(created_at)
-            .bind(id)
-            .fetch_one(&self.pool)
-            .await?;
-        Ok(held)
+        Ok(lifecycle::group_held_before(&self.pool, group, sequence, created_at, id).await?)
     }
 
     /// The router's settled-message hook: reset `ids` still QUEUED or

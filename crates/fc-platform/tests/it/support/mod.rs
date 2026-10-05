@@ -19,6 +19,17 @@ pub mod sources;
 
 pub use db::{start_db, TestDb};
 
+/// Test fixtures write `msg_dispatch_jobs` by hand (a status, a version, a
+/// back-dated `updated_at`) in ways the lifecycle would not. The queue table
+/// must stay exact (one row per PENDING job, mirroring it), so after such a
+/// write call this: it is the production reconcile pass with no age guard.
+pub async fn sync_dispatch_queue(pool: &sqlx::PgPool) {
+    use fc_platform::dispatch_job::lifecycle::{reconcile_queue, ReconcileGuards};
+    reconcile_queue(pool, ReconcileGuards::immediate())
+        .await
+        .expect("sync the dispatch queue to the fixture");
+}
+
 use fc_platform_core::shared::id::ClientId;
 use std::sync::Arc;
 

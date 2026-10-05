@@ -9,19 +9,25 @@
 //!    +----------- released --------------+
 //! ```
 //!
-//! The poller claims due PENDING jobs in the total order
+//! The poller claims due jobs from `msg_dispatch_queue` (one row per PENDING
+//! job, kept exact by the lifecycle) in the total order
 //! `(message_group NULLS LAST, sequence, created_at, id)` and hands them to
 //! the lanes; it never waits for a publish. It blocks only when
 //! `buffer_capacity` jobs are already claimed and not yet finished. A lane
 //! publishes its jobs through the [`MessageGroupDispatcher`] and marks the
 //! published ids QUEUED in one statement (see [`super::lane`]).
 //!
-//! The claim takes **no row lock and no transaction**. What keeps a claimed
-//! job out of the next claim is the poller's in-memory in-flight set,
-//! excluded in the query (`id <> ALL($3)`), not a status or a column: until
-//! the lane's update runs the row is still PENDING. Only the leader claims,
-//! so nothing else competes for the rows. A crash needs no recovery: whatever
-//! was not yet marked is still PENDING and the next leader publishes it.
+//! The claim is one statement with no transaction held open
+//! ([`lifecycle::claim`]): it stamps `claimed_at` on the rows it returns, and
+//! a stamped row is not claimed again. It never reads `msg_dispatch_jobs`
+//! except to look for a FAILED / ERROR holder of a candidate's group. A job
+//! that is published is marked QUEUED (the lifecycle deletes its queue row in
+//! the same statement). A job that is NOT published (a failed publish, a drop
+//! as poisoned, a withhold) has its claim RELEASED so that it is claimed again
+//! in order; see [`super::lane`] for the ordering rule, which is unchanged.
+//! A crash needs the stale-claim release: when an instance becomes leader it
+//! releases every claim it does not hold in memory, and the leader releases
+//! claims older than five minutes that it does not hold, every minute.
 //!
 //! The price is that a job can be published twice (a lane that published and
 //! then failed to mark; a claim that raced a failure). That is accepted: the
@@ -29,23 +35,24 @@
 //! `/api/dispatch/process` claims a job before delivering it, so a copy that
 //! finds the job taken or finished never delivers it.
 //!
-//! Held and paused jobs are excluded **inside the claim query**, not after
-//! it (a deliberate improvement on Go, which filters after the `LIMIT`: a
+//! Held and paused jobs are excluded **inside the claim statement** (a
+//! deliberate improvement on Go and Java, which filter after the `LIMIT`: a
 //! full batch of held or paused rows at the head of the order would stall
 //! every other group). Excluded:
 //! - jobs whose subscription's connection is PAUSED (cached set, refreshed
 //!   every `paused_cache_ttl`);
 //! - BLOCK_ON_ERROR jobs with an EARLIER job in their group that is holding
-//!   it: FAILED/ERROR, or PENDING in a retry backoff
-//!   ([`GROUP_HOLDING_STATUS_SQL`]). The comparison is positional, so the
-//!   holder itself dispatches once its backoff expires. IMMEDIATE and
-//!   NEXT_ON_ERROR (and, per X-01, an absent or unknown mode) never wait.
+//!   it: FAILED/ERROR (read from `msg_dispatch_jobs` through
+//!   `idx_dispatch_jobs_status_group`), or PENDING in a retry backoff (read
+//!   from the queue table). The comparison is positional, so the holder
+//!   itself dispatches once its backoff expires. IMMEDIATE and NEXT_ON_ERROR
+//!   (and, per X-01, an absent or unknown mode) never wait.
 //!
-//! A NULL group never holds (`=` never matches NULL); an ungrouped job is
-//! held only by a row whose group is literally `default` — Go's quirk,
-//! kept.
+//! A NULL group never holds; an ungrouped job is held only by a row whose
+//! group is literally `default`: Go's quirk, kept.
 
 use crate::dispatch_job::lifecycle;
+use std::collections::HashSet;
 use std::pin::pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -60,52 +67,12 @@ use tokio::task::JoinSet;
 use tokio::time;
 use tokio_util::sync::CancellationToken;
 use tracing::field::Empty;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 use super::destination::PoolCodeResolver;
 use super::dispatcher::{DispatchJobToken, MessageGroupDispatcher};
 use super::lane::{ClaimedJob, Lane, LaneJob, Pipeline};
 use super::{SchedulerConfig, SchedulerError};
-
-/// A job that is holding its message group (Go `GroupHoldingStatusSQL`):
-/// terminally failed, or waiting out a retry backoff. QUEUED and PROCESSING
-/// are the normal flow and hold nothing. Unqualified column names; callers
-/// qualify by aliasing the table.
-pub const GROUP_HOLDING_STATUS_SQL: &str =
-    "status IN ('FAILED', 'ERROR') OR (status = 'PENDING' AND scheduled_for IS NOT NULL AND scheduled_for > NOW())";
-
-/// The claim query: due PENDING jobs, minus paused subscriptions, held
-/// BLOCK_ON_ERROR successors and the ids already in flight, totally ordered.
-/// One statement, no lock: see the module docs.
-const CLAIM_SQL: &str = "\
-SELECT j.id, j.subscription_id, j.message_group, j.mode, j.dispatch_pool_id, j.client_id, \
-       j.created_at, j.updated_at, j.queue \
-  FROM msg_dispatch_jobs j \
- WHERE j.status = 'PENDING' \
-   AND (j.scheduled_for IS NULL OR j.scheduled_for <= NOW()) \
-   AND (j.subscription_id IS NULL OR NOT (j.subscription_id = ANY($2::text[]))) \
-   AND j.id <> ALL($3::text[]) \
-   AND NOT (j.mode = 'BLOCK_ON_ERROR' AND EXISTS ( \
-        SELECT 1 FROM msg_dispatch_jobs h \
-         WHERE h.message_group = COALESCE(j.message_group, 'default') \
-           AND (h.status IN ('FAILED', 'ERROR') \
-                OR (h.status = 'PENDING' AND h.scheduled_for IS NOT NULL AND h.scheduled_for > NOW())) \
-           AND (h.sequence, h.created_at, h.id) < (j.sequence, j.created_at, j.id))) \
- ORDER BY j.message_group ASC NULLS LAST, j.sequence ASC, j.created_at ASC, j.id ASC \
- LIMIT $1";
-
-#[derive(Debug, sqlx::FromRow)]
-struct ClaimRow {
-    id: String,
-    subscription_id: Option<String>,
-    message_group: Option<String>,
-    mode: String,
-    dispatch_pool_id: Option<String>,
-    client_id: Option<String>,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
-    queue: Option<String>,
-}
 
 /// The subscription ids whose connection is PAUSED, cached.
 pub struct PausedConnectionCache {
@@ -155,17 +122,29 @@ pub(crate) type MarkKey = (String, DateTime<Utc>, DateTime<Utc>);
 /// The database side of the pipeline, so the loop can be tested without one.
 #[async_trait]
 pub(crate) trait JobStore: Send + Sync {
-    /// Up to `limit` due PENDING jobs in claim order, minus paused
-    /// subscriptions, held successors and the ids in `exclude`.
-    async fn claim(
-        &self,
-        limit: usize,
-        exclude: Vec<String>,
-    ) -> Result<Vec<ClaimedJob>, SchedulerError>;
+    /// Up to `limit` due, unclaimed jobs in claim order, minus paused
+    /// subscriptions and held successors, now claimed.
+    async fn claim(&self, limit: usize) -> Result<Vec<ClaimedJob>, SchedulerError>;
 
     /// Mark the given jobs QUEUED where they are still PENDING; returns how
     /// many rows changed.
     async fn mark_queued(&self, jobs: &[MarkKey]) -> Result<u64, SchedulerError>;
+
+    /// Give the claims of `ids` back, so the jobs are claimed again.
+    async fn release_claims(&self, ids: &[String]) -> Result<u64, SchedulerError>;
+
+    /// Release the claims this process does not hold (`held` are the ids it
+    /// does); only those made before `claimed_before` when given.
+    async fn release_unheld_claims(
+        &self,
+        claimed_before: Option<DateTime<Utc>>,
+        held: &[String],
+    ) -> Result<u64, SchedulerError>;
+
+    /// Unclaimed due rows in the queue and the age of the oldest.
+    async fn backlog(&self) -> Result<Option<lifecycle::QueueBacklog>, SchedulerError> {
+        Ok(None)
+    }
 }
 
 struct PgJobStore {
@@ -176,18 +155,9 @@ struct PgJobStore {
 
 #[async_trait]
 impl JobStore for PgJobStore {
-    async fn claim(
-        &self,
-        limit: usize,
-        exclude: Vec<String>,
-    ) -> Result<Vec<ClaimedJob>, SchedulerError> {
+    async fn claim(&self, limit: usize) -> Result<Vec<ClaimedJob>, SchedulerError> {
         let paused = self.paused.paused_subscription_ids().await?;
-        let rows: Vec<ClaimRow> = sqlx::query_as(CLAIM_SQL)
-            .bind(limit as i64)
-            .bind(&paused)
-            .bind(&exclude)
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = lifecycle::claim(&self.pool, limit as i64, &paused).await?;
         let mut jobs = Vec::with_capacity(rows.len());
         for c in rows {
             let pool_code = self
@@ -195,10 +165,10 @@ impl JobStore for PgJobStore {
                 .resolve(c.dispatch_pool_id.as_deref(), c.client_id.as_deref())
                 .await;
             jobs.push(ClaimedJob {
-                created_at: c.created_at,
-                updated_at: c.updated_at,
+                created_at: c.job_created_at,
+                updated_at: c.version,
                 token: DispatchJobToken {
-                    job_id: c.id,
+                    job_id: c.job_id,
                     message_group: c.message_group,
                     mode: c.mode,
                     pool_code,
@@ -222,6 +192,22 @@ impl JobStore for PgJobStore {
         let done = lifecycle::mark_queued(&self.pool, jobs).await?;
         Ok(done.len() as u64)
     }
+
+    async fn release_claims(&self, ids: &[String]) -> Result<u64, SchedulerError> {
+        Ok(lifecycle::release_claims(&self.pool, ids).await?)
+    }
+
+    async fn release_unheld_claims(
+        &self,
+        claimed_before: Option<DateTime<Utc>>,
+        held: &[String],
+    ) -> Result<u64, SchedulerError> {
+        Ok(lifecycle::release_unheld_claims(&self.pool, claimed_before, held).await?)
+    }
+
+    async fn backlog(&self) -> Result<Option<lifecycle::QueueBacklog>, SchedulerError> {
+        Ok(Some(lifecycle::queue_backlog(&self.pool).await?))
+    }
 }
 
 /// Registers the scheduler's metric descriptions (idempotent).
@@ -233,7 +219,7 @@ fn describe_metrics() {
     );
     describe_counter!(
         "scheduler.jobs.claimed_total",
-        "Jobs claimed from PENDING by the poller."
+        "Jobs claimed from the dispatch queue by the poller."
     );
     describe_counter!(
         "scheduler.poll.full_batches_total",
@@ -282,6 +268,31 @@ fn describe_metrics() {
     describe_counter!(
         "scheduler.queued_mark.skipped_total",
         "Published jobs the QUEUED update left alone because they had already moved past PENDING."
+    );
+    describe_counter!(
+        "scheduler.claims.released_total",
+        "Queue claims given back because the job was not published (failed publish, dropped as poisoned, withheld, or not marked QUEUED), so it is claimed again in order."
+    );
+    describe_counter!(
+        "scheduler.claims.released_at_start_total",
+        "Claims released when this instance became leader (left by a previous leader that died between claim and publish)."
+    );
+    describe_counter!(
+        "scheduler.claims.stale_released_total",
+        "Claims older than 5 minutes that this process did not hold, released by the leader's sweep. Non-zero is logged at WARN."
+    );
+    describe_counter!(
+        "scheduler.jobs.withheld_total",
+        "Claimed jobs the poller did not submit (behind a doomed job, or already in flight); their claims are released."
+    );
+    describe_gauge!(
+        "scheduler.queue.backlog",
+        "Unclaimed, due rows in msg_dispatch_queue (the dispatch backlog), sampled by the leader every 15 s."
+    );
+    describe_gauge!(
+        "scheduler.queue.oldest_age_seconds",
+        Unit::Seconds,
+        "Age of the oldest unclaimed, due row in msg_dispatch_queue (0 when empty), sampled with the backlog."
     );
     describe_gauge!(
         "scheduler.poll.last_success_timestamp_seconds",
@@ -368,7 +379,9 @@ struct ClaimStage {
 impl ClaimStage {
     /// Claim up to `want` jobs, holding `want` permits. The jobs come back
     /// stamped and already in the in-flight set; the permits for the rest
-    /// are released. A failed claim releases them all.
+    /// are released. A failed claim releases them all. A job the claim took
+    /// but this pass does not submit (behind a doomed job, or already in
+    /// flight) has its claim released again.
     async fn claim(&self, want: usize) -> Result<(Vec<LaneJob>, usize), SchedulerError> {
         // The generation BEFORE the snapshot: the ordering rule in `lane`
         // depends on it.
@@ -376,7 +389,7 @@ impl ClaimStage {
         self.pipeline.race_point();
         let snapshot = self.pipeline.snapshot_in_flight();
         let started = Instant::now();
-        let claimed = self.store.claim(want, snapshot.ids.clone()).await;
+        let claimed = self.store.claim(want).await;
         metrics::histogram!("scheduler.claim.duration_seconds").record(started.elapsed());
         let rows = match claimed {
             Ok(rows) => rows,
@@ -387,23 +400,93 @@ impl ClaimStage {
         };
         let claimed = rows.len();
         let mut jobs = Vec::with_capacity(claimed);
+        // Jobs taken but not submitted, and the groups they belong to: a
+        // later job of such a group would overtake them.
+        let mut withheld: Vec<String> = Vec::new();
+        let mut withheld_groups: HashSet<String> = HashSet::new();
         for job in rows {
+            let group = job.group().map(str::to_string);
             // The claim skipped a job of this group that is doomed (it will be
-            // dropped): this one is behind it. Leave it PENDING; it is claimed
-            // again, in order, once the doomed job has gone.
-            if job
-                .group()
-                .is_some_and(|g| self.pipeline.skipped_a_doomed_job(&snapshot, g))
-            {
+            // dropped): this one is behind it. Its claim is given back; it is
+            // claimed again, in order, once the doomed job has gone.
+            let behind = group.as_deref().is_some_and(|g| {
+                withheld_groups.contains(g) || self.pipeline.skipped_a_doomed_job(&snapshot, g)
+            });
+            // Already in flight: this claim ran between a lane's release of
+            // the job and the lane removing it. Not submitted twice, and
+            // nothing behind it goes first.
+            if behind || !self.pipeline.add_in_flight(&job, generation) {
+                withheld.push(job.id().to_string());
+                withheld_groups.extend(group);
                 continue;
             }
-            // Cannot happen (the claim excluded the set); never submit twice.
-            if self.pipeline.add_in_flight(&job, generation) {
-                jobs.push(LaneJob { job, generation });
-            }
+            jobs.push(LaneJob { job, generation });
+        }
+        if !withheld.is_empty() {
+            metrics::counter!("scheduler.jobs.withheld_total").increment(withheld.len() as u64);
+            self.release_unsubmitted(&withheld).await;
         }
         self.pipeline.release(want.saturating_sub(jobs.len()));
         Ok((jobs, claimed))
+    }
+
+    /// Give back the claims of jobs that were claimed but not submitted to a
+    /// lane. A failure is retried (see [`Self::retry_releases`]); until then
+    /// the jobs are not claimable, which only delays them.
+    async fn release_unsubmitted(&self, ids: &[String]) {
+        if ids.is_empty() {
+            return;
+        }
+        match self.store.release_claims(ids).await {
+            Ok(n) => metrics::counter!("scheduler.claims.released_total").increment(n),
+            Err(e) => {
+                warn!(jobs = ids.len(), error = %e, "releasing unsubmitted dispatch claims failed; retrying");
+                self.pipeline
+                    .defer_release(ids.iter().map(|id| (id.clone(), false)));
+            }
+        }
+    }
+
+    /// Retry the claims whose release failed (a lane's, or this stage's), once
+    /// per pass before the next claim. A lane's job leaves the in-flight set
+    /// only when its claim is released.
+    async fn retry_releases(&self) {
+        let pending = self.pipeline.take_unreleased();
+        if pending.is_empty() {
+            return;
+        }
+        let ids: Vec<String> = pending.iter().map(|(id, _)| id.clone()).collect();
+        match self.store.release_claims(&ids).await {
+            Ok(n) => {
+                metrics::counter!("scheduler.claims.released_total").increment(n);
+                self.pipeline.remove_in_flight(
+                    pending
+                        .iter()
+                        .filter(|(_, owned)| *owned)
+                        .map(|(id, _)| id.as_str()),
+                );
+            }
+            Err(e) => {
+                warn!(jobs = ids.len(), error = %e, "retrying the release of dispatch claims failed");
+                self.pipeline.defer_release(pending);
+            }
+        }
+    }
+
+    /// When this instance starts polling as leader: release every claim it
+    /// does not hold (at process start, all of them: a previous leader's
+    /// unpublished claims).
+    async fn release_claims_at_start(&self) -> Result<(), SchedulerError> {
+        let held = self.pipeline.held_ids();
+        let released = self.store.release_unheld_claims(None, &held).await?;
+        metrics::counter!("scheduler.claims.released_at_start_total").increment(released);
+        if released > 0 {
+            info!(
+                released,
+                "released dispatch claims left by a previous leader"
+            );
+        }
+        Ok(())
     }
 }
 
@@ -444,13 +527,17 @@ impl Claimer {
         for job in jobs {
             let lane = self.lane_of(&job.job);
             // Capacity equals the permit count, so this never waits; a
-            // closed lane (shutdown) leaves the job PENDING.
+            // closed lane (shutdown) leaves the job unpublished: its claim is
+            // given back.
             match self.lanes[lane].try_send(job) {
                 Ok(()) => submitted += 1,
                 Err(e) => {
                     let job = e.into_inner();
                     self.stage.pipeline.remove_in_flight([job.job.id()]);
                     self.stage.pipeline.release(1);
+                    self.stage
+                        .release_unsubmitted(&[job.job.id().to_string()])
+                        .await;
                 }
             }
         }
@@ -488,11 +575,20 @@ pub(crate) struct PollCtl {
 /// One poll pass, so [`drive`] can be tested without a database.
 pub(crate) trait PollSource {
     async fn poll(&self, ctl: &PollCtl) -> Result<PassReport, SchedulerError>;
+
+    /// This instance has become leader (and polls for the first time since):
+    /// release the claims it does not hold. A failure is retried before the
+    /// first pass.
+    async fn on_start_leading(&self) -> Result<(), SchedulerError> {
+        Ok(())
+    }
 }
 
 impl PollSource for Claimer {
-    /// Block for permits (cancellable), re-check leadership, claim, route.
+    /// Retry pending releases, block for permits (cancellable), re-check
+    /// leadership, claim, route.
     async fn poll(&self, ctl: &PollCtl) -> Result<PassReport, SchedulerError> {
+        self.stage.retry_releases().await;
         let pipeline = &self.stage.pipeline;
         let want = tokio::select! {
             biased;
@@ -506,26 +602,45 @@ impl PollSource for Claimer {
         }
         self.claim_pass(want).await
     }
+
+    async fn on_start_leading(&self) -> Result<(), SchedulerError> {
+        self.stage.release_claims_at_start().await
+    }
 }
 
 /// The poller loop: a pass, then a wait only when [`PassReport::should_pause`]
 /// says so (a backlog drains at the speed of the lanes, not at
 /// `batch / interval`). Leadership and cancellation are re-checked before
-/// every pass; a non-leader just waits.
+/// every pass; a non-leader just waits. Each time the instance becomes
+/// leader it first releases the claims it does not hold.
 pub(crate) async fn drive<S: PollSource>(source: &S, interval: Duration, ctl: &PollCtl) {
+    let mut leading = false;
     loop {
         if ctl.cancel.is_cancelled() {
             break;
         }
         let pause = if (ctl.is_leader)() {
-            match source.poll(ctl).await {
-                Ok(report) => report.should_pause(),
-                Err(e) => {
-                    warn!(error = %e, "dispatch poll error");
-                    true
+            if !leading {
+                match source.on_start_leading().await {
+                    Ok(()) => leading = true,
+                    Err(e) => {
+                        warn!(error = %e, "releasing the dispatch claims left by a previous leader failed")
+                    }
                 }
             }
+            if leading {
+                match source.poll(ctl).await {
+                    Ok(report) => report.should_pause(),
+                    Err(e) => {
+                        warn!(error = %e, "dispatch poll error");
+                        true
+                    }
+                }
+            } else {
+                true
+            }
         } else {
+            leading = false;
             true
         };
         if pause {
@@ -533,6 +648,72 @@ pub(crate) async fn drive<S: PollSource>(source: &S, interval: Duration, ctl: &P
                 () = ctl.cancel.cancelled() => break,
                 () = time::sleep(interval) => {}
             }
+        }
+    }
+}
+
+/// How often the leader samples the queue backlog.
+const BACKLOG_EVERY: Duration = Duration::from_secs(15);
+/// How often the leader looks for claims nobody holds.
+const STALE_CLAIMS_EVERY: Duration = Duration::from_secs(60);
+/// A claim older than this that this process does not hold is released.
+const STALE_CLAIM_AFTER: Duration = Duration::from_secs(5 * 60);
+
+/// The leader's housekeeping, off the claim path: the backlog gauge every 15
+/// s, and every 60 s the release of claims older than five minutes that this
+/// process does not hold (the process that made them died between the claim
+/// and the publish, or a lane died holding them). Counted; WARN when any.
+async fn maintain(
+    store: Arc<dyn JobStore>,
+    pipeline: Arc<Pipeline>,
+    is_leader: Arc<dyn Fn() -> bool + Send + Sync>,
+    cancel: CancellationToken,
+) {
+    let mut backlog = time::interval_at(time::Instant::now() + BACKLOG_EVERY, BACKLOG_EVERY);
+    let mut stale = time::interval_at(
+        time::Instant::now() + STALE_CLAIMS_EVERY,
+        STALE_CLAIMS_EVERY,
+    );
+    backlog.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
+    stale.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
+    loop {
+        let sample_backlog = tokio::select! {
+            () = cancel.cancelled() => break,
+            _ = backlog.tick() => true,
+            _ = stale.tick() => false,
+        };
+        if !is_leader() {
+            continue;
+        }
+        if sample_backlog {
+            match store.backlog().await {
+                Ok(Some(b)) => {
+                    metrics::gauge!("scheduler.queue.backlog").set(b.depth as f64);
+                    let age = b.oldest_enqueued_at.map_or(0.0, |t| {
+                        (Utc::now() - t).num_milliseconds().max(0) as f64 / 1e3
+                    });
+                    metrics::gauge!("scheduler.queue.oldest_age_seconds").set(age);
+                }
+                Ok(None) => {}
+                Err(e) => warn!(error = %e, "sampling the dispatch queue backlog failed"),
+            }
+            continue;
+        }
+        let cutoff = Utc::now()
+            - chrono::Duration::from_std(STALE_CLAIM_AFTER).unwrap_or(chrono::Duration::minutes(5));
+        match store
+            .release_unheld_claims(Some(cutoff), &pipeline.held_ids())
+            .await
+        {
+            Ok(0) => {}
+            Ok(n) => {
+                metrics::counter!("scheduler.claims.stale_released_total").increment(n);
+                warn!(
+                    released = n,
+                    "released stale dispatch claims (older than 5 minutes, not held by this process)"
+                );
+            }
+            Err(e) => warn!(error = %e, "releasing stale dispatch claims failed"),
         }
     }
 }
@@ -573,15 +754,18 @@ impl PendingJobPoller {
 
     /// One pass, synchronously: claim, publish through one lane, mark the
     /// published jobs QUEUED, return. For tests and tooling; the scheduler
-    /// itself runs [`Self::run`]. Each call starts with an empty in-flight
-    /// set, so it sees the database as it is.
+    /// itself runs [`Self::run`]. Each call starts as a new process would:
+    /// an empty in-flight set, and every claim left in the queue released.
     pub async fn poll_once(&self) -> Result<PollReport, SchedulerError> {
         let pipeline = Arc::new(Pipeline::new(self.settings.buffer_capacity));
-        let want = pipeline.acquire_up_to(self.settings.batch_size).await;
         let stage = ClaimStage {
             store: self.store.clone(),
             pipeline: pipeline.clone(),
         };
+        // A fresh process: whatever is still claimed was claimed by one that
+        // is gone.
+        stage.release_claims_at_start().await?;
+        let want = pipeline.acquire_up_to(self.settings.batch_size).await;
         let (jobs, claimed) = stage.claim(want).await.inspect_err(|_| {
             metrics::counter!("scheduler.poll.errors_total").increment(1);
         })?;
@@ -645,6 +829,12 @@ impl PendingJobPoller {
             next_ungrouped: AtomicUsize::new(0),
             batch_size: self.settings.batch_size,
         };
+        let maintenance = tokio::spawn(maintain(
+            self.store.clone(),
+            claimer.stage.pipeline.clone(),
+            is_leader.clone(),
+            cancel.clone(),
+        ));
         let ctl = PollCtl {
             cancel: cancel.clone(),
             is_leader,
@@ -670,6 +860,7 @@ impl PendingJobPoller {
         }
         // No more submissions; the lanes finish what they hold and exit.
         drop(claimer);
+        maintenance.abort();
         while let Some(res) = lane_tasks.join_next().await {
             if let Err(e) = res {
                 error!(error = %e, "a dispatch lane failed while stopping");
@@ -697,34 +888,6 @@ mod tests {
     };
 
     const TICK: Duration = Duration::from_secs(1);
-
-    #[test]
-    fn claim_sql_takes_no_lock_and_orders_totally() {
-        assert!(!CLAIM_SQL.contains("FOR UPDATE"));
-        assert!(!CLAIM_SQL.contains("SKIP LOCKED"));
-        assert!(CLAIM_SQL.contains(
-            "ORDER BY j.message_group ASC NULLS LAST, j.sequence ASC, j.created_at ASC, j.id ASC"
-        ));
-        assert!(CLAIM_SQL.contains("j.status = 'PENDING'"));
-        assert!(CLAIM_SQL.contains("j.scheduled_for IS NULL OR j.scheduled_for <= NOW()"));
-        // The in-flight exclusion is a bind that is valid when empty.
-        assert!(CLAIM_SQL.contains("j.id <> ALL($3::text[])"));
-        assert!(CLAIM_SQL.ends_with("LIMIT $1"));
-    }
-
-    /// The claim inlines the holding condition under an alias; it must be
-    /// the condition /process checks at delivery time.
-    #[test]
-    fn the_claim_hold_matches_the_shared_definition() {
-        let normalise = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
-        let claim = normalise(CLAIM_SQL);
-        let aliased = GROUP_HOLDING_STATUS_SQL
-            .replace("status", "h.status")
-            .replace("scheduled_for", "h.scheduled_for");
-        let (failed, backoff) = aliased.split_once(" OR ").unwrap();
-        assert!(claim.contains(failed), "{claim}");
-        assert!(claim.contains(backoff), "{claim}");
-    }
 
     #[test]
     fn a_group_always_maps_to_the_same_lane() {
@@ -1109,7 +1272,7 @@ mod tests {
         assert_eq!(r.store.count(Status::Queued), 20);
         for c in lock(&r.store.claims).iter() {
             assert!(
-                c.exclude.len() + c.returned.len() <= 4,
+                c.held_before + c.returned.len() <= 4,
                 "more than the capacity in flight: {c:?}"
             );
         }
@@ -1407,15 +1570,21 @@ mod tests {
 
     #[async_trait]
     impl JobStore for FixedStore {
-        async fn claim(
-            &self,
-            _limit: usize,
-            _exclude: Vec<String>,
-        ) -> Result<Vec<ClaimedJob>, SchedulerError> {
+        async fn claim(&self, _limit: usize) -> Result<Vec<ClaimedJob>, SchedulerError> {
             Ok(mem::take(&mut *lock(&self.0)))
         }
         async fn mark_queued(&self, jobs: &[MarkKey]) -> Result<u64, SchedulerError> {
             Ok(jobs.len() as u64)
+        }
+        async fn release_claims(&self, ids: &[String]) -> Result<u64, SchedulerError> {
+            Ok(ids.len() as u64)
+        }
+        async fn release_unheld_claims(
+            &self,
+            _claimed_before: Option<DateTime<Utc>>,
+            _held: &[String],
+        ) -> Result<u64, SchedulerError> {
+            Ok(0)
         }
     }
 
@@ -1485,6 +1654,11 @@ mod tests {
         assert_eq!(claimed, 2, "the store did return j1 and j3");
         assert!(b.is_empty(), "submitted behind a doomed job: {b:?}");
         assert_eq!(pipeline.available(), 10 - 1, "only j2 holds a permit");
+        assert_eq!(
+            r.store.claimed_count(),
+            1,
+            "the withheld claims (j1, j3) are released; only j2 is claimed"
+        );
 
         // The lane drops j2; claim C sees everything, in order.
         assert_eq!(lane.process(vec![a2]).await.dropped, 1);
@@ -1494,6 +1668,210 @@ mod tests {
         assert_eq!(lane.process(c).await.published, 3);
         assert_eq!(r.publisher.published_ids(), vec!["j1", "j2", "j3"]);
         assert_eq!(pipeline.available(), 10);
+    }
+
+    /// A claim that returns a job already in the in-flight set (a lane
+    /// released it and has not yet removed it) withholds that job and the
+    /// rest of its group, and releases them.
+    #[tokio::test]
+    async fn a_job_already_in_flight_is_withheld_with_its_group_and_released() {
+        let ids: Vec<(String, Option<String>)> = ["j1", "j2", "x1"]
+            .iter()
+            .map(|i| {
+                (
+                    i.to_string(),
+                    Some(if *i == "x1" { "h" } else { "g" }.to_string()),
+                )
+            })
+            .collect();
+        let r = rig(FakeStore::with_jobs(ids), settings(10, 1, 3));
+        let pipeline = Arc::new(Pipeline::new(10));
+        let stage = ClaimStage {
+            store: r.store.clone(),
+            pipeline: pipeline.clone(),
+        };
+        // j1 is in flight under an older claim of this process.
+        let g0 = pipeline.next_generation();
+        assert!(pipeline.add_in_flight(&claimed("j1", Some("g")), g0));
+        assert_eq!(pipeline.acquire_up_to(3).await, 3);
+        let (jobs, taken) = stage.claim(3).await.unwrap();
+        assert_eq!(taken, 3);
+        let got: Vec<&str> = jobs.iter().map(|j| j.job.id()).collect();
+        assert_eq!(got, vec!["x1"], "j1 is a duplicate, j2 is behind it");
+        assert!(!r.store.is_claimed("j1") && !r.store.is_claimed("j2"));
+        assert!(r.store.is_claimed("x1"));
+        assert_eq!(pipeline.available(), 10 - 1);
+    }
+
+    /// A failed release is retried before the next claim; until it succeeds
+    /// the group is held back, and when it does the group is published in
+    /// order.
+    #[tokio::test]
+    async fn a_failed_release_is_retried_and_the_group_stays_in_order() {
+        let ids: Vec<(String, Option<String>)> = ["j1", "j2", "j3"]
+            .iter()
+            .map(|i| (i.to_string(), Some("g".to_string())))
+            .collect();
+        let r = rig(FakeStore::with_jobs(ids), settings(10, 1, 2));
+        lock(&r.publisher.fail_once).insert("j1".into());
+        let pipeline = Arc::new(Pipeline::new(10));
+        let stage = ClaimStage {
+            store: r.store.clone(),
+            pipeline: pipeline.clone(),
+        };
+        let mut lane = Lane::new(
+            0,
+            pipeline.clone(),
+            r.store.clone(),
+            dispatcher(r.publisher.clone()),
+            0,
+        );
+        let take = |n: usize| {
+            let pipeline = pipeline.clone();
+            async move {
+                let mut got = 0;
+                while got < n {
+                    got += pipeline.acquire_up_to(n - got).await;
+                }
+            }
+        };
+        r.store.fail_release.store(true, Ordering::SeqCst);
+
+        take(2).await;
+        let (mut a, _) = stage.claim(2).await.unwrap();
+        let (a2, a1) = (a.pop().unwrap(), a.pop().unwrap());
+        // j1 fails to publish and its claim cannot be released.
+        assert_eq!(lane.process(vec![a1]).await.unpublished, 1);
+        assert!(r.store.is_claimed("j1"));
+
+        // The next claim finds j3 (j1 and j2 are claimed) behind j1: held back.
+        take(1).await;
+        let (b, claimed_n) = stage.claim(1).await.unwrap();
+        assert_eq!(claimed_n, 1);
+        assert!(b.is_empty(), "j3 must not go ahead of j1: {b:?}");
+
+        // j2 is dropped (poisoned); everything is still claimed.
+        assert_eq!(lane.process(vec![a2]).await.dropped, 1);
+        assert!(pipeline.take_failure());
+
+        // The database comes back: the retry releases them all.
+        r.store.fail_release.store(false, Ordering::SeqCst);
+        stage.retry_releases().await;
+        assert_eq!(r.store.claimed_count(), 0);
+        assert_eq!(pipeline.in_flight_len(), 0);
+        assert_eq!(pipeline.unreleased_len(), 0);
+
+        take(3).await;
+        let (c, _) = stage.claim(3).await.unwrap();
+        let order: Vec<&str> = c.iter().map(|j| j.job.id()).collect();
+        assert_eq!(order, vec!["j1", "j2", "j3"]);
+        assert_eq!(lane.process(c).await.published, 3);
+        assert_eq!(r.publisher.published_ids(), vec!["j1", "j2", "j3"]);
+        assert_eq!(pipeline.available(), 10);
+    }
+
+    /// At leader start every claim the process does not hold is released;
+    /// one it does hold is not.
+    #[tokio::test]
+    async fn leader_start_releases_the_claims_this_process_does_not_hold() {
+        let ids: Vec<(String, Option<String>)> = ["a", "b", "c"]
+            .iter()
+            .map(|i| (i.to_string(), None))
+            .collect();
+        let r = rig(FakeStore::with_jobs(ids), settings(10, 1, 3));
+        let pipeline = Arc::new(Pipeline::new(10));
+        let stage = ClaimStage {
+            store: r.store.clone(),
+            pipeline: pipeline.clone(),
+        };
+        let now = Utc::now();
+        for id in ["a", "b"] {
+            r.store.claim_by_hand(id, now);
+        }
+        // b is held by this process.
+        assert!(pipeline.add_in_flight(&claimed("b", None), 1));
+        stage.release_claims_at_start().await.unwrap();
+        assert!(!r.store.is_claimed("a"), "a stranger's claim is released");
+        assert!(r.store.is_claimed("b"), "this process's own is not");
+    }
+
+    /// `drive` runs the leader-start hook once per spell of leadership, and
+    /// retries it (without polling) when it fails.
+    #[tokio::test(start_paused = true)]
+    async fn the_leader_start_hook_runs_once_per_leadership_and_is_retried() {
+        struct Hooked {
+            hook_calls: AtomicUsize,
+            hook_fails: AtomicUsize,
+            polls: AtomicUsize,
+        }
+        impl PollSource for Hooked {
+            async fn poll(&self, _ctl: &PollCtl) -> Result<PassReport, SchedulerError> {
+                self.polls.fetch_add(1, Ordering::SeqCst);
+                Ok(PassReport::default())
+            }
+            async fn on_start_leading(&self) -> Result<(), SchedulerError> {
+                self.hook_calls.fetch_add(1, Ordering::SeqCst);
+                if self.hook_fails.load(Ordering::SeqCst) > 0 {
+                    self.hook_fails.fetch_sub(1, Ordering::SeqCst);
+                    return Err(SchedulerError::ConfigError("boom".into()));
+                }
+                Ok(())
+            }
+        }
+        let source = Hooked {
+            hook_calls: AtomicUsize::new(0),
+            hook_fails: AtomicUsize::new(1),
+            polls: AtomicUsize::new(0),
+        };
+        let cancel = CancellationToken::new();
+        // Leader for seconds 0-3, not leader 3-6, leader again 6-9.
+        let t0 = TokioInstant::now();
+        let is_leader: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(move || {
+            let s = t0.elapsed().as_secs();
+            !(3..6).contains(&s)
+        });
+        let stop = cancel.clone();
+        tokio::spawn(async move {
+            time::sleep(Duration::from_millis(8500)).await;
+            stop.cancel();
+        });
+        drive(&source, TICK, &ctl(is_leader, &cancel)).await;
+        // 1st spell: one failed attempt then one success; 2nd spell: one.
+        assert_eq!(source.hook_calls.load(Ordering::SeqCst), 3);
+        assert!(source.polls.load(Ordering::SeqCst) >= 4);
+    }
+
+    /// The leader's sweep releases claims older than five minutes that this
+    /// process does not hold; younger ones and held ones stay; a non-leader
+    /// releases nothing.
+    #[tokio::test(start_paused = true)]
+    async fn the_stale_claim_sweep_releases_only_old_unheld_claims_and_only_as_leader() {
+        let ids: Vec<(String, Option<String>)> = ["old", "young", "held"]
+            .iter()
+            .map(|i| (i.to_string(), None))
+            .collect();
+        for leading in [false, true] {
+            let store = FakeStore::with_jobs(ids.clone());
+            let pipeline = Arc::new(Pipeline::new(10));
+            let now = Utc::now();
+            store.claim_by_hand("old", now - chrono::Duration::minutes(10));
+            store.claim_by_hand("young", now - chrono::Duration::minutes(1));
+            store.claim_by_hand("held", now - chrono::Duration::minutes(10));
+            assert!(pipeline.add_in_flight(&claimed("held", None), 1));
+            let cancel = CancellationToken::new();
+            let task = tokio::spawn(maintain(
+                store.clone(),
+                pipeline,
+                leader(leading),
+                cancel.clone(),
+            ));
+            time::sleep(Duration::from_secs(61)).await;
+            cancel.cancel();
+            task.await.unwrap();
+            assert_eq!(store.is_claimed("old"), !leading, "old, leading={leading}");
+            assert!(store.is_claimed("young"), "young is never released");
+            assert!(store.is_claimed("held"), "held is never released");
+        }
     }
 
     /// Real threads, real time, random publish and mark failures, a small

@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::support::{start_db, TestDb};
+use crate::support::{start_db, sync_dispatch_queue, TestDb};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
@@ -21,6 +21,7 @@ use testcontainers_modules::localstack::LocalStack;
 use aws_sdk_sqs::config::Credentials;
 use aws_sdk_sqs::types::MessageSystemAttributeName;
 use aws_sdk_sqs::types::QueueAttributeName;
+use fc_platform::dispatch_job::lifecycle;
 use fc_platform::scheduler::destination::DestinationResolver;
 use fc_platform::scheduler::{
     DispatchAuthService, DispatchPublisher, DispatchQueueKind, DispatchQueueSettings,
@@ -33,6 +34,7 @@ use fc_queue::sqs_publisher::QueueAddressing;
 use fc_queue::sqs_publisher::SqsFifoPublisher;
 use std::future;
 use tokio::time;
+use tokio_util::sync::CancellationToken;
 
 const APP_KEY: &str = "scheduler-test-app-key";
 const ENDPOINT: &str = "http://fc-platform:8080/api/dispatch/process";
@@ -164,6 +166,7 @@ async fn insert(pool: &PgPool, j: &Job) {
     .execute(pool)
     .await
     .expect("insert job");
+    sync_dispatch_queue(pool).await;
 }
 
 async fn status(pool: &PgPool, id: &str) -> String {
@@ -322,13 +325,196 @@ impl DispatchPublisher for DiesMidPublish {
     }
 }
 
+/// A job the publisher refused keeps its queue row with the claim RELEASED
+/// (so it is claimed again); a published job's queue row is gone.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn a_job_that_is_not_published_has_its_claim_released() {
+    let (pool, _c) = setup_db().await;
+    let (a, b) = (job(1), job(2));
+    insert(&pool, &a).await;
+    insert(&pool, &b).await;
+    let publisher = Arc::new(RecordingPublisher::default());
+    publisher.fail.lock().unwrap().insert(b.id.clone());
+    let s = scheduler(&pool, publisher.clone(), 100);
+    s.poller().poll_once().await.unwrap();
+    let rows: Vec<(String, Option<DateTime<Utc>>)> =
+        sqlx::query_as("SELECT job_id, claimed_at FROM msg_dispatch_queue ORDER BY job_id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        rows,
+        vec![(b.id.clone(), None)],
+        "only b is left, unclaimed"
+    );
+}
+
+/// The real loop, real lanes: a job whose publish fails is claimed again and
+/// published after nothing it should not be behind: the group is published
+/// in order (first deliveries), every job ends QUEUED, and the queue is
+/// empty and exact.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn a_failed_publish_is_claimed_again_and_the_group_stays_in_order() {
+    let (pool, _c) = setup_db().await;
+    let jobs: Vec<Job> = (1..=6)
+        .map(|n| {
+            let mut j = job(n);
+            j.group = Some("orders-1");
+            j.mode = "BLOCK_ON_ERROR";
+            j.sequence = n as i32;
+            j
+        })
+        .collect();
+    for j in &jobs {
+        insert(&pool, j).await;
+    }
+    // j3 fails the first time it is published (and with it, as the real
+    // publishers do, the rest of its group in that call).
+    struct FailOnce {
+        inner: RecordingPublisher,
+        once: Mutex<HashSet<String>>,
+    }
+    #[async_trait]
+    impl DispatchPublisher for FailOnce {
+        async fn publish(&self, items: Vec<PublishItem>) -> PublishOutcome {
+            let mut out = PublishOutcome::default();
+            let mut failed = false;
+            for item in items {
+                failed |= self.once.lock().unwrap().remove(&item.job_id);
+                if failed {
+                    out.unpublished.push(item.job_id.clone());
+                    out.error = Some("refused once".into());
+                } else {
+                    self.inner.published.lock().unwrap().push(item);
+                }
+            }
+            out
+        }
+        fn describe(&self) -> String {
+            "fail once".into()
+        }
+    }
+    let publisher = Arc::new(FailOnce {
+        inner: RecordingPublisher::default(),
+        once: Mutex::new(HashSet::from([jobs[2].id.clone()])),
+    });
+    let s = scheduler(&pool, publisher.clone(), 100);
+    let cancel = CancellationToken::new();
+    let stop = cancel.clone();
+    let run = s
+        .poller()
+        .run(Duration::from_millis(50), Arc::new(|| true), cancel.clone());
+    let watch = async {
+        let deadline = time::Instant::now() + Duration::from_secs(30);
+        loop {
+            let (queued,): (i64,) =
+                sqlx::query_as("SELECT COUNT(*) FROM msg_dispatch_jobs WHERE status = 'QUEUED'")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            if queued == 6 || time::Instant::now() > deadline {
+                break;
+            }
+            time::sleep(Duration::from_millis(50)).await;
+        }
+        stop.cancel();
+    };
+    tokio::join!(run, watch);
+
+    let published = publisher.inner.ids();
+    let mut first_seen: Vec<String> = Vec::new();
+    for id in &published {
+        if !first_seen.contains(id) {
+            first_seen.push(id.clone());
+        }
+    }
+    let want: Vec<String> = jobs.iter().map(|j| j.id.clone()).collect();
+    assert_eq!(first_seen, want, "published in order: {published:?}");
+    for j in &jobs {
+        assert_eq!(status(&pool, &j.id).await, "QUEUED");
+    }
+    assert!(
+        sqlx::query_scalar::<_, String>("SELECT job_id FROM msg_dispatch_queue")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .is_empty(),
+        "the queue is empty"
+    );
+}
+
+/// When an instance starts polling as leader it releases every claim it does
+/// not hold: what a dead leader left claimed is published.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn a_new_leader_releases_the_claims_a_dead_one_left_and_publishes_them() {
+    let (pool, _c) = setup_db().await;
+    let jobs: Vec<Job> = (1..=3).map(job).collect();
+    for j in &jobs {
+        insert(&pool, j).await;
+    }
+    sqlx::query("UPDATE msg_dispatch_queue SET claimed_at = NOW() - INTERVAL '1 hour'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let publisher = Arc::new(RecordingPublisher::default());
+    let s = scheduler(&pool, publisher.clone(), 100);
+    let cancel = CancellationToken::new();
+    let stop = cancel.clone();
+    let run = s
+        .poller()
+        .run(Duration::from_millis(50), Arc::new(|| true), cancel.clone());
+    let watch = async {
+        let deadline = time::Instant::now() + Duration::from_secs(30);
+        while publisher.ids().len() < 3 && time::Instant::now() < deadline {
+            time::sleep(Duration::from_millis(50)).await;
+        }
+        stop.cancel();
+    };
+    tokio::join!(run, watch);
+    let mut got = publisher.ids();
+    got.sort();
+    let mut want: Vec<String> = jobs.iter().map(|j| j.id.clone()).collect();
+    want.sort();
+    assert_eq!(got, want);
+}
+
+/// The scheduler's reconcile pass repairs a PENDING job that lost its queue
+/// row (only once it is old enough to be drift, not a write in flight).
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn the_scheduler_reconciles_a_job_that_lost_its_queue_row() {
+    let (pool, _c) = setup_db().await;
+    let mut old = job(1);
+    old.updated_at = Some(Utc::now() - chrono::Duration::minutes(5));
+    let mut fresh = job(2);
+    fresh.updated_at = Some(Utc::now());
+    insert(&pool, &old).await;
+    insert(&pool, &fresh).await;
+    sqlx::query("DELETE FROM msg_dispatch_queue")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let s = scheduler(&pool, Arc::new(RecordingPublisher::default()), 100);
+    let done = s.stale_recovery().reconcile_once().await.unwrap();
+    assert_eq!(done.inserted, 1, "{done:?}");
+    let ids: Vec<String> = sqlx::query_scalar("SELECT job_id FROM msg_dispatch_queue")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(ids, vec![old.id.clone()]);
+}
+
 /// Delivery run 3, `worker-restart`: a worker killed between claiming and
 /// finishing its publish must not strand its claim. Go commits the claim
-/// QUEUED before publishing and the unpublished rows wait 75 minutes for
-/// stale recovery; here nothing is marked QUEUED until the publish is done,
-/// so the dead worker's claim is still PENDING and the next poll publishes
-/// every job (the ones already sent a second time — `/process` delivers
-/// each once).
+/// QUEUED before publishing and the unpublished rows wait for stale
+/// recovery; here nothing is marked QUEUED until the publish is done, so the
+/// dead worker's jobs are still PENDING (their queue rows claimed): a new
+/// leader releases the claims it does not hold when it starts, and the next
+/// poll publishes every job (the ones already sent a second time —
+/// `/process` delivers each once).
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn a_worker_dying_mid_publish_leaves_its_claim_pending() {
@@ -433,6 +619,7 @@ async fn the_queued_update_does_not_regress_a_job_that_moved_on() {
                 .execute(&self.pool)
                 .await
                 .unwrap();
+            sync_dispatch_queue(&self.pool).await;
             PublishOutcome::default()
         }
         fn describe(&self) -> String {
@@ -484,6 +671,7 @@ async fn a_job_rescheduled_to_pending_between_publish_and_mark_is_not_queued() {
             .execute(&self.pool)
             .await
             .unwrap();
+            sync_dispatch_queue(&self.pool).await;
             PublishOutcome::default()
         }
         fn describe(&self) -> String {
@@ -589,12 +777,14 @@ async fn a_backed_off_job_waits_and_holds_its_group_until_due() {
     // The backoff expires: the head dispatches, and the successor with it
     // (QUEUED holds nothing; the router's FIFO keeps them in order).
     sqlx::query(
-        "UPDATE msg_dispatch_jobs SET scheduled_for = NOW() - INTERVAL '1 second' WHERE id = $1",
+        "UPDATE msg_dispatch_jobs SET scheduled_for = NOW() - INTERVAL '1 second', \
+         updated_at = NOW() WHERE id = $1",
     )
     .bind(&head.id)
     .execute(&pool)
     .await
     .unwrap();
+    sync_dispatch_queue(&pool).await;
     s.poller().poll_once().await.unwrap();
     assert_eq!(publisher.ids(), vec![head.id.clone(), next.id.clone()]);
 }
@@ -643,32 +833,36 @@ async fn held_and_paused_jobs_do_not_stall_the_rest() {
 
 // ── Stale recovery ──────────────────────────────────────────────────────
 
-/// QUEUED for over 75 minutes — including a row with a NULL `queued_at`,
+/// QUEUED for over 15 minutes — including a row with a NULL `queued_at`,
 /// as an older build inserted it (C2) — goes back to PENDING, as does a
-/// PROCESSING row whose outcome was never written. Fresh rows stay.
+/// PROCESSING row left for over 75 minutes whose outcome was never written.
+/// Fresh rows stay, and a PROCESSING row of 30 minutes is NOT recovered (the
+/// 15 minute ruling is for QUEUED only). The queue table follows.
 #[tokio::test]
 #[ignore = "requires Docker"]
-async fn stale_recovery_uses_updated_at_and_75_minutes() {
+async fn stale_recovery_returns_queued_after_15_minutes_and_processing_after_75() {
     let (pool, _c) = setup_db().await;
-    let old = Some(Utc::now() - chrono::Duration::minutes(76));
-    let fresh = Some(Utc::now() - chrono::Duration::minutes(20));
+    let stale_queued_at = Some(Utc::now() - chrono::Duration::minutes(16));
+    let fresh_queued_at = Some(Utc::now() - chrono::Duration::minutes(10));
+    let stale_processing_at = Some(Utc::now() - chrono::Duration::minutes(76));
+    let mid_processing_at = Some(Utc::now() - chrono::Duration::minutes(30));
     let mut stale_queued = job(1);
     stale_queued.status = "QUEUED";
-    stale_queued.updated_at = old;
+    stale_queued.updated_at = stale_queued_at;
     let mut fresh_queued = job(2);
     fresh_queued.status = "QUEUED";
-    fresh_queued.updated_at = fresh;
+    fresh_queued.updated_at = fresh_queued_at;
     let mut stale_processing = job(3);
     stale_processing.status = "PROCESSING";
-    stale_processing.updated_at = old;
-    let mut fresh_processing = job(4);
-    fresh_processing.status = "PROCESSING";
-    fresh_processing.updated_at = fresh;
+    stale_processing.updated_at = stale_processing_at;
+    let mut mid_processing = job(4);
+    mid_processing.status = "PROCESSING";
+    mid_processing.updated_at = mid_processing_at;
     for j in [
         &stale_queued,
         &fresh_queued,
         &stale_processing,
-        &fresh_processing,
+        &mid_processing,
     ] {
         insert(&pool, j).await;
     }
@@ -678,7 +872,23 @@ async fn stale_recovery_uses_updated_at_and_75_minutes() {
     assert_eq!(status(&pool, &stale_queued.id).await, "PENDING");
     assert_eq!(status(&pool, &fresh_queued.id).await, "QUEUED");
     assert_eq!(status(&pool, &stale_processing.id).await, "PENDING");
-    assert_eq!(status(&pool, &fresh_processing.id).await, "PROCESSING");
+    assert_eq!(status(&pool, &mid_processing.id).await, "PROCESSING");
+    // Back in the queue, claimable.
+    let queued: Vec<String> =
+        sqlx::query_scalar("SELECT job_id FROM msg_dispatch_queue ORDER BY job_id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    let mut want = vec![stale_queued.id.clone(), stale_processing.id.clone()];
+    want.sort();
+    assert_eq!(queued, want);
+    assert_eq!(
+        lifecycle::queue_drift(&pool).await.unwrap(),
+        lifecycle::QueueDrift {
+            missing_or_stale: 0,
+            orphaned: 0
+        }
+    );
 }
 
 // ── Destinations ────────────────────────────────────────────────────────

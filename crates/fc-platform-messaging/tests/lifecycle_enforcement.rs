@@ -185,6 +185,112 @@ fn only_the_lifecycle_writes_msg_dispatch_queue() {
     );
 }
 
+/// Production code reads the queue of PENDING jobs from `msg_dispatch_queue`
+/// (through the lifecycle's claim, its hold-back lookups and its reconcile
+/// sweep), never by asking `msg_dispatch_jobs` for `status = 'PENDING'`: the
+/// partial indexes that made that cheap are gone (migration 065), and a read
+/// that comes back is a seq scan or a slow plan under load. The lifecycle
+/// itself reads the table for PENDING in its reconcile statements.
+#[test]
+fn nothing_outside_the_lifecycle_reads_pending_jobs_from_the_jobs_table() {
+    let root = workspace_root();
+    let mut violations = Vec::new();
+    for file in production_sources(&root) {
+        let rel = relative(&root, &file);
+        if rel == LIFECYCLE {
+            continue;
+        }
+        let src = fs::read_to_string(&file).unwrap();
+        for hit in pending_reads_in(&src) {
+            violations.push(format!("{rel}: {hit}"));
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "msg_dispatch_jobs is read for status = 'PENDING' outside the lifecycle; \
+         read msg_dispatch_queue (a lifecycle operation) instead:\n  {}",
+        violations.join("\n  ")
+    );
+}
+
+/// The three indexes migration 065 dropped are not named by any production
+/// code (an index hint or a comment promising a plan that no longer exists).
+#[test]
+fn no_production_code_names_a_dropped_dispatch_index() {
+    let root = workspace_root();
+    for file in production_sources(&root) {
+        let src = fs::read_to_string(&file).unwrap();
+        let prod = src.split("#[cfg(test)]").next().unwrap_or(&src);
+        for gone in [
+            "idx_dispatch_jobs_pending_poll",
+            "idx_dispatch_jobs_group_holders",
+            "idx_dispatch_jobs_in_flight",
+        ] {
+            assert!(
+                !prod.contains(gone),
+                "{} names {gone}, which migration 065 dropped",
+                relative(&root, &file)
+            );
+        }
+    }
+}
+
+/// Statements in `src` (normalised) that select from `msg_dispatch_jobs` with
+/// `status = 'PENDING'` in the same statement.
+fn pending_reads_in(src: &str) -> Vec<String> {
+    let prod = src.split("#[cfg(test)]").next().unwrap_or(src);
+    let flat = prod
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    let mut hits = Vec::new();
+    let mut from = 0;
+    while let Some(pos) = flat[from..].find("status = 'pending'") {
+        let at = from + pos;
+        from = at + "status = 'pending'".len();
+        // The statement around it: back to the previous quote that opens the
+        // string, forward to the next one.
+        let start = flat[..at].rfind('"').map_or(0, |i| i + 1);
+        let end = flat[from..].find('"').map_or(flat.len(), |i| from + i);
+        let statement = &flat[start..end];
+        let mut rest = statement;
+        while let Some(i) = rest.find("msg_dispatch_jobs") {
+            let after = rest[i + "msg_dispatch_jobs".len()..].chars().next();
+            if !after.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') {
+                hits.push(statement.chars().take(100).collect::<String>());
+                break;
+            }
+            rest = &rest[i + "msg_dispatch_jobs".len()..];
+        }
+    }
+    hits
+}
+
+#[test]
+fn the_pending_read_detector_detects() {
+    assert_eq!(
+        pending_reads_in(
+            "sqlx::query(\"SELECT 1 FROM msg_dispatch_jobs WHERE status = 'PENDING'\")"
+        )
+        .len(),
+        1
+    );
+    // Other tables, the read table and other statuses are not it.
+    assert!(pending_reads_in("\"SELECT 1 FROM iam_requests WHERE status = 'PENDING'\"").is_empty());
+    assert!(
+        pending_reads_in("\"SELECT 1 FROM msg_dispatch_jobs_read WHERE status = 'PENDING'\"")
+            .is_empty()
+    );
+    assert!(
+        pending_reads_in("\"SELECT 1 FROM msg_dispatch_jobs WHERE status = 'QUEUED'\"").is_empty()
+    );
+    assert!(pending_reads_in(
+        "fn a() {}\n#[cfg(test)]\nmod t { \"FROM msg_dispatch_jobs WHERE status = 'PENDING'\" }"
+    )
+    .is_empty());
+}
+
 #[test]
 fn the_named_queue_exceptions_are_still_real() {
     let root = workspace_root();

@@ -3,6 +3,7 @@
 //! Requires Docker.
 
 use crate::support;
+use crate::support::sync_dispatch_queue;
 use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::OptionIdExt;
 
@@ -1840,6 +1841,7 @@ async fn dispatch_jobs_are_requeued_settled_and_signed_as_go() {
     .execute(&app.pool)
     .await
     .unwrap();
+    sync_dispatch_queue(&app.pool).await;
 
     // cancel/complete: FAILED only.
     let (s, b) = read_json(

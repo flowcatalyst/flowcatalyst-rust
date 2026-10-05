@@ -7,6 +7,7 @@
 //!   cargo test -p fc-platform --test it dispatch_descriptor_test:: -- --ignored
 
 use crate::support;
+use crate::support::sync_dispatch_queue;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -338,6 +339,7 @@ async fn a_directly_created_job_carries_the_descriptor_and_metadata_it_is_sent()
     .execute(pool)
     .await
     .unwrap();
+    sync_dispatch_queue(pool).await;
     project(pool).await;
     let flags: Vec<(String, String, bool, bool, Option<String>)> = sqlx::query_as(
         "SELECT code, status, is_completed, is_terminal, descriptor FROM msg_dispatch_jobs_read \
