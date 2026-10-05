@@ -400,8 +400,18 @@ impl Selector<'_> {
             Selector::StaleSince { before } => {
                 qb.push(" WHERE j.updated_at < ").push_bind(*before);
             }
-            Selector::StrandedSiblings { .. } => {
-                qb.push(" WHERE j.id = st.id AND j.created_at = st.created_at");
+            Selector::StrandedSiblings { live_before } => {
+                // The age test is repeated here, on the row the UPDATE finally
+                // locks: the CTE decided it from the statement's snapshot, and
+                // a delivery callback that claims the sibling (PROCESSING, a
+                // fresh `updated_at`) while the UPDATE waits for the row lock
+                // must not be reset to PENDING.
+                qb.push(
+                    " WHERE j.id = st.id AND j.created_at = st.created_at \
+                     AND (j.status <> 'PROCESSING' OR j.updated_at < ",
+                )
+                .push_bind(*live_before)
+                .push(")");
             }
         }
     }
@@ -2013,7 +2023,14 @@ mod tests {
             sql.contains(") UPDATE msg_dispatch_jobs AS j SET status = 'PENDING'"),
             "{sql}"
         );
-        assert!(sql.contains("WHERE j.id = st.id AND j.created_at = st.created_at AND j.status IN ('QUEUED', 'PROCESSING')"), "{sql}");
+        assert!(
+            sql.contains("WHERE j.id = st.id AND j.created_at = st.created_at AND (j.status <> 'PROCESSING' OR j.updated_at < $"),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(") AND j.status IN ('QUEUED', 'PROCESSING')"),
+            "{sql}"
+        );
     }
 
     fn render(t: &Transition, sel: &Selector<'_>, changes: &[Change<'_>]) -> String {

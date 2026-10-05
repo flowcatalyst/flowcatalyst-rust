@@ -418,6 +418,58 @@ async fn mark_queued_waits_for_a_concurrent_re_enter_and_then_marks_nothing() {
     assert_ne!(after.updated_at, claimed_version);
 }
 
+/// The reaper decides in its CTE (from the statement's snapshot) that a
+/// sibling is stranded; the guard that must hold on the CURRENT row, the
+/// PROCESSING age test, has to be in the UPDATE's own WHERE. A QUEUED sibling
+/// behind a FAILED head is claimed for delivery by a callback whose
+/// transaction is still open; the sweep blocks on the row lock; once the
+/// callback commits the sibling is PROCESSING with a fresh `updated_at`, and
+/// the sweep must leave it alone.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn the_reaper_does_not_reset_a_sibling_a_callback_claimed_while_it_waited() {
+    let (pool, _c) = setup_db().await;
+    let created_at = Utc::now() - Duration::minutes(30);
+    insert_job(
+        &pool,
+        "h00000000001",
+        "FAILED",
+        Some("g"),
+        1,
+        "BLOCK_ON_ERROR",
+        created_at - Duration::minutes(1),
+    )
+    .await;
+    let id = "s00000000001";
+    insert_job(
+        &pool,
+        id,
+        "QUEUED",
+        Some("g"),
+        2,
+        "BLOCK_ON_ERROR",
+        created_at,
+    )
+    .await;
+
+    let mut tx = pool.begin().await.unwrap();
+    assert!(lifecycle::claim_for_delivery(&mut *tx, id, created_at)
+        .await
+        .unwrap());
+    let p2 = pool.clone();
+    let sweep = tokio::spawn(async move {
+        lifecycle::reap_stranded_siblings(&p2, Utc::now() - Duration::minutes(10), "reaped").await
+    });
+    wait_for_a_blocked_statement(&pool).await;
+    tx.commit().await.unwrap();
+    let swept = sweep.await.unwrap().unwrap();
+    assert!(
+        swept.iter().all(|t| t.id != id),
+        "a job being delivered was swept: {swept:?}"
+    );
+    assert_eq!(row(&pool, id).await.status, "PROCESSING");
+}
+
 /// mark-QUEUED marks exactly the pairs whose job is PENDING at the claimed
 /// version, in one statement, whatever else is in the batch.
 #[tokio::test]
