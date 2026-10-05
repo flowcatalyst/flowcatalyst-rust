@@ -164,6 +164,16 @@ Expect partitions from `(this month - 1)` through `(this month + 3)`.
 
 ---
 
+## The dispatch queue table
+
+`msg_dispatch_queue` holds exactly one row for every PENDING dispatch job (keyed by `job_id`, ordered by `idx_dispatch_queue_order` on `(message_group NULLS LAST, sequence, job_created_at, job_id)`). The dispatch-job lifecycle writes it in the same SQL statement as the job (migrations 064 and 065; the Go and Java platforms run the same DDL against the same database). The scheduler claims from it (`claimed_at` is stamped; it is in no index) and never scans `msg_dispatch_jobs` for PENDING. Anything other than the lifecycle writing either table is a bug; `scheduler.queue_reconcile` repairs and reports drift.
+
+Indexes on `msg_dispatch_jobs` after 065: the primary key, `idx_dispatch_jobs_status_group` on `(status, message_group, sequence, created_at, id)` (hold-back by FAILED / ERROR, the stale sweeps, the reaper, the reconcile sweep) and the projector's `idx_msg_dispatch_jobs_dirty` (the one partial index left on the table). No other dispatch index is partial except the projection feed's three.
+
+The queue table is small and churns: it has `fillfactor = 70` and vacuums and analyzes after 2,000 changes (`autovacuum_*_scale_factor = 0`), so its statistics follow its size within a minute. With no statistics at all (a brand-new table) or statistics taken while it was empty, PostgreSQL may claim with a sequential scan and a sort instead of walking `idx_dispatch_queue_order`: harmless while the queue is small (tens of ms at 5,000 rows) and healed by the first autovacuum analyze; if a restored or truncated database shows slow claims, run `ANALYZE msg_dispatch_queue;`.
+
+---
+
 ## Query rules
 
 Three CLAUDE.md rules that matter for ops because violations cause sustained DB load:
@@ -231,6 +241,7 @@ The platform itself exposes a number of Postgres-touching metrics:
 | `fc_scheduler_poll_full_batches_total` | polls that filled the batch (a backlog is draining) |
 | `fc_scheduler_queued_jobs` | depth of QUEUED (gauge) |
 | `fc_scheduler_stale_jobs_recovered_total` | recovery firings (should usually be 0) |
+| `fc_scheduler_queue_backlog` | unclaimed, due rows in the dispatch queue (gauge): the dispatch backlog |
 
 If `fc_scheduler_poll_full_batches_total` rises continuously and `fc_scheduler_jobs_queued_total` lags it: the publish path is slow or stuck (`fc_scheduler_pending_jobs` is capped at the batch size and cannot show a backlog).
 If `fc_scheduler_stale_jobs_recovered_total` increments routinely: the router isn't completing dispatches within the 15-minute window — investigate.

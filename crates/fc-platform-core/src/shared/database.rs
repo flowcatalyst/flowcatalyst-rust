@@ -701,6 +701,14 @@ fn core_migrations() -> &'static [(&'static str, &'static str)] {
             "064_dispatch_queue",
             include_str!("../../../../migrations/064_dispatch_queue.sql"),
         ),
+        // The scheduler claims from msg_dispatch_queue: the partial indexes
+        // the dispatch path read msg_dispatch_jobs through go, one ordinary
+        // status index replaces them, the queue table gets its storage
+        // options, and any drift an older binary left is repaired.
+        (
+            "065_dispatch_queue_reads",
+            include_str!("../../../../migrations/065_dispatch_queue_reads.sql"),
+        ),
     ]
 }
 
@@ -1062,6 +1070,14 @@ pub async fn run_migrations_with(
             "SELECT EXISTS (SELECT 1 FROM pg_indexes \
              WHERE schemaname = 'public' AND tablename = 'msg_dispatch_queue' \
                AND indexname = 'idx_dispatch_queue_order')",
+        ),
+        // 065's new index means it ran (Go's 067 and Java's V22 create the
+        // same index, so a database they migrated already has it).
+        (
+            "065_dispatch_queue_reads",
+            "SELECT EXISTS (SELECT 1 FROM pg_indexes \
+             WHERE schemaname = 'public' AND tablename = 'msg_dispatch_jobs' \
+               AND indexname = 'idx_dispatch_jobs_status_group')",
         ),
     ];
 

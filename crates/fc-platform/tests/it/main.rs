@@ -28,6 +28,8 @@ mod dispatch_ingest_pending_test;
 mod dispatch_lifecycle_test;
 mod dispatch_pool_write_permission_test;
 mod dispatch_process_test;
+mod dispatch_queue_claim_test;
+mod dispatch_queue_plan_test;
 mod dispatch_scheduler_test;
 mod dispatch_schema_test;
 mod function_api_test;
