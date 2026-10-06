@@ -2,6 +2,7 @@
 name = "fc-fnhost-js"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "FlowCatalyst function host: the `runtime: js` loader (V8 isolates through deno_core), beside fc-fnhost-core's WASI components"

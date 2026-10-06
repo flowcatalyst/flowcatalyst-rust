@@ -27,7 +27,7 @@ COPY frontend/ ./
 RUN pnpm build
 
 # ── Stage 2: Plan Rust dependencies ─────────────────────────────────
-# Rust 1.98: the toolchain CI (dtolnay/rust-toolchain@stable) and local
+# Rust 1.98: the toolchain CI (pinned in rust-toolchain.toml) and local
 # builds use. The workspace needs at least 1.96 (wasmtime 49's cranelift
 # crates declare it); 1.92 no longer builds main.
 FROM lukemathwalker/cargo-chef:latest-rust-1.98-bookworm AS chef

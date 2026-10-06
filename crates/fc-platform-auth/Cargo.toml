@@ -2,6 +2,7 @@
 name = "fc-platform-auth"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "FlowCatalyst Platform - the sign-in flows: OAuth/OIDC, sessions, refresh tokens, password reset, two-factor login, passkeys, the portal login plane"
 

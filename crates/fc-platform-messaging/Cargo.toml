@@ -2,6 +2,7 @@
 name = "fc-platform-messaging"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "FlowCatalyst Platform - messaging: event types, events, subscriptions, connections, dispatch pools and jobs, the dispatch scheduler, processes"
 

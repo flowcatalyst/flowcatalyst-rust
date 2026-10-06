@@ -122,8 +122,10 @@ jobs:
           name: frontend-dist
           path: frontend/dist
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          # Keep in step with rust-toolchain.toml (the pin).
+          toolchain: 1.98.1
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2

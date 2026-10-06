@@ -2,6 +2,7 @@
 name = "fc-function-abi"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 # Shared by the function host (AGPL) and the guest PDK (an SDK), so it takes the
 # SDK licence, like fc-sdk.

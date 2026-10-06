@@ -2,6 +2,7 @@
 name = "fc-platform-scheduled-jobs"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "FlowCatalyst Platform - scheduled jobs: definitions, the cron scheduler and its firings"
 

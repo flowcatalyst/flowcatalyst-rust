@@ -2,6 +2,7 @@
 name = "fc-http-listener"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "Phase-aware connection timeouts for FlowCatalyst's HTTP listeners (owner ruling 10): keep-alive idle, request read, never in-flight work"

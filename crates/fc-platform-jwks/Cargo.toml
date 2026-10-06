@@ -2,6 +2,7 @@
 name = "fc-platform-jwks"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "Verifies platform-issued bearer JWTs against the platform's JWKS (Java platform/shared/auth/jwks): discovery, key caching, RS256, the platform's claim rules. Shared by the function host and the router."

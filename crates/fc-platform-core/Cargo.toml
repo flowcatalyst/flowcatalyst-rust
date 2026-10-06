@@ -2,6 +2,7 @@
 name = "fc-platform-core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "FlowCatalyst Platform - the kernel every domain crate builds on: use cases and the unit of work, errors, the authorization context and checks, the permission catalogue, middleware, database and shared services"
 

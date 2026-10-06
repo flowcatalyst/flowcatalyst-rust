@@ -2,6 +2,7 @@
 name = "fc-parity"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "API parity harness: the same scenarios against Go's and Rust's fc-server on cloned seed databases"
 publish = false

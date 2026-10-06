@@ -2,6 +2,7 @@
 name = "fc-fnhost-core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "FlowCatalyst function host: environment, logging, observability, reconciler, artifact stores, Sigstore verification and the function listeners (a drop-in for Java's fc-fnhost)"

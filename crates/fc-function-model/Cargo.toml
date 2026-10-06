@@ -2,6 +2,7 @@
 name = "fc-function-model"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 # Shared by the platform and the function host (AGPL) and linked by guests, so
 # it takes the SDK licence, like fc-function-abi (its one FlowCatalyst

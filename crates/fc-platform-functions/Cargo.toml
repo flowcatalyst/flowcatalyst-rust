@@ -2,6 +2,7 @@
 name = "fc-platform-functions"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "FlowCatalyst Platform - the function registry: functions, versions, artifacts, policies, domains, routes and the control plane"
 

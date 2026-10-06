@@ -2,6 +2,7 @@
 name = "fc-common-types"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 # Linked by fc-sdk, which applications build into their own code (owner
 # decision #51), so it takes fc-sdk's licence, not the platform's AGPL.

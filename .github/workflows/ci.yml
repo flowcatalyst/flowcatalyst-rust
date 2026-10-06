@@ -23,9 +23,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
-          components: clippy
+          # Keep in step with rust-toolchain.toml (the pin).
+          toolchain: 1.98.1
+          components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@v2
 
@@ -54,7 +56,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          # Keep in step with rust-toolchain.toml (the pin).
+          toolchain: 1.98.1
 
       - uses: Swatinem/rust-cache@v2
 
@@ -105,7 +110,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          # Keep in step with rust-toolchain.toml (the pin).
+          toolchain: 1.98.1
 
       - name: Install cargo-deny (pinned, checksum-verified)
         run: |

@@ -7,3 +7,11 @@
 # qualified for the route-auth scanner: the `routes.rs` files and
 # `router.rs` allow the lint.
 absolute-paths-max-segments = 2
+
+# `clippy::result_large_err`: a handler helper that returns
+# `Result<T, axum::response::Response>` has its finished HTTP response as the
+# error (an early return from a handler). `Response<Body>` is 128 bytes on
+# this toolchain, which is exactly the lint's default threshold, so every such
+# helper fires; boxing the response would change each caller's `?`/`return`.
+# 160 stays well under what a genuinely oversized error enum would weigh.
+large-error-threshold = 160
