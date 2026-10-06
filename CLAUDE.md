@@ -141,6 +141,13 @@ Every repository follows one pattern:
 - Dynamic filters (list endpoints): `sqlx::QueryBuilder` with `push_bind`, never
   `format!`-built WHERE clauses
 - Domain entities stay in `*/entity.rs`, row mapping stays in `*/repository.rs`
+- String enums (`str_enum!`, `fc-platform-core/src/shared/enum_str.rs`) are SQL text
+  types: bind the enum (`.bind(status)`, `status = $1`), never its spelling or a
+  literal. A row struct holds `Stored<T>` for a status-like column and calls
+  `.decode(table, column, row_id)?` in its `TryFrom`, so a corrupt value is the
+  loud error naming the row (a plain `Decode` cannot name it). A literal stays in
+  SQL only where a partial-index predicate or the dispatch hot path needs it; each
+  is tied to its enum by `fc-platform`'s `split_tests/sql_literals.rs`.
 - Connection: use `shared::database::create_pool()`
 
 ## Imports

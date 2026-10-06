@@ -114,11 +114,11 @@ impl LoginAttemptRepository {
 
         if let Some(at) = filter.attempt_type {
             push_where(&mut qb, &mut has_where);
-            qb.push("attempt_type = ").push_bind(at.as_str());
+            qb.push("attempt_type = ").push_bind(at);
         }
         if let Some(o) = filter.outcome {
             push_where(&mut qb, &mut has_where);
-            qb.push("outcome = ").push_bind(o.as_str());
+            qb.push("outcome = ").push_bind(o);
         }
         if let Some(ident) = filter.identifier {
             push_where(&mut qb, &mut has_where);

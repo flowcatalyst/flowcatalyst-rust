@@ -42,6 +42,7 @@ mod dispatch_pool_write_permission_test;
 mod dispatch_process_test;
 mod dispatch_scheduler_test;
 mod dispatch_schema_test;
+mod enum_roundtrip_test;
 mod event_type_app_scope_test;
 mod function_api_test;
 mod function_catalogue_test;

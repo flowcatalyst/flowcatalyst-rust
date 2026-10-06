@@ -25,6 +25,7 @@ use super::entity::{
     AppGrant, IdentitySource, IdentityStatus, LinkedOAuthClient, LoginFlow, PortalApp,
     PortalIdentity, PortalOAuthClient,
 };
+use fc_platform_core::shared::enum_str::Stored;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase::DbTx;
 use fc_platform_core::usecase::Persist;
@@ -38,8 +39,8 @@ struct IdentityRow {
     email: String,
     name: Option<String>,
     password_hash: Option<String>,
-    status: String,
-    source: String,
+    status: Stored<IdentityStatus>,
+    source: Stored<IdentitySource>,
     last_login_at: Option<DateTime<Utc>>,
     invited_at: Option<DateTime<Utc>>,
     invite_expires_at: Option<DateTime<Utc>>,
@@ -50,10 +51,11 @@ struct IdentityRow {
 impl TryFrom<IdentityRow> for PortalIdentity {
     type Error = PlatformError;
     fn try_from(r: IdentityRow) -> Result<Self> {
-        let status = IdentityStatus::parse(&r.status).ok_or_else(|| {
+        // This table's own wording, kept: it names the two statuses.
+        let status = r.status.into_result().map_err(|raw| {
             PlatformError::internal(format!(
-                "portal_identities.status of {} is not ACTIVE or DISABLED: {}",
-                r.id, r.status
+                "portal_identities.status of {} is not ACTIVE or DISABLED: {raw}",
+                r.id
             ))
         })?;
         Ok(PortalIdentity::from_parts(
@@ -63,7 +65,8 @@ impl TryFrom<IdentityRow> for PortalIdentity {
             r.name,
             r.password_hash,
             status,
-            IdentitySource::parse(&r.source),
+            // An unrecognised source reads as INVITE (what Go's ensure writes).
+            r.source.known().unwrap_or(IdentitySource::Invite),
             r.last_login_at,
             r.invited_at,
             r.invite_expires_at,
@@ -77,7 +80,7 @@ impl TryFrom<IdentityRow> for PortalIdentity {
 struct GrantRow {
     identity_id: PortalIdentityId,
     portal_app_id: PortalAppId,
-    source: String,
+    source: Stored<IdentitySource>,
     granted_at: DateTime<Utc>,
 }
 
@@ -233,7 +236,7 @@ impl PortalIdentityRepository {
                 .or_default()
                 .push(AppGrant {
                     app_id: r.portal_app_id,
-                    source: IdentitySource::parse(&r.source),
+                    source: r.source.known().unwrap_or(IdentitySource::Invite),
                     granted_at: r.granted_at,
                 });
         }
@@ -319,8 +322,8 @@ impl Persist<PortalIdentity> for PortalIdentityRepository {
         .bind(&i.email)
         .bind(name)
         .bind(&i.password_hash)
-        .bind(i.status.as_str())
-        .bind(i.source.as_str())
+        .bind(i.status)
+        .bind(i.source)
         .bind(i.last_login_at)
         .bind(i.created_at)
         .bind(Utc::now())
@@ -339,7 +342,7 @@ impl Persist<PortalIdentity> for PortalIdentityRepository {
         }
         if !i.apps.is_empty() {
             let app_ids: Vec<&PortalAppId> = i.apps.iter().map(|g| &g.app_id).collect();
-            let sources: Vec<&str> = i.apps.iter().map(|g| g.source.as_str()).collect();
+            let sources: Vec<IdentitySource> = i.apps.iter().map(|g| g.source).collect();
             let granted: Vec<DateTime<Utc>> = i.apps.iter().map(|g| g.granted_at).collect();
             sqlx::query(
                 "INSERT INTO portal_identity_apps (identity_id, portal_app_id, source, granted_at) \

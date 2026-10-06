@@ -35,7 +35,7 @@ pub struct EnsureCommand {
     pub email: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    pub source: String,
+    pub source: IdentitySource,
     /// Grants the identity this portal app (which must belong to the client
     /// and be active). The grant's source is `source`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -85,10 +85,11 @@ impl<U: UnitOfWork> EnsurePortalIdentityUseCase<U> {
             ),
             None => None,
         };
-        let source = if cmd.source == IdentitySource::Jit.as_str() {
-            IdentitySource::Jit
-        } else {
-            IdentitySource::Invite
+        // An identity is created as a JIT one or an invited one; an ensure
+        // never creates an ADMIN one (that is a grant's source).
+        let source = match cmd.source {
+            IdentitySource::Jit => IdentitySource::Jit,
+            IdentitySource::Invite | IdentitySource::Admin => IdentitySource::Invite,
         };
         let existing = self
             .identities
@@ -365,7 +366,7 @@ pub struct SetStatusCommand {
     pub email: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub id: String,
-    pub status: String,
+    pub status: IdentityStatus,
 }
 
 impl AuditMasked for SetStatusCommand {}
@@ -405,12 +406,7 @@ impl<U: UnitOfWork> SetPortalIdentityStatusUseCase<U> {
         if !cmd.client_id.is_empty() && ident.client_id.as_str() != cmd.client_id {
             return Err(not_found("PortalIdentity", &cmd.id));
         }
-        // `validate` already refused a status that doesn't parse; parse again
-        // rather than default, so a caller that skips `validate` can't turn a
-        // bad status into ACTIVE.
-        ident.status = IdentityStatus::parse(&cmd.status).ok_or_else(|| {
-            UseCaseError::validation("STATUS_INVALID", "status must be ACTIVE or DISABLED")
-        })?;
+        ident.status = cmd.status;
         let event = IdentityStatusSet::new(ctx, &ident.id, &ident.client_id, ident.status);
         Ok((ident, event))
     }
@@ -428,12 +424,6 @@ impl<U: UnitOfWork> UseCase for SetPortalIdentityStatusUseCase<U> {
             return Err(UseCaseError::validation(
                 "TARGET_REQUIRED",
                 "id, or clientId + email, is required",
-            ));
-        }
-        if IdentityStatus::parse(&cmd.status).is_none() {
-            return Err(UseCaseError::validation(
-                "STATUS_INVALID",
-                "status must be ACTIVE or DISABLED",
             ));
         }
         Ok(())

@@ -444,7 +444,7 @@ impl EventTypeRepository {
         }
         if let Some(s) = status {
             push_where(&mut qb, &mut has_where);
-            qb.push("status = ").push_bind(s.as_str());
+            qb.push("status = ").push_bind(s);
         }
         if let Some(sd) = subdomain {
             push_where(&mut qb, &mut has_where);

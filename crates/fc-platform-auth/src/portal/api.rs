@@ -24,7 +24,8 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 use super::entity::{
-    micros, normalize_app_code, IdentityStatus, LinkedOAuthClient, PortalApp, PortalIdentity,
+    micros, normalize_app_code, IdentitySource, IdentityStatus, LinkedOAuthClient, PortalApp,
+    PortalIdentity,
 };
 use super::operations::{
     not_found, AppGrantCommand, AssignUnassignedCommand, AssignUnassignedPortalIdentitiesUseCase,
@@ -283,7 +284,7 @@ pub async fn ensure_portal_user(
         client_id: client_id.clone(),
         email: req.email.clone(),
         name: req.name.clone(),
-        source: "INVITE".to_string(),
+        source: IdentitySource::Invite,
         portal_app_id: app
             .as_ref()
             .map(|a| a.id.clone())
@@ -679,7 +680,7 @@ async fn set_status(
         client_id,
         email: String::new(),
         id,
-        status: status.as_str().to_string(),
+        status,
     };
     use_case
         .run(cmd, ExecutionContext::from_auth(&auth.0))

@@ -453,11 +453,11 @@ impl PrincipalRepository {
         }
         if let Some(s) = scope {
             push_where(&mut qb, &mut has_where);
-            qb.push("p.scope = ").push_bind(s.as_str());
+            qb.push("p.scope = ").push_bind(s);
         }
         if let Some(pt) = principal_type {
             push_where(&mut qb, &mut has_where);
-            qb.push("p.type = ").push_bind(pt.as_str());
+            qb.push("p.type = ").push_bind(pt);
         }
         if let Some(a) = active {
             push_where(&mut qb, &mut has_where);

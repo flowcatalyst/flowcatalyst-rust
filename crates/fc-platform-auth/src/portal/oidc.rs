@@ -19,7 +19,7 @@ use chrono::{Duration, Utc};
 use fc_platform_core::shared::id::IdentityProviderId;
 use std::collections::HashMap;
 
-use super::entity::{email_domain_of, IdentityStatus, LoginFlow};
+use super::entity::{email_domain_of, IdentitySource, IdentityStatus, LoginFlow};
 use super::login_api::{coded, issue_code, query_escape, redirect, PortalLoginState};
 use super::operations::{EnsureCommand, EnsurePortalIdentityUseCase};
 use super::repository::PortalOidcState;
@@ -258,7 +258,7 @@ pub async fn complete(
                 client_id: portal_client_id.to_string(),
                 email: email.to_string(),
                 name: (!name.is_empty()).then(|| name.to_string()),
-                source: "JIT".to_string(),
+                source: IdentitySource::Jit,
                 portal_app_id: app.as_ref().map(|a| a.id.to_string()),
             };
             let use_case = EnsurePortalIdentityUseCase::new(

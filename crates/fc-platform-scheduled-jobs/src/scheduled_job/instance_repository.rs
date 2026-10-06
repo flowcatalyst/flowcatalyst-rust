@@ -385,12 +385,11 @@ impl ScheduledJobInstanceRepository {
         }
         if let Some(s) = f.status {
             push_where(&mut qb, &mut has_where);
-            qb.push("status = ").push_bind(s.as_str().to_string());
+            qb.push("status = ").push_bind(s);
         }
         if let Some(tk) = f.trigger_kind {
             push_where(&mut qb, &mut has_where);
-            qb.push("trigger_kind = ")
-                .push_bind(tk.as_str().to_string());
+            qb.push("trigger_kind = ").push_bind(tk);
         }
         if let Some(from) = f.from {
             push_where(&mut qb, &mut has_where);
@@ -434,12 +433,11 @@ impl ScheduledJobInstanceRepository {
         }
         if let Some(s) = f.status {
             push_where(&mut qb, &mut has_where);
-            qb.push("status = ").push_bind(s.as_str().to_string());
+            qb.push("status = ").push_bind(s);
         }
         if let Some(tk) = f.trigger_kind {
             push_where(&mut qb, &mut has_where);
-            qb.push("trigger_kind = ")
-                .push_bind(tk.as_str().to_string());
+            qb.push("trigger_kind = ").push_bind(tk);
         }
         if let Some(from) = f.from {
             push_where(&mut qb, &mut has_where);

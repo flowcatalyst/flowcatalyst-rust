@@ -175,7 +175,7 @@ impl ConnectionRepository {
         }
         if let Some(v) = status {
             push_where(&mut qb, &mut has_where);
-            qb.push("status = ").push_bind(v.as_str());
+            qb.push("status = ").push_bind(v);
         }
         if let Some(v) = service_account_id {
             push_where(&mut qb, &mut has_where);

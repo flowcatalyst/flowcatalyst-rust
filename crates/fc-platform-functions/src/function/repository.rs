@@ -265,7 +265,7 @@ fn push_filter(qb: &mut QueryBuilder<'_, Postgres>, filter: &FunctionListFilter)
     }
     if let Some(status) = filter.status {
         qb.push(" AND status = ");
-        qb.push_bind(status.as_str());
+        qb.push_bind(status);
     }
     match &filter.owners {
         OwnerReach::Everything => {}

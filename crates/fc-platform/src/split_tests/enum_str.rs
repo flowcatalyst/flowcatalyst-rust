@@ -26,6 +26,7 @@ use crate::login_attempt::entity::AttemptType;
 use crate::login_attempt::entity::LoginOutcome;
 use crate::platform_config::entity::ConfigScope;
 use crate::platform_config::entity::ConfigValueType;
+use crate::portal::entity::{IdentitySource, IdentityStatus};
 use crate::principal::entity::PrincipalType;
 use crate::principal::entity::UserScope;
 use crate::process::entity::ProcessSource;
@@ -87,6 +88,8 @@ fn every_domain_enum_agrees_with_serde() {
     assert_str_enum(ClientStatus::ALL, ClientStatus::as_str);
     assert_str_enum(ProcessStatus::ALL, ProcessStatus::as_str);
     assert_str_enum(ProcessSource::ALL, ProcessSource::as_str);
+    assert_str_enum(IdentityStatus::ALL, IdentityStatus::as_str);
+    assert_str_enum(IdentitySource::ALL, IdentitySource::as_str);
 }
 
 /// Every value the production database held at the 2026-09-24 audit

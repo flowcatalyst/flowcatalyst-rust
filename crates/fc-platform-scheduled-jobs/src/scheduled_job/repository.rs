@@ -209,7 +209,7 @@ impl ScheduledJobRepository {
         }
         if let Some(s) = status {
             push_where(&mut qb, &mut has_where);
-            qb.push("status = ").push_bind(s.as_str().to_string());
+            qb.push("status = ").push_bind(s);
         }
         if let Some(term) = search {
             push_where(&mut qb, &mut has_where);
@@ -262,7 +262,7 @@ impl ScheduledJobRepository {
         }
         if let Some(s) = status {
             push_where(&mut qb, &mut has_where);
-            qb.push("status = ").push_bind(s.as_str().to_string());
+            qb.push("status = ").push_bind(s);
         }
         if let Some(term) = search {
             push_where(&mut qb, &mut has_where);
@@ -482,7 +482,7 @@ fn push_list_filters(
     }
     if let Some(s) = status {
         push_where(qb);
-        qb.push("status = ").push_bind(s.as_str().to_string());
+        qb.push("status = ").push_bind(s);
     }
     if let Some(term) = search.filter(|t| !t.is_empty()) {
         push_where(qb);

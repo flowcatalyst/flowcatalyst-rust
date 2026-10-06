@@ -29,20 +29,14 @@ pub enum IdentityStatus {
     Disabled,
 }
 
-impl IdentityStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Active => "ACTIVE",
-            Self::Disabled => "DISABLED",
-        }
-    }
+fc_platform_core::shared::enum_str::str_enum!(IdentityStatus, "portal identity status", {
+    Active => "ACTIVE",
+    Disabled => "DISABLED",
+});
 
+impl IdentityStatus {
     pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "ACTIVE" => Some(Self::Active),
-            "DISABLED" => Some(Self::Disabled),
-            _ => None,
-        }
+        s.parse().ok()
     }
 }
 
@@ -58,23 +52,17 @@ pub enum IdentitySource {
     Admin,
 }
 
-impl IdentitySource {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Invite => "INVITE",
-            Self::Jit => "JIT",
-            Self::Admin => "ADMIN",
-        }
-    }
+fc_platform_core::shared::enum_str::str_enum!(IdentitySource, "portal identity source", {
+    Invite => "INVITE",
+    Jit => "JIT",
+    Admin => "ADMIN",
+});
 
+impl IdentitySource {
     /// Stored values are Go's strings; an unknown value reads as INVITE,
     /// which is what Go's ensure writes for anything that is not JIT.
     pub fn parse(s: &str) -> Self {
-        match s {
-            "JIT" => Self::Jit,
-            "ADMIN" => Self::Admin,
-            _ => Self::Invite,
-        }
+        s.parse().unwrap_or(Self::Invite)
     }
 }
 

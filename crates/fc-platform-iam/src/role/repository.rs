@@ -209,7 +209,7 @@ impl RoleRepository {
         }
         if let Some(s) = source {
             push_where(&mut qb, &mut has_where);
-            qb.push("source = ").push_bind(s.as_str());
+            qb.push("source = ").push_bind(s);
         }
         if let Some(cm) = client_managed {
             push_where(&mut qb, &mut has_where);
