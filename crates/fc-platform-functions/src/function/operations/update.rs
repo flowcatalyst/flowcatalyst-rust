@@ -24,6 +24,7 @@ use serde::Serialize;
 use super::access::function_by_address;
 use super::events::FunctionUpdated;
 use super::trigger_sync::TriggerSync;
+use crate::function::entity::FunctionStatus;
 use crate::function::repository::FunctionRepository;
 use crate::function::FunctionAddress;
 use fc_platform_core::usecase::{
@@ -86,10 +87,10 @@ impl<U: UnitOfWork> UseCase for UpdateFunctionUseCase<U> {
         let description_changed = function.description != before;
         let mut status_noop = None;
         if let Some(status) = &command.status {
-            let transition = match status.as_str() {
-                "ACTIVE" => function.enable(now),
-                "DISABLED" => function.disable(now),
-                _ => {
+            let transition = match status.parse::<FunctionStatus>() {
+                Ok(FunctionStatus::Active) => function.enable(now),
+                Ok(FunctionStatus::Disabled) => function.disable(now),
+                Err(_) => {
                     return Err(UseCaseError::validation(
                         "STATUS_INVALID",
                         "status must be ACTIVE or DISABLED",

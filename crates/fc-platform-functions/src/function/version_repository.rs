@@ -20,9 +20,10 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
-use super::entity::{FunctionVersion, SignerIdentity, VersionState};
+use super::entity::{FunctionVersion, SignerIdentity, VersionState, VersionStateKind};
 use super::{Digest, DnsLabel, JsonNode, Manifest, LIVE_ALIAS};
 use axum::http::StatusCode;
+use fc_platform_core::shared::enum_str::Stored;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::shared::log_throttle::LogThrottle;
 use fc_platform_core::usecase::{DbTx, LockedRead, Persist};
@@ -106,7 +107,7 @@ struct VersionRow {
     signer_issuer: Option<String>,
     signer_subject: Option<String>,
     manifest: String,
-    state: String,
+    state: Stored<VersionStateKind>,
     published_by: String,
     published_at: DateTime<Utc>,
     ready_at: Option<DateTime<Utc>>,
@@ -239,10 +240,11 @@ impl FunctionVersionRepository {
         function_id: &FunctionId,
     ) -> Result<Option<FunctionVersion>> {
         let row = sqlx::query_as::<_, VersionRow>(&format!(
-            "SELECT {COLUMNS} FROM fnr_versions WHERE function_id = $1 AND state <> 'RETIRED' \
+            "SELECT {COLUMNS} FROM fnr_versions WHERE function_id = $1 AND state <> $2 \
              ORDER BY version DESC LIMIT 1"
         ))
         .bind(function_id)
+        .bind(VersionStateKind::Retired)
         .fetch_optional(&self.pool)
         .await?;
         row.map(to_entity_or_corrupt).transpose()
@@ -296,10 +298,11 @@ impl FunctionVersionRepository {
         }
         let rows = sqlx::query_as::<_, VersionRow>(&format!(
             "SELECT DISTINCT ON (function_id) {COLUMNS} FROM fnr_versions \
-             WHERE function_id = ANY($1) AND state = 'PUBLISHED' \
+             WHERE function_id = ANY($1) AND state = $2 \
              ORDER BY function_id ASC, version DESC"
         ))
         .bind(function_ids)
+        .bind(VersionStateKind::Published)
         .fetch_all(&self.pool)
         .await?;
         for row in rows {
@@ -406,9 +409,9 @@ impl Persist<FunctionVersion> for FunctionVersionRepository {
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15) \
              ON CONFLICT (id) DO UPDATE SET \
                 state = EXCLUDED.state, \
-                ready_at = CASE WHEN EXCLUDED.state = 'READY' THEN EXCLUDED.ready_at \
+                ready_at = CASE WHEN EXCLUDED.state = $16 THEN EXCLUDED.ready_at \
                                 ELSE fnr_versions.ready_at END, \
-                retired_at = CASE WHEN EXCLUDED.state = 'RETIRED' THEN EXCLUDED.retired_at \
+                retired_at = CASE WHEN EXCLUDED.state = $17 THEN EXCLUDED.retired_at \
                                   ELSE fnr_versions.retired_at END",
         )
         .bind(&v.id)
@@ -421,11 +424,13 @@ impl Persist<FunctionVersion> for FunctionVersionRepository {
         .bind(issuer)
         .bind(subject)
         .bind(serde_json::to_string(&v.manifest).expect("a manifest always serialises"))
-        .bind(v.state.name())
+        .bind(v.state.kind())
         .bind(&v.published_by)
         .bind(v.published_at)
         .bind(v.ready_at())
         .bind(v.retired_at())
+        .bind(VersionStateKind::Ready)
+        .bind(VersionStateKind::Retired)
         .execute(&mut **tx.inner)
         .await?;
         Ok(())
@@ -482,11 +487,20 @@ fn to_entity(row: VersionRow) -> result::Result<FunctionVersion, String> {
     let json = JsonNode::parse(&row.manifest)
         .map_err(|_| "fnr_versions.manifest is not valid JSON".to_string())?;
     let manifest = read_stored_manifest(&json, &row.id)?;
-    let state = match (row.state.as_str(), row.ready_at, row.retired_at) {
-        ("PUBLISHED", _, _) => VersionState::Published,
-        ("READY", Some(at), _) => VersionState::Ready(at),
-        ("RETIRED", _, Some(at)) => VersionState::Retired(at),
-        (other, _, _) => return Err(format!("unrecognised fnr_versions.state: {other}")),
+    let kind = row
+        .state
+        .into_result()
+        .map_err(|raw| format!("unrecognised fnr_versions.state: {raw}"))?;
+    let state = match (kind, row.ready_at, row.retired_at) {
+        (VersionStateKind::Published, _, _) => VersionState::Published,
+        (VersionStateKind::Ready, Some(at), _) => VersionState::Ready(at),
+        (VersionStateKind::Retired, _, Some(at)) => VersionState::Retired(at),
+        (kind @ (VersionStateKind::Ready | VersionStateKind::Retired), _, _) => {
+            return Err(format!(
+                "unrecognised fnr_versions.state: {}",
+                kind.as_str()
+            ))
+        }
     };
     let digest = Digest::parse(&row.digest).map_err(|e| e.message().to_string())?;
     let signer = match (row.signer_issuer, row.signer_subject) {
@@ -561,5 +575,65 @@ mod tests {
         assert!(lines[0].contains("part=\"endpoint\""), "{}", lines[0]);
         assert!(lines[0].contains("no-leading-slash"), "{}", lines[0]);
         assert!(lines[0].contains("fnv_1"), "{}", lines[0]);
+    }
+
+    fn row_in_state(
+        state: &str,
+        ready: Option<DateTime<Utc>>,
+        retired: Option<DateTime<Utc>>,
+    ) -> VersionRow {
+        VersionRow {
+            id: FunctionVersionId::parse("fnv_1").unwrap(),
+            function_id: FunctionId::parse("fnc_1").unwrap(),
+            version: 1,
+            artifact_ref: "file://a".to_string(),
+            digest: format!("sha256:{}", "a".repeat(64)),
+            signature_bundle: None,
+            signature_bundle_ref: None,
+            signer_issuer: None,
+            signer_subject: None,
+            manifest: r#"{"runtime":"wasm","entrypoint":"handle","endpoints":[]}"#.to_string(),
+            state: Stored::of_text(state),
+            published_by: "prn_1".to_string(),
+            published_at: Utc::now(),
+            ready_at: ready,
+            retired_at: retired,
+        }
+    }
+
+    #[test]
+    fn a_stored_state_reads_with_its_time_or_is_unrecognised() {
+        let at = Utc::now();
+        assert_eq!(
+            to_entity(row_in_state("PUBLISHED", None, None))
+                .unwrap()
+                .state,
+            VersionState::Published
+        );
+        assert_eq!(
+            to_entity(row_in_state("READY", Some(at), None))
+                .unwrap()
+                .state,
+            VersionState::Ready(at)
+        );
+        assert_eq!(
+            to_entity(row_in_state("RETIRED", None, Some(at)))
+                .unwrap()
+                .state,
+            VersionState::Retired(at)
+        );
+        // READY without its time, RETIRED without its time, and a spelling no
+        // state has: all "unrecognised", naming the stored text.
+        for (state, ready, retired, named) in [
+            ("READY", None, None, "READY"),
+            ("RETIRED", Some(at), None, "RETIRED"),
+            ("BOGUS", None, None, "BOGUS"),
+            ("ready", Some(at), None, "ready"),
+        ] {
+            let err = to_entity(row_in_state(state, ready, retired))
+                .err()
+                .unwrap();
+            assert_eq!(err, format!("unrecognised fnr_versions.state: {named}"));
+        }
     }
 }

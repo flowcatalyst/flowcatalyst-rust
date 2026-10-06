@@ -48,7 +48,8 @@ use super::api::{query_param, QueryParams};
 use super::artifact::{self, ArtifactBlobStore, ArtifactError, PlatformArtifactRef};
 use super::desired_state::{etag, etag_matches, DesiredStateBuilder};
 use super::entity::{
-    Function, FunctionHost, FunctionStatus, FunctionVersion, HostState, LoadState, LoadedVersion,
+    Function, FunctionHost, FunctionStatus, FunctionVersion, HostState, LoadState, LoadStateKind,
+    LoadedVersion,
 };
 use super::host_repository::FunctionHostRepository;
 use super::json::JsonNode;
@@ -198,15 +199,17 @@ fn parse_loaded_entry(
         .filter(|v| *v > 0)
         .and_then(|v| i32::try_from(v).ok())
         .ok_or_else(|| loaded_invalid(index, "version must be a positive integer"))?;
-    let state = match entry.state.as_deref() {
-        None => return Err(loaded_invalid(index, "state is required")),
-        Some("REGISTERED") => LoadState::Registered,
-        Some("LOADED") => LoadState::Loaded,
-        Some("FAILED") => LoadState::Failed(truncate_utf16(
+    let Some(state) = entry.state.as_deref() else {
+        return Err(loaded_invalid(index, "state is required"));
+    };
+    let state = match state.parse::<LoadStateKind>() {
+        Ok(LoadStateKind::Registered) => LoadState::Registered,
+        Ok(LoadStateKind::Loaded) => LoadState::Loaded,
+        Ok(LoadStateKind::Failed) => LoadState::Failed(truncate_utf16(
             entry.error.as_deref().unwrap_or(""),
             MAX_ERROR_LENGTH,
         )),
-        Some(_) => {
+        Err(_) => {
             return Err(loaded_invalid(
                 index,
                 "state must be REGISTERED, LOADED, or FAILED",
@@ -253,17 +256,13 @@ pub async fn heartbeat(
         )
     })?;
     let pool = parse_pool(req.pool.as_deref())?;
-    let host_state = match req.state.as_deref() {
-        Some("ACTIVE") => HostState::Active,
-        Some("DRAINING") => HostState::Draining,
-        _ => {
-            return Err(UseCaseError::validation(
-                "HOST_STATE_INVALID",
-                "state must be ACTIVE or DRAINING",
-            )
-            .into())
-        }
-    };
+    let host_state = req
+        .state
+        .as_deref()
+        .and_then(|s| s.parse::<HostState>().ok())
+        .ok_or_else(|| {
+            UseCaseError::validation("HOST_STATE_INVALID", "state must be ACTIVE or DRAINING")
+        })?;
     let raw_loaded = req.loaded.unwrap_or_default();
     let loaded = raw_loaded
         .iter()

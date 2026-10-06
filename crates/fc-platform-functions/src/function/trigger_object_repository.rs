@@ -16,7 +16,7 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
 use super::entity::{TriggerObject, TriggerObjectKind, TriggerObjectLink};
-use fc_platform_core::shared::enum_str::decode;
+use fc_platform_core::shared::enum_str::Stored;
 use fc_platform_core::shared::error::Result;
 use fc_platform_core::usecase::{DbTx, HasId, Persist};
 
@@ -31,7 +31,7 @@ impl TriggerObjectRepository {
 
     /// A function's links, by kind then trigger key (Java `listByFunction`).
     pub async fn list(&self, function_id: &FunctionId) -> Result<Vec<TriggerObject>> {
-        let rows: Vec<(String, String, String, DateTime<Utc>)> = sqlx::query_as(
+        let rows: Vec<(Stored<TriggerObjectKind>, String, String, DateTime<Utc>)> = sqlx::query_as(
             "SELECT kind, object_id, trigger_key, created_at FROM fnr_trigger_objects \
              WHERE function_id = $1 ORDER BY kind ASC, trigger_key ASC",
         )
@@ -40,8 +40,7 @@ impl TriggerObjectRepository {
         .await?;
         rows.into_iter()
             .map(|(kind, object_id, trigger_key, created_at)| {
-                let kind: TriggerObjectKind =
-                    decode(&kind, "fnr_trigger_objects", "kind", &object_id)?;
+                let kind = kind.decode("fnr_trigger_objects", "kind", &object_id)?;
                 Ok(TriggerObject {
                     function_id: function_id.clone(),
                     kind,
@@ -58,7 +57,7 @@ impl TriggerObjectRepository {
     pub async fn object_ids(&self, kind: TriggerObjectKind) -> Result<HashSet<String>> {
         let rows: Vec<(String,)> =
             sqlx::query_as("SELECT object_id FROM fnr_trigger_objects WHERE kind = $1")
-                .bind(kind.as_str())
+                .bind(kind)
                 .fetch_all(&self.pool)
                 .await?;
         Ok(rows.into_iter().map(|(id,)| id).collect())
@@ -72,14 +71,14 @@ impl TriggerObjectRepository {
         &self,
         function_id: &FunctionId,
     ) -> Result<Vec<TriggerObjectLink>> {
-        let rows: Vec<(String, String, String, bool)> = sqlx::query_as(
+        let rows: Vec<(Stored<TriggerObjectKind>, String, String, bool)> = sqlx::query_as(
             "SELECT t.kind, t.trigger_key, t.object_id, \
                 CASE t.kind \
-                    WHEN 'POOL' THEN EXISTS \
+                    WHEN $2 THEN EXISTS \
                         (SELECT 1 FROM msg_dispatch_pools p WHERE p.id = t.object_id) \
-                    WHEN 'SUBSCRIPTION' THEN EXISTS \
+                    WHEN $3 THEN EXISTS \
                         (SELECT 1 FROM msg_subscriptions s WHERE s.id = t.object_id) \
-                    WHEN 'SCHEDULED_JOB' THEN EXISTS \
+                    WHEN $4 THEN EXISTS \
                         (SELECT 1 FROM msg_scheduled_jobs j WHERE j.id = t.object_id) \
                     ELSE FALSE \
                 END \
@@ -87,12 +86,14 @@ impl TriggerObjectRepository {
              ORDER BY t.kind ASC, t.trigger_key ASC",
         )
         .bind(function_id)
+        .bind(TriggerObjectKind::Pool)
+        .bind(TriggerObjectKind::Subscription)
+        .bind(TriggerObjectKind::ScheduledJob)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter()
             .map(|(kind, trigger_key, object_id, present)| {
-                let kind: TriggerObjectKind =
-                    decode(&kind, "fnr_trigger_objects", "kind", &object_id)?;
+                let kind = kind.decode("fnr_trigger_objects", "kind", &object_id)?;
                 Ok(TriggerObjectLink {
                     kind,
                     trigger_key,
@@ -112,7 +113,7 @@ impl TriggerObjectRepository {
              ON CONFLICT (function_id, kind, trigger_key) DO UPDATE SET object_id = EXCLUDED.object_id",
         )
         .bind(&link.function_id)
-        .bind(link.kind.as_str())
+        .bind(link.kind)
         .bind(&link.object_id)
         .bind(&link.trigger_key)
         .bind(link.created_at)
@@ -127,7 +128,7 @@ impl TriggerObjectRepository {
              WHERE function_id = $1 AND kind = $2 AND trigger_key = $3",
         )
         .bind(&link.function_id)
-        .bind(link.kind.as_str())
+        .bind(link.kind)
         .bind(&link.trigger_key)
         .execute(&mut **tx.inner)
         .await?;

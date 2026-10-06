@@ -14,7 +14,7 @@ use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{Function, FunctionAlias, FunctionStatus};
 use super::{FunctionAddress, FunctionAddressPattern, FunctionOwner, Runtime};
-use fc_platform_core::shared::enum_str::{corrupt_value, decode};
+use fc_platform_core::shared::enum_str::{corrupt_value, decode, Stored};
 use fc_platform_core::shared::error::Result;
 use fc_platform_core::usecase::{DbTx, Persist};
 
@@ -28,7 +28,7 @@ struct FunctionRow {
     client_id: Option<ClientId>,
     runtime: String,
     description: Option<String>,
-    status: String,
+    status: Stored<FunctionStatus>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -124,9 +124,10 @@ impl FunctionRepository {
     /// null, ACTIVE))`): desired state's starting set.
     pub async fn list_active(&self) -> Result<Vec<Function>> {
         let rows = sqlx::query_as::<_, FunctionRow>(&format!(
-            "SELECT {COLUMNS} FROM fnr_functions WHERE status = 'ACTIVE' \
+            "SELECT {COLUMNS} FROM fnr_functions WHERE status = $1 \
              ORDER BY application_code ASC, service_name ASC, name ASC"
         ))
+        .bind(FunctionStatus::Active)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate(rows).await
@@ -303,7 +304,9 @@ fn to_entity(row: FunctionRow, aliases: Vec<FunctionAlias>) -> Result<Function> 
         )
     })?;
     let runtime: Runtime = decode(&row.runtime, "fnr_functions", "runtime", row.id.as_str())?;
-    let status: FunctionStatus = decode(&row.status, "fnr_functions", "status", row.id.as_str())?;
+    let status = row
+        .status
+        .decode("fnr_functions", "status", row.id.as_str())?;
     Ok(Function {
         id: row.id,
         application_id: row.application_id,
@@ -341,7 +344,7 @@ impl Persist<Function> for FunctionRepository {
         .bind(f.owner.client_id_or_none())
         .bind(f.runtime.as_str())
         .bind(&f.description)
-        .bind(f.status.as_str())
+        .bind(f.status)
         .bind(f.created_at)
         .bind(f.updated_at)
         .execute(&mut **tx.inner)

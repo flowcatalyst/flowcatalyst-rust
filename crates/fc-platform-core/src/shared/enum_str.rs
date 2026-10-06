@@ -114,6 +114,12 @@ impl<T: FromStr<Err = UnknownEnumValue>> Stored<T> {
 }
 
 impl<T> Stored<T> {
+    /// The enum, or the text the column held when no variant spells it, for a
+    /// reader that words its own error.
+    pub fn into_result(self) -> Result<T, String> {
+        self.0
+    }
+
     /// The enum if the column held a known spelling, `None` if not: for the
     /// few reads that have always treated an unrecognised value as "no
     /// information" rather than as a corrupt row. Prefer [`Stored::decode`].

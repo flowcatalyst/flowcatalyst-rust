@@ -13,16 +13,16 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::PgPool;
 
-use super::entity::{FunctionHost, HostState, LoadState, LoadedVersion};
+use super::entity::{FunctionHost, HostState, LoadState, LoadStateKind, LoadedVersion};
 use super::FunctionAddress;
-use fc_platform_core::shared::enum_str::decode;
+use fc_platform_core::shared::enum_str::Stored;
 use fc_platform_core::shared::error::Result;
 
 #[derive(sqlx::FromRow)]
 struct HostRow {
     id: String,
     pool: String,
-    state: String,
+    state: Stored<HostState>,
     loaded: Value,
     runtimes: Option<Value>,
     started_at: DateTime<Utc>,
@@ -100,7 +100,7 @@ impl FunctionHostRepository {
         )
         .bind(&host.id)
         .bind(&host.pool)
-        .bind(host.state.as_str())
+        .bind(host.state)
         .bind(write_loaded(&host.loaded))
         .bind(host.runtimes.as_ref().map(|r| serde_json::json!(r)))
         .bind(host.started_at)
@@ -144,7 +144,7 @@ impl FunctionHostRepository {
 }
 
 fn to_entity(row: HostRow) -> Result<FunctionHost> {
-    let state: HostState = decode(&row.state, "fnr_hosts", "state", &row.id)?;
+    let state: HostState = row.state.decode("fnr_hosts", "state", &row.id)?;
     Ok(FunctionHost {
         loaded: read_loaded(&row.loaded),
         runtimes: row.runtimes.as_ref().and_then(read_runtimes),
@@ -210,17 +210,21 @@ fn read_loaded_version(node: &Value) -> Option<LoadedVersion> {
         .as_i64()
         .and_then(|v| i32::try_from(v).ok())
         .filter(|v| *v > 0)?;
-    let state = match object.get("state")?.as_str()? {
-        "REGISTERED" => LoadState::Registered,
-        "LOADED" => LoadState::Loaded,
-        "FAILED" => LoadState::Failed(
+    let state = match object
+        .get("state")?
+        .as_str()?
+        .parse::<LoadStateKind>()
+        .ok()?
+    {
+        LoadStateKind::Registered => LoadState::Registered,
+        LoadStateKind::Loaded => LoadState::Loaded,
+        LoadStateKind::Failed => LoadState::Failed(
             object
                 .get("error")
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string(),
         ),
-        _ => return None,
     };
     Some(LoadedVersion {
         address,

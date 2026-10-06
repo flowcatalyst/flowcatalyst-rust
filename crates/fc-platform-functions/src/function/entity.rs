@@ -271,15 +271,34 @@ pub enum VersionState {
 }
 
 impl VersionState {
-    /// The stored and wire name.
-    pub fn name(&self) -> &'static str {
+    /// Which state this is, without the time it carries.
+    pub fn kind(&self) -> VersionStateKind {
         match self {
-            VersionState::Published => "PUBLISHED",
-            VersionState::Ready(_) => "READY",
-            VersionState::Retired(_) => "RETIRED",
+            VersionState::Published => VersionStateKind::Published,
+            VersionState::Ready(_) => VersionStateKind::Ready,
+            VersionState::Retired(_) => VersionStateKind::Retired,
         }
     }
+
+    /// The stored and wire name.
+    pub fn name(&self) -> &'static str {
+        self.kind().as_str()
+    }
 }
+
+/// A [`VersionState`] without its times: what `fnr_versions.state` holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VersionStateKind {
+    Published,
+    Ready,
+    Retired,
+}
+
+fc_platform_core::shared::enum_str::str_enum!(VersionStateKind, "function version state", {
+    Published => "PUBLISHED",
+    Ready => "READY",
+    Retired => "RETIRED",
+});
 
 /// The keyless signer a version's bundle was verified against.
 pub use fc_function_model::SignerIdentity;
@@ -424,6 +443,21 @@ fc_platform_core::shared::enum_str::str_enum!(HostState, "function host state", 
     Draining => "DRAINING",
 });
 
+/// A [`LoadState`] without its message: what a host's report and its stored
+/// `loaded` entries spell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoadStateKind {
+    Registered,
+    Loaded,
+    Failed,
+}
+
+fc_platform_core::shared::enum_str::str_enum!(LoadStateKind, "load state", {
+    Registered => "REGISTERED",
+    Loaded => "LOADED",
+    Failed => "FAILED",
+});
+
 /// One version on a host (Java `FunctionHost.LoadState`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoadState {
@@ -440,12 +474,17 @@ impl LoadState {
         !matches!(self, LoadState::Failed(_))
     }
 
-    pub fn name(&self) -> &'static str {
+    /// Which state this is, without a failure's message.
+    pub fn kind(&self) -> LoadStateKind {
         match self {
-            LoadState::Registered => "REGISTERED",
-            LoadState::Loaded => "LOADED",
-            LoadState::Failed(_) => "FAILED",
+            LoadState::Registered => LoadStateKind::Registered,
+            LoadState::Loaded => LoadStateKind::Loaded,
+            LoadState::Failed(_) => LoadStateKind::Failed,
         }
+    }
+
+    pub fn name(&self) -> &'static str {
+        self.kind().as_str()
     }
 
     pub fn error(&self) -> Option<&str> {
