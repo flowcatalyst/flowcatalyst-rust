@@ -97,7 +97,5 @@ http-body-util = "0.1"
 hyper = { version = "=1.9.0", features = ["server", "http1", "http2"] }
 hyper-util = { version = "=0.1.20", features = ["tokio", "server", "server-auto"] }
 
-[lints.clippy]
-# Imports, not inline paths (CLAUDE.md "Imports"): `use std::sync::Arc;`
-# and `Arc`, not `std::sync::Arc`. Limits in clippy.toml.
-absolute_paths = "warn"
+[lints]
+workspace = true

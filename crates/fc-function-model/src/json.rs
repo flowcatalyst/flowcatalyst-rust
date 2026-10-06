@@ -88,7 +88,11 @@ impl JsonNode {
     pub fn get(&self, key: &str) -> Option<&JsonNode> {
         match self {
             JsonNode::Object(map) => map.get(key),
-            _ => None,
+            JsonNode::Null
+            | JsonNode::Bool(_)
+            | JsonNode::Number(_)
+            | JsonNode::String(_)
+            | JsonNode::Array(_) => None,
         }
     }
 
@@ -104,28 +108,44 @@ impl JsonNode {
     pub fn as_str(&self) -> Option<&str> {
         match self {
             JsonNode::String(s) => Some(s),
-            _ => None,
+            JsonNode::Null
+            | JsonNode::Bool(_)
+            | JsonNode::Number(_)
+            | JsonNode::Array(_)
+            | JsonNode::Object(_) => None,
         }
     }
 
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             JsonNode::Bool(b) => Some(*b),
-            _ => None,
+            JsonNode::Null
+            | JsonNode::Number(_)
+            | JsonNode::String(_)
+            | JsonNode::Array(_)
+            | JsonNode::Object(_) => None,
         }
     }
 
     pub fn as_array(&self) -> Option<&[JsonNode]> {
         match self {
             JsonNode::Array(items) => Some(items),
-            _ => None,
+            JsonNode::Null
+            | JsonNode::Bool(_)
+            | JsonNode::Number(_)
+            | JsonNode::String(_)
+            | JsonNode::Object(_) => None,
         }
     }
 
     pub fn as_object(&self) -> Option<&IndexMap<String, JsonNode>> {
         match self {
             JsonNode::Object(map) => Some(map),
-            _ => None,
+            JsonNode::Null
+            | JsonNode::Bool(_)
+            | JsonNode::Number(_)
+            | JsonNode::String(_)
+            | JsonNode::Array(_) => None,
         }
     }
 
@@ -135,7 +155,12 @@ impl JsonNode {
     pub fn fits_int(&self) -> Option<i32> {
         match self {
             JsonNode::Number(JsonNumber::Integer(text)) => text.parse().ok(),
-            _ => None,
+            JsonNode::Null
+            | JsonNode::Bool(_)
+            | JsonNode::Number(JsonNumber::Float(_))
+            | JsonNode::String(_)
+            | JsonNode::Array(_)
+            | JsonNode::Object(_) => None,
         }
     }
 
@@ -145,7 +170,12 @@ impl JsonNode {
     pub fn fits_long(&self) -> Option<i64> {
         match self {
             JsonNode::Number(JsonNumber::Integer(text)) => text.parse().ok(),
-            _ => None,
+            JsonNode::Null
+            | JsonNode::Bool(_)
+            | JsonNode::Number(JsonNumber::Float(_))
+            | JsonNode::String(_)
+            | JsonNode::Array(_)
+            | JsonNode::Object(_) => None,
         }
     }
 

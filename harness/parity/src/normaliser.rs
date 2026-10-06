@@ -102,7 +102,9 @@ pub fn normalise_header(
         Value::String(s) => s,
         // Java's `asString()` on a container node is empty (a header whose
         // whole value is a JWS; not seen in practice).
-        _ => String::new(),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_) => {
+            String::new()
+        }
     }
 }
 
@@ -176,7 +178,7 @@ fn normalise_node(node: &Value, labels: &IndexMap<String, String>, base_url: &st
                 .collect(),
         ),
         Value::String(s) => normalise_string(s, labels, base_url),
-        other => other.clone(),
+        Value::Null | Value::Bool(_) | Value::Number(_) => node.clone(),
     }
 }
 
@@ -305,7 +307,7 @@ fn remove_at(node: &mut Value, segments: &[String], index: usize) {
                 }
             }
         }
-        _ => {}
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
     }
 }
 

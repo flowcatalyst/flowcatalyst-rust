@@ -313,7 +313,11 @@ fn string_map(node: Option<&Value>) -> BTreeMap<String, String> {
             Value::String(s) => {
                 out.insert(key.clone(), s.clone());
             }
-            _ => return BTreeMap::new(),
+            Value::Null
+            | Value::Bool(_)
+            | Value::Number(_)
+            | Value::Array(_)
+            | Value::Object(_) => return BTreeMap::new(),
         }
     }
     out

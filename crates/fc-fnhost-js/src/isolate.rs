@@ -211,6 +211,10 @@ impl Isolate {
 
     /// Loads the main module (the host's seal, then the bundle) and runs
     /// the top-level code, driving the event loop until it settles.
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "Poll<Result<..>>: Pending and Ready(Ok) both mean the loop has no error to report"
+    )]
     pub async fn start(&mut self) -> Result<ModuleId, StartError> {
         let raw = self.raw;
         let specifier =

@@ -200,7 +200,11 @@ fn ready(probes: &Probes) -> Response {
         .readiness((probes.listener_bound)(), (probes.reconcile_loop_alive)());
     let (status, code) = match readiness {
         Readiness::Ready => ("UP", StatusCode::OK),
-        other => (other.name(), StatusCode::SERVICE_UNAVAILABLE),
+        other @ (Readiness::Starting
+        | Readiness::PlatformUnreachable
+        | Readiness::ListenerDown
+        | Readiness::ReconcilerDown
+        | Readiness::Draining) => (other.name(), StatusCode::SERVICE_UNAVAILABLE),
     };
     let memory = match memory_limit_bytes() {
         Some(limit) => format!(r#"{{"limitBytes":{limit}}}"#),

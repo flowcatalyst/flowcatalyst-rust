@@ -62,7 +62,7 @@ impl Api {
     pub fn bearer_token(&self) -> Option<String> {
         match &self.auth {
             Auth::Bearer(t) => Some(t.clone()),
-            _ => None,
+            Auth::None | Auth::Cookie(_) => None,
         }
     }
 

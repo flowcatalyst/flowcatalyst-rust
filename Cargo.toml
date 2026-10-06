@@ -51,6 +51,22 @@ rust-version = "1.98"
 authors = ["FlowCatalyst Team"]
 license = "AGPL-3.0-or-later"
 
+# One lint table for every member crate (each has `[lints] workspace = true`).
+# Limits for the clippy lints are in clippy.toml.
+[workspace.lints.rust]
+# `tokio_unstable` is set by RUSTFLAGS for the task-dump build.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tokio_unstable)'] }
+
+[workspace.lints.clippy]
+# Imports, not inline paths (CLAUDE.md "Imports"): `use std::sync::Arc;`
+# and `Arc`, not `std::sync::Arc`.
+absolute_paths = "warn"
+# A `_ =>` arm over one of our own enums hides a new variant from every
+# match that should decide what it means. List the variants instead;
+# `#[expect(clippy::wildcard_enum_match_arm, reason = "...")]` is for foreign
+# or `#[non_exhaustive]` enums only.
+wildcard_enum_match_arm = "warn"
+
 [workspace.dependencies]
 # Global allocator for fc-server (owner decision 2026-10-04). The system allocator (glibc)
 # locks its arenas when memory allocated on one thread is freed on another, which Tokio's

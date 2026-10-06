@@ -157,6 +157,10 @@ impl Display for DbFailure {
 }
 
 /// The code, the SQLSTATE when there is one, and the message.
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "sqlx::Error is #[non_exhaustive]: a wildcard is the only exhaustive form"
+)]
 fn classify(error: &sqlx::Error) -> (DbErrorCode, Option<String>, String) {
     match error {
         sqlx::Error::Database(e) => {

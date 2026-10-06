@@ -57,7 +57,9 @@ pub fn table_config_from_env() -> OutboxTableConfig {
 pub fn database_url_from_env(backend: OutboxBackend) -> Option<String> {
     match backend {
         OutboxBackend::Mongo => env_first_opt(&["FC_OUTBOX_MONGO_URI", "FC_OUTBOX_DB_URL"]),
-        _ => env_first_opt(&["FC_OUTBOX_DB_URL"]),
+        OutboxBackend::Sqlite | OutboxBackend::Postgres | OutboxBackend::Mysql => {
+            env_first_opt(&["FC_OUTBOX_DB_URL"])
+        }
     }
 }
 

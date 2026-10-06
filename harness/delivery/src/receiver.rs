@@ -156,7 +156,10 @@ fn find_marker(v: &serde_json::Value, key: &str) -> Option<serde_json::Value> {
         serde_json::Value::String(s) if s.contains(key) => serde_json::from_str(s)
             .ok()
             .and_then(|inner: serde_json::Value| find_marker(&inner, key)),
-        _ => None,
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => None,
     }
 }
 

@@ -171,7 +171,10 @@ fn older_platform_existing_version(e: &CliError) -> Option<i64> {
         CliError::Platform { code, details, .. } if code == "VERSION_DIGEST_EXISTS" => {
             details["version"].as_i64()
         }
-        _ => None,
+        CliError::Usage(_)
+        | CliError::Platform { .. }
+        | CliError::Other(_)
+        | CliError::Reported => None,
     }
 }
 

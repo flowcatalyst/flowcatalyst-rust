@@ -165,7 +165,7 @@ impl ArtifactKind {
         let prefix = &prefix[..prefix.len().min(Self::PREFIX_LEN)];
         match WasmKind::sniff(prefix) {
             WasmKind::NotWasm => {}
-            kind => return ArtifactKind::Wasm(kind),
+            kind @ (WasmKind::Component | WasmKind::CoreModule) => return ArtifactKind::Wasm(kind),
         }
         if prefix.starts_with(b"PK\x03\x04") {
             return ArtifactKind::Jar;

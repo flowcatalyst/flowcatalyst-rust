@@ -56,7 +56,7 @@ impl PinnedVersions {
         }
         let loaded = match self.reconciler.load_pinned(entry).await {
             PinnedLoad::Loaded(loaded) => loaded,
-            miss => return miss,
+            miss @ (PinnedLoad::Preparing | PinnedLoad::Refused) => return miss,
         };
         let evicted = {
             let mut cache = self.cache.lock();

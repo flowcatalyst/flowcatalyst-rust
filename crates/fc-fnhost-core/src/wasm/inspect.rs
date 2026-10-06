@@ -221,6 +221,10 @@ struct Shape {
 
 /// The top-level component's imports and exports, and every memory any
 /// nested core module defines.
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "wasmparser's Payload has dozens of variants and grows with the spec; only these sections matter"
+)]
 fn read(bytes: &[u8]) -> wasmparser::Result<Shape> {
     let mut shape = Shape {
         imports: Vec::new(),

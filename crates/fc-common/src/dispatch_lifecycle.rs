@@ -341,7 +341,10 @@ impl Selector<'_> {
                     );
                 true
             }
-            _ => false,
+            Selector::One { .. }
+            | Selector::Ids(_)
+            | Selector::Keys(_)
+            | Selector::StaleSince { .. } => false,
         }
     }
 

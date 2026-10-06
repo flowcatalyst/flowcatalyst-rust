@@ -936,6 +936,10 @@ fn identity_of(leaf: &Certificate) -> Result<Option<SignerIdentity>, Unexpected>
     })
 }
 
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "x509-cert's GeneralName is a foreign enum; only a URI or an email SAN names a signer"
+)]
 fn single_uri_or_email_san(leaf: &Certificate) -> Option<String> {
     let (_, value) = extension(leaf, &ObjectIdentifier::new_unwrap("2.5.29.17"))?;
     let san = SubjectAltName::from_der(value).ok()?;

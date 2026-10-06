@@ -140,14 +140,14 @@ impl CliError {
     pub fn code(&self) -> Option<&str> {
         match self {
             CliError::Platform { code, .. } => Some(code),
-            _ => None,
+            CliError::Usage(_) | CliError::Other(_) | CliError::Reported => None,
         }
     }
 
     pub fn status(&self) -> Option<u16> {
         match self {
             CliError::Platform { status, .. } => Some(*status),
-            _ => None,
+            CliError::Usage(_) | CliError::Other(_) | CliError::Reported => None,
         }
     }
 }

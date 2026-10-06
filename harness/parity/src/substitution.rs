@@ -54,7 +54,7 @@ pub fn resolve_json(node: &Value, vars: &Vars) -> Result<Value> {
                 .map(|v| resolve_json(v, vars))
                 .collect::<Result<_>>()?,
         ),
-        other => other.clone(),
+        Value::Null | Value::Bool(_) | Value::Number(_) => node.clone(),
     })
 }
 

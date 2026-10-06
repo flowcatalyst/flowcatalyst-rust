@@ -267,6 +267,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "a test: any other command is the failure it reports"
+    )]
     fn the_manifest_is_required_and_the_alias_defaults_to_live() {
         let args = super::super::parse(&["validate", "a.b.c", "--manifest", "m.json"]).unwrap();
         match args.command {

@@ -14,7 +14,5 @@ description = "FlowCatalyst types shared by the platform and the Rust SDK: outbo
 serde = { workspace = true }
 serde_json = { workspace = true }
 
-[lints.clippy]
-# Imports, not inline paths (CLAUDE.md "Imports"): `use std::sync::Arc;`
-# and `Arc`, not `std::sync::Arc`. Limits in clippy.toml.
-absolute_paths = "warn"
+[lints]
+workspace = true

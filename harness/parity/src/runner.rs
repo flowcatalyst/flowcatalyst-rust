@@ -338,6 +338,10 @@ fn auto_capture_ids(sent: &Sent, vars: &mut Vars) {
     }
 }
 
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "a String that fails the guard lands in the last arm too: it means every other value"
+)]
 fn auto_capture(node: &Value, vars: &mut Vars) {
     match node {
         Value::Object(map) => {
@@ -356,7 +360,7 @@ fn auto_capture(node: &Value, vars: &mut Vars) {
             }
         }
         Value::Array(items) => items.iter().for_each(|v| auto_capture(v, vars)),
-        _ => {}
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
     }
 }
 
@@ -401,7 +405,11 @@ fn capture(step: &Step, sent: &Sent, vars: &mut Vars) -> Result<()> {
             })?;
             match at {
                 Value::String(s) => s.clone(),
-                other => other.to_string(),
+                other @ (Value::Null
+                | Value::Bool(_)
+                | Value::Number(_)
+                | Value::Array(_)
+                | Value::Object(_)) => other.to_string(),
             }
         };
         // An empty capture would mask every empty string on that side.

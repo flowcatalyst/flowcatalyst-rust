@@ -251,7 +251,11 @@ impl DispatchJobPayload {
     pub fn to_outbox_payload(&self, id: &str) -> serde_json::Value {
         let payload = match &self.payload {
             serde_json::Value::String(s) => s.clone(),
-            other => other.to_string(),
+            other @ (serde_json::Value::Null
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::Array(_)
+            | serde_json::Value::Object(_)) => other.to_string(),
         };
         let retry_strategy = match self.retry_strategy.as_str() {
             "exponential_backoff" => "exponential",

@@ -34,7 +34,5 @@ test-support = ["dep:axum", "dep:rand_core"]
 # Its own `testing` fixture, for its own tests.
 fc-platform-jwks = { path = ".", features = ["test-support"] }
 
-[lints.clippy]
-# Imports, not inline paths (CLAUDE.md "Imports"): `use std::sync::Arc;`
-# and `Arc`, not `std::sync::Arc`. Limits in clippy.toml.
-absolute_paths = "warn"
+[lints]
+workspace = true

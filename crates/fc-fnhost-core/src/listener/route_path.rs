@@ -71,7 +71,9 @@ mod tests {
                 version,
                 function_path,
             } => (address.render(), version, function_path),
-            other => panic!("{raw}: {other:?}"),
+            other @ (RoutePath::NotFunctionsRoute
+            | RoutePath::AddressInvalid
+            | RoutePath::VersionInvalid) => panic!("{raw}: {other:?}"),
         }
     }
 

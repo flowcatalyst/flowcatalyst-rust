@@ -128,7 +128,7 @@ fn redact_node(node: &Value, masked: &[&str], top_level: bool) -> Value {
                 .map(|item| redact_node(item, masked, false))
                 .collect(),
         ),
-        leaf => leaf.clone(),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => node.clone(),
     }
 }
 
@@ -137,7 +137,9 @@ fn redact_node(node: &Value, masked: &[&str], top_level: bool) -> Value {
 fn mask_value(value: &Value) -> Value {
     match value {
         Value::Null | Value::Bool(_) => value.clone(),
-        _ => Value::String(MASK.to_string()),
+        Value::Number(_) | Value::String(_) | Value::Array(_) | Value::Object(_) => {
+            Value::String(MASK.to_string())
+        }
     }
 }
 

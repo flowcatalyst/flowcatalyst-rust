@@ -239,7 +239,12 @@ impl TokenValidationError {
             | Self::UnsupportedKeyType(_)
             | Self::NoMatchingKey(_) => true,
             Self::Header(e) | Self::Invalid(e) => matches!(e.kind(), ErrorKind::InvalidRsaKey(_)),
-            _ => false,
+            Self::DiscoveryFetch(_)
+            | Self::DiscoveryStatus(_)
+            | Self::DiscoveryParse(_)
+            | Self::JwksFetch(_)
+            | Self::JwksStatus(_)
+            | Self::JwksParse(_) => false,
         }
     }
 }

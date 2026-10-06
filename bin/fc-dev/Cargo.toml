@@ -107,7 +107,5 @@ web = ["dep:fc-web"]
 # export (FC_OTEL_ENABLED=true).
 otel = ["fc-common/otel"]
 
-[lints.clippy]
-# Imports, not inline paths (CLAUDE.md "Imports"): `use std::sync::Arc;`
-# and `Arc`, not `std::sync::Arc`. Limits in clippy.toml.
-absolute_paths = "warn"
+[lints]
+workspace = true

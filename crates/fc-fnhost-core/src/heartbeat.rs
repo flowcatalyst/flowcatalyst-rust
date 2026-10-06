@@ -80,7 +80,7 @@ impl HeartbeatReport {
                     },
                     error: match &entry.state {
                         LoadState::Failed(error) => Some(error),
-                        _ => None,
+                        LoadState::Registered | LoadState::Loaded => None,
                     },
                 })
                 .collect(),
