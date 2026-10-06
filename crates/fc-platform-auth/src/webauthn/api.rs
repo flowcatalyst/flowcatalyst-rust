@@ -11,6 +11,7 @@ use axum::{
     Json,
 };
 use axum_extra::extract::cookie::CookieJar;
+use fc_platform_core::shared::id::WebauthnCredentialId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::warn;
@@ -636,7 +637,9 @@ pub async fn delete_credential(
     let use_case =
         RevokePasskeyUseCase::new(state.credential_repo.clone(), state.unit_of_work.clone());
     let ctx = ExecutionContext::from_auth(&auth.0);
-    let cmd = RevokePasskeyCommand { credential_id };
+    let cmd = RevokePasskeyCommand {
+        credential_id: WebauthnCredentialId::from_wire(credential_id),
+    };
     use_case.run(cmd, ctx).await.into_result()?;
     Ok(StatusCode::NO_CONTENT)
 }

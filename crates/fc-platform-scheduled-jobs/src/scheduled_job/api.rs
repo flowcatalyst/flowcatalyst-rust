@@ -826,9 +826,9 @@ pub async fn fire_scheduled_job(
     Ok((
         StatusCode::ACCEPTED,
         Json(FireNowResponse {
-            id: event.instance_id.clone(),
+            id: event.instance_id.to_string(),
             scheduled_job_id: event.scheduled_job_id.into_string(),
-            instance_id: event.instance_id,
+            instance_id: event.instance_id.into_string(),
         }),
     ))
 }

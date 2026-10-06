@@ -13,6 +13,7 @@
 
 use fc_platform_core::impl_domain_event;
 use fc_platform_core::shared::id::ScheduledJobId;
+use fc_platform_core::shared::id::ScheduledJobInstanceId;
 use fc_platform_core::usecase::domain_event::{null_if_empty, EventMetadata};
 use fc_platform_core::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
@@ -99,7 +100,7 @@ pub struct ScheduledJobFiredManually {
     pub metadata: EventMetadata,
     pub scheduled_job_id: ScheduledJobId,
     pub code: String,
-    pub instance_id: String,
+    pub instance_id: ScheduledJobInstanceId,
 }
 
 impl_domain_event!(ScheduledJobFiredManually);
@@ -111,13 +112,13 @@ impl ScheduledJobFiredManually {
         ctx: &ExecutionContext,
         scheduled_job_id: &ScheduledJobId,
         code: &str,
-        instance_id: &str,
+        instance_id: &ScheduledJobInstanceId,
     ) -> Self {
         Self {
             metadata: meta(ctx, Self::EVENT_TYPE, scheduled_job_id),
             scheduled_job_id: scheduled_job_id.clone(),
             code: code.into(),
-            instance_id: instance_id.into(),
+            instance_id: instance_id.clone(),
         }
     }
 }
@@ -185,7 +186,7 @@ mod tests {
             &ctx,
             &ScheduledJobId::parse("sjb_1").unwrap(),
             "nightly",
-            "sji_1",
+            &ScheduledJobInstanceId::parse("sji_1").unwrap(),
         );
         assert_eq!(
             e.metadata.event_type,

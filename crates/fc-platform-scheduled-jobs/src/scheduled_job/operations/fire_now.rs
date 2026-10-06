@@ -136,7 +136,7 @@ impl<U: UnitOfWork> UseCase for FireScheduledJobUseCase<U> {
             )));
         }
 
-        let event = ScheduledJobFiredManually::new(&ctx, &job.id, &job.code, instance.id.as_str());
+        let event = ScheduledJobFiredManually::new(&ctx, &job.id, &job.code, &instance.id);
 
         self.unit_of_work.emit_event(event, &cmd).await
     }

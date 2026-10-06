@@ -3,6 +3,7 @@
 //! Removes a single registered passkey. The caller must be the owning principal.
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::WebauthnCredentialId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -16,7 +17,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RevokePasskeyCommand {
-    pub credential_id: String,
+    pub credential_id: WebauthnCredentialId,
 }
 
 impl AuditMasked for RevokePasskeyCommand {}
@@ -41,7 +42,7 @@ impl<U: UnitOfWork> UseCase for RevokePasskeyUseCase<U> {
     type Event = PasskeyRevoked;
 
     async fn validate(&self, command: &RevokePasskeyCommand) -> Result<(), UseCaseError> {
-        if command.credential_id.trim().is_empty() {
+        if command.credential_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "CREDENTIAL_ID_REQUIRED",
                 "credentialId is required",
@@ -60,7 +61,7 @@ impl<U: UnitOfWork> UseCase for RevokePasskeyUseCase<U> {
     ) -> Result<(), UseCaseError> {
         let Some(credential) = self
             .credential_repo
-            .find_by_id(&command.credential_id)
+            .find_by_id(command.credential_id.as_str())
             .await?
         else {
             return Ok(());
@@ -81,7 +82,7 @@ impl<U: UnitOfWork> UseCase for RevokePasskeyUseCase<U> {
     ) -> Result<Committed<PasskeyRevoked>, UseCaseError> {
         let credential = self
             .credential_repo
-            .find_by_id(&command.credential_id)
+            .find_by_id(command.credential_id.as_str())
             .await
             .or_not_found(
                 "CREDENTIAL_NOT_FOUND",

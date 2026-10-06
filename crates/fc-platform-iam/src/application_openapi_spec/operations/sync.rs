@@ -14,6 +14,7 @@
 
 use async_trait::async_trait;
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ApplicationOpenApiSpecId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -42,7 +43,7 @@ impl AuditMasked for SyncOpenApiSpecCommand {}
 #[serde(rename_all = "camelCase")]
 pub struct SyncOpenApiSpecResult {
     pub application_code: String,
-    pub spec_id: String,
+    pub spec_id: ApplicationOpenApiSpecId,
     pub version: String,
     pub status: String,
     pub archived_prior_version: Option<String>,
