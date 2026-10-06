@@ -3,6 +3,7 @@
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::EventTypeId;
+use fc_platform_core::shared::id::SpecVersionId;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{EventType, EventTypeStatus, SpecVersion};
@@ -88,7 +89,7 @@ impl TryFrom<SpecVersionRow> for SpecVersion {
         )?;
         let status = decode(&r.status, "msg_event_type_spec_versions", "status", &r.id)?;
         Ok(Self {
-            id: r.id,
+            id: SpecVersionId::from_wire(r.id),
             event_type_id: r.event_type_id,
             version: r.version,
             mime_type: r.mime_type,
@@ -116,7 +117,6 @@ impl EventTypeRepository {
     /// built-in role seeding.
     pub async fn seed_catalogue(&self, defs: &[SyncEventTypeInput]) -> Result<usize> {
         use crate::event_type::entity::EventType;
-        use fc_platform_core::shared::tsid::{self, EntityType};
 
         let codes: Vec<String> = defs.iter().map(|d| d.code.clone()).collect();
 
@@ -219,7 +219,7 @@ impl EventTypeRepository {
             if versioned.contains(&d.code) {
                 continue;
             }
-            sv_ids.push(tsid::generate(EntityType::Schema));
+            sv_ids.push(SpecVersionId::generate());
             sv_types.push(id.clone());
             sv_schemas.push(schema.clone());
         }

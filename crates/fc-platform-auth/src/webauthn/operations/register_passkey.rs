@@ -136,7 +136,7 @@ impl<U: UnitOfWork> UseCase for RegisterPasskeyUseCase<U> {
         }
 
         let credential = WebauthnCredential::new(principal_id.clone(), passkey, name.clone());
-        let event = PasskeyRegistered::new(&ctx, credential.id.as_str(), &principal_id, name);
+        let event = PasskeyRegistered::new(&ctx, &credential.id, &principal_id, name);
 
         self.unit_of_work
             .commit(&credential, &*self.credential_repo, event, &command)

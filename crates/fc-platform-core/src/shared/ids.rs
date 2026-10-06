@@ -215,13 +215,6 @@ impl IdKind for SpecVersionKind {
 pub type SpecVersionId = Id<SpecVersionKind>;
 
 #[derive(Debug, Clone, Copy)]
-pub enum AuthCodeKind {}
-impl IdKind for AuthCodeKind {
-    const ENTITY: EntityType = EntityType::AuthCode;
-}
-pub type AuthCodeId = Id<AuthCodeKind>;
-
-#[derive(Debug, Clone, Copy)]
 pub enum FunctionKind {}
 impl IdKind for FunctionKind {
     const ENTITY: EntityType = EntityType::Function;

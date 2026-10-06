@@ -56,7 +56,7 @@ pub struct BffSpecVersionResponse {
 impl From<SpecVersion> for BffSpecVersionResponse {
     fn from(v: SpecVersion) -> Self {
         Self {
-            id: v.id,
+            id: v.id.into_string(),
             version: v.version,
             status: v.status.as_str().to_string(),
             schema_type: v.schema_type.as_str().to_string(),

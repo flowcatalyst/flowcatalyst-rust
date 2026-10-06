@@ -54,7 +54,7 @@ pub struct LoginAttemptResponse {
 impl From<LoginAttempt> for LoginAttemptResponse {
     fn from(a: LoginAttempt) -> Self {
         Self {
-            id: a.id,
+            id: a.id.into_string(),
             attempt_type: a.attempt_type.as_str().to_string(),
             outcome: a.outcome.as_str().to_string(),
             failure_reason: a.failure_reason,
@@ -143,7 +143,9 @@ pub async fn list_login_attempts(
         items.truncate(size);
     }
     let next_cursor = if has_more {
-        items.last().map(|a| encode_cursor(a.attempted_at, &a.id))
+        items
+            .last()
+            .map(|a| encode_cursor(a.attempted_at, a.id.as_str()))
     } else {
         None
     };

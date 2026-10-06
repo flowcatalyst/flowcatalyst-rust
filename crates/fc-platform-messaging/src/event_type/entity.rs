@@ -3,8 +3,7 @@
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::EventTypeId;
-use fc_platform_core::shared::tsid;
-use fc_platform_core::shared::tsid::EntityType;
+use fc_platform_core::shared::id::SpecVersionId;
 use serde::de;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -78,7 +77,7 @@ fc_platform_core::shared::enum_str::str_enum!(SchemaType, "schema type", {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SpecVersion {
-    pub id: String,
+    pub id: SpecVersionId,
     pub event_type_id: EventTypeId,
     pub version: String,
     pub mime_type: String,
@@ -97,7 +96,7 @@ impl SpecVersion {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: tsid::generate(EntityType::Schema),
+            id: SpecVersionId::generate(),
             event_type_id,
             version: version.into(),
             mime_type: "application/schema+json".to_string(),

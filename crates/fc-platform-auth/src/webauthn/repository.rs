@@ -15,7 +15,7 @@ use fc_platform_core::usecase::Persist;
 #[derive(sqlx::FromRow)]
 struct WebauthnCredentialRow {
     id: String,
-    principal_id: String,
+    principal_id: PrincipalId,
     #[allow(dead_code)]
     credential_id: Vec<u8>,
     passkey_data: serde_json::Value,
@@ -73,7 +73,10 @@ impl WebauthnCredentialRepository {
         row.map(WebauthnCredential::try_from).transpose()
     }
 
-    pub async fn find_by_principal(&self, principal_id: &str) -> Result<Vec<WebauthnCredential>> {
+    pub async fn find_by_principal(
+        &self,
+        principal_id: &PrincipalId,
+    ) -> Result<Vec<WebauthnCredential>> {
         let rows = sqlx::query_as::<_, WebauthnCredentialRow>(
             "SELECT * FROM webauthn_credentials WHERE principal_id = $1 ORDER BY created_at DESC",
         )
@@ -83,7 +86,7 @@ impl WebauthnCredentialRepository {
         rows.into_iter().map(WebauthnCredential::try_from).collect()
     }
 
-    pub async fn count_for_principal(&self, principal_id: &str) -> Result<i64> {
+    pub async fn count_for_principal(&self, principal_id: &PrincipalId) -> Result<i64> {
         let count: (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM webauthn_credentials WHERE principal_id = $1")
                 .bind(principal_id)

@@ -488,7 +488,7 @@ async fn post_reset(state: &PasswordResetApiState, token: &PasswordResetToken) -
             return ok;
         }
     }
-    match tf.mint_enroll_token(p.id.as_str()) {
+    match tf.mint_enroll_token(&p.id) {
         Some(enroll_token) => ConfirmResponse {
             status: "enrollment_required",
             message: "Password set. Set up two-factor authentication to finish.".to_string(),

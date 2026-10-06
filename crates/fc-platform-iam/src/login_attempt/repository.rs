@@ -1,6 +1,7 @@
 //! LoginAttempt Repository — PostgreSQL via SQLx
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::LoginAttemptId;
 use fc_platform_core::shared::id::PrincipalId;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
@@ -28,7 +29,7 @@ impl TryFrom<LoginAttemptRow> for LoginAttempt {
         let attempt_type = decode(&r.attempt_type, "iam_login_attempts", "attempt_type", &r.id)?;
         let outcome = decode(&r.outcome, "iam_login_attempts", "outcome", &r.id)?;
         Ok(Self {
-            id: r.id,
+            id: LoginAttemptId::from_wire(r.id),
             attempt_type,
             outcome,
             failure_reason: r.failure_reason,

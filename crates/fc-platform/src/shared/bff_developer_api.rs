@@ -371,7 +371,7 @@ pub async fn list_event_types(
                 .spec_versions
                 .into_iter()
                 .map(|sv| DeveloperSpecVersionSummary {
-                    id: sv.id,
+                    id: sv.id.into_string(),
                     version: sv.version,
                     status: sv.status.as_str().to_string(),
                     // The schema is serialised as a JSON string here to match

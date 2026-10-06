@@ -425,9 +425,12 @@ impl TwoFactorLogin {
 
     /// Mint an enrolment token for a user who just set a password on a
     /// domain requiring 2FA (the password-reset hand-off).
-    pub fn mint_enroll_token(&self, principal_id: &str) -> Option<String> {
-        self.tokens
-            .mint(principal_id, Purpose::Enroll, ENROLL_TOKEN_TTL_SECS)
+    pub fn mint_enroll_token(&self, principal_id: &PrincipalId) -> Option<String> {
+        self.tokens.mint(
+            principal_id.as_str(),
+            Purpose::Enroll,
+            ENROLL_TOKEN_TTL_SECS,
+        )
     }
 
     /// The active principal a step token names, or Go's 401.

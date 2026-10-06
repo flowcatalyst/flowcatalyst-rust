@@ -204,7 +204,7 @@ pub async fn register_begin(
     // existing credential ids from the challenge.
     let existing = state
         .credential_repo
-        .find_by_principal(auth.0.principal_id.as_str())
+        .find_by_principal(&auth.0.principal_id)
         .await?;
     let exclude: Vec<_> = existing
         .iter()
@@ -306,7 +306,7 @@ pub async fn register_complete(
 
     let event = use_case.run(cmd, ctx).await.into_result()?;
     Ok(Json(RegisterCompleteResponse {
-        credential_id: event.credential_id,
+        credential_id: event.credential_id.into_string(),
     }))
 }
 
@@ -388,7 +388,7 @@ async fn resolve_real_credentials(state: &WebauthnApiState, email: &str) -> Opti
     }
     let creds = state
         .credential_repo
-        .find_by_principal(principal.id.as_str())
+        .find_by_principal(&principal.id)
         .await
         .ok()?;
     Some(creds.into_iter().map(|c| c.passkey).collect())
@@ -598,7 +598,7 @@ pub async fn list_credentials(
     auth.0.require_session_user()?;
     let creds = state
         .credential_repo
-        .find_by_principal(auth.0.principal_id.as_str())
+        .find_by_principal(&auth.0.principal_id)
         .await?;
     let summaries = creds
         .into_iter()

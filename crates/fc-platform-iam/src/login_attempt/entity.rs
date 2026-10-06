@@ -1,9 +1,8 @@
 //! LoginAttempt Entity
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::LoginAttemptId;
 use fc_platform_core::shared::id::PrincipalId;
-use fc_platform_core::shared::tsid;
-use fc_platform_core::shared::tsid::EntityType;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,7 +36,7 @@ fc_platform_core::shared::enum_str::str_enum!(LoginOutcome, "login outcome", {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoginAttempt {
-    pub id: String,
+    pub id: LoginAttemptId,
     pub attempt_type: AttemptType,
     pub outcome: LoginOutcome,
     pub failure_reason: Option<String>,
@@ -51,7 +50,7 @@ pub struct LoginAttempt {
 impl LoginAttempt {
     pub fn new(attempt_type: AttemptType, outcome: LoginOutcome) -> Self {
         Self {
-            id: tsid::generate(EntityType::LoginAttempt),
+            id: LoginAttemptId::generate(),
             attempt_type,
             outcome,
             failure_reason: None,
@@ -107,7 +106,7 @@ mod tests {
         assert!(a.principal_id.is_none());
         assert!(a.ip_address.is_none());
         assert!(a.user_agent.is_none());
-        assert!(!a.id.is_empty());
+        assert!(!a.id.as_str().is_empty());
     }
 
     #[test]

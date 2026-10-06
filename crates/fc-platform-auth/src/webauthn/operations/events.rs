@@ -9,6 +9,7 @@
 
 use fc_platform_core::impl_domain_event;
 use fc_platform_core::shared::id::PrincipalId;
+use fc_platform_core::shared::id::WebauthnCredentialId;
 use fc_platform_core::usecase::domain_event::EventMetadata;
 use fc_platform_core::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
@@ -16,7 +17,11 @@ use serde::{Deserialize, Serialize};
 const SPEC_VERSION: &str = "1.0";
 const SOURCE: &str = "platform:admin";
 
-fn metadata_for(ctx: &ExecutionContext, event_type: &str, credential_id: &str) -> EventMetadata {
+fn metadata_for(
+    ctx: &ExecutionContext,
+    event_type: &str,
+    credential_id: &WebauthnCredentialId,
+) -> EventMetadata {
     EventMetadata::from_ctx(
         ctx,
         event_type,
@@ -33,7 +38,7 @@ fn metadata_for(ctx: &ExecutionContext, event_type: &str, credential_id: &str) -
 pub struct PasskeyRegistered {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub credential_id: String,
+    pub credential_id: WebauthnCredentialId,
     pub user_id: PrincipalId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -46,13 +51,13 @@ impl PasskeyRegistered {
 
     pub fn new(
         ctx: &ExecutionContext,
-        credential_id: &str,
+        credential_id: &WebauthnCredentialId,
         user_id: &PrincipalId,
         name: Option<String>,
     ) -> Self {
         Self {
             metadata: metadata_for(ctx, Self::EVENT_TYPE, credential_id),
-            credential_id: credential_id.to_string(),
+            credential_id: credential_id.clone(),
             user_id: user_id.clone(),
             name,
         }
@@ -65,7 +70,7 @@ impl PasskeyRegistered {
 pub struct PasskeyRevoked {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub credential_id: String,
+    pub credential_id: WebauthnCredentialId,
     pub user_id: PrincipalId,
 }
 
@@ -74,10 +79,14 @@ impl_domain_event!(PasskeyRevoked);
 impl PasskeyRevoked {
     pub const EVENT_TYPE: &'static str = "platform:admin:passkey:revoked";
 
-    pub fn new(ctx: &ExecutionContext, credential_id: &str, user_id: &PrincipalId) -> Self {
+    pub fn new(
+        ctx: &ExecutionContext,
+        credential_id: &WebauthnCredentialId,
+        user_id: &PrincipalId,
+    ) -> Self {
         Self {
             metadata: metadata_for(ctx, Self::EVENT_TYPE, credential_id),
-            credential_id: credential_id.to_string(),
+            credential_id: credential_id.clone(),
             user_id: user_id.clone(),
         }
     }
@@ -89,7 +98,7 @@ impl PasskeyRevoked {
 pub struct PasskeyAuthenticated {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub credential_id: String,
+    pub credential_id: WebauthnCredentialId,
     pub user_id: PrincipalId,
 }
 
@@ -98,10 +107,14 @@ impl_domain_event!(PasskeyAuthenticated);
 impl PasskeyAuthenticated {
     pub const EVENT_TYPE: &'static str = "platform:admin:passkey:authenticated";
 
-    pub fn new(ctx: &ExecutionContext, credential_id: &str, user_id: &PrincipalId) -> Self {
+    pub fn new(
+        ctx: &ExecutionContext,
+        credential_id: &WebauthnCredentialId,
+        user_id: &PrincipalId,
+    ) -> Self {
         Self {
             metadata: metadata_for(ctx, Self::EVENT_TYPE, credential_id),
-            credential_id: credential_id.to_string(),
+            credential_id: credential_id.clone(),
             user_id: user_id.clone(),
         }
     }
@@ -119,7 +132,7 @@ mod tests {
     fn registered_event_is_go_shaped() {
         let event = PasskeyRegistered::new(
             &ctx(),
-            "pkc_AAA",
+            &WebauthnCredentialId::parse("pkc_AAA").unwrap(),
             &PrincipalId::parse("prn_BBB").unwrap(),
             Some("MacBook".into()),
         );
@@ -139,10 +152,17 @@ mod tests {
 
     #[test]
     fn revoked_and_authenticated_events_are_go_shaped() {
-        let event = PasskeyRevoked::new(&ctx(), "pkc_AAA", &PrincipalId::parse("prn_BBB").unwrap());
+        let event = PasskeyRevoked::new(
+            &ctx(),
+            &WebauthnCredentialId::parse("pkc_AAA").unwrap(),
+            &PrincipalId::parse("prn_BBB").unwrap(),
+        );
         assert_eq!(event.metadata.event_type, "platform:admin:passkey:revoked");
-        let event =
-            PasskeyAuthenticated::new(&ctx(), "pkc_AAA", &PrincipalId::parse("prn_BBB").unwrap());
+        let event = PasskeyAuthenticated::new(
+            &ctx(),
+            &WebauthnCredentialId::parse("pkc_AAA").unwrap(),
+            &PrincipalId::parse("prn_BBB").unwrap(),
+        );
         assert_eq!(
             event.metadata.event_type,
             "platform:admin:passkey:authenticated"
@@ -155,10 +175,22 @@ mod tests {
 
     #[test]
     fn events_share_message_group_for_same_credential() {
-        let r =
-            PasskeyRegistered::new(&ctx(), "pkc_X", &PrincipalId::parse("prn_X").unwrap(), None);
-        let v = PasskeyRevoked::new(&ctx(), "pkc_X", &PrincipalId::parse("prn_X").unwrap());
-        let l = PasskeyAuthenticated::new(&ctx(), "pkc_X", &PrincipalId::parse("prn_X").unwrap());
+        let r = PasskeyRegistered::new(
+            &ctx(),
+            &WebauthnCredentialId::parse("pkc_X").unwrap(),
+            &PrincipalId::parse("prn_X").unwrap(),
+            None,
+        );
+        let v = PasskeyRevoked::new(
+            &ctx(),
+            &WebauthnCredentialId::parse("pkc_X").unwrap(),
+            &PrincipalId::parse("prn_X").unwrap(),
+        );
+        let l = PasskeyAuthenticated::new(
+            &ctx(),
+            &WebauthnCredentialId::parse("pkc_X").unwrap(),
+            &PrincipalId::parse("prn_X").unwrap(),
+        );
         assert_eq!(r.metadata.message_group, v.metadata.message_group);
         assert_eq!(v.metadata.message_group, l.metadata.message_group);
     }

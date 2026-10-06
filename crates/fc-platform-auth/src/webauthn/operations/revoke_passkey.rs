@@ -88,7 +88,7 @@ impl<U: UnitOfWork> UseCase for RevokePasskeyUseCase<U> {
                 format!("passkey '{}' not found", command.credential_id),
             )?;
 
-        let event = PasskeyRevoked::new(&ctx, credential.id.as_str(), &credential.principal_id);
+        let event = PasskeyRevoked::new(&ctx, &credential.id, &credential.principal_id);
 
         self.unit_of_work
             .commit_delete(&credential, &*self.credential_repo, event, &command)

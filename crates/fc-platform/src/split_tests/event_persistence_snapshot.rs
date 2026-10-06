@@ -31,6 +31,7 @@ use fc_platform_core::shared::id::ProcessId;
 use fc_platform_core::shared::id::RoleId;
 use fc_platform_core::shared::id::ScheduledJobId;
 use fc_platform_core::shared::id::SubscriptionId;
+use fc_platform_core::shared::id::WebauthnCredentialId;
 use serde::Serialize;
 
 use fc_platform_core::shared::id::{EventTypeId, PrincipalId, ServiceAccountId};
@@ -624,7 +625,7 @@ fn subscription_created() {
 fn passkey_registered() {
     let e = fixed!(PasskeyRegistered::new(
         &ctx(),
-        "pkc_1",
+        &WebauthnCredentialId::parse("pkc_1").unwrap(),
         &PrincipalId::parse("prn_1").unwrap(),
         Some("YubiKey".to_string())
     ));
