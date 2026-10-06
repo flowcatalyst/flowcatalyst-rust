@@ -6,7 +6,6 @@
 use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::OAuthClientId;
-use fc_platform_core::shared::id::PrincipalId;
 use std::sync::Arc;
 
 use axum::{
@@ -25,6 +24,7 @@ use crate::auth::oauth_entity::GrantType;
 use crate::auth::oauth_entity::OAuthClientType;
 use crate::auth::operations::CreateOAuthClientCommand;
 use crate::auth::operations::CreateOAuthClientUseCase;
+use crate::service_account::account_or_principal_id;
 use crate::service_account::entity::RoleAssignment;
 use crate::service_account::entity::ServiceAccount;
 use crate::service_account::entity::{SigningAlgorithm, WebhookAuthType, WebhookCredentials};
@@ -521,7 +521,7 @@ pub async fn get_service_account<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ServiceAccountResponse>, PlatformError> {
-    let id = PrincipalId::from_wire(id);
+    let id = account_or_principal_id(id);
     checks::can_read_service_accounts(&auth.0)?;
     let account = state
         .repo
@@ -733,7 +733,7 @@ pub async fn update_service_account<U: UnitOfWork>(
     Path(id): Path<String>,
     Json(req): Json<UpdateServiceAccountRequest>,
 ) -> Result<StatusCode, PlatformError> {
-    let id = PrincipalId::from_wire(id);
+    let id = account_or_principal_id(id);
     checks::can_write_service_accounts(&auth.0)?;
     let webhook_credentials = req
         .webhook_credentials
@@ -777,7 +777,7 @@ pub async fn delete_service_account<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse, PlatformError> {
-    let id = PrincipalId::from_wire(id);
+    let id = account_or_principal_id(id);
     checks::can_delete_service_accounts(&auth.0)?;
     let command = DeleteServiceAccountCommand { id };
 
@@ -809,7 +809,7 @@ pub async fn update_auth_token<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<RegenerateTokenResponse>, PlatformError> {
-    let id = PrincipalId::from_wire(id);
+    let id = account_or_principal_id(id);
     checks::can_update_service_accounts(&auth.0)?;
     let command = RegenerateAuthTokenCommand {
         service_account_id: id.clone(),
@@ -851,7 +851,7 @@ pub async fn regenerate_auth_token<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<RegenerateTokenResponse>, PlatformError> {
-    let id = PrincipalId::from_wire(id);
+    let id = account_or_principal_id(id);
     checks::can_update_service_accounts(&auth.0)?;
     let command = RegenerateAuthTokenCommand {
         service_account_id: id.clone(),
@@ -893,7 +893,7 @@ pub async fn regenerate_signing_secret<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<RegenerateSecretResponse>, PlatformError> {
-    let id = PrincipalId::from_wire(id);
+    let id = account_or_principal_id(id);
     checks::can_update_service_accounts(&auth.0)?;
     let command = RegenerateSigningSecretCommand {
         service_account_id: id.clone(),
@@ -974,7 +974,7 @@ pub async fn get_roles<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<RolesResponse>, PlatformError> {
-    let id = PrincipalId::from_wire(id);
+    let id = account_or_principal_id(id);
     checks::can_read_service_accounts(&auth.0)?;
     let account = state
         .repo
@@ -1013,7 +1013,7 @@ pub async fn assign_roles<U: UnitOfWork>(
     Path(id): Path<String>,
     Json(req): Json<AssignRolesRequest>,
 ) -> Result<Json<AssignRolesResponse>, PlatformError> {
-    let id = PrincipalId::from_wire(id);
+    let id = account_or_principal_id(id);
     checks::can_update_service_accounts(&auth.0)?;
     let command = AssignRolesCommand {
         service_account_id: id.clone(),
@@ -1117,7 +1117,7 @@ pub async fn deactivate_service_account(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
-    let id = PrincipalId::from_wire(id);
+    let id = account_or_principal_id(id);
     checks::can_write_service_accounts(&auth.0)?;
     state
         .deactivate_use_case
@@ -1151,7 +1151,7 @@ pub async fn mint_service_account_token(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<MintTokenResponse>, PlatformError> {
-    let id = PrincipalId::from_wire(id);
+    let id = account_or_principal_id(id);
     checks::can_update_service_accounts(&auth.0)?;
     let sa = state
         .repo

@@ -11,6 +11,7 @@ use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::PrincipalId;
 use sqlx::PgPool;
 
+use crate::service_account::account_or_principal_id;
 use crate::service_account::entity::{AccountRow, ServiceAccount};
 use crate::service_account::entity::{RoleAssignment, WebhookAuthType, WebhookCredentials};
 use fc_platform_core::directory::{
@@ -215,7 +216,9 @@ impl ServiceAccountRepository {
 
     /// Find by principal ID (the ID returned in API responses).
     /// Find by id: the SERVICE principal's id, or the account's own
-    /// (`iam_service_accounts.id`, the id the API answers with, as Go's).
+    /// (`iam_service_accounts.id`, the id the API answers with, as Go's). A
+    /// `sac_` id travels in the `PrincipalId` parameter: see
+    /// [`crate::service_account::account_or_principal_id`].
     pub async fn find_by_id(&self, id: &PrincipalId) -> Result<Option<ServiceAccount>> {
         let principal = sqlx::query_as::<_, PrincipalRow>(
             "SELECT id, type, scope, client_id, application_id, name, active, \
@@ -1035,7 +1038,7 @@ impl Persist<ServiceAccount> for ServiceAccountRepository {
 impl ServiceAccountDirectory for ServiceAccountRepository {
     async fn find_by_id(&self, id: &str) -> Result<Option<ServiceAccountRef>> {
         Ok(
-            ServiceAccountRepository::find_by_id(self, &PrincipalId::from_wire(id))
+            ServiceAccountRepository::find_by_id(self, &account_or_principal_id(id))
                 .await?
                 .map(|sa| ServiceAccountRef {
                     id: sa.id.into_string(),
