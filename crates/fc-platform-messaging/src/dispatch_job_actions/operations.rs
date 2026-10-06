@@ -2,6 +2,7 @@
 //! cancel,complete,shared}.go`), with Go's events.
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ClientId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -48,7 +49,7 @@ pub const COMPLETED_EVENT: &str = "platform:messaging:dispatch-job:completed";
 /// one anchor or super-admin.
 pub fn reaches(caller: &impl Authority, client_id: Option<&str>) -> bool {
     match client_id {
-        Some(c) => caller.can_access_client(c),
+        Some(c) => caller.can_access_client(&ClientId::from_wire(c)),
         None => caller.is_anchor() || caller.has_permission(permissions::ADMIN_ALL),
     }
 }

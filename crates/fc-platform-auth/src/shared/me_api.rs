@@ -5,6 +5,7 @@ use axum::{
     Json,
 };
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
 use serde::Serialize;
 use std::sync::Arc;
 use utoipa::ToSchema;
@@ -149,7 +150,7 @@ pub async fn list_my_clients(
 
     let accessible: Vec<_> = all_clients
         .into_iter()
-        .filter(|c| auth.0.is_anchor() || auth.0.can_access_client(c.id.as_str()))
+        .filter(|c| auth.0.is_anchor() || auth.0.can_access_client(&c.id))
         .map(|c| MyClientResponse {
             id: c.id.to_string(),
             name: c.name,
@@ -188,13 +189,14 @@ pub async fn get_my_client(
     auth: Authenticated,
     Path(client_id): Path<String>,
 ) -> Result<Json<MyClientResponse>, PlatformError> {
+    let client_id = ClientId::from_wire(client_id);
     let client = state
         .client_repo
         .find_by_id(&client_id)
         .await?
         .ok_or_else(|| PlatformError::not_found("Client", &client_id))?;
 
-    if !auth.0.is_anchor() && !auth.0.can_access_client(client.id.as_str()) {
+    if !auth.0.is_anchor() && !auth.0.can_access_client(&client.id) {
         return Err(PlatformError::forbidden("No access to this client"));
     }
 
@@ -229,6 +231,7 @@ pub async fn list_my_client_applications(
     auth: Authenticated,
     Path(client_id): Path<String>,
 ) -> Result<Json<MyApplicationsListResponse>, PlatformError> {
+    let client_id = ClientId::from_wire(client_id);
     // Check access
     let _client = state
         .client_repo
@@ -272,7 +275,7 @@ pub async fn list_my_client_applications(
     Ok(Json(MyApplicationsListResponse {
         applications: apps,
         total,
-        client_id,
+        client_id: client_id.into_string(),
     }))
 }
 
@@ -321,10 +324,13 @@ pub async fn whoami(
             (None, Some(p)) => {
                 let mut clients = p.assigned_clients.clone();
                 if let Some(home) = &p.client_id {
-                    clients.push(home.to_string());
+                    clients.push(home.clone());
                 }
                 let (ids, all) = parse_applications_claim(&auth_service::applications_claim(p));
-                (clients, (ids, all || p.all_applications))
+                (
+                    ClientId::into_strings(clients),
+                    (ids, all || p.all_applications),
+                )
             }
             (None, None) => (Vec::new(), (Vec::new(), false)),
         };
@@ -350,7 +356,7 @@ pub async fn whoami(
     permissions.extend(rest);
 
     Ok(Json(WhoamiResponse {
-        principal_id: ctx.principal_id.clone(),
+        principal_id: ctx.principal_id.to_string(),
         principal_type: principal
             .as_ref()
             .map_or(ctx.principal_type.as_str(), |p| p.principal_type.as_str())

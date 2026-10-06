@@ -16,6 +16,8 @@
 //! fields its callers read; the implementations run the same queries.
 
 use crate::shared::id::ApplicationId;
+use crate::shared::id::ClientId;
+use crate::shared::id::PrincipalId;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -31,7 +33,7 @@ use crate::shared::error::Result;
 /// A client, as the other domains look it up.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientRef {
-    pub id: String,
+    pub id: ClientId,
     pub name: String,
     pub identifier: String,
     /// Its status is ACTIVE.
@@ -41,13 +43,13 @@ pub struct ClientRef {
 /// `ClientRepository`'s lookups (fc-platform-iam).
 #[async_trait]
 pub trait ClientDirectory: Send + Sync {
-    async fn find_by_id(&self, id: &str) -> Result<Option<ClientRef>>;
-    async fn find_by_ids(&self, ids: &[String]) -> Result<Vec<ClientRef>>;
+    async fn find_by_id(&self, id: &ClientId) -> Result<Option<ClientRef>>;
+    async fn find_by_ids(&self, ids: &[ClientId]) -> Result<Vec<ClientRef>>;
     /// Client ids by identifier, for the identifiers that exist.
     async fn find_ids_by_identifiers(
         &self,
         identifiers: &[String],
-    ) -> Result<HashMap<String, String>>;
+    ) -> Result<HashMap<String, ClientId>>;
     async fn find_all(&self) -> Result<Vec<ClientRef>>;
 }
 
@@ -87,7 +89,7 @@ pub trait ApplicationAccess: Send + Sync {
     ) -> Result<ApplicationRef>;
 
     /// A principal's application scope (cached).
-    async fn scope_for(&self, principal_id: &str) -> Result<ApplicationScope>;
+    async fn scope_for(&self, principal_id: &PrincipalId) -> Result<ApplicationScope>;
 }
 
 // ── Service accounts ─────────────────────────────────────────────────────
@@ -98,12 +100,12 @@ pub enum AccountReach {
     /// No client: an anchor-tier account.
     Anchor,
     /// These clients (never empty).
-    Clients(Vec<String>),
+    Clients(Vec<ClientId>),
 }
 
 impl AccountReach {
     /// An empty client list is no client: anchor-tier.
-    pub fn of_clients(clients: Vec<String>) -> AccountReach {
+    pub fn of_clients(clients: Vec<ClientId>) -> AccountReach {
         if clients.is_empty() {
             AccountReach::Anchor
         } else {
@@ -136,7 +138,10 @@ pub trait ServiceAccountDirectory: Send + Sync {
     async fn find_by_id(&self, id: &str) -> Result<Option<ServiceAccountRef>>;
     /// The application a caller *is*: its SERVICE principal's linked
     /// account's `application_id`.
-    async fn caller_application_id(&self, principal_id: &str) -> Result<Option<ApplicationId>>;
+    async fn caller_application_id(
+        &self,
+        principal_id: &PrincipalId,
+    ) -> Result<Option<ApplicationId>>;
     /// The accounts the references name (an account id or its principal's),
     /// by reference.
     async fn find_signing_accounts(
@@ -158,7 +163,7 @@ pub trait PrincipalDirectory: Send + Sync {
     /// A principal's application-access facts; `None` when it doesn't exist.
     async fn find_application_binding(
         &self,
-        principal_id: &str,
+        principal_id: &PrincipalId,
     ) -> Result<Option<PrincipalApplicationBinding>>;
 }
 

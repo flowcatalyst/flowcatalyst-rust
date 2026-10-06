@@ -17,6 +17,8 @@ pub use identity::{
 };
 
 use fc_platform_core::shared::error;
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::PortalAppId;
 use fc_platform_core::usecase::UseCaseError;
 use fc_platform_iam::portal::entity::PortalApp;
 use fc_platform_iam::portal::repository::PortalAppRepository;
@@ -34,14 +36,14 @@ pub fn not_found(resource: &str, id: &str) -> UseCaseError {
 /// (Go `loadClientApp`).
 pub async fn load_client_app(
     apps: &PortalAppRepository,
-    client_id: &str,
-    app_id: &str,
+    client_id: &ClientId,
+    app_id: &PortalAppId,
 ) -> Result<PortalApp, UseCaseError> {
     let app = apps
         .find_by_id(app_id)
         .await?
-        .filter(|a| a.client_id == client_id)
-        .ok_or_else(|| not_found("PortalApp", app_id))?;
+        .filter(|a| &a.client_id == client_id)
+        .ok_or_else(|| not_found("PortalApp", app_id.as_str()))?;
     if !app.active {
         return Err(UseCaseError::validation(
             "PORTAL_APP_INACTIVE",
@@ -55,10 +57,10 @@ pub async fn load_client_app(
 pub async fn find_client_app(
     apps: &PortalAppRepository,
     client_id: &str,
-    id: &str,
+    id: &PortalAppId,
 ) -> Result<PortalApp, UseCaseError> {
     apps.find_by_id(id)
         .await?
-        .filter(|a| client_id.is_empty() || a.client_id == client_id)
-        .ok_or_else(|| not_found("PortalApp", id))
+        .filter(|a| client_id.is_empty() || a.client_id.as_str() == client_id)
+        .ok_or_else(|| not_found("PortalApp", id.as_str()))
 }

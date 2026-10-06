@@ -1,6 +1,9 @@
 //! Portal identity plane domain events (Go `portalidentity/events.go`): the
 //! event types, source, subjects and message groups are Go's.
 
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::PortalAppId;
+use fc_platform_core::shared::id::PortalIdentityId;
 use serde::Serialize;
 
 use fc_platform_core::impl_domain_event;
@@ -22,7 +25,11 @@ pub const APP_DELETED: &str = "platform:portal:app:deleted";
 pub const EVENT_SOURCE: &str = "platform:portal";
 const SPEC_VERSION: &str = "1.0";
 
-fn identity_metadata(ctx: &ExecutionContext, event_type: &str, identity_id: &str) -> EventMetadata {
+fn identity_metadata(
+    ctx: &ExecutionContext,
+    event_type: &str,
+    identity_id: &PortalIdentityId,
+) -> EventMetadata {
     EventMetadata::from_ctx(
         ctx,
         event_type,
@@ -33,7 +40,7 @@ fn identity_metadata(ctx: &ExecutionContext, event_type: &str, identity_id: &str
     )
 }
 
-fn app_metadata(ctx: &ExecutionContext, event_type: &str, app_id: &str) -> EventMetadata {
+fn app_metadata(ctx: &ExecutionContext, event_type: &str, app_id: &PortalAppId) -> EventMetadata {
     EventMetadata::from_ctx(
         ctx,
         event_type,
@@ -51,14 +58,14 @@ fn app_metadata(ctx: &ExecutionContext, event_type: &str, app_id: &str) -> Event
 pub struct IdentityEnsured {
     #[serde(flatten)]
     pub metadata: EventMetadata,
-    pub identity_id: String,
-    pub client_id: String,
+    pub identity_id: PortalIdentityId,
+    pub client_id: ClientId,
     pub email: String,
     pub created: bool,
     pub source: String,
     /// The portal app granted by this ensure, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub portal_app_id: Option<String>,
+    pub portal_app_id: Option<PortalAppId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub portal_app_code: Option<String>,
 }
@@ -68,16 +75,16 @@ impl_domain_event!(IdentityEnsured);
 impl IdentityEnsured {
     pub fn new(
         ctx: &ExecutionContext,
-        identity_id: &str,
-        client_id: &str,
+        identity_id: &PortalIdentityId,
+        client_id: &ClientId,
         email: &str,
         created: bool,
         source: &str,
     ) -> Self {
         Self {
             metadata: identity_metadata(ctx, IDENTITY_ENSURED, identity_id),
-            identity_id: identity_id.to_string(),
-            client_id: client_id.to_string(),
+            identity_id: identity_id.clone(),
+            client_id: client_id.clone(),
             email: email.to_string(),
             created,
             source: source.to_string(),
@@ -93,8 +100,8 @@ impl IdentityEnsured {
 pub struct IdentityStatusSet {
     #[serde(flatten)]
     pub metadata: EventMetadata,
-    pub identity_id: String,
-    pub client_id: String,
+    pub identity_id: PortalIdentityId,
+    pub client_id: ClientId,
     pub status: IdentityStatus,
 }
 
@@ -103,14 +110,14 @@ impl_domain_event!(IdentityStatusSet);
 impl IdentityStatusSet {
     pub fn new(
         ctx: &ExecutionContext,
-        identity_id: &str,
-        client_id: &str,
+        identity_id: &PortalIdentityId,
+        client_id: &ClientId,
         status: IdentityStatus,
     ) -> Self {
         Self {
             metadata: identity_metadata(ctx, IDENTITY_STATUS_SET, identity_id),
-            identity_id: identity_id.to_string(),
-            client_id: client_id.to_string(),
+            identity_id: identity_id.clone(),
+            client_id: client_id.clone(),
             status,
         }
     }
@@ -122,19 +129,24 @@ impl IdentityStatusSet {
 pub struct IdentityDeleted {
     #[serde(flatten)]
     pub metadata: EventMetadata,
-    pub identity_id: String,
-    pub client_id: String,
+    pub identity_id: PortalIdentityId,
+    pub client_id: ClientId,
     pub email: String,
 }
 
 impl_domain_event!(IdentityDeleted);
 
 impl IdentityDeleted {
-    pub fn new(ctx: &ExecutionContext, identity_id: &str, client_id: &str, email: &str) -> Self {
+    pub fn new(
+        ctx: &ExecutionContext,
+        identity_id: &PortalIdentityId,
+        client_id: &ClientId,
+        email: &str,
+    ) -> Self {
         Self {
             metadata: identity_metadata(ctx, IDENTITY_DELETED, identity_id),
-            identity_id: identity_id.to_string(),
-            client_id: client_id.to_string(),
+            identity_id: identity_id.clone(),
+            client_id: client_id.clone(),
             email: email.to_string(),
         }
     }
@@ -146,9 +158,9 @@ impl IdentityDeleted {
 pub struct IdentityAppGranted {
     #[serde(flatten)]
     pub metadata: EventMetadata,
-    pub identity_id: String,
-    pub client_id: String,
-    pub portal_app_id: String,
+    pub identity_id: PortalIdentityId,
+    pub client_id: ClientId,
+    pub portal_app_id: PortalAppId,
     pub portal_app_code: String,
     pub source: String,
 }
@@ -158,17 +170,17 @@ impl_domain_event!(IdentityAppGranted);
 impl IdentityAppGranted {
     pub fn new(
         ctx: &ExecutionContext,
-        identity_id: &str,
-        client_id: &str,
-        app_id: &str,
+        identity_id: &PortalIdentityId,
+        client_id: &ClientId,
+        app_id: &PortalAppId,
         app_code: &str,
         source: &str,
     ) -> Self {
         Self {
             metadata: identity_metadata(ctx, IDENTITY_APP_GRANTED, identity_id),
-            identity_id: identity_id.to_string(),
-            client_id: client_id.to_string(),
-            portal_app_id: app_id.to_string(),
+            identity_id: identity_id.clone(),
+            client_id: client_id.clone(),
+            portal_app_id: app_id.clone(),
             portal_app_code: app_code.to_string(),
             source: source.to_string(),
         }
@@ -181,9 +193,9 @@ impl IdentityAppGranted {
 pub struct IdentityAppRevoked {
     #[serde(flatten)]
     pub metadata: EventMetadata,
-    pub identity_id: String,
-    pub client_id: String,
-    pub portal_app_id: String,
+    pub identity_id: PortalIdentityId,
+    pub client_id: ClientId,
+    pub portal_app_id: PortalAppId,
     pub portal_app_code: String,
 }
 
@@ -192,16 +204,16 @@ impl_domain_event!(IdentityAppRevoked);
 impl IdentityAppRevoked {
     pub fn new(
         ctx: &ExecutionContext,
-        identity_id: &str,
-        client_id: &str,
-        app_id: &str,
+        identity_id: &PortalIdentityId,
+        client_id: &ClientId,
+        app_id: &PortalAppId,
         app_code: &str,
     ) -> Self {
         Self {
             metadata: identity_metadata(ctx, IDENTITY_APP_REVOKED, identity_id),
-            identity_id: identity_id.to_string(),
-            client_id: client_id.to_string(),
-            portal_app_id: app_id.to_string(),
+            identity_id: identity_id.clone(),
+            client_id: client_id.clone(),
+            portal_app_id: app_id.clone(),
             portal_app_code: app_code.to_string(),
         }
     }
@@ -214,8 +226,8 @@ impl IdentityAppRevoked {
 pub struct PortalAppChanged {
     #[serde(flatten)]
     pub metadata: EventMetadata,
-    pub portal_app_id: String,
-    pub client_id: String,
+    pub portal_app_id: PortalAppId,
+    pub client_id: ClientId,
     pub code: String,
     pub name: String,
     /// What went with a deleted app: the public ids of the OAuth clients
@@ -248,7 +260,7 @@ pub struct AssignedToApp {
     #[serde(skip)]
     pub app_code: String,
     #[serde(skip)]
-    pub identity_ids: Vec<String>,
+    pub identity_ids: Vec<PortalIdentityId>,
 }
 
 impl_domain_event!(AssignedToApp => granted);
@@ -261,7 +273,14 @@ mod tests {
     #[test]
     fn identity_events_use_gos_envelope() {
         let ctx = ExecutionContext::system("prn_1");
-        let e = IdentityEnsured::new(&ctx, "ptu_1", "clt_1", "a@b.c", true, "INVITE");
+        let e = IdentityEnsured::new(
+            &ctx,
+            &PortalIdentityId::parse("ptu_1").unwrap(),
+            &ClientId::parse("clt_1").unwrap(),
+            "a@b.c",
+            true,
+            "INVITE",
+        );
         assert_eq!(e.metadata.event_type, "platform:portal:identity:ensured");
         assert_eq!(e.metadata.source, "platform:portal");
         assert_eq!(e.metadata.subject, "platform.portal-identity.ptu_1");
@@ -274,7 +293,11 @@ mod tests {
     #[test]
     fn app_events_use_gos_envelope() {
         let ctx = ExecutionContext::system("prn_1");
-        let app = PortalApp::new("clt_1", "Suppliers", "Suppliers Portal");
+        let app = PortalApp::new(
+            &ClientId::parse("clt_1").unwrap(),
+            "Suppliers",
+            "Suppliers Portal",
+        );
         let e = PortalAppChanged::new(&ctx, APP_CREATED, &app);
         assert_eq!(
             e.metadata.subject,
@@ -297,7 +320,12 @@ mod tests {
             (IdentityStatus::Active, "ACTIVE"),
             (IdentityStatus::Disabled, "DISABLED"),
         ] {
-            let e = IdentityStatusSet::new(&ctx, "ptu_1", "clt_1", status);
+            let e = IdentityStatusSet::new(
+                &ctx,
+                &PortalIdentityId::parse("ptu_1").unwrap(),
+                &ClientId::parse("clt_1").unwrap(),
+                status,
+            );
             let body = serde_json::to_value(&e).unwrap();
             assert_eq!(body["status"], serde_json::json!(name));
             assert_eq!(status.as_str(), name);

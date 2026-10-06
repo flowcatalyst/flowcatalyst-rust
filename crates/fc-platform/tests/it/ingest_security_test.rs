@@ -40,7 +40,10 @@ fn client_user(client_id: &str, _identifier: &str) -> Principal {
 
 fn partner_user(client_ids: &[&str]) -> Principal {
     let mut p = Principal::new_user("partner@flowcatalyst.test", UserScope::Partner);
-    p.assigned_clients = client_ids.iter().map(|c| c.to_string()).collect();
+    p.assigned_clients = client_ids
+        .iter()
+        .map(|c| ClientId::parse(*c).unwrap())
+        .collect();
     p
 }
 

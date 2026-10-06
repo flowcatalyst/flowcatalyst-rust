@@ -21,6 +21,8 @@ use fc_platform_core::directory::ApplicationAccess;
 use fc_platform_core::directory::ApplicationRef;
 use fc_platform_core::principal_kind::{PrincipalType, UserScope};
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::PrincipalId;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
@@ -32,7 +34,7 @@ pub fn auth_context_from_claims(
     permissions: HashSet<String>,
 ) -> AuthContext {
     AuthContext {
-        principal_id: claims.sub.clone(),
+        principal_id: PrincipalId::from_wire(claims.sub.clone()),
         principal_type: claims.principal_type,
         // Only an identity-only token lacks a tier, and `build_context`
         // refuses those; were one to get here, CLIENT with no clients
@@ -65,14 +67,14 @@ pub fn auth_context_for_session(
     } else {
         let mut clients = principal.assigned_clients.clone();
         if let Some(home) = &principal.client_id {
-            if !clients.iter().any(|c| c == home.as_str()) {
-                clients.push(home.to_string());
+            if !clients.contains(home) {
+                clients.push(home.clone());
             }
         }
-        clients
+        ClientId::into_strings(clients)
     };
     AuthContext {
-        principal_id: principal.id.to_string(),
+        principal_id: principal.id.clone(),
         principal_type: principal.principal_type,
         scope: principal.scope,
         email: principal.email().map(String::from),
@@ -133,7 +135,7 @@ impl AuthorizationService {
     /// 60-second cache. `None` when the principal is unknown, inactive or
     /// not a USER (only an interactive login mints a session), or when no
     /// principal store is configured.
-    pub async fn session_context(&self, principal_id: &str) -> Result<Option<AuthContext>> {
+    pub async fn session_context(&self, principal_id: &PrincipalId) -> Result<Option<AuthContext>> {
         let Some(principals) = &self.principals else {
             return Ok(None);
         };
@@ -214,7 +216,7 @@ impl AuthorizationService {
         &self,
         context: &AuthContext,
         permission: &str,
-        client_id: Option<&str>,
+        client_id: Option<&ClientId>,
     ) -> Result<()> {
         // Check permission
         if !context.has_permission(permission) {
@@ -257,7 +259,7 @@ impl AuthorizationService {
     }
 
     /// Require client access
-    pub fn require_client_access(&self, context: &AuthContext, client_id: &str) -> Result<()> {
+    pub fn require_client_access(&self, context: &AuthContext, client_id: &ClientId) -> Result<()> {
         if !context.can_access_client(client_id) {
             return Err(PlatformError::forbidden(format!(
                 "Client access required: {}",
@@ -281,7 +283,7 @@ pub struct ApplicationAccessService {
     principal_repo: Arc<PrincipalRepository>,
     application_repo: Arc<ApplicationRepository>,
     /// Cache: principal id → application scope
-    scope_cache: DashMap<String, CachedApplicationScope>,
+    scope_cache: DashMap<PrincipalId, CachedApplicationScope>,
 }
 
 impl ApplicationAccessService {
@@ -297,7 +299,7 @@ impl ApplicationAccessService {
     }
 
     /// The caller's application scope (cached).
-    pub async fn scope_for(&self, principal_id: &str) -> Result<ApplicationScope> {
+    pub async fn scope_for(&self, principal_id: &PrincipalId) -> Result<ApplicationScope> {
         if let Some(entry) = self.scope_cache.get(principal_id) {
             if entry.cached_at.elapsed().as_secs() < PERMISSION_CACHE_TTL_SECS {
                 return Ok(entry.scope.clone());
@@ -310,7 +312,7 @@ impl ApplicationAccessService {
             .await?;
         let scope = ApplicationScope::from_binding(binding);
         self.scope_cache.insert(
-            principal_id.to_string(),
+            principal_id.clone(),
             CachedApplicationScope {
                 scope: scope.clone(),
                 cached_at: Instant::now(),
@@ -320,7 +322,7 @@ impl ApplicationAccessService {
     }
 
     /// Drop a principal's cached scope, after its application access changed.
-    pub fn forget(&self, principal_id: &str) {
+    pub fn forget(&self, principal_id: &PrincipalId) {
         self.scope_cache.remove(principal_id);
     }
 
@@ -352,7 +354,7 @@ impl ApplicationAccess for ApplicationAccessService {
             .map(repository::application_ref)
     }
 
-    async fn scope_for(&self, principal_id: &str) -> Result<ApplicationScope> {
+    async fn scope_for(&self, principal_id: &PrincipalId) -> Result<ApplicationScope> {
         ApplicationAccessService::scope_for(self, principal_id).await
     }
 }
@@ -362,10 +364,11 @@ mod tests {
     use super::*;
     use fc_platform_core::permissions;
     use fc_platform_core::shared::id::ApplicationId;
+    use fc_platform_core::shared::id::PrincipalId;
 
     fn create_test_context(permissions: Vec<&str>, scope: &str, clients: Vec<&str>) -> AuthContext {
         AuthContext {
-            principal_id: "test123".to_string(),
+            principal_id: PrincipalId::from_wire("test123"),
             principal_type: PrincipalType::User,
             scope: scope.parse().unwrap(),
             email: Some("test@example.com".to_string()),
@@ -390,10 +393,10 @@ mod tests {
         .unwrap();
         let ctx = auth_context_from_claims(&claims, HashSet::new());
         assert_eq!(ctx.accessible_clients, vec!["clt_A", "clt_B"]);
-        assert!(ctx.can_access_client("clt_A"));
-        assert!(ctx.can_access_client("clt_B"));
-        assert!(!ctx.can_access_client("acme"));
-        assert!(!ctx.can_access_client("clt_C"));
+        assert!(ctx.can_access_client(&ClientId::parse("clt_A").unwrap()));
+        assert!(ctx.can_access_client(&ClientId::parse("clt_B").unwrap()));
+        assert!(!ctx.can_access_client(&ClientId::from_wire("acme")));
+        assert!(!ctx.can_access_client(&ClientId::parse("clt_C").unwrap()));
         assert_eq!(client_id_of("*"), "*");
     }
 
@@ -423,16 +426,16 @@ mod tests {
     #[test]
     fn test_client_access() {
         let ctx = create_test_context(vec![], "CLIENT", vec!["client1", "client2"]);
-        assert!(ctx.can_access_client("client1"));
-        assert!(ctx.can_access_client("client2"));
-        assert!(!ctx.can_access_client("client3"));
+        assert!(ctx.can_access_client(&ClientId::from_wire("client1")));
+        assert!(ctx.can_access_client(&ClientId::from_wire("client2")));
+        assert!(!ctx.can_access_client(&ClientId::from_wire("client3")));
     }
 
     #[test]
     fn test_anchor_all_clients() {
         let ctx = create_test_context(vec![], "ANCHOR", vec!["*"]);
-        assert!(ctx.can_access_client("any_client"));
-        assert!(ctx.can_access_client("another_client"));
+        assert!(ctx.can_access_client(&ClientId::from_wire("any_client")));
+        assert!(ctx.can_access_client(&ClientId::from_wire("another_client")));
     }
 
     // ── Wildcard permission edge cases ────────────────────────────────
@@ -486,7 +489,7 @@ mod tests {
     #[test]
     fn test_empty_roles_list() {
         let ctx = AuthContext {
-            principal_id: "p1".to_string(),
+            principal_id: PrincipalId::from_wire("p1"),
             principal_type: PrincipalType::User,
             scope: UserScope::Client,
             email: None,
@@ -589,15 +592,15 @@ mod tests {
     #[test]
     fn test_no_clients_denies_all() {
         let ctx = create_test_context(vec![], "CLIENT", vec![]);
-        assert!(!ctx.can_access_client("anything"));
+        assert!(!ctx.can_access_client(&ClientId::from_wire("anything")));
     }
 
     #[test]
     fn test_client_access_exact_match_only() {
         let ctx = create_test_context(vec![], "CLIENT", vec!["client1"]);
-        assert!(ctx.can_access_client("client1"));
-        assert!(!ctx.can_access_client("client10")); // no prefix matching
-        assert!(!ctx.can_access_client("client")); // no partial matching
+        assert!(ctx.can_access_client(&ClientId::from_wire("client1")));
+        assert!(!ctx.can_access_client(&ClientId::from_wire("client10"))); // no prefix matching
+        assert!(!ctx.can_access_client(&ClientId::from_wire("client"))); // no partial matching
     }
 
     // ── from_claims_with_permissions ──────────────────────────────────
@@ -628,12 +631,12 @@ mod tests {
         perms.insert("platform:*:*:*".to_string());
 
         let ctx = auth_context_from_claims(&claims, perms);
-        assert_eq!(ctx.principal_id, "principal_1");
+        assert_eq!(ctx.principal_id, PrincipalId::from_wire("principal_1"));
         assert_eq!(ctx.principal_type, PrincipalType::Service);
         assert_eq!(ctx.scope, UserScope::Anchor);
         assert_eq!(ctx.email, Some("svc@test.com".to_string()));
         assert_eq!(ctx.name, "Service Account");
-        assert!(ctx.can_access_client("any_client"));
+        assert!(ctx.can_access_client(&ClientId::from_wire("any_client")));
         assert!(ctx.is_anchor());
         assert!(ctx.has_permission("platform:admin:event:read"));
     }

@@ -6,6 +6,7 @@ use axum::{
     extract::{Path, Query, State},
     Json,
 };
+use fc_platform_core::shared::id::ClientId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
@@ -428,7 +429,7 @@ pub async fn get_event(
     // A client's event needs that client; a platform event is visible to any
     // holder of `event:view` (Go `getByID`).
     if let Some(cid) = event.client_id.as_deref() {
-        if !auth.0.can_access_client(cid) {
+        if !auth.0.can_access_client(&ClientId::from_wire(cid)) {
             return Err(PlatformError::forbidden("No access to this event"));
         }
     }

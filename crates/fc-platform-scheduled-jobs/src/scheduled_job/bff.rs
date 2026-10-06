@@ -34,7 +34,6 @@ use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::authorization_service::AuthContext;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::id::ClientId;
-use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::shared::middleware::Authenticated;
 
 #[derive(Clone)]
@@ -122,7 +121,7 @@ impl From<ScheduledJobInstance> for BffScheduledJobInstanceResponse {
             id: i.id.into_string(),
             scheduled_job_id: i.scheduled_job_id.into_string(),
             job_code: i.job_code,
-            client_id: i.client_id,
+            client_id: i.client_id.map(ClientId::into_string),
             trigger_kind: i.trigger_kind.as_str().into(),
             scheduled_for: i.scheduled_for,
             fired_at: i.fired_at,
@@ -253,7 +252,7 @@ fn time_param(q: &RawQuery, key: &str) -> Option<DateTime<Utc>> {
 
 /// Go `canViewJob` / `canViewInstance`: a platform-scoped row is the
 /// anchor's; a client's row, whoever reaches that client.
-fn can_view(auth: &AuthContext, client_id: Option<&str>) -> bool {
+fn can_view(auth: &AuthContext, client_id: Option<&ClientId>) -> bool {
     match client_id {
         Some(cid) => auth.can_access_client(cid),
         None => auth.is_anchor(),
@@ -262,7 +261,7 @@ fn can_view(auth: &AuthContext, client_id: Option<&str>) -> bool {
 
 async fn names(
     state: &BffScheduledJobsState,
-) -> Result<(HashMap<String, String>, HashMap<ApplicationId, String>), PlatformError> {
+) -> Result<(HashMap<ClientId, String>, HashMap<ApplicationId, String>), PlatformError> {
     let (clients, applications) = tokio::try_join!(
         state.client_repo.find_all(),
         state.application_repo.find_all()
@@ -275,15 +274,12 @@ async fn names(
 
 fn to_bff_job(
     j: ScheduledJob,
-    clients: &HashMap<String, String>,
+    clients: &HashMap<ClientId, String>,
     applications: &HashMap<ApplicationId, String>,
     active: bool,
 ) -> BffScheduledJobResponse {
     BffScheduledJobResponse {
-        client_name: j
-            .client_id
-            .as_ref()
-            .and_then(|c| clients.get(c.as_str()).cloned()),
+        client_name: j.client_id.as_ref().and_then(|c| clients.get(c).cloned()),
         application_name: j
             .application_id
             .as_ref()
@@ -322,7 +318,7 @@ async fn visible_job(
         .repo
         .find_by_id(id)
         .await?
-        .filter(|j| can_view(auth, j.client_id.as_id_str()))
+        .filter(|j| can_view(auth, j.client_id.as_ref()))
         .ok_or_else(|| PlatformError::not_found("ScheduledJob", id))
 }
 
@@ -335,7 +331,7 @@ async fn visible_instance(
         .instance_repo
         .find_by_id(id)
         .await?
-        .filter(|i| can_view(auth, i.client_id.as_deref()))
+        .filter(|i| can_view(auth, i.client_id.as_ref()))
         .ok_or_else(|| PlatformError::not_found("ScheduledJobInstance", id))
 }
 
@@ -368,7 +364,7 @@ pub async fn list_jobs(
             filters
                 .client_ids
                 .iter()
-                .filter(|c| auth.0.can_access_client(c))
+                .filter(|c| auth.0.can_access_client(&ClientId::from_wire(c.as_str())))
                 .cloned()
                 .collect()
         };
@@ -387,7 +383,7 @@ pub async fn list_jobs(
     )?;
     let visible: Vec<ScheduledJob> = rows
         .into_iter()
-        .filter(|j| can_view(&auth.0, j.client_id.as_id_str()))
+        .filter(|j| can_view(&auth.0, j.client_id.as_ref()))
         .collect();
     let keys: Vec<(String, bool)> = visible
         .iter()
@@ -535,7 +531,7 @@ pub async fn filter_options(
         .filter(|c| c.active)
         .filter(|c| auth.0.is_anchor() || auth.0.can_access_client(&c.id))
         .map(|c| FilterOption {
-            value: c.id,
+            value: c.id.into_string(),
             label: c.name,
         })
         .collect();

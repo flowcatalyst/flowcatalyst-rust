@@ -223,7 +223,7 @@ async fn try_issue_reset(
     let requires_factor = match &state.two_factor {
         Some(tf) => tf
             .mfa
-            .confirmed_methods(principal.id.as_str())
+            .confirmed_methods(&principal.id)
             .await
             .map(|m| m.contains(&MethodType::Totp))
             .unwrap_or(false),
@@ -453,20 +453,20 @@ async fn post_reset(state: &PasswordResetApiState, token: &PasswordResetToken) -
 
     if let Some(tf) = &state.two_factor {
         if token.reset_2fa {
-            match tf.mfa.reset_all(p.id.as_str()).await {
+            match tf.mfa.reset_all(&p.id).await {
                 Ok(()) => tf.notifier.two_factor_reset(&email).await,
                 Err(e) => {
                     warn!(principal_id = %p.id, error = %e, "2FA reset during password reset failed")
                 }
             }
         }
-        if let Err(e) = tf.mfa.revoke_all_trusted_devices(p.id.as_str()).await {
+        if let Err(e) = tf.mfa.revoke_all_trusted_devices(&p.id).await {
             warn!(principal_id = %p.id, error = %e, "revoke trusted devices failed");
         }
     }
     if let Err(e) = state
         .refresh_token_repo
-        .revoke_all_for_principal(p.id.as_str())
+        .revoke_all_for_principal(&p.id)
         .await
     {
         warn!(principal_id = %p.id, error = %e, "revoke refresh tokens after reset failed");
@@ -480,7 +480,7 @@ async fn post_reset(state: &PasswordResetApiState, token: &PasswordResetToken) -
     if !eval.requires_2fa() {
         return ok;
     }
-    match tf.mfa.has_confirmed_method(p.id.as_str()).await {
+    match tf.mfa.has_confirmed_method(&p.id).await {
         Ok(false) => {}
         Ok(true) => return ok,
         Err(e) => {

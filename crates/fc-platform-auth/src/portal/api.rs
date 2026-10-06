@@ -7,7 +7,10 @@
 //! Every handler resolves the target client from the request, then gates on
 //! [`can_read_portal_users`] / [`can_write_portal_users`] for that client.
 
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::OAuthClientId;
+use fc_platform_core::shared::id::OptionIdExt;
+use fc_platform_core::shared::id::PortalAppId;
 use std::collections::HashMap;
 
 use axum::{
@@ -173,7 +176,7 @@ fn message(m: impl Into<String>) -> Json<MessageResponse> {
 async fn app_by_code(state: &PortalState, client_id: &str, code: &str) -> ApiResult<PortalApp> {
     state
         .apps
-        .find_by_client_and_code(client_id, code)
+        .find_by_client_and_code(&ClientId::from_wire(client_id), code)
         .await?
         .ok_or_else(|| not_found("PortalApp", &normalize_app_code(code)).into())
 }
@@ -278,7 +281,10 @@ pub async fn ensure_portal_user(
         email: req.email.clone(),
         name: req.name.clone(),
         source: "INVITE".to_string(),
-        portal_app_id: app.as_ref().map(|a| a.id.clone()),
+        portal_app_id: app
+            .as_ref()
+            .map(|a| a.id.clone())
+            .map(PortalAppId::into_string),
     };
     let use_case = EnsurePortalIdentityUseCase::new(
         state.identities.clone(),
@@ -297,7 +303,7 @@ pub async fn ensure_portal_user(
         .ok_or_else(|| internal("REPO", "post-ensure identity lookup failed"))?;
 
     let mut resp = PortalUserResponse {
-        identity_id: ident.id.clone(),
+        identity_id: ident.id.to_string(),
         created: event.created,
         invited: false,
         invite_url: None,
@@ -382,7 +388,10 @@ async fn mark_invited(
 /// The post-set-password redirect must exactly match a registered redirect
 /// URI of one of the client's portal OAuth clients (fail closed).
 async fn validate_redirect_uri(state: &PortalState, client_id: &str, uri: &str) -> ApiResult<()> {
-    let clients = state.portal_oauth.find_by_portal_client(client_id).await?;
+    let clients = state
+        .portal_oauth
+        .find_by_portal_client(&ClientId::from_wire(client_id))
+        .await?;
     if clients
         .iter()
         .any(|c| c.redirect_uris.iter().any(|r| r == uri))
@@ -405,12 +414,12 @@ async fn default_portal_redirect(
 ) -> Option<String> {
     let mut clients = state
         .portal_oauth
-        .find_by_portal_client(client_id)
+        .find_by_portal_client(&ClientId::from_wire(client_id))
         .await
         .ok()?;
     if let Some(app) = app {
         // Stable partition: the app's own OAuth clients first.
-        clients.sort_by_key(|c| c.portal_app_id.as_deref() != Some(app.id.as_str()));
+        clients.sort_by_key(|c| c.portal_app_id.as_id_str() != Some(app.id.as_str()));
     }
     clients
         .iter()
@@ -556,7 +565,7 @@ pub async fn list_portal_users(
     let size = size.min(MAX_PAGE_SIZE);
 
     let search = IdentitySearch {
-        client_id: client_id.clone(),
+        client_id: ClientId::from_wire(client_id.clone()),
         query: q.q.clone().unwrap_or_default(),
         app_id,
         unassigned,
@@ -564,9 +573,9 @@ pub async fn list_portal_users(
         limit: size,
     };
     let (rows, total) = state.identities.search(&search).await?;
-    let apps: HashMap<String, PortalApp> = state
+    let apps: HashMap<PortalAppId, PortalApp> = state
         .apps
-        .find_by_client(Some(&client_id))
+        .find_by_client(Some(&ClientId::from_wire(client_id.as_str())))
         .await?
         .into_iter()
         .map(|a| (a.id.clone(), a))
@@ -583,11 +592,11 @@ pub async fn list_portal_users(
 
 fn list_item(
     i: &PortalIdentity,
-    apps: &HashMap<String, PortalApp>,
+    apps: &HashMap<PortalAppId, PortalApp>,
     now: DateTime<Utc>,
 ) -> PortalUserListItem {
     PortalUserListItem {
-        identity_id: i.id.clone(),
+        identity_id: i.id.to_string(),
         email: i.email.clone(),
         name: i.name.clone(),
         status: i.status.as_str().to_string(),
@@ -601,9 +610,9 @@ fn list_item(
                 let (code, name) = apps
                     .get(&g.app_id)
                     .map(|a| (a.code.clone(), a.name.clone()))
-                    .unwrap_or_else(|| (g.app_id.clone(), g.app_id.clone()));
+                    .unwrap_or_else(|| (g.app_id.to_string(), g.app_id.to_string()));
                 PortalUserAppRef {
-                    id: g.app_id.clone(),
+                    id: g.app_id.to_string(),
                     code,
                     name,
                     source: g.source.as_str().to_string(),
@@ -808,7 +817,7 @@ pub async fn grant_portal_user_app(
     let cmd = AppGrantCommand {
         client_id,
         identity_id: id,
-        portal_app_id: app.id,
+        portal_app_id: app.id.into_string(),
     };
     use_case
         .run(cmd, ExecutionContext::from_auth(&auth.0))
@@ -845,7 +854,7 @@ pub async fn revoke_portal_user_app(
     let cmd = AppGrantCommand {
         client_id,
         identity_id: id,
-        portal_app_id: app.id,
+        portal_app_id: app.id.into_string(),
     };
     use_case
         .run(cmd, ExecutionContext::from_auth(&auth.0))
@@ -892,7 +901,7 @@ async fn app_responses(
     state: &PortalState,
     apps: Vec<PortalApp>,
 ) -> ApiResult<Vec<PortalAppResponse>> {
-    let ids: Vec<String> = apps.iter().map(|a| a.id.clone()).collect();
+    let ids: Vec<PortalAppId> = apps.iter().map(|a| a.id.clone()).collect();
     let (counts, mut linked) = tokio::try_join!(
         state.apps.grant_counts(&ids),
         state.apps.linked_oauth_clients(&ids)
@@ -904,8 +913,8 @@ async fn app_responses(
             user_count: counts.get(&a.id).copied().unwrap_or(0),
             created_at: micros(&a.created_at),
             updated_at: micros(&a.updated_at),
-            id: a.id,
-            client_id: a.client_id,
+            id: a.id.into_string(),
+            client_id: a.client_id.into_string(),
             code: a.code,
             name: a.name,
             description: a.description,
@@ -917,7 +926,7 @@ async fn app_responses(
 async fn app_out(state: &PortalState, id: &str) -> ApiResult<PortalAppResponse> {
     let app = state
         .apps
-        .find_by_id(id)
+        .find_by_id(&PortalAppId::from_wire(id))
         .await?
         .ok_or_else(|| internal("REPO", "portal app lookup failed"))?;
     app_responses(state, vec![app])
@@ -952,11 +961,11 @@ pub async fn list_portal_apps(
     } else {
         can_read_portal_users(&auth.0, &client_id)?;
     }
-    let scope = (!client_id.is_empty()).then_some(client_id.as_str());
-    let apps = state.apps.find_by_client(scope).await?;
+    let scope = (!client_id.is_empty()).then(|| ClientId::from_wire(client_id.as_str()));
+    let apps = state.apps.find_by_client(scope.as_ref()).await?;
     let portal_apps = app_responses(&state, apps).await?;
     let unassigned_users = match scope {
-        Some(c) => Some(state.identities.count_unassigned(c).await?),
+        Some(c) => Some(state.identities.count_unassigned(&c).await?),
         None => None,
     };
     Ok(Json(PortalAppListResponse {
@@ -1064,7 +1073,7 @@ pub async fn create_portal_app(
         })
         .await
         .map(Committed::into_inner)?;
-    let portal_app = app_out(&state, &event.portal_app_id).await?;
+    let portal_app = app_out(&state, event.portal_app_id.as_str()).await?;
     Ok((
         StatusCode::CREATED,
         Json(CreatePortalAppResponse {

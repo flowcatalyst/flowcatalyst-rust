@@ -3,6 +3,7 @@
 //! `listDeveloperUsers`, `setDeveloperCredential`,
 //! `revokeDeveloperCredential`).
 
+use fc_platform_core::shared::id::PrincipalId;
 use std::sync::Arc;
 
 use axum::{
@@ -79,7 +80,7 @@ pub async fn list_developer_users(
         .into_iter()
         .filter(Principal::is_user)
         .collect();
-    let ids: Vec<String> = users.iter().map(|p| p.id.to_string()).collect();
+    let ids: Vec<PrincipalId> = users.iter().map(|p| p.id.clone()).collect();
     let times = state
         .principal_repo
         .find_developer_secret_times(&ids)
@@ -87,7 +88,7 @@ pub async fn list_developer_users(
     let principals: Vec<serde_json::Value> = users
         .into_iter()
         .map(|p| {
-            let updated = times.get(p.id.as_str()).copied();
+            let updated = times.get(&p.id).copied();
             let mut v = serde_json::to_value(PrincipalResponse::from(p)).unwrap_or_default();
             v["hasDeveloperCredential"] = serde_json::Value::Bool(updated.is_some());
             if let Some(at) = updated {
@@ -118,20 +119,21 @@ pub async fn set_developer_credential(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<SetDeveloperCredentialResponse>, PlatformError> {
+    let id = PrincipalId::from_wire(id);
     // The coarse gate before any load (see `require_credential_access`).
     if auth.0.principal_id == id {
         checks::require_permission(&auth.0, permissions::developer::API_CREDENTIAL_MANAGE)?;
     } else {
         checks::can_write_principals(&auth.0)?;
     }
-    Ok(Json(set_credential(&state, &auth.0, &id).await?))
+    Ok(Json(set_credential(&state, &auth.0, id.as_str()).await?))
 }
 
 /// The coarse gate before any load (Go `requireDeveloperCredentialAccess`):
 /// your own credential needs the self-service permission; someone else's
 /// needs the user-admin write permission.
 fn require_credential_access(ctx: &AuthContext, id: &str) -> Result<(), PlatformError> {
-    if ctx.principal_id == id {
+    if ctx.principal_id == PrincipalId::from_wire(id) {
         checks::require_permission(ctx, permissions::developer::API_CREDENTIAL_MANAGE)
     } else {
         checks::can_write_principals(ctx)
@@ -156,7 +158,7 @@ pub async fn set_credential(
     rand::rng().fill(&mut bytes[..]);
     let plaintext = general_purpose::URL_SAFE_NO_PAD.encode(bytes);
     let command = SetDeveloperCredentialCommand {
-        principal_id: id.to_string(),
+        principal_id: PrincipalId::from_wire(id),
         secret_ref: enc.hash_secret(&plaintext),
     };
     let event = state
@@ -165,7 +167,7 @@ pub async fn set_credential(
         .await
         .into_result()?;
     Ok(SetDeveloperCredentialResponse {
-        id: event.user_id,
+        id: event.user_id.into_string(),
         client_secret: plaintext,
     })
 }
@@ -185,13 +187,14 @@ pub async fn revoke_developer_credential(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = PrincipalId::from_wire(id);
     // The coarse gate before any load (see `require_credential_access`).
     if auth.0.principal_id == id {
         checks::require_permission(&auth.0, permissions::developer::API_CREDENTIAL_MANAGE)?;
     } else {
         checks::can_write_principals(&auth.0)?;
     }
-    revoke_credential(&state, &auth.0, &id).await?;
+    revoke_credential(&state, &auth.0, id.as_str()).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -207,7 +210,7 @@ pub async fn revoke_credential(
         .revoke_use_case
         .run(
             RevokeDeveloperCredentialCommand {
-                principal_id: id.to_string(),
+                principal_id: PrincipalId::from_wire(id),
             },
             ExecutionContext::from_auth(ctx),
         )

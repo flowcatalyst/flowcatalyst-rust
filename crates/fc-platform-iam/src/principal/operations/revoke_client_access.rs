@@ -1,6 +1,8 @@
 //! Revoke Client Access Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::PrincipalId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -18,8 +20,8 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RevokeClientAccessCommand {
-    pub user_id: String,
-    pub client_id: String,
+    pub user_id: PrincipalId,
+    pub client_id: ClientId,
 }
 
 impl AuditMasked for RevokeClientAccessCommand {}
@@ -50,13 +52,13 @@ impl<U: UnitOfWork> UseCase for RevokeClientAccessUseCase<U> {
     type Event = ClientAccessRevoked;
 
     async fn validate(&self, command: &RevokeClientAccessCommand) -> Result<(), UseCaseError> {
-        if command.user_id.trim().is_empty() {
+        if command.user_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "USER_ID_REQUIRED",
                 "User ID is required",
             ));
         }
-        if command.client_id.trim().is_empty() {
+        if command.client_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "CLIENT_ID_REQUIRED",
                 "Client ID is required",
@@ -122,8 +124,8 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = RevokeClientAccessCommand {
-            user_id: "user-123".to_string(),
-            client_id: "client-456".to_string(),
+            user_id: PrincipalId::from_wire("user-123"),
+            client_id: ClientId::from_wire("client-456"),
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("userId"));

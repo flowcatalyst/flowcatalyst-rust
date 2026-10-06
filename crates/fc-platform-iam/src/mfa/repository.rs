@@ -9,20 +9,21 @@
 //! verifies of the same code both pass), a recovery code, and an email PIN.
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::MfaEmailPinId;
+use fc_platform_core::shared::id::MfaMethodId;
+use fc_platform_core::shared::id::MfaRecoveryCodeId;
+use fc_platform_core::shared::id::MfaTrustedDeviceId;
+use fc_platform_core::shared::id::PrincipalId;
 use sqlx::PgPool;
 
-use super::entity::{
-    EmailPin, EmailPinPurpose, Method, MethodType, TrustedDevice, EMAIL_PIN_ID_PREFIX,
-    RECOVERY_CODE_ID_PREFIX, TRUSTED_DEVICE_ID_PREFIX,
-};
-use fc_common::tsid;
+use super::entity::{EmailPin, EmailPinPurpose, Method, MethodType, TrustedDevice};
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error::{PlatformError, Result};
 
 #[derive(sqlx::FromRow)]
 struct MethodRow {
-    id: String,
-    principal_id: String,
+    id: MfaMethodId,
+    principal_id: PrincipalId,
     method: String,
     secret_encrypted: Option<String>,
     confirmed_at: Option<DateTime<Utc>>,
@@ -34,7 +35,7 @@ impl TryFrom<MethodRow> for Method {
     type Error = PlatformError;
     fn try_from(r: MethodRow) -> Result<Self> {
         Ok(Self {
-            method: decode(&r.method, "iam_user_mfa_methods", "method", &r.id)?,
+            method: decode(&r.method, "iam_user_mfa_methods", "method", r.id.as_str())?,
             id: r.id,
             principal_id: r.principal_id,
             secret_encrypted: r.secret_encrypted,
@@ -47,8 +48,8 @@ impl TryFrom<MethodRow> for Method {
 
 #[derive(sqlx::FromRow)]
 struct EmailPinRow {
-    id: String,
-    principal_id: String,
+    id: MfaEmailPinId,
+    principal_id: PrincipalId,
     purpose: String,
     pin_hash: String,
     attempts: i32,
@@ -60,7 +61,7 @@ impl TryFrom<EmailPinRow> for EmailPin {
     type Error = PlatformError;
     fn try_from(r: EmailPinRow) -> Result<Self> {
         Ok(Self {
-            purpose: decode(&r.purpose, "iam_mfa_email_pins", "purpose", &r.id)?,
+            purpose: decode(&r.purpose, "iam_mfa_email_pins", "purpose", r.id.as_str())?,
             id: r.id,
             principal_id: r.principal_id,
             pin_hash: r.pin_hash,
@@ -73,8 +74,8 @@ impl TryFrom<EmailPinRow> for EmailPin {
 
 #[derive(sqlx::FromRow)]
 struct TrustedDeviceRow {
-    id: String,
-    principal_id: String,
+    id: MfaTrustedDeviceId,
+    principal_id: PrincipalId,
     token_hash: String,
     label: Option<String>,
     expires_at: DateTime<Utc>,
@@ -196,7 +197,7 @@ impl MfaRepository {
 
     pub async fn find_method(
         &self,
-        principal_id: &str,
+        principal_id: &PrincipalId,
         method: MethodType,
     ) -> Result<Option<Method>> {
         let row = sqlx::query_as::<_, MethodRow>(&format!(
@@ -211,7 +212,7 @@ impl MfaRepository {
     }
 
     /// Every factor of the user, confirmed or not, oldest first.
-    pub async fn find_methods(&self, principal_id: &str) -> Result<Vec<Method>> {
+    pub async fn find_methods(&self, principal_id: &PrincipalId) -> Result<Vec<Method>> {
         let rows = sqlx::query_as::<_, MethodRow>(&format!(
             "SELECT {METHOD_COLUMNS} FROM iam_user_mfa_methods \
              WHERE principal_id = $1 ORDER BY created_at"
@@ -222,7 +223,11 @@ impl MfaRepository {
         rows.into_iter().map(Method::try_from).collect()
     }
 
-    pub async fn delete_method(&self, principal_id: &str, method: MethodType) -> Result<u64> {
+    pub async fn delete_method(
+        &self,
+        principal_id: &PrincipalId,
+        method: MethodType,
+    ) -> Result<u64> {
         let r =
             sqlx::query("DELETE FROM iam_user_mfa_methods WHERE principal_id = $1 AND method = $2")
                 .bind(principal_id)
@@ -238,12 +243,12 @@ impl MfaRepository {
     /// transaction.
     pub async fn replace_recovery_codes(
         &self,
-        principal_id: &str,
+        principal_id: &PrincipalId,
         hashes: &[String],
     ) -> Result<()> {
-        let ids: Vec<String> = hashes
+        let ids: Vec<MfaRecoveryCodeId> = hashes
             .iter()
-            .map(|_| tsid::generate_with_prefix(RECOVERY_CODE_ID_PREFIX))
+            .map(|_| MfaRecoveryCodeId::generate())
             .collect();
         let mut tx = self.pool.begin().await?;
         sqlx::query("DELETE FROM iam_user_mfa_recovery_codes WHERE principal_id = $1")
@@ -265,7 +270,11 @@ impl MfaRepository {
 
     /// Spend an unused recovery code matching `code_hash`. `true` once; the
     /// code is then burned.
-    pub async fn consume_recovery_code(&self, principal_id: &str, code_hash: &str) -> Result<bool> {
+    pub async fn consume_recovery_code(
+        &self,
+        principal_id: &PrincipalId,
+        code_hash: &str,
+    ) -> Result<bool> {
         let r = sqlx::query(
             "UPDATE iam_user_mfa_recovery_codes SET used_at = NOW() \
              WHERE id = (SELECT id FROM iam_user_mfa_recovery_codes \
@@ -280,7 +289,7 @@ impl MfaRepository {
         Ok(r.rows_affected() == 1)
     }
 
-    pub async fn count_unused_recovery_codes(&self, principal_id: &str) -> Result<i64> {
+    pub async fn count_unused_recovery_codes(&self, principal_id: &PrincipalId) -> Result<i64> {
         let n: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM iam_user_mfa_recovery_codes \
              WHERE principal_id = $1 AND used_at IS NULL",
@@ -296,7 +305,7 @@ impl MfaRepository {
     /// Replace the user's outstanding PINs of `purpose` with a fresh one.
     pub async fn replace_email_pin(
         &self,
-        principal_id: &str,
+        principal_id: &PrincipalId,
         purpose: EmailPinPurpose,
         pin_hash: &str,
         expires_at: DateTime<Utc>,
@@ -312,7 +321,7 @@ impl MfaRepository {
                (id, principal_id, purpose, pin_hash, attempts, expires_at, created_at) \
              VALUES ($1, $2, $3, $4, 0, $5, NOW())",
         )
-        .bind(tsid::generate_with_prefix(EMAIL_PIN_ID_PREFIX))
+        .bind(MfaEmailPinId::generate())
         .bind(principal_id)
         .bind(purpose.as_str())
         .bind(pin_hash)
@@ -326,7 +335,7 @@ impl MfaRepository {
     /// The user's most recent PIN of `purpose`.
     pub async fn find_latest_email_pin(
         &self,
-        principal_id: &str,
+        principal_id: &PrincipalId,
         purpose: EmailPinPurpose,
     ) -> Result<Option<EmailPin>> {
         let row = sqlx::query_as::<_, EmailPinRow>(&format!(
@@ -366,7 +375,7 @@ impl MfaRepository {
 
     pub async fn insert_trusted_device(
         &self,
-        principal_id: &str,
+        principal_id: &PrincipalId,
         token_hash: &str,
         label: Option<&str>,
         expires_at: DateTime<Utc>,
@@ -376,7 +385,7 @@ impl MfaRepository {
                (id, principal_id, token_hash, label, expires_at, created_at) \
              VALUES ($1, $2, $3, $4, $5, NOW())",
         )
-        .bind(tsid::generate_with_prefix(TRUSTED_DEVICE_ID_PREFIX))
+        .bind(MfaTrustedDeviceId::generate())
         .bind(principal_id)
         .bind(token_hash)
         .bind(label)
@@ -388,7 +397,11 @@ impl MfaRepository {
 
     /// Stamp use of an unexpired remembered device matching the token hash;
     /// `true` when there was one.
-    pub async fn use_trusted_device(&self, principal_id: &str, token_hash: &str) -> Result<bool> {
+    pub async fn use_trusted_device(
+        &self,
+        principal_id: &PrincipalId,
+        token_hash: &str,
+    ) -> Result<bool> {
         let r = sqlx::query(
             "UPDATE iam_mfa_trusted_devices SET last_used_at = NOW() \
              WHERE principal_id = $1 AND token_hash = $2 AND expires_at > NOW()",
@@ -401,7 +414,10 @@ impl MfaRepository {
     }
 
     /// The user's remembered devices, newest first.
-    pub async fn list_trusted_devices(&self, principal_id: &str) -> Result<Vec<TrustedDevice>> {
+    pub async fn list_trusted_devices(
+        &self,
+        principal_id: &PrincipalId,
+    ) -> Result<Vec<TrustedDevice>> {
         let rows = sqlx::query_as::<_, TrustedDeviceRow>(&format!(
             "SELECT {DEVICE_COLUMNS} FROM iam_mfa_trusted_devices \
              WHERE principal_id = $1 ORDER BY created_at DESC"
@@ -413,7 +429,11 @@ impl MfaRepository {
     }
 
     /// Remove one of the user's remembered devices (owner-scoped).
-    pub async fn delete_trusted_device(&self, principal_id: &str, id: &str) -> Result<u64> {
+    pub async fn delete_trusted_device(
+        &self,
+        principal_id: &PrincipalId,
+        id: &MfaTrustedDeviceId,
+    ) -> Result<u64> {
         let r =
             sqlx::query("DELETE FROM iam_mfa_trusted_devices WHERE id = $1 AND principal_id = $2")
                 .bind(id)
@@ -424,7 +444,7 @@ impl MfaRepository {
     }
 
     /// Forget every remembered device of the user (a password change).
-    pub async fn delete_trusted_devices(&self, principal_id: &str) -> Result<()> {
+    pub async fn delete_trusted_devices(&self, principal_id: &PrincipalId) -> Result<()> {
         sqlx::query("DELETE FROM iam_mfa_trusted_devices WHERE principal_id = $1")
             .bind(principal_id)
             .execute(&self.pool)
@@ -436,7 +456,7 @@ impl MfaRepository {
 
     /// Clear every factor, recovery code, pending PIN and remembered device
     /// of the user, in one transaction (Go `ResetAll`).
-    pub async fn reset_all(&self, principal_id: &str) -> Result<()> {
+    pub async fn reset_all(&self, principal_id: &PrincipalId) -> Result<()> {
         let mut tx = self.pool.begin().await?;
         for table in [
             "iam_user_mfa_methods",

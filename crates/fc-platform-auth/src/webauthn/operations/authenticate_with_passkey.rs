@@ -13,6 +13,7 @@
 //! That bubbles out as a `business_rule` failure.
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::PrincipalId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use webauthn_rs::prelude::{PasskeyAuthentication, PublicKeyCredential};
@@ -38,7 +39,7 @@ pub struct AuthenticatePasskeyCommand {
 impl AuditMasked for AuthenticatePasskeyCommand {}
 
 pub struct AuthenticationOutcome {
-    pub principal_id: String,
+    pub principal_id: PrincipalId,
     pub credential_id: String,
 }
 
@@ -160,7 +161,8 @@ impl<U: UnitOfWork> UseCase for AuthenticatePasskeyUseCase<U> {
         credential.record_authentication(&result);
 
         // 6. Commit credential update + login event.
-        let event = PasskeyAuthenticated::new(&ctx, &credential.id, &credential.principal_id);
+        let event =
+            PasskeyAuthenticated::new(&ctx, credential.id.as_str(), &credential.principal_id);
 
         self.unit_of_work
             .commit(&credential, &*self.credential_repo, event, &command)

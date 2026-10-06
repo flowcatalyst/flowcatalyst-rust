@@ -2,6 +2,7 @@
 //!
 //! REST endpoints for event type management.
 
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::EventTypeId;
 use std::sync::Arc;
 
@@ -148,7 +149,7 @@ impl From<EventType> for EventTypeResponse {
             description: et.description,
             status: et.status.as_str().to_string(),
             source: et.source.as_str().to_string(),
-            client_id: et.client_id,
+            client_id: et.client_id.map(ClientId::into_string),
             created_by: et.created_by,
             created_at: et.created_at.to_rfc3339(),
             updated_at: et.updated_at.to_rfc3339(),
@@ -220,7 +221,7 @@ pub async fn create_event_type(
         code: CreateEventTypeCommand::parse_code(&req.code, &req.name)?,
         name: req.name,
         description: req.description,
-        client_id: req.client_id,
+        client_id: req.client_id.map(ClientId::from_wire),
         client_scoped: req.client_scoped,
         schema: req.schema,
     };

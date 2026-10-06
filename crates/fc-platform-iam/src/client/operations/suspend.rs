@@ -1,6 +1,7 @@
 //! Suspend Client Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ClientId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -18,7 +19,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct SuspendClientCommand {
     /// Client ID to suspend
-    pub client_id: String,
+    pub client_id: ClientId,
 
     /// Reason for suspension (required, 1-500 chars)
     pub reason: String,
@@ -47,7 +48,7 @@ impl<U: UnitOfWork> UseCase for SuspendClientUseCase<U> {
     type Event = ClientSuspended;
 
     async fn validate(&self, command: &SuspendClientCommand) -> Result<(), UseCaseError> {
-        if command.client_id.trim().is_empty() {
+        if command.client_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "CLIENT_ID_REQUIRED",
                 "Client ID is required",
@@ -120,7 +121,7 @@ impl<U: UnitOfWork> UseCase for SuspendClientUseCase<U> {
         client.suspend(reason);
 
         // Create domain event
-        let event = ClientSuspended::new(&ctx, client.id.as_str(), reason);
+        let event = ClientSuspended::new(&ctx, &client.id, reason);
 
         // Atomic commit
         self.unit_of_work
@@ -136,7 +137,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = SuspendClientCommand {
-            client_id: "client-123".to_string(),
+            client_id: ClientId::from_wire("client-123"),
             reason: "Payment overdue".to_string(),
         };
 

@@ -8,6 +8,7 @@ use axum::{
     extract::{Path, Query, State},
     Json,
 };
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::ConnectionId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -521,7 +522,11 @@ pub(super) async fn sync_subscriptions(
     // `No access to client: …`).
     let client_id = match req.client_id.as_deref().map(str::trim) {
         Some(r) if !r.is_empty() => {
-            let client = match state.client_repo.find_by_id(r).await? {
+            let client = match state
+                .client_repo
+                .find_by_id(&ClientId::from_wire(r))
+                .await?
+            {
                 Some(c) => Some(c),
                 None => {
                     state
@@ -532,7 +537,7 @@ pub(super) async fn sync_subscriptions(
             };
             let client = client.ok_or_else(|| PlatformError::not_found_code("Client", r))?;
             // The use case checks the caller holds it (403).
-            Some(client.id.into_string())
+            Some(client.id)
         }
         _ => None,
     };
@@ -784,7 +789,7 @@ pub(super) async fn sync_scheduled_jobs(
 
     let command = SyncScheduledJobsCommand {
         scope: app_code.clone(),
-        client_id: req.client_id,
+        client_id: req.client_id.map(ClientId::from_wire),
         jobs: req
             .jobs
             .into_iter()

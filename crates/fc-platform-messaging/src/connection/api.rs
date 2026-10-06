@@ -170,7 +170,7 @@ pub async fn create_connection(
         description: req.description,
         service_account_id: req.service_account_id,
         external_id: req.external_id,
-        client_id: req.client_id,
+        client_id: req.client_id.map(ClientId::from_wire),
         application_code,
     };
     let ctx = ExecutionContext::from_auth(&auth.0);
@@ -208,10 +208,11 @@ pub async fn list_connections(
 ) -> Result<Json<ConnectionsListResponse>, PlatformError> {
     checks::can_read_connections(&auth.0)?;
 
+    let client_filter = query.client_id.as_deref().map(ClientId::from_wire);
     let connections = state
         .connection_repo
         .find_with_filters(
-            query.client_id.as_deref(),
+            client_filter.as_ref(),
             enum_str::parse_opt(query.status.as_deref())?,
             query.service_account_id.as_deref(),
         )

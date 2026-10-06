@@ -46,7 +46,6 @@ use fc_platform_core::shared::caller_reach;
 use fc_platform_core::shared::enum_str;
 use fc_platform_core::shared::error::{NotFoundExt, PlatformError};
 use fc_platform_core::shared::id::ClientId;
-use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_core::usecase::{ExecutionContext, PgUnitOfWork, UseCase};
 
@@ -387,7 +386,7 @@ impl From<ScheduledJobInstance> for ScheduledJobInstanceResponse {
         Self {
             id: i.id.into_string(),
             scheduled_job_id: i.scheduled_job_id.into_string(),
-            client_id: i.client_id,
+            client_id: i.client_id.map(ClientId::into_string),
             job_code: i.job_code,
             trigger_kind: i.trigger_kind.as_str().into(),
             scheduled_for: i.scheduled_for,
@@ -429,7 +428,7 @@ impl From<ScheduledJobInstanceLog> for InstanceLogResponse {
             id: l.id.into_string(),
             instance_id: l.instance_id.into_string(),
             scheduled_job_id: l.scheduled_job_id.map(ScheduledJobId::into_string),
-            client_id: l.client_id,
+            client_id: l.client_id.map(ClientId::into_string),
             level: l.level.as_str().into(),
             message: l.message,
             metadata: l.metadata,
@@ -442,7 +441,10 @@ impl From<ScheduledJobInstanceLog> for InstanceLogResponse {
 
 /// Go's by-id write rule (`auth.CheckScopeAccess` in each use case): 403
 /// `SCOPE_FORBIDDEN`.
-fn check_scope_access(auth: &Authenticated, client_id: Option<&str>) -> Result<(), PlatformError> {
+fn check_scope_access(
+    auth: &Authenticated,
+    client_id: Option<&ClientId>,
+) -> Result<(), PlatformError> {
     checks::check_scope_access(&auth.0, client_id)
 }
 
@@ -451,7 +453,7 @@ fn check_scope_access(auth: &Authenticated, client_id: Option<&str>) -> Result<(
 /// readable by any holder of the read permission.
 fn check_read_access(
     auth: &Authenticated,
-    client_id: Option<&str>,
+    client_id: Option<&ClientId>,
     message: &str,
 ) -> Result<(), PlatformError> {
     match client_id {
@@ -480,7 +482,7 @@ pub async fn create_scheduled_job(
         code: req.code,
         name: req.name,
         description: req.description,
-        client_id: req.client_id,
+        client_id: req.client_id.map(ClientId::from_wire),
         application_id: req.application_id.map(ApplicationId::from_wire),
         crons: req.crons,
         timezone: req.timezone,
@@ -607,7 +609,7 @@ pub async fn get_scheduled_job(
         .or_not_found("ScheduledJob", id.as_str())?;
     check_read_access(
         &auth,
-        job.client_id.as_id_str(),
+        job.client_id.as_ref(),
         "No access to this scheduled job",
     )?;
     let active = state
@@ -636,15 +638,15 @@ pub async fn get_scheduled_job_by_code(
 ) -> Result<Json<ScheduledJobResponse>, PlatformError> {
     checks::can_read_scheduled_jobs(&auth.0)?;
 
-    let cid = q.client_id.as_deref();
+    let cid = q.client_id.as_deref().map(ClientId::from_wire);
     let job = state
         .repo
-        .find_by_code(cid, &code)
+        .find_by_code(cid.as_ref(), &code)
         .await?
         .or_not_found("ScheduledJob", &code)?;
     check_read_access(
         &auth,
-        job.client_id.as_id_str(),
+        job.client_id.as_ref(),
         "No access to this scheduled job",
     )?;
     let active = state
@@ -861,7 +863,7 @@ pub async fn list_instances_for_job(
     if let Some(job) = state.repo.find_by_id(&id).await? {
         check_read_access(
             &auth,
-            job.client_id.as_id_str(),
+            job.client_id.as_ref(),
             "No access to this scheduled job",
         )?;
     }
@@ -913,11 +915,7 @@ pub async fn get_instance(
         .find_by_id(&instance_id)
         .await?
         .or_not_found("ScheduledJobInstance", instance_id.as_str())?;
-    check_read_access(
-        &auth,
-        inst.client_id.as_deref(),
-        "No access to this instance",
-    )?;
+    check_read_access(&auth, inst.client_id.as_ref(), "No access to this instance")?;
     Ok(Json(inst.into()))
 }
 
@@ -939,11 +937,7 @@ pub async fn list_instance_logs(
     let Some(inst) = state.instance_repo.find_by_id(&instance_id).await? else {
         return Ok(Json(Vec::new()));
     };
-    check_read_access(
-        &auth,
-        inst.client_id.as_deref(),
-        "No access to this instance",
-    )?;
+    check_read_access(&auth, inst.client_id.as_ref(), "No access to this instance")?;
     let logs = state
         .instance_repo
         .list_logs_for_instance(&instance_id, None)
@@ -974,7 +968,7 @@ pub async fn post_instance_log(
         .find_by_id(&instance_id)
         .await?
         .or_not_found("ScheduledJobInstance", instance_id.as_str())?;
-    check_scope_access(&auth, inst.client_id.as_deref())?;
+    check_scope_access(&auth, inst.client_id.as_ref())?;
 
     let log = ScheduledJobInstanceLog {
         id: ScheduledJobInstanceLogId::generate(),
@@ -1011,7 +1005,7 @@ pub async fn post_instance_complete(
         .find_by_id(&instance_id)
         .await?
         .or_not_found("ScheduledJobInstance", instance_id.as_str())?;
-    check_scope_access(&auth, inst.client_id.as_deref())?;
+    check_scope_access(&auth, inst.client_id.as_ref())?;
 
     let (status, completion) =
         resolve_instance_completion(req.status.as_deref(), req.completion_status.as_deref())

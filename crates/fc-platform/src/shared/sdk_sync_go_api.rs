@@ -11,6 +11,7 @@ use axum::{
     extract::{Path, Query, State},
     Json,
 };
+use fc_platform_core::shared::id::ClientId;
 use serde::Deserialize;
 use std::sync::Arc;
 use utoipa::ToSchema;
@@ -116,7 +117,11 @@ pub async fn sync_connections(
     // Go `resolveClientRef`: the id first, then the identifier lower-cased.
     let client_id = match req.client_id.as_deref().map(str::trim) {
         Some(r) if !r.is_empty() => {
-            let client = match state.client_repo.find_by_id(r).await? {
+            let client = match state
+                .client_repo
+                .find_by_id(&ClientId::from_wire(r))
+                .await?
+            {
                 Some(c) => Some(c),
                 None => {
                     state
@@ -127,7 +132,7 @@ pub async fn sync_connections(
             };
             let client = client.ok_or_else(|| PlatformError::not_found_code("Client", r))?;
             // The use case checks the caller holds it (403).
-            Some(client.id.into_string())
+            Some(client.id)
         }
         _ => None,
     };

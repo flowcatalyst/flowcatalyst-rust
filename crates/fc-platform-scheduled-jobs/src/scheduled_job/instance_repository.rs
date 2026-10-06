@@ -10,6 +10,7 @@
 //! `/instances/:id/complete`) are enforced at the handler layer.
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::ScheduledJobId;
 use fc_platform_core::shared::id::ScheduledJobInstanceId;
 use fc_platform_core::shared::id::ScheduledJobInstanceLogId;
@@ -26,7 +27,7 @@ use std::collections::HashSet;
 struct InstanceRow {
     id: ScheduledJobInstanceId,
     scheduled_job_id: ScheduledJobId,
-    client_id: Option<String>,
+    client_id: Option<ClientId>,
     job_code: String,
     trigger_kind: String,
     scheduled_for: Option<DateTime<Utc>>,
@@ -89,7 +90,7 @@ struct LogRow {
     id: ScheduledJobInstanceLogId,
     instance_id: ScheduledJobInstanceId,
     scheduled_job_id: Option<ScheduledJobId>,
-    client_id: Option<String>,
+    client_id: Option<ClientId>,
     level: String,
     message: String,
     metadata: Option<serde_json::Value>,

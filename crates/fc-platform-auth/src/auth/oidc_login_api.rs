@@ -18,6 +18,8 @@ use axum::{
 use axum_extra::extract::cookie::CookieJar;
 use axum_extra::extract::Host;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::OptionIdExt;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -794,7 +796,7 @@ pub async fn oidc_callback(
                 name: claims.name.as_deref().unwrap_or(&claims.email),
                 external_idp_id: &claims.subject,
                 provider_id: idp.oidc_issuer_url.as_deref().unwrap_or("unknown"),
-                client_id: mapping.primary_client_id.as_deref(),
+                client_id: mapping.primary_client_id.as_id_str(),
                 scope: user_scope,
             },
             &claims.roles.unwrap_or_default(),
@@ -849,7 +851,9 @@ pub async fn oidc_callback(
         // Build clients list matching TS behaviour
         let clients: Vec<String> = match user_scope {
             UserScope::Anchor => vec!["*".to_string()],
-            UserScope::Partner | UserScope::Client => principal.assigned_clients.clone(),
+            UserScope::Partner | UserScope::Client => {
+                ClientId::into_strings(principal.assigned_clients.clone())
+            }
         };
 
         let fc_claims = FlowcatalystClaims {
@@ -871,7 +875,7 @@ pub async fn oidc_callback(
 
         let login_event = UserLoggedIn::new(
             &ctx,
-            principal.id.as_str(),
+            &principal.id,
             &claims.email,
             "OIDC",
             Some(&idp.code),

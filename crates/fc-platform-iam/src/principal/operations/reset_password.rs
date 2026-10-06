@@ -7,6 +7,7 @@
 //! `UnitOfWork` so events and audit logs are emitted.
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::PrincipalId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -22,7 +23,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResetPasswordCommand {
-    pub principal_id: String,
+    pub principal_id: PrincipalId,
     /// Never serialised: the UnitOfWork persists the command into
     /// `aud_logs.operation_json`, and a plaintext password must not land there.
     #[serde(skip_serializing)]
@@ -61,7 +62,7 @@ impl<U: UnitOfWork> UseCase for ResetPasswordUseCase<U> {
     type Event = PasswordResetCompleted;
 
     async fn validate(&self, command: &ResetPasswordCommand) -> Result<(), UseCaseError> {
-        if command.principal_id.trim().is_empty() {
+        if command.principal_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "PRINCIPAL_ID_REQUIRED",
                 "Principal ID is required",
@@ -163,7 +164,7 @@ impl<U: UnitOfWork> UseCase for ResetPasswordUseCase<U> {
         }
         principal.updated_at = chrono::Utc::now();
 
-        let event = PasswordResetCompleted::from_ctx(&ctx, principal.id.as_str());
+        let event = PasswordResetCompleted::from_ctx(&ctx, &principal.id);
 
         self.unit_of_work
             .commit(&principal, &*self.principal_repo, event, &command)
@@ -178,7 +179,7 @@ mod tests {
     #[test]
     fn command_serialization() {
         let cmd = ResetPasswordCommand {
-            principal_id: "user-1".to_string(),
+            principal_id: PrincipalId::from_wire("user-1"),
             new_password: "hunter22!".to_string(),
             enforce_password_complexity: Some(false),
         };
@@ -193,7 +194,7 @@ mod tests {
     #[test]
     fn command_still_deserializes_the_password() {
         let cmd: ResetPasswordCommand =
-            serde_json::from_str(r#"{"principalId":"user-1","newPassword":"hunter22!"}"#).unwrap();
+            serde_json::from_str(r#"{"principalId":"prn_1","newPassword":"hunter22!"}"#).unwrap();
         assert_eq!(cmd.new_password, "hunter22!");
     }
 }

@@ -3,6 +3,7 @@
 //! `platform:iam`, subject `platform.principal.{id}`, group
 //! `platform:principal:{id}`, data `{userId}`). Never the secret.
 
+use fc_platform_core::shared::id::PrincipalId;
 use serde::{Deserialize, Serialize};
 
 use fc_platform_core::impl_domain_event;
@@ -11,7 +12,7 @@ use fc_platform_core::usecase::{EventMetadata, ExecutionContext};
 const SOURCE: &str = "platform:iam";
 const SPEC_VERSION: &str = "1.0";
 
-fn metadata(ctx: &ExecutionContext, event_type: &str, user_id: &str) -> EventMetadata {
+fn metadata(ctx: &ExecutionContext, event_type: &str, user_id: &PrincipalId) -> EventMetadata {
     EventMetadata::from_ctx(
         ctx,
         event_type,
@@ -28,7 +29,7 @@ fn metadata(ctx: &ExecutionContext, event_type: &str, user_id: &str) -> EventMet
 pub struct DeveloperCredentialSet {
     #[serde(flatten)]
     pub metadata: EventMetadata,
-    pub user_id: String,
+    pub user_id: PrincipalId,
 }
 
 impl_domain_event!(DeveloperCredentialSet);
@@ -36,10 +37,10 @@ impl_domain_event!(DeveloperCredentialSet);
 impl DeveloperCredentialSet {
     pub const EVENT_TYPE: &'static str = "platform:iam:user:developer-credential-set";
 
-    pub fn new(ctx: &ExecutionContext, user_id: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, user_id: &PrincipalId) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, user_id),
-            user_id: user_id.to_string(),
+            user_id: user_id.clone(),
         }
     }
 }
@@ -50,7 +51,7 @@ impl DeveloperCredentialSet {
 pub struct DeveloperCredentialRevoked {
     #[serde(flatten)]
     pub metadata: EventMetadata,
-    pub user_id: String,
+    pub user_id: PrincipalId,
 }
 
 impl_domain_event!(DeveloperCredentialRevoked);
@@ -58,10 +59,10 @@ impl_domain_event!(DeveloperCredentialRevoked);
 impl DeveloperCredentialRevoked {
     pub const EVENT_TYPE: &'static str = "platform:iam:user:developer-credential-revoked";
 
-    pub fn new(ctx: &ExecutionContext, user_id: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, user_id: &PrincipalId) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, user_id),
-            user_id: user_id.to_string(),
+            user_id: user_id.clone(),
         }
     }
 }

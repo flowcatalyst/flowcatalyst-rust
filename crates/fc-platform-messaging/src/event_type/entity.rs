@@ -1,6 +1,7 @@
 //! EventType Entity — matches TypeScript EventType domain
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::EventTypeId;
 use fc_platform_core::shared::tsid;
 use fc_platform_core::shared::tsid::EntityType;
@@ -135,7 +136,7 @@ pub struct EventType {
     pub event_name: String,
     /// Optional client scoping
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
     /// Who created this event type
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
@@ -282,8 +283,8 @@ impl EventType {
         self.description = Some(desc.into());
         self
     }
-    pub fn with_client_id(mut self, id: impl Into<String>) -> Self {
-        self.client_id = Some(id.into());
+    pub fn with_client_id(mut self, id: ClientId) -> Self {
+        self.client_id = Some(id);
         self
     }
 

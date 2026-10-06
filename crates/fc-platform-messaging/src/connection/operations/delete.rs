@@ -9,7 +9,6 @@ use super::events::ConnectionDeleted;
 use crate::connection::repository::ConnectionRepository;
 use crate::subscription::repository::SubscriptionRepository;
 use fc_platform_core::shared::caller_reach;
-use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
@@ -72,7 +71,7 @@ impl<U: UnitOfWork> UseCase for DeleteConnectionUseCase<U> {
             .find_by_id(&command.connection_id)
             .await?
         {
-            caller_reach::check_scope_access(ctx.caller(), target.client_id.as_id_str())?;
+            caller_reach::check_scope_access(ctx.caller(), target.client_id.as_ref())?;
         }
         Ok(())
     }

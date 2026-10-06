@@ -204,7 +204,7 @@ pub async fn register_begin(
     // existing credential ids from the challenge.
     let existing = state
         .credential_repo
-        .find_by_principal(&auth.0.principal_id)
+        .find_by_principal(auth.0.principal_id.as_str())
         .await?;
     let exclude: Vec<_> = existing
         .iter()
@@ -212,7 +212,7 @@ pub async fn register_begin(
         .collect();
 
     let (challenge, ceremony_state) = state.webauthn_service.start_registration(
-        &auth.0.principal_id,
+        auth.0.principal_id.as_str(),
         &email,
         &display_name,
         &exclude,
@@ -526,7 +526,7 @@ pub async fn authenticate_complete(
                 record_user_login_attempt(
                     &state.login_attempt_repo,
                     Some(email),
-                    Some(principal.id.as_str()),
+                    Some(&principal.id),
                     ip,
                     LoginOutcome::Failure,
                     Some("RATE_LIMITED"),
@@ -547,7 +547,7 @@ pub async fn authenticate_complete(
             record_user_login_attempt(
                 &state.login_attempt_repo,
                 principal.email(),
-                Some(principal.id.as_str()),
+                Some(&principal.id),
                 ip,
                 LoginOutcome::Failure,
                 Some("SESSION_TOKEN_FAILED"),
@@ -562,7 +562,7 @@ pub async fn authenticate_complete(
     record_user_login_attempt(
         &state.login_attempt_repo,
         principal.email(),
-        Some(principal.id.as_str()),
+        Some(&principal.id),
         ip,
         LoginOutcome::Success,
         None,
@@ -598,12 +598,12 @@ pub async fn list_credentials(
     auth.0.require_session_user()?;
     let creds = state
         .credential_repo
-        .find_by_principal(&auth.0.principal_id)
+        .find_by_principal(auth.0.principal_id.as_str())
         .await?;
     let summaries = creds
         .into_iter()
         .map(|c| CredentialSummary {
-            id: c.id,
+            id: c.id.into_string(),
             name: c.name,
             created_at: c.created_at,
             last_used_at: c.last_used_at,

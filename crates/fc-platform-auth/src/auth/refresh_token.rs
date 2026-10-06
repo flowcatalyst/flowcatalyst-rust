@@ -5,6 +5,7 @@
 
 use base64::engine::general_purpose;
 use chrono::{DateTime, Duration, Utc};
+use fc_platform_core::shared::id::PrincipalId;
 use fc_platform_core::shared::tsid;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::AtomicI64;
@@ -46,7 +47,7 @@ pub struct RefreshToken {
     pub token_hash: String,
 
     /// Principal ID (user or service account)
-    pub principal_id: String,
+    pub principal_id: PrincipalId,
 
     /// OAuth client ID (optional - set for OAuth flows)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -104,7 +105,7 @@ impl RefreshToken {
     ///
     /// Note: The raw token should be generated separately and hashed before storage.
     /// Use `generate_token_pair()` to create both the raw token and entity.
-    pub fn new(token_hash: impl Into<String>, principal_id: impl Into<String>) -> Self {
+    pub fn new(token_hash: impl Into<String>, principal_id: PrincipalId) -> Self {
         let now = Utc::now();
         let id = tsid::generate_untyped();
         Self {
@@ -113,7 +114,7 @@ impl RefreshToken {
             token_family: Some(id.clone()),
             id,
             token_hash: token_hash.into(),
-            principal_id: principal_id.into(),
+            principal_id,
             oauth_client_id: None,
             scopes: vec![],
             accessible_clients: vec![],
@@ -166,7 +167,7 @@ impl RefreshToken {
     /// inherits its expiry: the family's absolute cap, never extended by
     /// rotating (Go `grantstore.Rotate`, Java `RefreshRotation.successorOf`).
     pub fn successor(&self) -> (String, Self) {
-        let (raw, mut next) = Self::generate_token_pair(&self.principal_id);
+        let (raw, mut next) = Self::generate_token_pair(self.principal_id.clone());
         next.oauth_client_id = self.oauth_client_id.clone();
         next.scopes = self.scopes.clone();
         next.accessible_clients = self.accessible_clients.clone();
@@ -236,7 +237,7 @@ impl RefreshToken {
     }
 
     /// Generate a token pair (raw token for client, entity for storage)
-    pub fn generate_token_pair(principal_id: impl Into<String>) -> (String, Self) {
+    pub fn generate_token_pair(principal_id: PrincipalId) -> (String, Self) {
         let raw_token = Self::generate_raw_token();
         let token_hash = Self::hash_token(&raw_token);
         let entity = Self::new(token_hash, principal_id);
@@ -252,10 +253,11 @@ mod tests {
 
     #[test]
     fn test_new_token() {
-        let (raw, token) = RefreshToken::generate_token_pair("principal-123");
+        let (raw, token) =
+            RefreshToken::generate_token_pair(PrincipalId::parse("prn_123").unwrap());
 
         assert!(!raw.is_empty());
-        assert_eq!(token.principal_id, "principal-123");
+        assert_eq!(token.principal_id.as_str(), "prn_123");
         assert!(!token.revoked);
         assert!(token.is_valid());
         assert!(!token.is_expired());
@@ -278,7 +280,8 @@ mod tests {
 
     #[test]
     fn test_revoke_token() {
-        let (_, mut token) = RefreshToken::generate_token_pair("principal-123");
+        let (_, mut token) =
+            RefreshToken::generate_token_pair(PrincipalId::parse("prn_123").unwrap());
         assert!(token.is_valid());
 
         token.revoke();
@@ -288,7 +291,7 @@ mod tests {
 
     #[test]
     fn test_with_oauth_client() {
-        let (_, token) = RefreshToken::generate_token_pair("principal-123");
+        let (_, token) = RefreshToken::generate_token_pair(PrincipalId::parse("prn_123").unwrap());
         let token = token.with_oauth_client("oauth-client-456");
 
         assert_eq!(token.oauth_client_id, Some("oauth-client-456".to_string()));
@@ -296,7 +299,7 @@ mod tests {
 
     #[test]
     fn a_new_token_roots_its_family() {
-        let (_, token) = RefreshToken::generate_token_pair("principal-123");
+        let (_, token) = RefreshToken::generate_token_pair(PrincipalId::parse("prn_123").unwrap());
         assert_eq!(token.token_family.as_deref(), Some(token.id.as_str()));
     }
 
@@ -304,7 +307,7 @@ mod tests {
     /// expiry instead of a fresh 30 days.
     #[test]
     fn the_successor_inherits_lineage_family_and_expiry() {
-        let (_, stored) = RefreshToken::generate_token_pair("prn_1");
+        let (_, stored) = RefreshToken::generate_token_pair(PrincipalId::parse("prn_1").unwrap());
         let mut stored = stored
             .with_oauth_client("oc_planner")
             .with_scopes(vec!["openid".to_string(), "offline_access".to_string()])
@@ -314,7 +317,7 @@ mod tests {
         let (raw, next) = stored.successor();
         assert_eq!(RefreshToken::hash_token(&raw), next.token_hash);
         assert_ne!(next.id, stored.id);
-        assert_eq!(next.principal_id, "prn_1");
+        assert_eq!(next.principal_id.as_str(), "prn_1");
         assert_eq!(next.oauth_client_id.as_deref(), Some("oc_planner"));
         assert_eq!(next.scopes, stored.scopes);
         assert_eq!(next.accessible_clients, stored.accessible_clients);
@@ -329,7 +332,7 @@ mod tests {
 
     #[test]
     fn test_with_scopes() {
-        let (_, token) = RefreshToken::generate_token_pair("principal-123");
+        let (_, token) = RefreshToken::generate_token_pair(PrincipalId::parse("prn_123").unwrap());
         let token = token.with_scopes(vec!["openid".to_string(), "profile".to_string()]);
 
         assert_eq!(token.scopes.len(), 2);

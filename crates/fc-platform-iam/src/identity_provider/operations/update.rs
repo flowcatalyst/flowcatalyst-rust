@@ -7,7 +7,9 @@
 //! `PgUnitOfWork::run`.
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::IdentityProviderId;
+use fc_platform_core::shared::id::OptionIdExt;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -50,7 +52,7 @@ pub struct UpdateIdentityProviderCommand {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mapping_scope: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub primary_client_id: Option<String>,
+    pub primary_client_id: Option<ClientId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sync_roles_from_idp: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -104,7 +106,7 @@ impl<U: UnitOfWork> UseCase for UpdateIdentityProviderUseCase<U> {
         }
         validate_mapping_scope(
             command.mapping_scope.as_deref(),
-            command.primary_client_id.as_deref(),
+            command.primary_client_id.as_id_str(),
         )?;
         super::require_sealed_secret(command.oidc_client_secret_ref.as_deref())
     }
@@ -151,7 +153,7 @@ impl<U: UnitOfWork> UseCase for UpdateIdentityProviderUseCase<U> {
         if let Some(domains) = &command.allowed_email_domains {
             let (scope, _) = validate_mapping_scope(
                 command.mapping_scope.as_deref(),
-                command.primary_client_id.as_deref(),
+                command.primary_client_id.as_id_str(),
             )?;
             require_scope_for_new_domains(&self.domains, &normalize_domains(domains), scope)
                 .await?;
@@ -239,7 +241,7 @@ impl<U: UnitOfWork> UpdateIdentityProviderUseCase<U> {
         let desired = normalize_domains(domains);
         let (scope, client) = validate_mapping_scope(
             command.mapping_scope.as_deref(),
-            command.primary_client_id.as_deref(),
+            command.primary_client_id.as_id_str(),
         )?;
         let current = self
             .domains
@@ -254,7 +256,7 @@ impl<U: UnitOfWork> UpdateIdentityProviderUseCase<U> {
                 idp,
                 domain,
                 scope,
-                client.as_deref(),
+                client.as_ref(),
                 ctx,
                 command,
             )

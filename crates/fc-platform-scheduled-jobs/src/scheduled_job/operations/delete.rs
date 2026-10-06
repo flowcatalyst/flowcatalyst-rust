@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 use super::events::ScheduledJobDeleted;
 use crate::scheduled_job::ScheduledJobRepository;
 use fc_platform_core::shared::caller_reach;
-use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
@@ -57,7 +56,7 @@ impl<U: UnitOfWork> UseCase for DeleteScheduledJobUseCase<U> {
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
         if let Some(job) = self.repo.find_by_id(&command.scheduled_job_id).await? {
-            caller_reach::check_scope_access(ctx.caller(), job.client_id.as_id_str())?;
+            caller_reach::check_scope_access(ctx.caller(), job.client_id.as_ref())?;
         }
         Ok(())
     }

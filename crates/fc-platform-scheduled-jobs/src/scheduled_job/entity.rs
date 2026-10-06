@@ -359,7 +359,7 @@ pub struct ScheduledJobInstance {
     pub id: ScheduledJobInstanceId,
     pub scheduled_job_id: ScheduledJobId,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
     pub job_code: String,
     pub trigger_kind: TriggerKind,
     /// The cron slot this firing represents. NULL for MANUAL.
@@ -392,7 +392,7 @@ pub struct ScheduledJobInstanceLog {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scheduled_job_id: Option<ScheduledJobId>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
     pub level: LogLevel,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -9,7 +9,6 @@ use super::events::ConnectionUpdated;
 use crate::connection::entity::ConnectionStatus;
 use crate::connection::repository::ConnectionRepository;
 use fc_platform_core::shared::caller_reach;
-use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
@@ -87,7 +86,7 @@ impl<U: UnitOfWork> UseCase for UpdateConnectionUseCase<U> {
             .find_by_id(&command.connection_id)
             .await?
         {
-            caller_reach::check_scope_access(ctx.caller(), target.client_id.as_id_str())?;
+            caller_reach::check_scope_access(ctx.caller(), target.client_id.as_ref())?;
         }
         Ok(())
     }
@@ -127,7 +126,7 @@ impl<U: UnitOfWork> UseCase for UpdateConnectionUseCase<U> {
                     .find_by_code_in_scope(
                         &connection.code,
                         Some(app_code),
-                        connection.client_id.as_id_str(),
+                        connection.client_id.as_ref(),
                     )
                     .await?;
                 if dup.is_some_and(|d| d.id != connection.id) {

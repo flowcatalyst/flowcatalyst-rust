@@ -5,6 +5,8 @@
 
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::PrincipalId;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{ExternalIdentity, Principal, PrincipalType, UserIdentity, UserScope};
@@ -91,7 +93,7 @@ impl TryFrom<PrincipalRow> for Principal {
             scope,
             client_id: r
                 .client_id
-                .as_deref()
+                .as_ref()
                 .map(|v| decode_id(v, "iam_principals", "client_id", &r.id))
                 .transpose()?,
             application_id: r.application_id,
@@ -119,7 +121,7 @@ impl TryFrom<PrincipalRow> for Principal {
 
 #[derive(sqlx::FromRow)]
 struct PrincipalRoleRow {
-    principal_id: String,
+    principal_id: PrincipalId,
     role_name: String,
     assignment_source: Option<String>,
     assigned_at: DateTime<Utc>,
@@ -147,19 +149,19 @@ impl TryFrom<PrincipalRoleRow> for RoleAssignment {
 
 #[derive(sqlx::FromRow)]
 struct ClientAccessGrantRow {
-    principal_id: String,
-    client_id: String,
+    principal_id: PrincipalId,
+    client_id: ClientId,
 }
 
 #[derive(sqlx::FromRow)]
 struct ClientIdentifierRow {
-    id: String,
+    id: ClientId,
     identifier: String,
 }
 
 #[derive(sqlx::FromRow)]
 struct PrincipalApplicationAccessRow {
-    principal_id: String,
+    principal_id: PrincipalId,
     application_id: ApplicationId,
     /// The application's code; NULL when the application row is gone (the
     /// junction has no FK), as Go's LEFT JOIN reads it.
@@ -240,8 +242,7 @@ impl PrincipalRepository {
         .await?;
 
         // Insert roles into junction table
-        self.insert_roles(principal.id.as_str(), &principal.roles)
-            .await?;
+        self.insert_roles(&principal.id, &principal.roles).await?;
 
         // Insert application access grants
         if !principal.accessible_application_ids.is_empty() {
@@ -259,7 +260,7 @@ impl PrincipalRepository {
         Ok(())
     }
 
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<Principal>> {
+    pub async fn find_by_id(&self, id: &PrincipalId) -> Result<Option<Principal>> {
         let row = sqlx::query_as::<_, PrincipalRow>("SELECT * FROM iam_principals WHERE id = $1")
             .bind(id)
             .fetch_optional(&self.pool)
@@ -291,7 +292,7 @@ impl PrincipalRepository {
     /// parameters), made on login. Go writes it the same way, as a direct
     /// UPDATE with no event or audit (principal/repository.go:760-770,
     /// called from auth/login/endpoint.go:519-525).
-    pub async fn update_password_hash(&self, principal_id: &str, hash: &str) -> Result<()> {
+    pub async fn update_password_hash(&self, principal_id: &PrincipalId, hash: &str) -> Result<()> {
         sqlx::query("UPDATE iam_principals SET password_hash = $1, updated_at = $2 WHERE id = $3")
             .bind(hash)
             .bind(Utc::now())
@@ -322,7 +323,7 @@ impl PrincipalRepository {
     /// such principal exists.
     pub async fn find_application_binding(
         &self,
-        principal_id: &str,
+        principal_id: &PrincipalId,
     ) -> Result<Option<PrincipalApplicationBinding>> {
         let row = sqlx::query_as::<_, PrincipalApplicationBinding>(
             "SELECT p.all_applications,
@@ -386,7 +387,7 @@ impl PrincipalRepository {
         self.hydrate_principals(rows).await
     }
 
-    pub async fn find_by_client(&self, client_id: &str) -> Result<Vec<Principal>> {
+    pub async fn find_by_client(&self, client_id: &ClientId) -> Result<Vec<Principal>> {
         // Find principals that either have this client_id OR have a grant for it
         let rows = sqlx::query_as::<_, PrincipalRow>(
             "SELECT DISTINCT p.* FROM iam_principals p
@@ -414,7 +415,7 @@ impl PrincipalRepository {
     /// For `search`, applies ILIKE on name and email (OR).
     pub async fn find_with_filters(
         &self,
-        client_id: Option<&str>,
+        client_id: Option<&ClientId>,
         scope: Option<UserScope>,
         principal_type: Option<PrincipalType>,
         active: Option<bool>,
@@ -575,8 +576,7 @@ impl PrincipalRepository {
             .bind(&principal.id)
             .execute(&self.pool)
             .await?;
-        self.insert_roles(principal.id.as_str(), &principal.roles)
-            .await?;
+        self.insert_roles(&principal.id, &principal.roles).await?;
 
         // Sync application access
         sqlx::query("DELETE FROM iam_principal_application_access WHERE principal_id = $1")
@@ -586,8 +586,8 @@ impl PrincipalRepository {
 
         if !principal.accessible_application_ids.is_empty() {
             let count = principal.accessible_application_ids.len();
-            let principal_ids: Vec<String> =
-                iter::repeat_n(principal.id.to_string(), count).collect();
+            let principal_ids: Vec<PrincipalId> =
+                iter::repeat_n(principal.id.clone(), count).collect();
             let app_ids: Vec<ApplicationId> = principal.accessible_application_ids.clone();
             let granted_ats: Vec<DateTime<Utc>> = iter::repeat_n(now, count).collect();
 
@@ -608,7 +608,7 @@ impl PrincipalRepository {
     /// Delete a principal and cascade the non-FK junctions. Mirrors the
     /// tx-aware `Persist<Principal>::delete` — both paths MUST cascade or
     /// we leak orphaned role assignments / client access / app access rows.
-    pub async fn delete(&self, id: &str) -> Result<bool> {
+    pub async fn delete(&self, id: &PrincipalId) -> Result<bool> {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query("DELETE FROM iam_principal_roles WHERE principal_id = $1")
@@ -634,7 +634,11 @@ impl PrincipalRepository {
 
     /// Grant a single client access to a principal. Idempotent via ON CONFLICT.
     /// Returns true if a new row was inserted, false if the grant already existed.
-    pub async fn grant_client_access(&self, principal_id: &str, client_id: &str) -> Result<bool> {
+    pub async fn grant_client_access(
+        &self,
+        principal_id: &PrincipalId,
+        client_id: &ClientId,
+    ) -> Result<bool> {
         let now = Utc::now();
         let result = sqlx::query(
             "INSERT INTO iam_client_access_grants
@@ -667,11 +671,14 @@ impl PrincipalRepository {
     }
 
     /// Batch-lookup principal names by IDs. Returns a map of id -> name.
-    pub async fn find_names_by_ids(&self, ids: &[String]) -> Result<HashMap<String, String>> {
+    pub async fn find_names_by_ids(
+        &self,
+        ids: &[PrincipalId],
+    ) -> Result<HashMap<PrincipalId, String>> {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
-        let rows: Vec<(String, String)> =
+        let rows: Vec<(PrincipalId, String)> =
             sqlx::query_as("SELECT id, name FROM iam_principals WHERE id = ANY($1)")
                 .bind(ids)
                 .fetch_all(&self.pool)
@@ -691,7 +698,11 @@ impl PrincipalRepository {
     }
 
     /// Insert roles into the junction table via UNNEST
-    async fn insert_roles(&self, principal_id: &str, roles: &[RoleAssignment]) -> Result<()> {
+    async fn insert_roles(
+        &self,
+        principal_id: &PrincipalId,
+        roles: &[RoleAssignment],
+    ) -> Result<()> {
         if roles.is_empty() {
             return Ok(());
         }
@@ -726,9 +737,9 @@ impl PrincipalRepository {
 
     /// Hydrate a single principal with roles, client grants, and application access
     async fn hydrate_principal(&self, row: PrincipalRow) -> Result<Principal> {
-        let id = row.id.clone();
-        let home_client_id = row.client_id.clone();
         let mut principal = Principal::try_from(row)?;
+        let id = principal.id.clone();
+        let home_client_id = principal.client_id.clone();
 
         // Load roles
         let role_rows = sqlx::query_as::<_, PrincipalRoleRow>(
@@ -750,18 +761,18 @@ impl PrincipalRepository {
         .bind(&id)
         .fetch_all(&self.pool)
         .await?;
-        let client_ids: Vec<String> = grant_rows.into_iter().map(|g| g.client_id).collect();
+        let client_ids: Vec<ClientId> = grant_rows.into_iter().map(|g| g.client_id).collect();
 
         // Collect all client IDs for identifier lookup (grant + home)
-        let mut all_client_ids: HashSet<String> = client_ids.iter().cloned().collect();
+        let mut all_client_ids: HashSet<ClientId> = client_ids.iter().cloned().collect();
         if let Some(ref cid) = home_client_id {
             all_client_ids.insert(cid.clone());
         }
 
         // Batch-load client identifiers
-        let mut identifier_map: HashMap<String, String> = HashMap::new();
+        let mut identifier_map: HashMap<ClientId, String> = HashMap::new();
         if !all_client_ids.is_empty() {
-            let ids_vec: Vec<String> = all_client_ids.into_iter().collect();
+            let ids_vec: Vec<ClientId> = all_client_ids.into_iter().collect();
             let client_rows = sqlx::query_as::<_, ClientIdentifierRow>(
                 "SELECT id, identifier FROM tnt_clients WHERE id = ANY($1)",
             )
@@ -806,7 +817,11 @@ impl PrincipalRepository {
             return Ok(vec![]);
         }
 
-        let principal_ids: Vec<String> = rows.iter().map(|m| m.id.clone()).collect();
+        let mut principals: Vec<Principal> = rows
+            .into_iter()
+            .map(Principal::try_from)
+            .collect::<Result<_>>()?;
+        let principal_ids: Vec<PrincipalId> = principals.iter().map(|p| p.id.clone()).collect();
 
         // Batch-load roles
         let all_roles = sqlx::query_as::<_, PrincipalRoleRow>(
@@ -817,7 +832,7 @@ impl PrincipalRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        let mut role_map: HashMap<String, Vec<RoleAssignment>> = HashMap::new();
+        let mut role_map: HashMap<PrincipalId, Vec<RoleAssignment>> = HashMap::new();
         for r in all_roles {
             role_map
                 .entry(r.principal_id.clone())
@@ -833,14 +848,14 @@ impl PrincipalRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        let mut grant_map: HashMap<String, Vec<String>> = HashMap::new();
-        let mut all_client_ids: HashSet<String> = HashSet::new();
+        let mut grant_map: HashMap<PrincipalId, Vec<ClientId>> = HashMap::new();
+        let mut all_client_ids: HashSet<ClientId> = HashSet::new();
         for g in &all_grants {
             all_client_ids.insert(g.client_id.clone());
         }
         // Also include home client IDs so Client-scoped users get "id:identifier"
-        for m in &rows {
-            if let Some(ref cid) = m.client_id {
+        for p in &principals {
+            if let Some(ref cid) = p.client_id {
                 all_client_ids.insert(cid.clone());
             }
         }
@@ -852,9 +867,9 @@ impl PrincipalRepository {
         }
 
         // Batch-load client identifiers
-        let mut client_id_to_identifier: HashMap<String, String> = HashMap::new();
+        let mut client_id_to_identifier: HashMap<ClientId, String> = HashMap::new();
         if !all_client_ids.is_empty() {
-            let ids_vec: Vec<String> = all_client_ids.into_iter().collect();
+            let ids_vec: Vec<ClientId> = all_client_ids.into_iter().collect();
             let client_rows = sqlx::query_as::<_, ClientIdentifierRow>(
                 "SELECT id, identifier FROM tnt_clients WHERE id = ANY($1)",
             )
@@ -878,53 +893,48 @@ impl PrincipalRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        let mut app_access_map: HashMap<String, Vec<ApplicationId>> = HashMap::new();
+        let mut app_access_map: HashMap<PrincipalId, Vec<ApplicationId>> = HashMap::new();
         let mut app_code_map: HashMap<ApplicationId, String> = HashMap::new();
         for a in all_app_access {
             if let Some(code) = a.application_code.filter(|c| !c.is_empty()) {
                 app_code_map.insert(a.application_id.clone(), code);
             }
             app_access_map
-                .entry(a.principal_id)
+                .entry(a.principal_id.clone())
                 .or_default()
                 .push(a.application_id);
         }
 
         // Build domain entities
-        let principals = rows
-            .into_iter()
-            .map(|m| {
-                let id = m.id.clone();
-                let mut principal = Principal::try_from(m)?;
-                if let Some(roles) = role_map.remove(&id) {
-                    principal.roles = roles;
+        for principal in &mut principals {
+            let id = principal.id.clone();
+            if let Some(roles) = role_map.remove(&id) {
+                principal.roles = roles;
+            }
+            // Build client identifier map — include both grant clients and home client
+            let mut id_map = HashMap::new();
+            if let Some(ref home_cid) = principal.client_id {
+                if let Some(ident) = client_id_to_identifier.get(home_cid) {
+                    id_map.insert(home_cid.clone(), ident.clone());
                 }
-                // Build client identifier map — include both grant clients and home client
-                let mut id_map = HashMap::new();
-                if let Some(ref home_cid) = principal.client_id {
-                    if let Some(ident) = client_id_to_identifier.get(home_cid.as_str()) {
-                        id_map.insert(home_cid.to_string(), ident.clone());
+            }
+            if let Some(clients) = grant_map.remove(&id) {
+                for cid in &clients {
+                    if let Some(ident) = client_id_to_identifier.get(cid) {
+                        id_map.insert(cid.clone(), ident.clone());
                     }
                 }
-                if let Some(clients) = grant_map.remove(&id) {
-                    for cid in &clients {
-                        if let Some(ident) = client_id_to_identifier.get(cid) {
-                            id_map.insert(cid.clone(), ident.clone());
-                        }
-                    }
-                    principal.assigned_clients = clients;
-                }
-                principal.client_identifier_map = id_map;
-                if let Some(apps) = app_access_map.remove(&id) {
-                    principal.application_code_map = apps
-                        .iter()
-                        .filter_map(|a| app_code_map.get(a).map(|c| (a.clone(), c.clone())))
-                        .collect();
-                    principal.accessible_application_ids = apps;
-                }
-                Ok(principal)
-            })
-            .collect::<Result<Vec<_>>>()?;
+                principal.assigned_clients = clients;
+            }
+            principal.client_identifier_map = id_map;
+            if let Some(apps) = app_access_map.remove(&id) {
+                principal.application_code_map = apps
+                    .iter()
+                    .filter_map(|a| app_code_map.get(a).map(|c| (a.clone(), c.clone())))
+                    .collect();
+                principal.accessible_application_ids = apps;
+            }
+        }
 
         Ok(principals)
     }
@@ -1244,7 +1254,7 @@ impl Persist<Principal> for PrincipalRepository {
 
 impl HasId for DeveloperCredential {
     fn id(&self) -> &str {
-        &self.principal_id
+        self.principal_id.as_str()
     }
 }
 
@@ -1282,7 +1292,7 @@ impl PrincipalRepository {
     /// A principal's developer secret ref and when it was last set.
     pub async fn find_developer_secret(
         &self,
-        principal_id: &str,
+        principal_id: &PrincipalId,
     ) -> Result<Option<(Option<String>, Option<chrono::DateTime<chrono::Utc>>)>> {
         let row = sqlx::query_as::<_, (Option<String>, Option<chrono::DateTime<chrono::Utc>>)>(
             "SELECT dev_client_secret_ref, dev_client_secret_updated_at FROM iam_principals \
@@ -1297,9 +1307,9 @@ impl PrincipalRepository {
     /// When each of `ids` last set a developer secret (absent: none set).
     pub async fn find_developer_secret_times(
         &self,
-        ids: &[String],
-    ) -> Result<HashMap<String, chrono::DateTime<chrono::Utc>>> {
-        let rows = sqlx::query_as::<_, (String, Option<chrono::DateTime<chrono::Utc>>)>(
+        ids: &[PrincipalId],
+    ) -> Result<HashMap<PrincipalId, chrono::DateTime<chrono::Utc>>> {
+        let rows = sqlx::query_as::<_, (PrincipalId, Option<chrono::DateTime<chrono::Utc>>)>(
             "SELECT id, dev_client_secret_updated_at FROM iam_principals \
              WHERE id = ANY($1) AND dev_client_secret_ref IS NOT NULL",
         )
@@ -1319,7 +1329,7 @@ impl PrincipalRepository {
     /// non-fatal.
     pub async fn rewrite_developer_secret_ref(
         &self,
-        principal_id: &str,
+        principal_id: &PrincipalId,
         new_ref: &str,
     ) -> Result<()> {
         sqlx::query(
@@ -1339,12 +1349,12 @@ impl PrincipalRepository {
     /// account): the shallow read list pages need.
     pub async fn find_names_and_emails_by_ids(
         &self,
-        ids: &[String],
-    ) -> Result<HashMap<String, (String, String)>> {
+        ids: &[PrincipalId],
+    ) -> Result<HashMap<PrincipalId, (String, String)>> {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
-        let rows: Vec<(String, String, Option<String>)> =
+        let rows: Vec<(PrincipalId, String, Option<String>)> =
             sqlx::query_as("SELECT id, name, email FROM iam_principals WHERE id = ANY($1)")
                 .bind(ids)
                 .fetch_all(&self.pool)
@@ -1360,8 +1370,11 @@ impl PrincipalRepository {
     /// The OIDC-federated users of an email domain (Go
     /// `FindUsersByEmailDomain` filtered to `idp_type = 'OIDC'`), for an
     /// email-domain mapping moving to an internal provider.
-    pub async fn find_oidc_user_ids_by_email_domain(&self, domain: &str) -> Result<Vec<String>> {
-        let rows: Vec<(String,)> = sqlx::query_as(
+    pub async fn find_oidc_user_ids_by_email_domain(
+        &self,
+        domain: &str,
+    ) -> Result<Vec<PrincipalId>> {
+        let rows: Vec<(PrincipalId,)> = sqlx::query_as(
             "SELECT id FROM iam_principals \
              WHERE type = 'USER' AND email_domain = lower($1) AND idp_type = 'OIDC' \
              ORDER BY id",
@@ -1375,7 +1388,11 @@ impl PrincipalRepository {
     /// Hand federated users back to the internal provider inside `tx` (Go
     /// `MoveMappingTx`): provider INTERNAL, no external identity, and the
     /// roles their IdP synced dropped.
-    pub async fn reset_to_internal_in_tx(&self, ids: &[String], tx: &mut DbTx<'_>) -> Result<()> {
+    pub async fn reset_to_internal_in_tx(
+        &self,
+        ids: &[PrincipalId],
+        tx: &mut DbTx<'_>,
+    ) -> Result<()> {
         if ids.is_empty() {
             return Ok(());
         }
@@ -1400,7 +1417,7 @@ impl PrincipalRepository {
 impl PrincipalRepository {
     /// Go `LookupVersion` (principal/repository.go:74): the later of the
     /// principal's own `updated_at` and its roles' newest `updated_at`.
-    pub async fn lookup_version(&self, id: &str) -> Result<Option<DateTime<Utc>>> {
+    pub async fn lookup_version(&self, id: &PrincipalId) -> Result<Option<DateTime<Utc>>> {
         let row: Option<(Option<DateTime<Utc>>,)> = sqlx::query_as(
             "SELECT GREATEST(p.updated_at, COALESCE((SELECT MAX(r.updated_at) \
                  FROM iam_principal_roles pr JOIN iam_roles r ON r.name = pr.role_name \
@@ -1431,7 +1448,7 @@ impl PrincipalRepository {
 impl PrincipalDirectory for PrincipalRepository {
     async fn find_application_binding(
         &self,
-        principal_id: &str,
+        principal_id: &PrincipalId,
     ) -> Result<Option<PrincipalApplicationBinding>> {
         PrincipalRepository::find_application_binding(self, principal_id).await
     }

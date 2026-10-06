@@ -3,6 +3,7 @@
 //! The handler gates anchor scope and `platform:function:policy:manage`;
 //! this only checks that a client owner exists.
 
+use fc_platform_core::shared::id::ClientId;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -135,7 +136,12 @@ impl<U: UnitOfWork> UseCase for PutFunctionPolicyUseCase<U> {
         ctx: ExecutionContext,
     ) -> Result<Committed<PolicyUpdated>, UseCaseError> {
         if let FunctionOwner::Client(client_id) = &command.owner {
-            if self.clients.find_by_id(client_id).await?.is_none() {
+            if self
+                .clients
+                .find_by_id(&ClientId::from_wire(client_id.as_str()))
+                .await?
+                .is_none()
+            {
                 return Err(resource_not_found("Client", client_id));
             }
         }

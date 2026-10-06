@@ -3,6 +3,7 @@
 //! is verified by being made.
 
 use crate::function::operations::access::FunctionReach;
+use crate::function::OwnerClientId;
 use std::collections::HashMap;
 
 use axum::body::Bytes;
@@ -164,7 +165,7 @@ pub async fn list_domains(
     let owner = FunctionOwner::from_wire(raw)
         .map_err(|e| PlatformError::bad_request_code("CLIENT_ID_INVALID", e.to_string()))?;
     let caller = state.caller(&auth.0).await?;
-    if !caller.can_access_scope(owner.client_id_or_none()) {
+    if !caller.can_access_scope(owner.client_id_typed().as_ref()) {
         return Ok(Json(Vec::new()));
     }
     let domains = state.domains.list_by_owner(&owner).await?;

@@ -7,6 +7,7 @@
 //! `RegisterPublicKeyCredential` response into this use case.
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::PrincipalId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use webauthn_rs::prelude::{PasskeyRegistration, RegisterPublicKeyCredential};
@@ -21,7 +22,7 @@ use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RegisterPasskeyCommand {
-    pub principal_id: String,
+    pub principal_id: PrincipalId,
     pub name: Option<String>,
     pub registration_response: RegisterPublicKeyCredential,
     #[serde(skip)]
@@ -56,7 +57,7 @@ impl<U: UnitOfWork> UseCase for RegisterPasskeyUseCase<U> {
     type Event = PasskeyRegistered;
 
     async fn validate(&self, command: &RegisterPasskeyCommand) -> Result<(), UseCaseError> {
-        if command.principal_id.trim().is_empty() {
+        if command.principal_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "PRINCIPAL_REQUIRED",
                 "principalId is required",
@@ -90,7 +91,7 @@ impl<U: UnitOfWork> UseCase for RegisterPasskeyUseCase<U> {
         command: &RegisterPasskeyCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        if ctx.principal_id == command.principal_id {
+        if ctx.principal_id == command.principal_id.as_str() {
             Ok(())
         } else {
             Err(UseCaseError::business_rule(
@@ -134,8 +135,8 @@ impl<U: UnitOfWork> UseCase for RegisterPasskeyUseCase<U> {
             ));
         }
 
-        let credential = WebauthnCredential::new(&principal_id, passkey, name.clone());
-        let event = PasskeyRegistered::new(&ctx, &credential.id, &principal_id, name);
+        let credential = WebauthnCredential::new(principal_id.clone(), passkey, name.clone());
+        let event = PasskeyRegistered::new(&ctx, credential.id.as_str(), &principal_id, name);
 
         self.unit_of_work
             .commit(&credential, &*self.credential_repo, event, &command)

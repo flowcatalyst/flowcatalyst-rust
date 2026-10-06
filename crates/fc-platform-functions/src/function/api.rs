@@ -12,6 +12,7 @@
 //! `Checks.require`: `403 PERMISSION_REQUIRED`).
 
 use crate::function::operations::access::FunctionReach;
+use fc_platform_core::shared::id::ClientId;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -501,7 +502,7 @@ pub async fn create_function(
         name: req.name,
         runtime: req.runtime,
         description: req.description,
-        client_id: req.client_id,
+        client_id: req.client_id.map(ClientId::from_wire),
     };
     let caller = state.caller(&auth.0).await?;
     let event = state

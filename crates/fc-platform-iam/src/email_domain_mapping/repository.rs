@@ -1,8 +1,10 @@
 //! EmailDomainMapping Repository — PostgreSQL via SQLx
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::EmailDomainMappingId;
 use fc_platform_core::shared::id::IdentityProviderId;
+use sqlx::postgres::PgHasArrayType;
 use sqlx::PgPool;
 use std::collections::HashMap;
 
@@ -21,7 +23,7 @@ struct EmailDomainMappingRow {
     email_domain: String,
     identity_provider_id: IdentityProviderId,
     scope_type: String,
-    primary_client_id: Option<String>,
+    primary_client_id: Option<ClientId>,
     required_oidc_tenant_id: Option<String>,
     sync_roles_from_idp: bool,
     require_2fa: bool,
@@ -72,10 +74,10 @@ impl EmailDomainMappingRepository {
 
     async fn hydrate(&self, mut edm: EmailDomainMapping) -> Result<EmailDomainMapping> {
         let (additional, granted, roles, methods) = tokio::try_join!(
-            sqlx::query_scalar::<_, String>(
+            sqlx::query_scalar::<_, ClientId>(
                 "SELECT client_id FROM tnt_email_domain_mapping_additional_clients WHERE email_domain_mapping_id = $1"
             ).bind(&edm.id).fetch_all(&self.pool),
-            sqlx::query_scalar::<_, String>(
+            sqlx::query_scalar::<_, ClientId>(
                 "SELECT client_id FROM tnt_email_domain_mapping_granted_clients WHERE email_domain_mapping_id = $1"
             ).bind(&edm.id).fetch_all(&self.pool),
             sqlx::query_scalar::<_, String>(
@@ -106,7 +108,7 @@ impl EmailDomainMappingRepository {
         #[derive(sqlx::FromRow)]
         struct ClientRow {
             email_domain_mapping_id: EmailDomainMappingId,
-            client_id: String,
+            client_id: ClientId,
         }
         #[derive(sqlx::FromRow)]
         struct RoleRow {
@@ -142,7 +144,7 @@ impl EmailDomainMappingRepository {
                 .push(r.method);
         }
 
-        let mut additional_map: HashMap<EmailDomainMappingId, Vec<String>> = HashMap::new();
+        let mut additional_map: HashMap<EmailDomainMappingId, Vec<ClientId>> = HashMap::new();
         for r in additional_rows {
             additional_map
                 .entry(r.email_domain_mapping_id)
@@ -150,7 +152,7 @@ impl EmailDomainMappingRepository {
                 .push(r.client_id);
         }
 
-        let mut granted_map: HashMap<EmailDomainMappingId, Vec<String>> = HashMap::new();
+        let mut granted_map: HashMap<EmailDomainMappingId, Vec<ClientId>> = HashMap::new();
         for r in granted_rows {
             granted_map
                 .entry(r.email_domain_mapping_id)
@@ -340,35 +342,30 @@ async fn write_mapping(edm: &EmailDomainMapping, tx: &mut DbTx<'_>) -> Result<()
     .execute(&mut **tx.inner)
     .await?;
     delete_junctions(&edm.id, tx).await?;
-    for (table, column, values) in [
-        (
-            "tnt_email_domain_mapping_additional_clients",
-            "client_id",
-            &edm.additional_client_ids,
-        ),
-        (
-            "tnt_email_domain_mapping_granted_clients",
-            "client_id",
-            &edm.granted_client_ids,
-        ),
-        (
-            "tnt_email_domain_mapping_allowed_roles",
-            "role_id",
-            &edm.allowed_role_ids,
-        ),
-    ] {
-        if values.is_empty() {
-            continue;
-        }
-        sqlx::query(&format!(
-            "INSERT INTO {table} (email_domain_mapping_id, {column}) \
-             SELECT $1, v FROM UNNEST($2::varchar[]) AS v"
-        ))
-        .bind(&edm.id)
-        .bind(values)
-        .execute(&mut **tx.inner)
-        .await?;
-    }
+    insert_junction(
+        "tnt_email_domain_mapping_additional_clients",
+        "client_id",
+        &edm.id,
+        &edm.additional_client_ids,
+        tx,
+    )
+    .await?;
+    insert_junction(
+        "tnt_email_domain_mapping_granted_clients",
+        "client_id",
+        &edm.id,
+        &edm.granted_client_ids,
+        tx,
+    )
+    .await?;
+    insert_junction(
+        "tnt_email_domain_mapping_allowed_roles",
+        "role_id",
+        &edm.id,
+        &edm.allowed_role_ids,
+        tx,
+    )
+    .await?;
     if !edm.allowed_2fa_methods.is_empty() {
         sqlx::query(
             "INSERT INTO tnt_email_domain_mapping_2fa_methods (email_domain_mapping_id, method) \
@@ -422,4 +419,32 @@ impl Persist<EmailDomainMapping> for EmailDomainMappingRepository {
     async fn delete(&self, edm: &EmailDomainMapping, tx: &mut DbTx<'_>) -> Result<()> {
         delete_mapping(&edm.id, tx).await.map(|_| ())
     }
+}
+
+/// Insert one junction table's rows for a mapping (nothing when `values` is empty).
+async fn insert_junction<V>(
+    table: &str,
+    column: &str,
+    mapping_id: &EmailDomainMappingId,
+    values: &[V],
+    tx: &mut DbTx<'_>,
+) -> Result<()>
+where
+    V: for<'q> sqlx::Encode<'q, sqlx::Postgres>
+        + sqlx::Type<sqlx::Postgres>
+        + PgHasArrayType
+        + Sync,
+{
+    if values.is_empty() {
+        return Ok(());
+    }
+    sqlx::query(&format!(
+        "INSERT INTO {table} (email_domain_mapping_id, {column}) \
+         SELECT $1, v FROM UNNEST($2::varchar[]) AS v"
+    ))
+    .bind(mapping_id)
+    .bind(values)
+    .execute(&mut **tx.inner)
+    .await?;
+    Ok(())
 }

@@ -137,11 +137,11 @@ pub struct Principal {
 
     /// Assigned client IDs (loaded from iam_client_access_grants)
     #[serde(default)]
-    pub assigned_clients: Vec<String>,
+    pub assigned_clients: Vec<ClientId>,
 
     /// Client ID → identifier mapping (for JWT "id:identifier" claims)
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
-    pub client_identifier_map: HashMap<String, String>,
+    pub client_identifier_map: HashMap<ClientId, String>,
 
     /// Accessible application IDs (loaded from iam_principal_application_access)
     #[serde(default)]
@@ -285,11 +285,7 @@ impl Principal {
         self.updated_at = Utc::now();
     }
 
-    pub fn assign_role_for_client(
-        &mut self,
-        role: impl Into<String>,
-        client_id: impl Into<String>,
-    ) {
+    pub fn assign_role_for_client(&mut self, role: impl Into<String>, client_id: ClientId) {
         self.roles.push(RoleAssignment::for_client(role, client_id));
         self.updated_at = Utc::now();
     }
@@ -313,15 +309,14 @@ impl Principal {
         self.updated_at = Utc::now();
     }
 
-    pub fn grant_client_access(&mut self, client_id: impl Into<String>) {
-        let id = client_id.into();
-        if !self.assigned_clients.contains(&id) {
-            self.assigned_clients.push(id);
+    pub fn grant_client_access(&mut self, client_id: ClientId) {
+        if !self.assigned_clients.contains(&client_id) {
+            self.assigned_clients.push(client_id);
             self.updated_at = Utc::now();
         }
     }
 
-    pub fn revoke_client_access(&mut self, client_id: &str) {
+    pub fn revoke_client_access(&mut self, client_id: &ClientId) {
         self.assigned_clients.retain(|c| c != client_id);
         self.updated_at = Utc::now();
     }
@@ -330,12 +325,9 @@ impl Principal {
         self.roles.iter().any(|r| r.role == role)
     }
 
-    pub fn can_access_client(&self, client_id: &str) -> bool {
-        self.scope.can_access_client(
-            client_id,
-            self.client_id.as_ref().map(ClientId::as_str),
-            &self.assigned_clients,
-        )
+    pub fn can_access_client(&self, client_id: &ClientId) -> bool {
+        self.scope
+            .can_access_client(client_id, self.client_id.as_ref(), &self.assigned_clients)
     }
 
     pub fn deactivate(&mut self) {
@@ -366,8 +358,8 @@ impl Principal {
 #[serde(rename_all = "camelCase")]
 pub struct ClientAccessGrant {
     pub id: ClientAccessGrantId,
-    pub principal_id: String,
-    pub client_id: String,
+    pub principal_id: PrincipalId,
+    pub client_id: ClientId,
     pub granted_by: String,
     pub granted_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
@@ -376,16 +368,16 @@ pub struct ClientAccessGrant {
 
 impl ClientAccessGrant {
     pub fn new(
-        principal_id: impl Into<String>,
-        client_id: impl Into<String>,
+        principal_id: PrincipalId,
+        client_id: ClientId,
         granted_by: impl Into<String>,
     ) -> Self {
         let now = Utc::now();
         Self {
             // `gnt_`, as Go's `tsid.ClientAccessGrant`.
             id: ClientAccessGrantId::generate(),
-            principal_id: principal_id.into(),
-            client_id: client_id.into(),
+            principal_id,
+            client_id,
             granted_by: granted_by.into(),
             granted_at: now,
             created_at: now,
@@ -435,29 +427,52 @@ mod tests {
     #[test]
     fn anchor_scope_can_access_any_client() {
         let scope = UserScope::Anchor;
-        assert!(scope.can_access_client("clt_any", None, &[]));
-        assert!(scope.can_access_client("clt_foo", Some("clt_bar"), &[]));
+        assert!(scope.can_access_client(&ClientId::parse("clt_any").unwrap(), None, &[]));
+        assert!(scope.can_access_client(
+            &ClientId::parse("clt_foo").unwrap(),
+            Some(&ClientId::parse("clt_bar").unwrap()),
+            &[]
+        ));
     }
 
     #[test]
     fn partner_scope_requires_assigned_clients_membership() {
         let scope = UserScope::Partner;
-        let assigned = vec!["clt_a".to_string(), "clt_b".to_string()];
-        assert!(scope.can_access_client("clt_a", None, &assigned));
-        assert!(scope.can_access_client("clt_b", None, &assigned));
-        assert!(!scope.can_access_client("clt_other", None, &assigned));
+        let assigned = vec![
+            ClientId::parse("clt_a").unwrap(),
+            ClientId::parse("clt_b").unwrap(),
+        ];
+        assert!(scope.can_access_client(&ClientId::parse("clt_a").unwrap(), None, &assigned));
+        assert!(scope.can_access_client(&ClientId::parse("clt_b").unwrap(), None, &assigned));
+        assert!(!scope.can_access_client(&ClientId::parse("clt_other").unwrap(), None, &assigned));
         // home_client_id is ignored for Partner
-        assert!(!scope.can_access_client("clt_home", Some("clt_home"), &assigned));
+        assert!(!scope.can_access_client(
+            &ClientId::parse("clt_home").unwrap(),
+            Some(&ClientId::parse("clt_home").unwrap()),
+            &assigned
+        ));
     }
 
     #[test]
     fn client_scope_matches_only_home_client() {
         let scope = UserScope::Client;
-        assert!(scope.can_access_client("clt_home", Some("clt_home"), &[]));
-        assert!(!scope.can_access_client("clt_other", Some("clt_home"), &[]));
-        assert!(!scope.can_access_client("clt_x", None, &[]));
+        assert!(scope.can_access_client(
+            &ClientId::parse("clt_home").unwrap(),
+            Some(&ClientId::parse("clt_home").unwrap()),
+            &[]
+        ));
+        assert!(!scope.can_access_client(
+            &ClientId::parse("clt_other").unwrap(),
+            Some(&ClientId::parse("clt_home").unwrap()),
+            &[]
+        ));
+        assert!(!scope.can_access_client(&ClientId::parse("clt_x").unwrap(), None, &[]));
         // assigned_clients is ignored for Client scope
-        assert!(!scope.can_access_client("clt_x", Some("clt_home"), &["clt_x".to_string()]));
+        assert!(!scope.can_access_client(
+            &ClientId::parse("clt_x").unwrap(),
+            Some(&ClientId::parse("clt_home").unwrap()),
+            &[ClientId::parse("clt_x").unwrap()]
+        ));
     }
 
     // ── UserIdentity ──────────────────────────────────────────────────────
@@ -575,21 +590,25 @@ mod tests {
     #[test]
     fn grant_client_access_is_idempotent() {
         let mut p = Principal::new_user("a@b.com", UserScope::Partner);
-        p.grant_client_access("clt_1");
-        p.grant_client_access("clt_1"); // duplicate
-        p.grant_client_access("clt_2");
+        p.grant_client_access(ClientId::parse("clt_1").unwrap());
+        p.grant_client_access(ClientId::parse("clt_1").unwrap()); // duplicate
+        p.grant_client_access(ClientId::parse("clt_2").unwrap());
         assert_eq!(p.assigned_clients.len(), 2);
-        assert!(p.assigned_clients.contains(&"clt_1".to_string()));
-        assert!(p.assigned_clients.contains(&"clt_2".to_string()));
+        assert!(p
+            .assigned_clients
+            .contains(&ClientId::parse("clt_1").unwrap()));
+        assert!(p
+            .assigned_clients
+            .contains(&ClientId::parse("clt_2").unwrap()));
     }
 
     #[test]
     fn revoke_client_access_removes_only_that_client() {
         let mut p = Principal::new_user("a@b.com", UserScope::Partner);
-        p.grant_client_access("clt_1");
-        p.grant_client_access("clt_2");
-        p.revoke_client_access("clt_1");
-        assert_eq!(p.assigned_clients, vec!["clt_2".to_string()]);
+        p.grant_client_access(ClientId::parse("clt_1").unwrap());
+        p.grant_client_access(ClientId::parse("clt_2").unwrap());
+        p.revoke_client_access(&ClientId::parse("clt_1").unwrap());
+        assert_eq!(p.assigned_clients, vec![ClientId::parse("clt_2").unwrap()]);
     }
 
     // ── can_access_client delegation ──────────────────────────────────────
@@ -599,18 +618,18 @@ mod tests {
         // Client-scoped user with home client
         let p = Principal::new_user("u@c.com", UserScope::Client)
             .with_client_id(ClientId::parse("clt_home").unwrap());
-        assert!(p.can_access_client("clt_home"));
-        assert!(!p.can_access_client("clt_other"));
+        assert!(p.can_access_client(&ClientId::parse("clt_home").unwrap()));
+        assert!(!p.can_access_client(&ClientId::parse("clt_other").unwrap()));
 
         // Partner-scoped user with assigned clients
         let mut partner = Principal::new_user("p@co.com", UserScope::Partner);
-        partner.grant_client_access("clt_a");
-        assert!(partner.can_access_client("clt_a"));
-        assert!(!partner.can_access_client("clt_b"));
+        partner.grant_client_access(ClientId::parse("clt_a").unwrap());
+        assert!(partner.can_access_client(&ClientId::parse("clt_a").unwrap()));
+        assert!(!partner.can_access_client(&ClientId::parse("clt_b").unwrap()));
 
         // Anchor can access everything
         let anchor = Principal::new_user("admin@fc.com", UserScope::Anchor);
-        assert!(anchor.can_access_client("clt_any"));
+        assert!(anchor.can_access_client(&ClientId::parse("clt_any").unwrap()));
     }
 
     // ── Activate / deactivate ─────────────────────────────────────────────

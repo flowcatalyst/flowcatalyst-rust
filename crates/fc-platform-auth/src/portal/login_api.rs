@@ -212,7 +212,11 @@ pub async fn authorize(
         }
         Ok(Some(c)) => c,
     };
-    let Some(portal_client_id) = client.portal_client_id.clone().filter(|p| !p.is_empty()) else {
+    let Some(portal_client_id) = client
+        .portal_client_id
+        .clone()
+        .filter(|p| !p.as_str().is_empty())
+    else {
         // The portal plane serves only portal-flagged clients.
         return oauth_error(
             StatusCode::BAD_REQUEST,
@@ -425,7 +429,7 @@ pub async fn password_login(State(s): State<PortalLoginState>, raw: Bytes) -> Re
         Ok(Some(f)) => f,
         _ => return flow_expired(),
     };
-    let redirect_url = match issue_code(portal, &consumed, &ident.id).await {
+    let redirect_url = match issue_code(portal, &consumed, ident.id.as_str()).await {
         Ok(u) => u,
         Err(_) => {
             return coded(

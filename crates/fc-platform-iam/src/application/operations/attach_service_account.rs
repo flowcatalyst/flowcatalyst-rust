@@ -11,7 +11,8 @@
 
 use async_trait::async_trait;
 use fc_platform_core::shared::id::ApplicationId;
-use serde::{Deserialize, Serialize};
+use fc_platform_core::shared::id::PrincipalId;
+use serde::Serialize;
 use std::sync::Arc;
 
 use super::events::ApplicationServiceAccountProvisioned;
@@ -22,7 +23,9 @@ use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// Serialize only: the audited command is never read back (its `service_principal_id`
+// is an id the caller resolved, with no default).
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AttachServiceAccountToApplicationCommand {
     pub application_id: ApplicationId,
@@ -35,7 +38,7 @@ pub struct AttachServiceAccountToApplicationCommand {
     /// `iam_principals`, as in Go: `app.ServiceAccountID = &saPrincipal.ID`).
     /// Resolved by the caller; not part of Go's command, so not audited.
     #[serde(skip)]
-    pub service_principal_id: String,
+    pub service_principal_id: PrincipalId,
 }
 
 impl AuditMasked for AttachServiceAccountToApplicationCommand {}
@@ -112,7 +115,7 @@ impl<U: UnitOfWork> UseCase for AttachServiceAccountToApplicationUseCase<U> {
             ));
         }
 
-        application.service_account_id = Some(command.service_principal_id.clone());
+        application.service_account_id = Some(command.service_principal_id.to_string());
         application.updated_at = chrono::Utc::now();
 
         let event = ApplicationServiceAccountProvisioned::new(

@@ -6,7 +6,10 @@
 //! them inside `PgUnitOfWork::run`, so every commit lands in one transaction
 //! (Go's `TxOperation`).
 
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::OAuthClientId;
+use fc_platform_core::shared::id::OptionIdExt;
+use fc_platform_core::shared::id::PortalAppId;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -180,12 +183,13 @@ impl<U: UnitOfWork> UseCase for CreatePortalAppWithOAuthClientUseCase<U> {
         cmd: CreateAppWithOAuthClientCommand,
         ctx: ExecutionContext,
     ) -> Result<Committed<PortalAppChanged>, UseCaseError> {
-        if self.clients.find_by_id(&cmd.client_id).await?.is_none() {
+        let client_id = ClientId::from_wire(cmd.client_id.as_str());
+        if self.clients.find_by_id(&client_id).await?.is_none() {
             return Err(not_found("Client", &cmd.client_id));
         }
         if let Some(existing) = self
             .apps
-            .find_by_client_and_code(&cmd.client_id, &cmd.code)
+            .find_by_client_and_code(&client_id, &cmd.code)
             .await?
         {
             return Err(UseCaseError::business_rule(
@@ -196,7 +200,7 @@ impl<U: UnitOfWork> UseCase for CreatePortalAppWithOAuthClientUseCase<U> {
                 ),
             ));
         }
-        let mut app = PortalApp::new(&cmd.client_id, &cmd.code, &cmd.name);
+        let mut app = PortalApp::new(&client_id, &cmd.code, &cmd.name);
         app.description = trimmed_or_none(cmd.description.as_deref());
 
         let client_type =
@@ -312,7 +316,12 @@ impl<U: UnitOfWork> UseCase for UpdatePortalAppUseCase<U> {
         cmd: UpdateAppCommand,
         ctx: ExecutionContext,
     ) -> Result<Committed<PortalAppChanged>, UseCaseError> {
-        let mut app = find_client_app(&self.apps, &cmd.client_id, &cmd.id).await?;
+        let mut app = find_client_app(
+            &self.apps,
+            &cmd.client_id,
+            &PortalAppId::from_wire(cmd.id.as_str()),
+        )
+        .await?;
         if let Some(name) = &cmd.name {
             app.name = name.trim().to_string();
         }
@@ -401,7 +410,12 @@ impl<U: UnitOfWork> UseCase for DeletePortalAppUseCase<U> {
         cmd: DeleteAppCommand,
         ctx: ExecutionContext,
     ) -> Result<Committed<PortalAppChanged>, UseCaseError> {
-        let app = find_client_app(&self.apps, &cmd.client_id, &cmd.id).await?;
+        let app = find_client_app(
+            &self.apps,
+            &cmd.client_id,
+            &PortalAppId::from_wire(cmd.id.as_str()),
+        )
+        .await?;
         let portal_clients = self
             .portal_oauth
             .find_by_portal_client(&app.client_id)
@@ -409,7 +423,7 @@ impl<U: UnitOfWork> UseCase for DeletePortalAppUseCase<U> {
         let mut deleted = Vec::new();
         for pc in portal_clients
             .iter()
-            .filter(|c| c.portal_app_id.as_deref() == Some(app.id.as_str()))
+            .filter(|c| c.portal_app_id.as_id_str() == Some(app.id.as_str()))
         {
             // The delete keys on the row id (and the public id for the
             // client cache); the rest of the aggregate is not needed.
@@ -504,8 +518,14 @@ impl<U: UnitOfWork> UseCase for AssignUnassignedPortalIdentitiesUseCase<U> {
         cmd: AssignUnassignedCommand,
         ctx: ExecutionContext,
     ) -> Result<Committed<AssignedToApp>, UseCaseError> {
-        let app = load_client_app(&self.apps, &cmd.client_id, &cmd.portal_app_id).await?;
-        let mut idents = self.identities.find_unassigned(&cmd.client_id).await?;
+        let client_id = ClientId::from_wire(cmd.client_id.as_str());
+        let app = load_client_app(
+            &self.apps,
+            &client_id,
+            &PortalAppId::from_wire(cmd.portal_app_id.as_str()),
+        )
+        .await?;
+        let mut idents = self.identities.find_unassigned(&client_id).await?;
         let Some(mut last) = idents.pop() else {
             let mut details = HashMap::new();
             details.insert("portalAppCode".to_string(), serde_json::json!(app.code));

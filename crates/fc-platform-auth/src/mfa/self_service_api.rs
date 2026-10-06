@@ -11,6 +11,7 @@
 //! active, as Go's `principalFromSession`; there is no one else's 2FA to
 //! reach here, so authentication is the gate.
 
+use fc_platform_core::shared::id::MfaTrustedDeviceId;
 use std::sync::Arc;
 
 use axum::{
@@ -70,7 +71,7 @@ pub async fn status(State(s): State<Arc<TwoFactorLogin>>, auth: OptionalAuth) ->
         Ok(p) => p,
         Err(resp) => return *resp,
     };
-    let confirmed = match s.mfa.confirmed_methods(p.id.as_str()).await {
+    let confirmed = match s.mfa.confirmed_methods(&p.id).await {
         Ok(c) => c,
         Err(_) => return server_error("STATUS_FAILED", "could not load 2FA status"),
     };
@@ -81,14 +82,10 @@ pub async fn status(State(s): State<Arc<TwoFactorLogin>>, auth: OptionalAuth) ->
     } else {
         ALL_METHODS.iter().map(|m| m.to_string()).collect()
     };
-    let recovery_codes_left = s
-        .mfa
-        .remaining_recovery_codes(p.id.as_str())
-        .await
-        .unwrap_or(0);
+    let recovery_codes_left = s.mfa.remaining_recovery_codes(&p.id).await.unwrap_or(0);
     let trusted_device_count = s
         .mfa
-        .list_trusted_devices(p.id.as_str())
+        .list_trusted_devices(&p.id)
         .await
         .map(|d| d.len())
         .unwrap_or(0);
@@ -121,11 +118,7 @@ pub async fn totp_begin(State(s): State<Arc<TwoFactorLogin>>, auth: OptionalAuth
             "authenticator app is not permitted for this domain",
         );
     }
-    match s
-        .mfa
-        .begin_totp_enrollment(p.id.as_str(), &email_of(&p))
-        .await
-    {
+    match s.mfa.begin_totp_enrollment(&p.id, &email_of(&p)).await {
         Ok(e) => Json(json!({ "secret": e.secret, "uri": e.uri, "qr": e.qr })).into_response(),
         Err(e) => enroll_error(e),
     }
@@ -152,11 +145,7 @@ pub async fn totp_confirm(
         Ok(r) => r,
         Err(resp) => return *resp,
     };
-    match s
-        .mfa
-        .confirm_totp_enrollment(p.id.as_str(), &req.code)
-        .await
-    {
+    match s.mfa.confirm_totp_enrollment(&p.id, &req.code).await {
         Ok(true) => {}
         Ok(false) => {
             return coded(
@@ -200,7 +189,7 @@ pub async fn email_begin(State(s): State<Arc<TwoFactorLogin>>, auth: OptionalAut
     if email.is_empty() {
         return coded(StatusCode::BAD_REQUEST, "NO_EMAIL", "account has no email");
     }
-    match s.mfa.begin_email_enrollment(p.id.as_str(), &email).await {
+    match s.mfa.begin_email_enrollment(&p.id, &email).await {
         Ok(()) => Json(json!({
             "message": "A verification code has been sent to your email."
         }))
@@ -223,11 +212,7 @@ pub async fn email_confirm(
         Ok(r) => r,
         Err(resp) => return *resp,
     };
-    match s
-        .mfa
-        .confirm_email_enrollment(p.id.as_str(), &req.code)
-        .await
-    {
+    match s.mfa.confirm_email_enrollment(&p.id, &req.code).await {
         Ok(true) => {}
         Ok(false) => {
             return coded(
@@ -269,7 +254,7 @@ pub async fn remove_method(
             "unknown 2FA method",
         );
     };
-    let confirmed = match s.mfa.confirmed_methods(p.id.as_str()).await {
+    let confirmed = match s.mfa.confirmed_methods(&p.id).await {
         Ok(c) => c,
         Err(_) => return server_error("REMOVE_FAILED", "could not load methods"),
     };
@@ -282,11 +267,7 @@ pub async fn remove_method(
             "your organisation requires 2FA — add another method before removing this one",
         );
     }
-    if s.mfa
-        .remove_method(p.id.as_str(), method_type)
-        .await
-        .is_err()
-    {
+    if s.mfa.remove_method(&p.id, method_type).await.is_err() {
         return server_error("REMOVE_FAILED", "could not remove method");
     }
     s.notifier
@@ -312,7 +293,7 @@ pub async fn regenerate_recovery_codes(
         Ok(p) => p,
         Err(resp) => return *resp,
     };
-    let confirmed = match s.mfa.confirmed_methods(p.id.as_str()).await {
+    let confirmed = match s.mfa.confirmed_methods(&p.id).await {
         Ok(c) => c,
         Err(_) => return server_error("REGEN_FAILED", "could not load methods"),
     };
@@ -323,7 +304,7 @@ pub async fn regenerate_recovery_codes(
             "recovery codes apply to authenticator-app 2FA",
         );
     }
-    let codes = match s.mfa.generate_recovery_codes(p.id.as_str()).await {
+    let codes = match s.mfa.generate_recovery_codes(&p.id).await {
         Ok(c) => c,
         Err(_) => return server_error("REGEN_FAILED", "could not generate recovery codes"),
     };
@@ -347,7 +328,7 @@ pub async fn list_trusted_devices(
         Ok(p) => p,
         Err(resp) => return *resp,
     };
-    match s.mfa.list_trusted_devices(p.id.as_str()).await {
+    match s.mfa.list_trusted_devices(&p.id).await {
         Ok(devices) => Json(json!({ "devices": devices })).into_response(),
         Err(_) => server_error("LIST_FAILED", "could not list devices"),
     }
@@ -364,7 +345,7 @@ pub async fn revoke_trusted_device(
         Err(resp) => return *resp,
     };
     if s.mfa
-        .revoke_trusted_device(p.id.as_str(), &id)
+        .revoke_trusted_device(&p.id, &MfaTrustedDeviceId::from_wire(id.as_str()))
         .await
         .is_err()
     {

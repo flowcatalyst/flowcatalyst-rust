@@ -104,7 +104,7 @@ impl<U: UnitOfWork> UseCase for AddSchemaUseCase<U> {
             .find_by_id(&command.event_type_id)
             .await?
         {
-            caller_reach::check_scope_access(ctx.caller(), event_type.client_id.as_deref())?;
+            caller_reach::check_scope_access(ctx.caller(), event_type.client_id.as_ref())?;
         }
         Ok(())
     }

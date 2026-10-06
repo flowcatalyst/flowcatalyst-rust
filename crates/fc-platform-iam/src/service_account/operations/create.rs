@@ -2,6 +2,8 @@
 
 use async_trait::async_trait;
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::PrincipalId;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -112,7 +114,7 @@ pub struct CreateServiceAccountCommand {
 
     /// Client IDs this account can access
     #[serde(default)]
-    pub client_ids: Vec<String>,
+    pub client_ids: Vec<ClientId>,
 
     /// Application ID, set only by application provisioning. The account is
     /// bound to it and granted it; otherwise it starts with no application
@@ -143,7 +145,7 @@ pub struct CreateServiceAccountResult {
     /// applications point at. The event carries the account's own id
     /// (`sac_…`), as Go's does, so callers take the principal from here.
     #[serde(skip_serializing)]
-    pub principal_id: String,
+    pub principal_id: PrincipalId,
     #[serde(skip_serializing)]
     pub auth_token: String,
     #[serde(skip_serializing)]
@@ -324,7 +326,7 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
         // Create result with one-time secrets
         let result = CreateServiceAccountResult {
             event: event.clone(),
-            principal_id: service_account.id.to_string(),
+            principal_id: service_account.id.clone(),
             auth_token,
             signing_secret,
         };
@@ -356,7 +358,7 @@ mod tests {
             name: "My Service Account".to_string(),
             description: Some("Handles order processing".to_string()),
             scope: Some(UserScope::Client),
-            client_ids: vec!["client-123".to_string()],
+            client_ids: vec![ClientId::from_wire("client-123")],
             application_id: None,
             all_applications: false,
         };

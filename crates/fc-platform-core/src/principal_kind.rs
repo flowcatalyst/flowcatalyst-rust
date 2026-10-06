@@ -3,6 +3,7 @@
 //! are here, beside the authorization context, rather than with the
 //! `Principal` aggregate (fc-platform-iam), which re-exports them.
 
+use crate::shared::id::ClientId;
 use serde::{Deserialize, Serialize};
 
 /// Principal type
@@ -45,9 +46,9 @@ impl UserScope {
     /// Check if this scope can access a specific client
     pub fn can_access_client(
         &self,
-        client_id: &str,
-        home_client_id: Option<&str>,
-        assigned_clients: &[String],
+        client_id: &ClientId,
+        home_client_id: Option<&ClientId>,
+        assigned_clients: &[ClientId],
     ) -> bool {
         match self {
             Self::Anchor => true,

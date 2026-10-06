@@ -5,10 +5,11 @@
 
 use fc_platform_core::shared::authorization_service::AuthContext;
 use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::shared::id::ClientId;
 
 /// An anchor caller sees every client; anyone else only the clients they
 /// can access.
-pub fn ensure_visible(auth: &AuthContext, client_id: &str) -> Result<(), PlatformError> {
+pub fn ensure_visible(auth: &AuthContext, client_id: &ClientId) -> Result<(), PlatformError> {
     if !auth.is_anchor() && !auth.can_access_client(client_id) {
         return Err(PlatformError::forbidden("No access to this client"));
     }

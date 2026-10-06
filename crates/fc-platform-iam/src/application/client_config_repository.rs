@@ -3,6 +3,7 @@
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::AppClientConfigId;
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
 use sqlx::PgPool;
 
 use super::client_config::ApplicationClientConfig;
@@ -17,7 +18,7 @@ use fc_platform_core::usecase::Persist;
 struct AppClientConfigRow {
     id: AppClientConfigId,
     application_id: ApplicationId,
-    client_id: String,
+    client_id: ClientId,
     enabled: bool,
     base_url_override: Option<String>,
     config_json: Option<serde_json::Value>,
@@ -98,7 +99,10 @@ impl ApplicationClientConfigRepository {
             .collect())
     }
 
-    pub async fn find_by_client(&self, client_id: &str) -> Result<Vec<ApplicationClientConfig>> {
+    pub async fn find_by_client(
+        &self,
+        client_id: &ClientId,
+    ) -> Result<Vec<ApplicationClientConfig>> {
         let rows = sqlx::query_as::<_, AppClientConfigRow>(
             "SELECT * FROM app_client_configs WHERE client_id = $1",
         )
@@ -114,7 +118,7 @@ impl ApplicationClientConfigRepository {
     pub async fn find_by_application_and_client(
         &self,
         application_id: &ApplicationId,
-        client_id: &str,
+        client_id: &ClientId,
     ) -> Result<Option<ApplicationClientConfig>> {
         let row = sqlx::query_as::<_, AppClientConfigRow>(
             "SELECT * FROM app_client_configs WHERE application_id = $1 AND client_id = $2",
@@ -128,7 +132,7 @@ impl ApplicationClientConfigRepository {
 
     pub async fn find_enabled_for_client(
         &self,
-        client_id: &str,
+        client_id: &ClientId,
     ) -> Result<Vec<ApplicationClientConfig>> {
         let rows = sqlx::query_as::<_, AppClientConfigRow>(
             "SELECT * FROM app_client_configs WHERE client_id = $1 AND enabled = TRUE",
@@ -145,7 +149,7 @@ impl ApplicationClientConfigRepository {
     pub async fn enable_for_client(
         &self,
         application_id: &ApplicationId,
-        client_id: &str,
+        client_id: &ClientId,
     ) -> Result<ApplicationClientConfig> {
         // Check if exists
         let existing = self
@@ -169,7 +173,7 @@ impl ApplicationClientConfigRepository {
                 })?)
         } else {
             // Insert new
-            let config = ApplicationClientConfig::new(application_id.clone(), client_id);
+            let config = ApplicationClientConfig::new(application_id.clone(), client_id.clone());
             self.insert(&config).await?;
             Ok(config)
         }
@@ -178,7 +182,7 @@ impl ApplicationClientConfigRepository {
     pub async fn disable_for_client(
         &self,
         application_id: &ApplicationId,
-        client_id: &str,
+        client_id: &ClientId,
     ) -> Result<bool> {
         let existing = self
             .find_by_application_and_client(application_id, client_id)
@@ -231,7 +235,7 @@ impl ApplicationClientConfigRepository {
     pub async fn delete_by_application_and_client(
         &self,
         application_id: &ApplicationId,
-        client_id: &str,
+        client_id: &ClientId,
     ) -> Result<bool> {
         let result = sqlx::query(
             "DELETE FROM app_client_configs WHERE application_id = $1 AND client_id = $2",

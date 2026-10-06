@@ -9,6 +9,7 @@
 //! the state as used in a single round-trip — race-free and replay-safe.
 
 use chrono::{DateTime, Duration, Utc};
+use fc_platform_core::shared::id::PrincipalId;
 use serde_json::json;
 use sqlx::PgPool;
 use webauthn_rs::prelude::{PasskeyAuthentication, PasskeyRegistration};
@@ -28,13 +29,13 @@ pub struct WebauthnCeremonyRepository {
 }
 
 pub struct ConsumedRegistration {
-    pub principal_id: String,
+    pub principal_id: PrincipalId,
     pub state: PasskeyRegistration,
     pub display_name: Option<String>,
 }
 
 pub struct ConsumedAuthentication {
-    pub principal_id: Option<String>,
+    pub principal_id: Option<PrincipalId>,
     pub state: PasskeyAuthentication,
 }
 
@@ -46,7 +47,7 @@ impl WebauthnCeremonyRepository {
     pub async fn store_registration(
         &self,
         state_id: &str,
-        principal_id: &str,
+        principal_id: &PrincipalId,
         state: &PasskeyRegistration,
         display_name: Option<&str>,
     ) -> Result<()> {
@@ -90,8 +91,8 @@ impl WebauthnCeremonyRepository {
         let principal_id = payload
             .get("principalId")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| PlatformError::internal("ceremony payload missing principalId"))?
-            .to_string();
+            .map(PrincipalId::from_wire)
+            .ok_or_else(|| PlatformError::internal("ceremony payload missing principalId"))?;
         let display_name = payload
             .get("displayName")
             .and_then(|v| v.as_str())
@@ -114,7 +115,7 @@ impl WebauthnCeremonyRepository {
     pub async fn store_authentication(
         &self,
         state_id: &str,
-        principal_id: Option<&str>,
+        principal_id: Option<&PrincipalId>,
         state: &PasskeyAuthentication,
     ) -> Result<()> {
         let payload = json!({
@@ -156,7 +157,7 @@ impl WebauthnCeremonyRepository {
         let principal_id = payload
             .get("principalId")
             .and_then(|v| v.as_str())
-            .map(String::from);
+            .map(PrincipalId::from_wire);
         let state: PasskeyAuthentication = serde_json::from_value(
             payload
                 .get("state")

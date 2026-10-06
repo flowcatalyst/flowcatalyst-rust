@@ -8,6 +8,7 @@
 //! `userId`).
 
 use fc_platform_core::impl_domain_event;
+use fc_platform_core::shared::id::PrincipalId;
 use fc_platform_core::usecase::domain_event::EventMetadata;
 use fc_platform_core::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
@@ -33,7 +34,7 @@ pub struct PasskeyRegistered {
     #[serde(skip)]
     pub metadata: EventMetadata,
     pub credential_id: String,
-    pub user_id: String,
+    pub user_id: PrincipalId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 }
@@ -46,13 +47,13 @@ impl PasskeyRegistered {
     pub fn new(
         ctx: &ExecutionContext,
         credential_id: &str,
-        user_id: &str,
+        user_id: &PrincipalId,
         name: Option<String>,
     ) -> Self {
         Self {
             metadata: metadata_for(ctx, Self::EVENT_TYPE, credential_id),
             credential_id: credential_id.to_string(),
-            user_id: user_id.to_string(),
+            user_id: user_id.clone(),
             name,
         }
     }
@@ -65,7 +66,7 @@ pub struct PasskeyRevoked {
     #[serde(skip)]
     pub metadata: EventMetadata,
     pub credential_id: String,
-    pub user_id: String,
+    pub user_id: PrincipalId,
 }
 
 impl_domain_event!(PasskeyRevoked);
@@ -73,11 +74,11 @@ impl_domain_event!(PasskeyRevoked);
 impl PasskeyRevoked {
     pub const EVENT_TYPE: &'static str = "platform:admin:passkey:revoked";
 
-    pub fn new(ctx: &ExecutionContext, credential_id: &str, user_id: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, credential_id: &str, user_id: &PrincipalId) -> Self {
         Self {
             metadata: metadata_for(ctx, Self::EVENT_TYPE, credential_id),
             credential_id: credential_id.to_string(),
-            user_id: user_id.to_string(),
+            user_id: user_id.clone(),
         }
     }
 }
@@ -89,7 +90,7 @@ pub struct PasskeyAuthenticated {
     #[serde(skip)]
     pub metadata: EventMetadata,
     pub credential_id: String,
-    pub user_id: String,
+    pub user_id: PrincipalId,
 }
 
 impl_domain_event!(PasskeyAuthenticated);
@@ -97,11 +98,11 @@ impl_domain_event!(PasskeyAuthenticated);
 impl PasskeyAuthenticated {
     pub const EVENT_TYPE: &'static str = "platform:admin:passkey:authenticated";
 
-    pub fn new(ctx: &ExecutionContext, credential_id: &str, user_id: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, credential_id: &str, user_id: &PrincipalId) -> Self {
         Self {
             metadata: metadata_for(ctx, Self::EVENT_TYPE, credential_id),
             credential_id: credential_id.to_string(),
-            user_id: user_id.to_string(),
+            user_id: user_id.clone(),
         }
     }
 }
@@ -116,7 +117,12 @@ mod tests {
 
     #[test]
     fn registered_event_is_go_shaped() {
-        let event = PasskeyRegistered::new(&ctx(), "pkc_AAA", "prn_BBB", Some("MacBook".into()));
+        let event = PasskeyRegistered::new(
+            &ctx(),
+            "pkc_AAA",
+            &PrincipalId::parse("prn_BBB").unwrap(),
+            Some("MacBook".into()),
+        );
         assert_eq!(
             event.metadata.event_type,
             "platform:admin:passkey:registered"
@@ -133,9 +139,10 @@ mod tests {
 
     #[test]
     fn revoked_and_authenticated_events_are_go_shaped() {
-        let event = PasskeyRevoked::new(&ctx(), "pkc_AAA", "prn_BBB");
+        let event = PasskeyRevoked::new(&ctx(), "pkc_AAA", &PrincipalId::parse("prn_BBB").unwrap());
         assert_eq!(event.metadata.event_type, "platform:admin:passkey:revoked");
-        let event = PasskeyAuthenticated::new(&ctx(), "pkc_AAA", "prn_BBB");
+        let event =
+            PasskeyAuthenticated::new(&ctx(), "pkc_AAA", &PrincipalId::parse("prn_BBB").unwrap());
         assert_eq!(
             event.metadata.event_type,
             "platform:admin:passkey:authenticated"
@@ -148,9 +155,10 @@ mod tests {
 
     #[test]
     fn events_share_message_group_for_same_credential() {
-        let r = PasskeyRegistered::new(&ctx(), "pkc_X", "prn_X", None);
-        let v = PasskeyRevoked::new(&ctx(), "pkc_X", "prn_X");
-        let l = PasskeyAuthenticated::new(&ctx(), "pkc_X", "prn_X");
+        let r =
+            PasskeyRegistered::new(&ctx(), "pkc_X", &PrincipalId::parse("prn_X").unwrap(), None);
+        let v = PasskeyRevoked::new(&ctx(), "pkc_X", &PrincipalId::parse("prn_X").unwrap());
+        let l = PasskeyAuthenticated::new(&ctx(), "pkc_X", &PrincipalId::parse("prn_X").unwrap());
         assert_eq!(r.metadata.message_group, v.metadata.message_group);
         assert_eq!(v.metadata.message_group, l.metadata.message_group);
     }

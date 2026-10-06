@@ -1,6 +1,7 @@
 //! Subscription Repository — PostgreSQL via SQLx
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::ConnectionId;
 use fc_platform_core::shared::id::EventTypeId;
 use fc_platform_core::shared::id::SubscriptionId;
@@ -390,7 +391,7 @@ impl SubscriptionRepository {
         self.hydrate_all(rows).await
     }
 
-    pub async fn find_by_client(&self, client_id: Option<&str>) -> Result<Vec<Subscription>> {
+    pub async fn find_by_client(&self, client_id: Option<&ClientId>) -> Result<Vec<Subscription>> {
         let rows = if let Some(cid) = client_id {
             sqlx::query_as::<_, SubscriptionRow>(
                 "SELECT * FROM msg_subscriptions WHERE client_id = $1 OR client_scoped = false",
@@ -411,7 +412,7 @@ impl SubscriptionRepository {
     pub async fn find_active_for_event_type(
         &self,
         event_type_code: &str,
-        client_id: Option<&str>,
+        client_id: Option<&ClientId>,
     ) -> Result<Vec<Subscription>> {
         // Find subscription IDs that have a matching event type binding
         let sub_ids: Vec<String> = sqlx::query_scalar(
@@ -505,7 +506,7 @@ impl SubscriptionRepository {
     pub async fn find_by_code_and_client(
         &self,
         code: &str,
-        client_id: Option<&str>,
+        client_id: Option<&ClientId>,
     ) -> Result<Option<Subscription>> {
         let row = if let Some(cid) = client_id {
             sqlx::query_as::<_, SubscriptionRow>(
@@ -536,7 +537,7 @@ impl SubscriptionRepository {
         &self,
         code: &str,
         application_code: Option<&str>,
-        client_id: Option<&str>,
+        client_id: Option<&ClientId>,
     ) -> Result<Option<Subscription>> {
         let row = sqlx::query_as::<_, SubscriptionRow>(
             "SELECT * FROM msg_subscriptions WHERE code = $1 \
@@ -559,7 +560,7 @@ impl SubscriptionRepository {
     pub async fn find_with_filters(
         &self,
         status: Option<&str>,
-        client_id: Option<&str>,
+        client_id: Option<&ClientId>,
     ) -> Result<Vec<Subscription>> {
         let rows = sqlx::query_as::<_, SubscriptionRow>(
             "SELECT * FROM msg_subscriptions \
@@ -581,7 +582,7 @@ impl SubscriptionRepository {
     pub async fn find_by_application_and_client(
         &self,
         application_code: &str,
-        client_id: Option<&str>,
+        client_id: Option<&ClientId>,
     ) -> Result<Vec<Subscription>> {
         let rows = sqlx::query_as::<_, SubscriptionRow>(
             "SELECT * FROM msg_subscriptions \

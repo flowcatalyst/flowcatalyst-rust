@@ -1,6 +1,8 @@
 //! PasswordResetToken Repository — PostgreSQL via SQLx
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::PasswordResetTokenId;
+use fc_platform_core::shared::id::PrincipalId;
 use sqlx::PgPool;
 
 use super::entity::PasswordResetToken;
@@ -9,8 +11,8 @@ use fc_platform_core::shared::error::{PlatformError, Result};
 
 #[derive(sqlx::FromRow)]
 struct PasswordResetTokenRow {
-    id: String,
-    principal_id: String,
+    id: PasswordResetTokenId,
+    principal_id: PrincipalId,
     token_hash: String,
     purpose: String,
     reset_2fa: bool,
@@ -26,7 +28,12 @@ impl TryFrom<PasswordResetTokenRow> for PasswordResetToken {
     /// An unknown purpose is a loud read error, never read as `reset`
     /// (X-06; Go `scanToken`).
     fn try_from(r: PasswordResetTokenRow) -> Result<Self> {
-        let purpose = decode(&r.purpose, "iam_password_reset_tokens", "purpose", &r.id)?;
+        let purpose = decode(
+            &r.purpose,
+            "iam_password_reset_tokens",
+            "purpose",
+            r.id.as_str(),
+        )?;
         Ok(Self {
             id: r.id,
             principal_id: r.principal_id,
@@ -87,7 +94,10 @@ impl PasswordResetTokenRepository {
     /// Count a wrong factor code against the token and return the new count.
     /// Atomic, so concurrent wrong guesses can't share a slot under the
     /// ceiling (Go `IncrementFactorAttempts`).
-    pub async fn increment_factor_attempts(&self, id: &str) -> Result<Option<i32>> {
+    pub async fn increment_factor_attempts(
+        &self,
+        id: &PasswordResetTokenId,
+    ) -> Result<Option<i32>> {
         let n = sqlx::query_scalar::<_, i32>(
             "UPDATE iam_password_reset_tokens SET factor_attempts = factor_attempts + 1 \
              WHERE id = $1 RETURNING factor_attempts",
@@ -98,7 +108,7 @@ impl PasswordResetTokenRepository {
         Ok(n)
     }
 
-    pub async fn delete_by_principal_id(&self, principal_id: &str) -> Result<()> {
+    pub async fn delete_by_principal_id(&self, principal_id: &PrincipalId) -> Result<()> {
         sqlx::query("DELETE FROM iam_password_reset_tokens WHERE principal_id = $1")
             .bind(principal_id)
             .execute(&self.pool)
@@ -124,7 +134,7 @@ impl PasswordResetTokenRepository {
         Ok(result.rows_affected())
     }
 
-    pub async fn delete_by_id(&self, id: &str) -> Result<()> {
+    pub async fn delete_by_id(&self, id: &PasswordResetTokenId) -> Result<()> {
         sqlx::query("DELETE FROM iam_password_reset_tokens WHERE id = $1")
             .bind(id)
             .execute(&self.pool)

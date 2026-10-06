@@ -18,6 +18,7 @@
 //! this layered design beats a hard lockout (lockout DoS vector).
 
 use chrono::{Duration, Utc};
+use fc_platform_core::shared::id::PrincipalId;
 use std::env;
 use tracing::warn;
 
@@ -165,14 +166,14 @@ pub async fn check(
 pub async fn record_user_login_attempt(
     repo: &LoginAttemptRepository,
     identifier: Option<&str>,
-    principal_id: Option<&str>,
+    principal_id: Option<&PrincipalId>,
     ip: Option<&str>,
     outcome: LoginOutcome,
     failure_reason: Option<&str>,
 ) {
     let attempt = LoginAttempt {
         identifier: identifier.map(String::from),
-        principal_id: principal_id.map(String::from),
+        principal_id: principal_id.cloned(),
         ip_address: ip.map(String::from),
         failure_reason: failure_reason.map(String::from),
         ..LoginAttempt::new(AttemptType::UserLogin, outcome)

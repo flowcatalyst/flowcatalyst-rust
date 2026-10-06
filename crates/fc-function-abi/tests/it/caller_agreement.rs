@@ -15,6 +15,7 @@ use std::collections::{BTreeSet, HashSet};
 use fc_function_abi::{permission_matches, Principal};
 use fc_platform::role::entity::matches_pattern;
 use fc_platform::shared::authorization_service::Credential;
+use fc_platform::shared::id::{ClientId, PrincipalId};
 use fc_platform::{AuthContext, PrincipalType, UserScope};
 
 fn principal(
@@ -50,7 +51,7 @@ fn scope(tier: Option<&str>) -> UserScope {
 
 fn auth_context(tier: Option<&str>, clients: &[&str], permissions: &[&str]) -> AuthContext {
     AuthContext {
-        principal_id: "prn_1".into(),
+        principal_id: PrincipalId::from_wire("prn_1"),
         principal_type: PrincipalType::User,
         scope: scope(tier),
         email: None,
@@ -166,7 +167,7 @@ fn can_access_client_agrees_with_the_platform() {
     for (tier, clients, asked) in rows {
         assert_eq!(
             principal(Some(tier), clients, &[], false, &[]).can_access_client(asked),
-            auth_context(Some(tier), clients, &[]).can_access_client(asked),
+            auth_context(Some(tier), clients, &[]).can_access_client(&ClientId::from_wire(asked)),
             "tier={tier} clients={clients:?} asked={asked}"
         );
     }

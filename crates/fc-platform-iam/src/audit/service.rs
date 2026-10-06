@@ -36,7 +36,7 @@ impl AuditService {
             entity_id,
             operation,
             None,
-            Some(auth.principal_id.clone()),
+            Some(auth.principal_id.to_string()),
         );
 
         info!(

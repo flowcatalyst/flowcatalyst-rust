@@ -11,6 +11,7 @@
 
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::ScheduledJobId;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
@@ -129,7 +130,7 @@ impl ScheduledJobRepository {
     /// Look up by `(client_id, code)`. Pass `client_id = None` for platform-scoped jobs.
     pub async fn find_by_code(
         &self,
-        client_id: Option<&str>,
+        client_id: Option<&ClientId>,
         code: &str,
     ) -> Result<Option<ScheduledJob>> {
         let row = match client_id {
@@ -165,7 +166,7 @@ impl ScheduledJobRepository {
         rows.into_iter().map(ScheduledJob::try_from).collect()
     }
 
-    pub async fn find_by_client(&self, client_id: &str) -> Result<Vec<ScheduledJob>> {
+    pub async fn find_by_client(&self, client_id: &ClientId) -> Result<Vec<ScheduledJob>> {
         let rows = sqlx::query_as::<_, ScheduledJobRow>(&format!(
             "SELECT {SELECT_COLS} FROM msg_scheduled_jobs \
              WHERE client_id = $1 ORDER BY created_at DESC"

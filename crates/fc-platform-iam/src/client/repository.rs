@@ -1,6 +1,7 @@
 //! Client Repository — PostgreSQL via SQLx
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ClientId;
 use sqlx::PgPool;
 
 use super::entity::{Client, ClientNote, ClientStatus};
@@ -81,7 +82,7 @@ impl ClientRepository {
         Ok(())
     }
 
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<Client>> {
+    pub async fn find_by_id(&self, id: &ClientId) -> Result<Option<Client>> {
         let row = sqlx::query_as::<_, ClientRow>("SELECT * FROM tnt_clients WHERE id = $1")
             .bind(id)
             .fetch_optional(&self.pool)
@@ -103,11 +104,11 @@ impl ClientRepository {
     pub async fn find_ids_by_identifiers(
         &self,
         identifiers: &[String],
-    ) -> Result<HashMap<String, String>> {
+    ) -> Result<HashMap<String, ClientId>> {
         if identifiers.is_empty() {
             return Ok(HashMap::new());
         }
-        let rows = sqlx::query_as::<_, (String, String)>(
+        let rows = sqlx::query_as::<_, (String, ClientId)>(
             "SELECT identifier, id FROM tnt_clients WHERE identifier = ANY($1)",
         )
         .bind(identifiers)
@@ -156,7 +157,7 @@ impl ClientRepository {
         rows.into_iter().map(Client::try_from).collect()
     }
 
-    pub async fn find_by_ids(&self, ids: &[String]) -> Result<Vec<Client>> {
+    pub async fn find_by_ids(&self, ids: &[ClientId]) -> Result<Vec<Client>> {
         if ids.is_empty() {
             return Ok(vec![]);
         }
@@ -167,7 +168,7 @@ impl ClientRepository {
         rows.into_iter().map(Client::try_from).collect()
     }
 
-    pub async fn exists(&self, id: &str) -> Result<bool> {
+    pub async fn exists(&self, id: &ClientId) -> Result<bool> {
         let row: (bool,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM tnt_clients WHERE id = $1)")
             .bind(id)
             .fetch_one(&self.pool)
@@ -216,7 +217,7 @@ impl ClientRepository {
     /// we leak orphaned grants. `iam_principals.client_id` is NOT touched
     /// here — the delete use case is expected to refuse when principals
     /// still have this client as home.
-    pub async fn delete(&self, id: &str) -> Result<bool> {
+    pub async fn delete(&self, id: &ClientId) -> Result<bool> {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query("DELETE FROM iam_client_access_grants WHERE client_id = $1")
@@ -234,7 +235,7 @@ impl ClientRepository {
     }
 
     /// Count access grants targeting this client.
-    pub async fn count_access_grants(&self, client_id: &str) -> Result<i64> {
+    pub async fn count_access_grants(&self, client_id: &ClientId) -> Result<i64> {
         let (count,): (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM iam_client_access_grants WHERE client_id = $1")
                 .bind(client_id)
@@ -246,7 +247,7 @@ impl ClientRepository {
     /// Count principals whose home client is this one. Deletion must refuse
     /// while any exist — home-client is meaningful domain state; silently
     /// orphaning it would change a user's scope without explicit action.
-    pub async fn count_home_principals(&self, client_id: &str) -> Result<i64> {
+    pub async fn count_home_principals(&self, client_id: &ClientId) -> Result<i64> {
         let (count,): (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM iam_principals WHERE client_id = $1")
                 .bind(client_id)
@@ -256,7 +257,7 @@ impl ClientRepository {
     }
 
     /// Count per-application config entries scoped to this client.
-    pub async fn count_client_configs(&self, client_id: &str) -> Result<i64> {
+    pub async fn count_client_configs(&self, client_id: &ClientId) -> Result<i64> {
         let (count,): (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM app_client_configs WHERE client_id = $1")
                 .bind(client_id)
@@ -343,7 +344,7 @@ impl ClientRepository {
 fn client_ref(c: Client) -> ClientRef {
     ClientRef {
         active: c.status == entity::ClientStatus::Active,
-        id: c.id.to_string(),
+        id: c.id.clone(),
         name: c.name,
         identifier: c.identifier,
     }
@@ -351,13 +352,13 @@ fn client_ref(c: Client) -> ClientRef {
 
 #[async_trait::async_trait]
 impl ClientDirectory for ClientRepository {
-    async fn find_by_id(&self, id: &str) -> Result<Option<ClientRef>> {
+    async fn find_by_id(&self, id: &ClientId) -> Result<Option<ClientRef>> {
         Ok(ClientRepository::find_by_id(self, id)
             .await?
             .map(client_ref))
     }
 
-    async fn find_by_ids(&self, ids: &[String]) -> Result<Vec<ClientRef>> {
+    async fn find_by_ids(&self, ids: &[ClientId]) -> Result<Vec<ClientRef>> {
         Ok(ClientRepository::find_by_ids(self, ids)
             .await?
             .into_iter()
@@ -368,7 +369,7 @@ impl ClientDirectory for ClientRepository {
     async fn find_ids_by_identifiers(
         &self,
         identifiers: &[String],
-    ) -> Result<HashMap<String, String>> {
+    ) -> Result<HashMap<String, ClientId>> {
         ClientRepository::find_ids_by_identifiers(self, identifiers).await
     }
 

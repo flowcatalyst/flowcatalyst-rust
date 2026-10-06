@@ -7,6 +7,7 @@
 
 use crate::support;
 use fc_platform::shared::id::OAuthClientId;
+use fc_platform::shared::id::OptionIdExt;
 use fc_platform_core::shared::id::ClientId;
 
 use std::sync::Arc;
@@ -489,8 +490,8 @@ async fn portal_apps_admin_surface_follows_go() {
         .await
         .unwrap()
         .expect("oauth client");
-    assert_eq!(oc.portal_client_id.as_deref(), Some(client_id.as_str()));
-    assert_eq!(oc.portal_app_id.as_deref(), Some(app1.as_str()));
+    assert_eq!(oc.portal_client_id.as_id_str(), Some(client_id.as_str()));
+    assert_eq!(oc.portal_app_id.as_id_str(), Some(app1.as_str()));
     assert!(oc.pkce_required);
     assert_eq!(oc.client_name, "Customer Portal (portal)");
     assert_eq!(
@@ -1221,7 +1222,7 @@ async fn sso_owned_domains_route_to_their_idp() {
     // The provider's domains are its email-domain mappings (Go's model).
     let mut mapping =
         fc_platform::EmailDomainMapping::new("acme.test", idp.id.clone(), ScopeType::Client);
-    mapping.primary_client_id = Some(client_id.clone());
+    mapping.primary_client_id = Some(ClientId::from_wire(client_id.clone()));
     app.repos
         .edm_repo
         .insert(&mapping)

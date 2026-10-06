@@ -1,5 +1,6 @@
 //! Platform Config Admin API
 
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::PlatformConfigAccessId;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -85,7 +86,7 @@ impl ConfigResponse {
             section: c.section,
             property: c.property,
             scope: c.scope.as_str().to_string(),
-            client_id: c.client_id,
+            client_id: c.client_id.map(ClientId::into_string),
             value_type: c.value_type.as_str().to_string(),
             value,
             description: c.description,
@@ -200,7 +201,7 @@ pub async fn list_configs(
         .find_by_application(
             &app_code,
             query.scope_filter()?.map(|s| s.as_str()),
-            query.client_id.as_deref(),
+            query.client_id.as_deref().map(ClientId::from_wire).as_ref(),
         )
         .await?;
     Ok(Json(ConfigListResponse {
@@ -243,7 +244,7 @@ pub async fn get_section(
             &app_code,
             &section,
             Some(scope_str),
-            query.client_id.as_deref(),
+            query.client_id.as_deref().map(ClientId::from_wire).as_ref(),
         )
         .await?;
     let mut values = HashMap::new();
@@ -297,7 +298,7 @@ pub async fn get_property(
             &section,
             &property,
             scope_str,
-            query.client_id.as_deref(),
+            query.client_id.as_deref().map(ClientId::from_wire).as_ref(),
         )
         .await?
         .ok_or_else(|| {
@@ -314,7 +315,7 @@ pub async fn get_property(
         section: config.section,
         property: config.property,
         scope: config.scope.as_str().to_string(),
-        client_id: config.client_id,
+        client_id: config.client_id.map(ClientId::into_string),
         value,
     }))
 }
@@ -361,7 +362,7 @@ pub async fn set_property(
         property: property.clone(),
         value: req.value,
         scope,
-        client_id: query.client_id.clone(),
+        client_id: query.client_id.clone().map(ClientId::from_wire),
         value_type: parse_opt(req.value_type.as_deref())?,
         description: req.description,
     };
@@ -379,7 +380,7 @@ pub async fn set_property(
             &section,
             &property,
             scope.as_str(),
-            query.client_id.as_deref(),
+            query.client_id.as_deref().map(ClientId::from_wire).as_ref(),
         )
         .await?
         .ok_or_else(|| PlatformError::internal("Config set committed but row not found"))?;
@@ -428,7 +429,7 @@ pub async fn delete_property(
             &section,
             &property,
             scope_str,
-            query.client_id.as_deref(),
+            query.client_id.as_deref().map(ClientId::from_wire).as_ref(),
         )
         .await?;
     Ok(StatusCode::NO_CONTENT)
@@ -523,9 +524,9 @@ pub struct ClientIdQuery {
 }
 
 /// Go's coordinate: `CLIENT` with a client id, `GLOBAL` without.
-fn coordinate(client_id: Option<&str>) -> (ConfigScope, Option<&str>) {
+fn coordinate(client_id: Option<&str>) -> (ConfigScope, Option<ClientId>) {
     match client_id.filter(|c| !c.is_empty()) {
-        Some(c) => (ConfigScope::Client, Some(c)),
+        Some(c) => (ConfigScope::Client, Some(ClientId::from_wire(c))),
         None => (ConfigScope::Global, None),
     }
 }
@@ -606,7 +607,7 @@ impl GoPlatformConfigState {
             section: c.section,
             property: c.property,
             scope: c.scope.as_str().to_string(),
-            client_id: c.client_id,
+            client_id: c.client_id.map(ClientId::into_string),
             value_type: c.value_type.as_str().to_string(),
             value,
             description: c.description,
@@ -674,7 +675,13 @@ pub async fn get_config_property(
     let (scope, client_id) = coordinate(q.client_id.as_deref());
     let config = state
         .config_repo
-        .find_by_key(&app, &section, &property, scope.as_str(), client_id)
+        .find_by_key(
+            &app,
+            &section,
+            &property,
+            scope.as_str(),
+            client_id.as_ref(),
+        )
         .await?
         .ok_or_else(|| {
             PlatformError::not_found_code("Config", format!("{app}/{section}/{property}"))
@@ -722,7 +729,7 @@ pub async fn set_config_property(
         property: property.clone(),
         value: req.value,
         scope,
-        client_id: client_id.map(str::to_string),
+        client_id: client_id.clone(),
         value_type,
         description: req.description,
     };
@@ -733,7 +740,13 @@ pub async fn set_config_property(
         .into_result()?;
     let config = state
         .config_repo
-        .find_by_key(&app, &section, &property, scope.as_str(), client_id)
+        .find_by_key(
+            &app,
+            &section,
+            &property,
+            scope.as_str(),
+            client_id.as_ref(),
+        )
         .await?
         .ok_or_else(|| PlatformError::internal("config missing after set"))?;
     // Go answers the writer with the stored row, unmasked.
@@ -768,7 +781,13 @@ pub async fn delete_config_property(
     let (scope, client_id) = coordinate(q.client_id.as_deref());
     state
         .config_repo
-        .delete_by_key(&app, &section, &property, scope.as_str(), client_id)
+        .delete_by_key(
+            &app,
+            &section,
+            &property,
+            scope.as_str(),
+            client_id.as_ref(),
+        )
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }

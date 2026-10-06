@@ -5,16 +5,16 @@
 //! and is updated in-place by `webauthn-rs` after successful authentications.
 
 use chrono::{DateTime, Utc};
-use fc_platform_core::shared::tsid;
-use fc_platform_core::shared::tsid::EntityType;
+use fc_platform_core::shared::id::PrincipalId;
+use fc_platform_core::shared::id::WebauthnCredentialId;
 use serde::{Deserialize, Serialize};
 use webauthn_rs::prelude::{AuthenticationResult, Passkey};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WebauthnCredential {
-    pub id: String,
-    pub principal_id: String,
+    pub id: WebauthnCredentialId,
+    pub principal_id: PrincipalId,
     pub passkey: Passkey,
     pub name: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -22,10 +22,10 @@ pub struct WebauthnCredential {
 }
 
 impl WebauthnCredential {
-    pub fn new(principal_id: impl Into<String>, passkey: Passkey, name: Option<String>) -> Self {
+    pub fn new(principal_id: PrincipalId, passkey: Passkey, name: Option<String>) -> Self {
         Self {
-            id: tsid::generate(EntityType::WebauthnCredential),
-            principal_id: principal_id.into(),
+            id: WebauthnCredentialId::generate(),
+            principal_id,
             passkey,
             name,
             created_at: Utc::now(),

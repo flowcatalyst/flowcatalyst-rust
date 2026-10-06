@@ -3,6 +3,7 @@
 //! Use case for creating a new event type.
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ClientId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -32,7 +33,7 @@ pub struct CreateEventTypeCommand {
 
     /// Optional client ID for multi-tenant scoping
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
 
     /// Events of this type are carried per client (Go `clientScoped`): the
     /// subscription editor offers client-scoped types only to client-scoped
@@ -133,7 +134,7 @@ impl<U: UnitOfWork> UseCase for CreateEventTypeUseCase<U> {
         command: &CreateEventTypeCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        caller_reach::check_scope_access(ctx.caller(), command.client_id.as_deref())
+        caller_reach::check_scope_access(ctx.caller(), command.client_id.as_ref())
     }
 
     async fn execute(

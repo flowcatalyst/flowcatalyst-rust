@@ -6,7 +6,10 @@
 
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::OAuthClientId;
+use fc_platform_core::shared::id::PortalAppId;
+use fc_platform_core::shared::id::PrincipalId;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -33,7 +36,7 @@ struct OAuthClientRow {
     previous_secret_last_used_at: Option<DateTime<Utc>>,
     default_scopes: Option<String>,
     pkce_required: bool,
-    service_account_principal_id: Option<String>,
+    service_account_principal_id: Option<PrincipalId>,
     active: bool,
     api_access: bool,
     created_at: DateTime<Utc>,
@@ -83,8 +86,10 @@ impl TryFrom<OAuthClientRow> for OAuthClient {
             created_at: r.created_at,
             updated_at: r.updated_at,
             created_by: None,
-            portal_client_id: r.portal_client_id,
-            portal_app_id: r.portal_app_id,
+            // Tolerant read: a legacy row may hold a blank here, which strict id
+            // decoding would refuse; the portal plane treats it as "not set".
+            portal_client_id: r.portal_client_id.map(ClientId::from_wire),
+            portal_app_id: r.portal_app_id.map(PortalAppId::from_wire),
         })
     }
 }
@@ -547,7 +552,7 @@ impl OAuthClientRepository {
     /// a Vec.
     pub async fn find_by_service_account_principal_id(
         &self,
-        principal_id: &str,
+        principal_id: &PrincipalId,
     ) -> Result<Vec<OAuthClient>> {
         let rows = sqlx::query_as::<_, OAuthClientRow>(
             "SELECT * FROM oauth_clients WHERE service_account_principal_id = $1",

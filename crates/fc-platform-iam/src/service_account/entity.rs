@@ -4,6 +4,7 @@
 
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
 use serde::{Deserialize, Serialize};
 
 use fc_platform_core::principal_kind::UserScope;
@@ -182,7 +183,7 @@ pub struct RoleAssignment {
 
     /// Client ID this role applies to (null = all clients)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
 
     /// Source of this role assignment
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -224,10 +225,10 @@ impl RoleAssignment {
         }
     }
 
-    pub fn for_client(role: impl Into<String>, client_id: impl Into<String>) -> Self {
+    pub fn for_client(role: impl Into<String>, client_id: ClientId) -> Self {
         Self {
             role: role.into(),
-            client_id: Some(client_id.into()),
+            client_id: Some(client_id),
             assignment_source: None,
             assigned_at: Utc::now(),
             assigned_by: None,
@@ -283,7 +284,7 @@ pub struct ServiceAccount {
     /// (`iam_service_accounts.client_ids`, as in Go). Setting them through
     /// [`ServiceAccount::link_clients`] also moves the principal's reach.
     #[serde(default)]
-    pub client_ids: Vec<String>,
+    pub client_ids: Vec<ClientId>,
 
     /// The scope requested for the account, stored as sent
     /// (`iam_service_accounts.scope`, as in Go). It doesn't decide the token
@@ -301,7 +302,7 @@ pub struct ServiceAccount {
     /// grants for PARTNER (`iam_client_access_grants`). Persisted onto the
     /// principal; it changes only when the links do.
     #[serde(skip)]
-    pub principal_client_ids: Vec<String>,
+    pub principal_client_ids: Vec<ClientId>,
 
     /// Application ID (if created for an application)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -380,8 +381,7 @@ impl ServiceAccount {
         self
     }
 
-    pub fn with_client_id(mut self, client_id: impl Into<String>) -> Self {
-        let client_id = client_id.into();
+    pub fn with_client_id(mut self, client_id: ClientId) -> Self {
         self.client_ids.push(client_id.clone());
         self.principal_client_ids.push(client_id);
         self
@@ -391,7 +391,7 @@ impl ServiceAccount {
     /// them, as Go's `applyClientReach` does
     /// (serviceaccount/operations/client_reach.go:23-42): none → ANCHOR, one
     /// → CLIENT, several → PARTNER. The requested scope plays no part.
-    pub fn link_clients(&mut self, client_ids: Vec<String>) {
+    pub fn link_clients(&mut self, client_ids: Vec<ClientId>) {
         self.scope = match client_ids.len() {
             0 => UserScope::Anchor,
             1 => UserScope::Client,
@@ -416,11 +416,7 @@ impl ServiceAccount {
         self.updated_at = Utc::now();
     }
 
-    pub fn assign_role_for_client(
-        &mut self,
-        role: impl Into<String>,
-        client_id: impl Into<String>,
-    ) {
+    pub fn assign_role_for_client(&mut self, role: impl Into<String>, client_id: ClientId) {
         self.roles.push(RoleAssignment::for_client(role, client_id));
         self.updated_at = Utc::now();
     }
@@ -431,8 +427,8 @@ impl ServiceAccount {
 
     /// Whether the account reaches `client_id`: every client at ANCHOR,
     /// otherwise only its linked clients.
-    pub fn has_client_access(&self, client_id: &str) -> bool {
-        self.scope.is_anchor() || self.principal_client_ids.iter().any(|c| c == client_id)
+    pub fn has_client_access(&self, client_id: &ClientId) -> bool {
+        self.scope.is_anchor() || self.principal_client_ids.contains(client_id)
     }
 
     /// The account's own id (`iam_service_accounts.id`, `sac_…`): what the API
@@ -513,12 +509,12 @@ mod tests {
     fn test_service_account_builder_methods() {
         let sa = ServiceAccount::new("sa", "SA", UserScope::Anchor)
             .with_description("A test service account")
-            .with_client_id("client-1")
+            .with_client_id(ClientId::from_wire("client-1"))
             .with_application_id(ApplicationId::parse("app_1").unwrap())
             .with_credentials(WebhookCredentials::bearer_token("my-token"));
 
         assert_eq!(sa.description, Some("A test service account".to_string()));
-        assert_eq!(sa.client_ids, vec!["client-1".to_string()]);
+        assert_eq!(sa.client_ids, vec![ClientId::from_wire("client-1")]);
         assert_eq!(
             sa.application_id,
             Some(ApplicationId::parse("app_1").unwrap())
@@ -555,11 +551,11 @@ mod tests {
     #[test]
     fn test_service_account_assign_role_for_client() {
         let mut sa = ServiceAccount::new("sa", "SA", UserScope::Anchor);
-        sa.assign_role_for_client("viewer", "client-1");
+        sa.assign_role_for_client("viewer", ClientId::from_wire("client-1"));
 
         assert_eq!(sa.roles.len(), 1);
         assert_eq!(sa.roles[0].role, "viewer");
-        assert_eq!(sa.roles[0].client_id, Some("client-1".to_string()));
+        assert_eq!(sa.roles[0].client_id, Some(ClientId::from_wire("client-1")));
     }
 
     #[test]
@@ -576,16 +572,16 @@ mod tests {
     #[test]
     fn test_service_account_has_client_access() {
         let anchor = ServiceAccount::new("sa", "SA", UserScope::Anchor);
-        assert!(anchor.has_client_access("any-client"));
+        assert!(anchor.has_client_access(&ClientId::from_wire("any-client")));
 
         // No links below ANCHOR reaches nothing, never everything.
         let unlinked = ServiceAccount::new("sa", "SA", UserScope::Client);
-        assert!(!unlinked.has_client_access("any-client"));
+        assert!(!unlinked.has_client_access(&ClientId::from_wire("any-client")));
 
-        let sa_with_clients =
-            ServiceAccount::new("sa", "SA", UserScope::Client).with_client_id("client-1");
-        assert!(sa_with_clients.has_client_access("client-1"));
-        assert!(!sa_with_clients.has_client_access("client-2"));
+        let sa_with_clients = ServiceAccount::new("sa", "SA", UserScope::Client)
+            .with_client_id(ClientId::from_wire("client-1"));
+        assert!(sa_with_clients.has_client_access(&ClientId::from_wire("client-1")));
+        assert!(!sa_with_clients.has_client_access(&ClientId::from_wire("client-2")));
     }
 
     #[test]
@@ -729,9 +725,9 @@ mod tests {
 
     #[test]
     fn test_role_assignment_for_client() {
-        let ra = RoleAssignment::for_client("viewer", "client-1");
+        let ra = RoleAssignment::for_client("viewer", ClientId::from_wire("client-1"));
         assert_eq!(ra.role, "viewer");
-        assert_eq!(ra.client_id, Some("client-1".to_string()));
+        assert_eq!(ra.client_id, Some(ClientId::from_wire("client-1")));
     }
 
     #[test]

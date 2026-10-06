@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
+use fc_platform_core::shared::id::PrincipalId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -23,7 +24,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct AssignRolesCommand {
     /// Service account ID
-    pub service_account_id: String,
+    pub service_account_id: PrincipalId,
 
     /// Role names to assign (replaces existing roles)
     pub roles: Vec<String>,
@@ -80,7 +81,7 @@ impl<U: UnitOfWork> UseCase for AssignRolesUseCase<U> {
             .await?
             .ok_or_else(|| {
                 UseCaseError::verbatim(PlatformError::ServiceAccountNotFound {
-                    id: command.service_account_id.clone(),
+                    id: command.service_account_id.to_string(),
                 })
             })?;
         let before: Vec<String> = account.roles.iter().map(|r| r.role.clone()).collect();
@@ -151,7 +152,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = AssignRolesCommand {
-            service_account_id: "sa-123".to_string(),
+            service_account_id: PrincipalId::from_wire("sa-123"),
             roles: vec!["ADMIN".to_string(), "VIEWER".to_string()],
         };
 

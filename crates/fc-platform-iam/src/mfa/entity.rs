@@ -3,14 +3,11 @@
 //! remembered ("trusted") devices. Federated (OIDC) users never have any.
 
 use chrono::{DateTime, Utc};
-use fc_common::tsid;
+use fc_platform_core::shared::id::MfaEmailPinId;
+use fc_platform_core::shared::id::MfaMethodId;
+use fc_platform_core::shared::id::MfaTrustedDeviceId;
+use fc_platform_core::shared::id::PrincipalId;
 use serde::Serialize;
-
-/// TSID prefixes, as Go's `tsid` (mfm/mrc/mep/mtd).
-pub const METHOD_ID_PREFIX: &str = "mfm";
-pub const RECOVERY_CODE_ID_PREFIX: &str = "mrc";
-pub const EMAIL_PIN_ID_PREFIX: &str = "mep";
-pub const TRUSTED_DEVICE_ID_PREFIX: &str = "mtd";
 
 /// An enrolled second-factor mechanism.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -33,8 +30,8 @@ fc_platform_core::shared::enum_str::str_enum!(MethodType, "two-factor method", {
 /// challenge.
 #[derive(Debug, Clone)]
 pub struct Method {
-    pub id: String,
-    pub principal_id: String,
+    pub id: MfaMethodId,
+    pub principal_id: PrincipalId,
     pub method: MethodType,
     /// The encrypted TOTP secret (none for EMAIL_PIN).
     pub secret_encrypted: Option<String>,
@@ -45,10 +42,10 @@ pub struct Method {
 }
 
 impl Method {
-    pub fn new(principal_id: &str, method: MethodType) -> Self {
+    pub fn new(principal_id: &PrincipalId, method: MethodType) -> Self {
         Self {
-            id: tsid::generate_with_prefix(METHOD_ID_PREFIX),
-            principal_id: principal_id.to_string(),
+            id: MfaMethodId::generate(),
+            principal_id: principal_id.clone(),
             method,
             secret_encrypted: None,
             confirmed_at: None,
@@ -79,8 +76,8 @@ fc_platform_core::shared::enum_str::str_enum!(EmailPinPurpose, "email PIN purpos
 /// A pending email-PIN challenge (only the PIN's hash is kept).
 #[derive(Debug, Clone)]
 pub struct EmailPin {
-    pub id: String,
-    pub principal_id: String,
+    pub id: MfaEmailPinId,
+    pub principal_id: PrincipalId,
     pub purpose: EmailPinPurpose,
     pub pin_hash: String,
     pub attempts: i32,
@@ -99,8 +96,8 @@ impl EmailPin {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TrustedDevice {
-    pub id: String,
-    pub principal_id: String,
+    pub id: MfaTrustedDeviceId,
+    pub principal_id: PrincipalId,
     #[serde(skip)]
     pub token_hash: String,
     #[serde(skip_serializing_if = "Option::is_none")]

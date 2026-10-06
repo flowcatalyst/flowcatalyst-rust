@@ -1,6 +1,7 @@
 //! Set Platform Config Property Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ClientId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -23,7 +24,7 @@ pub struct SetPlatformConfigPropertyCommand {
     pub value: String,
     pub scope: ConfigScope,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value_type: Option<ConfigValueType>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -145,7 +146,7 @@ impl<U: UnitOfWork> UseCase for SetPlatformConfigPropertyUseCase<U> {
                 &command.section,
                 &command.property,
                 command.scope.as_str(),
-                command.client_id.as_deref(),
+                command.client_id.as_ref(),
             )
             .await?;
 

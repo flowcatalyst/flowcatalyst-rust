@@ -12,6 +12,7 @@
 //! - Attack is logged and prevented
 
 use chrono::Utc;
+use fc_platform_core::shared::id::PrincipalId;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
@@ -371,7 +372,7 @@ impl OidcSyncService {
 
     /// Audit log all IDP role mappings for a principal.
     /// Used for security auditing and debugging.
-    pub async fn audit_idp_roles(&self, principal_id: &str) -> Result<String> {
+    pub async fn audit_idp_roles(&self, principal_id: &PrincipalId) -> Result<String> {
         let principal = self.principal_repo.find_by_id(principal_id).await?;
 
         match principal {
@@ -399,7 +400,7 @@ impl OidcSyncService {
     }
 
     /// Get IDP roles for a principal
-    pub async fn get_idp_roles(&self, principal_id: &str) -> Result<Vec<String>> {
+    pub async fn get_idp_roles(&self, principal_id: &PrincipalId) -> Result<Vec<String>> {
         let principal = self.principal_repo.find_by_id(principal_id).await?;
 
         Ok(principal

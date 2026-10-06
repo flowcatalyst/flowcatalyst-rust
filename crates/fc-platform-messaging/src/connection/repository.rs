@@ -1,6 +1,7 @@
 //! Connection Repository — PostgreSQL via SQLx
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::ConnectionId;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
@@ -10,7 +11,6 @@ use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::shared::id::decode_id;
 use fc_platform_core::shared::id::decode_id_opt;
-use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::usecase::unit_of_work::HasId;
 use fc_platform_core::usecase::DbTx;
 use fc_platform_core::usecase::Persist;
@@ -127,7 +127,7 @@ impl ConnectionRepository {
     pub async fn find_by_code_and_client(
         &self,
         code: &str,
-        client_id: Option<&str>,
+        client_id: Option<&ClientId>,
     ) -> Result<Option<Connection>> {
         let row = if let Some(cid) = client_id {
             sqlx::query_as::<_, ConnectionRow>(
@@ -158,7 +158,7 @@ impl ConnectionRepository {
 
     pub async fn find_with_filters(
         &self,
-        client_id: Option<&str>,
+        client_id: Option<&ClientId>,
         status: Option<ConnectionStatus>,
         service_account_id: Option<&str>,
     ) -> Result<Vec<Connection>> {
@@ -197,7 +197,7 @@ impl ConnectionRepository {
         rows.into_iter().map(Connection::try_from).collect()
     }
 
-    pub async fn find_by_client_id(&self, client_id: &str) -> Result<Vec<Connection>> {
+    pub async fn find_by_client_id(&self, client_id: &ClientId) -> Result<Vec<Connection>> {
         let rows = sqlx::query_as::<_, ConnectionRow>(
             "SELECT * FROM msg_connections WHERE client_id = $1 ORDER BY code ASC",
         )
@@ -318,7 +318,7 @@ impl ConnectionRepository {
     pub async fn find_by_application_and_client(
         &self,
         application_code: &str,
-        client_id: Option<&str>,
+        client_id: Option<&ClientId>,
     ) -> Result<Vec<(Connection, String)>> {
         let rows = sqlx::query_as::<_, ConnectionRow>(
             "SELECT * FROM msg_connections \
@@ -366,7 +366,7 @@ impl ConnectionRepository {
         &self,
         code: &str,
         application_code: Option<&str>,
-        client_id: Option<&str>,
+        client_id: Option<&ClientId>,
     ) -> Result<Option<Connection>> {
         let row = sqlx::query_as::<_, ConnectionRow>(
             "SELECT * FROM msg_connections WHERE code = $1 \
@@ -407,7 +407,7 @@ impl Persist<ConnectionSyncPlan> for ConnectionRepository {
                 external_ids.push(c.external_id.clone());
                 statuses.push(c.status.as_str().to_string());
                 service_accounts.push(c.service_account_id.clone());
-                client_ids.push(c.client_id.as_id_str().map(String::from));
+                client_ids.push(c.client_id.as_ref().map(String::from));
                 identifiers.push(c.client_identifier.clone());
                 created.push(c.created_at);
                 sources.push(source.clone());

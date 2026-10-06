@@ -7,6 +7,7 @@
 
 use async_trait::async_trait;
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -25,7 +26,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct UpdateApplicationClientConfigCommand {
     pub application_id: ApplicationId,
-    pub client_id: String,
+    pub client_id: ClientId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
     /// `Some("")` means "clear the override"; `None` means "leave as-is".
@@ -75,7 +76,7 @@ impl<U: UnitOfWork> UseCase for UpdateApplicationClientConfigUseCase<U> {
                 "Application ID is required",
             ));
         }
-        if command.client_id.trim().is_empty() {
+        if command.client_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "CLIENT_ID_REQUIRED",
                 "Client ID is required",
@@ -125,7 +126,10 @@ impl<U: UnitOfWork> UseCase for UpdateApplicationClientConfigUseCase<U> {
             .find_by_application_and_client(&command.application_id, &command.client_id)
             .await?
             .unwrap_or_else(|| {
-                ApplicationClientConfig::new(command.application_id.clone(), &command.client_id)
+                ApplicationClientConfig::new(
+                    command.application_id.clone(),
+                    command.client_id.clone(),
+                )
             });
 
         if let Some(enabled) = command.enabled {

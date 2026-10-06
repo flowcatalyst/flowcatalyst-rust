@@ -57,6 +57,21 @@ pub fn dispatch_mode(mode: SubscriptionMode) -> fc_common::DispatchMode {
     }
 }
 
+use fc_platform_core::shared::id::ClientId;
+
+/// The owning client of a [`FunctionOwner`] as a typed id. The model crate
+/// keeps the id as the string it validated (it is outside the typed-id work);
+/// this is where it crosses into the platform's typed world.
+pub(crate) trait OwnerClientId {
+    fn client_id_typed(&self) -> Option<ClientId>;
+}
+
+impl OwnerClientId for FunctionOwner {
+    fn client_id_typed(&self) -> Option<ClientId> {
+        self.client_id_or_none().map(ClientId::from_wire)
+    }
+}
+
 /// Java's `String.isBlank`.
 pub(crate) use fc_function_model::java::is_blank as java_is_blank;
 

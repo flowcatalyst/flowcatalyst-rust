@@ -9,6 +9,8 @@ use crate::permissions;
 use crate::principal_kind::{PrincipalType, UserScope};
 use crate::shared::error::{PlatformError, Result};
 use crate::shared::id::ApplicationId;
+use crate::shared::id::ClientId;
+use crate::shared::id::PrincipalId;
 use std::collections::HashSet;
 use std::result;
 
@@ -16,7 +18,7 @@ use std::result;
 #[derive(Debug, Clone)]
 pub struct AuthContext {
     /// Principal ID
-    pub principal_id: String,
+    pub principal_id: PrincipalId,
 
     /// Principal type
     pub principal_type: PrincipalType,
@@ -87,10 +89,10 @@ impl AuthContext {
     }
 
     /// Check if this context can access a specific client
-    pub fn can_access_client(&self, client_id: &str) -> bool {
+    pub fn can_access_client(&self, client_id: &ClientId) -> bool {
         self.accessible_clients
             .iter()
-            .any(|c| c == "*" || c == client_id)
+            .any(|c| c == "*" || c == client_id.as_str())
     }
 
     /// Check if this context has a specific permission (4-level pattern matching)
@@ -135,7 +137,7 @@ pub trait Authority {
     /// Anchor tier (the system caller counts as anchor).
     fn is_anchor(&self) -> bool;
     /// Holds client `client_id`, or `*`.
-    fn can_access_client(&self, client_id: &str) -> bool;
+    fn can_access_client(&self, client_id: &ClientId) -> bool;
     /// Holds `permission`, directly or by a wildcard pattern.
     fn has_permission(&self, permission: &str) -> bool;
     /// Holds any one of `permissions`.
@@ -150,7 +152,7 @@ impl Authority for AuthContext {
     fn is_anchor(&self) -> bool {
         AuthContext::is_anchor(self)
     }
-    fn can_access_client(&self, client_id: &str) -> bool {
+    fn can_access_client(&self, client_id: &ClientId) -> bool {
         AuthContext::can_access_client(self, client_id)
     }
     fn has_permission(&self, permission: &str) -> bool {
@@ -714,7 +716,7 @@ pub mod checks {
     /// clients this way.
     pub fn require_user_admin(
         context: &impl Authority,
-        target_client_id: Option<&str>,
+        target_client_id: Option<&ClientId>,
     ) -> Result<()> {
         if context.is_anchor() {
             return can_write_principals(context);
@@ -1164,7 +1166,10 @@ pub mod checks {
     /// client-scoped resource needs that client, a platform one (no client)
     /// anchor or super-admin; otherwise 403 `SCOPE_FORBIDDEN`. One rule,
     /// kept in [`crate::shared::caller_reach::check_scope_access`].
-    pub fn check_scope_access(context: &impl Authority, client_id: Option<&str>) -> Result<()> {
+    pub fn check_scope_access(
+        context: &impl Authority,
+        client_id: Option<&ClientId>,
+    ) -> Result<()> {
         caller_reach::require_scope_access(context, client_id)
     }
     /// Sync endpoints: admin path. Application-scoped sync uses the

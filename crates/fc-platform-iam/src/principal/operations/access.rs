@@ -6,7 +6,7 @@ use fc_platform_core::principal_kind::UserScope;
 use fc_platform_core::shared::authorization_service::Authority;
 use fc_platform_core::shared::caller_reach;
 use fc_platform_core::shared::error::PlatformError;
-use fc_platform_core::shared::id::OptionIdExt;
+use fc_platform_core::shared::id::PrincipalId;
 use fc_platform_core::usecase::UseCaseError;
 
 /// Go's per-resource user-admin gate (`requireUserResourceAccess` /
@@ -27,7 +27,7 @@ pub fn require_user_resource_access(
     }
     // Go `auth.CanAccessScope`, the rule `check_scope_access` applies; out
     // of reach answers the not-found a missing id would (PR-3(b)).
-    if !caller_reach::can_access_scope(caller, target.client_id.as_id_str()) {
+    if !caller_reach::can_access_scope(caller, target.client_id.as_ref()) {
         return Err(PlatformError::not_found(resource, target.id.as_str()));
     }
     Ok(())
@@ -39,7 +39,7 @@ pub fn require_user_resource_access(
 pub async fn load_administered_user(
     principals: &PrincipalRepository,
     caller: &impl Authority,
-    id: &str,
+    id: &PrincipalId,
     resource: &str,
 ) -> Result<Principal, UseCaseError> {
     let target = principals

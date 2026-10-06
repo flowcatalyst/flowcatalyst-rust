@@ -1,6 +1,7 @@
 //! Create ScheduledJob use case.
 
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -25,7 +26,7 @@ pub struct CreateScheduledJobCommand {
     pub description: Option<String>,
     /// None = platform-scoped (anchor only); Some = client-scoped.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
     /// The owning application (Go `applicationId`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub application_id: Option<ApplicationId>,
@@ -70,7 +71,7 @@ impl<U: UnitOfWork> CreateScheduledJobUseCase<U> {
 /// client, a platform job an anchor.
 fn check_create_access(
     caller: &impl Authority,
-    client_id: Option<&str>,
+    client_id: Option<&ClientId>,
 ) -> Result<(), PlatformError> {
     match client_id {
         Some(cid) if !caller.can_access_client(cid) => Err(PlatformError::forbidden(format!(
@@ -142,7 +143,7 @@ impl<U: UnitOfWork> UseCase for CreateScheduledJobUseCase<U> {
     ) -> Result<(), UseCaseError> {
         Ok(check_create_access(
             ctx.caller(),
-            command.client_id.as_deref(),
+            command.client_id.as_ref(),
         )?)
     }
 
@@ -154,7 +155,7 @@ impl<U: UnitOfWork> UseCase for CreateScheduledJobUseCase<U> {
         let code = normalize_code(&cmd.code);
         let existing = self
             .repo
-            .find_by_code(cmd.client_id.as_deref(), &code)
+            .find_by_code(cmd.client_id.as_ref(), &code)
             .await?;
         if existing.is_some() {
             return Err(UseCaseError::business_rule(
@@ -171,7 +172,7 @@ impl<U: UnitOfWork> UseCase for CreateScheduledJobUseCase<U> {
             .with_created_by(ctx.principal_id.clone());
 
         if let Some(c) = &cmd.client_id {
-            job = job.with_client_id(parse_client_id(c)?);
+            job = job.with_client_id(parse_client_id(c.as_str())?);
         }
         job.application_id = cmd.application_id.clone();
         if let Some(d) = &cmd.description {

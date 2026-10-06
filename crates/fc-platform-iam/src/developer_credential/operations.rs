@@ -4,6 +4,7 @@
 //! user-write permission); `authorize` checks the target is within reach,
 //! `execute` its kind, and the unit of work commits.
 
+use fc_platform_core::shared::id::PrincipalId;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -15,7 +16,6 @@ use crate::principal::repository::PrincipalRepository;
 use fc_platform_core::permissions;
 use fc_platform_core::principal_kind::UserScope;
 use fc_platform_core::shared::error::PlatformError;
-use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::Caller;
 use fc_platform_core::usecase::{
@@ -28,7 +28,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetDeveloperCredentialCommand {
-    pub principal_id: String,
+    pub principal_id: PrincipalId,
     #[serde(skip)]
     pub secret_ref: String,
 }
@@ -38,7 +38,7 @@ impl AuditMasked for SetDeveloperCredentialCommand {}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RevokeDeveloperCredentialCommand {
-    pub principal_id: String,
+    pub principal_id: PrincipalId,
 }
 
 impl AuditMasked for RevokeDeveloperCredentialCommand {}
@@ -51,7 +51,7 @@ impl AuditMasked for RevokeDeveloperCredentialCommand {}
 async fn require_credential_target(
     principals: &PrincipalRepository,
     caller: &Caller,
-    id: &str,
+    id: &PrincipalId,
 ) -> Result<(), UseCaseError> {
     let p = principals
         .find_by_id(id)
@@ -65,7 +65,7 @@ async fn require_credential_target(
             "Client administrators can only manage client-scope users",
         )));
     }
-    let in_scope = match p.client_id.as_id_str() {
+    let in_scope = match p.client_id.as_ref() {
         Some(client_id) => caller.can_access_client(client_id),
         None => caller.is_anchor() || caller.has_permission(permissions::ADMIN_ALL),
     };
@@ -105,7 +105,7 @@ impl<U: UnitOfWork> UseCase for SetDeveloperCredentialUseCase<U> {
     type Event = DeveloperCredentialSet;
 
     async fn validate(&self, command: &Self::Command) -> Result<(), UseCaseError> {
-        require_id(&command.principal_id)
+        require_id(command.principal_id.as_str())
     }
 
     /// The target must be the caller or a user it administers (see
@@ -147,10 +147,10 @@ impl<U: UnitOfWork> UseCase for SetDeveloperCredentialUseCase<U> {
             ));
         }
         let credential = DeveloperCredential {
-            principal_id: principal.id.to_string(),
+            principal_id: principal.id.clone(),
             secret_ref: Some(command.secret_ref.clone()),
         };
-        let event = DeveloperCredentialSet::new(&ctx, principal.id.as_str());
+        let event = DeveloperCredentialSet::new(&ctx, &principal.id);
         self.unit_of_work
             .commit(&credential, &*self.principal_repo, event, &command)
             .await
@@ -177,7 +177,7 @@ impl<U: UnitOfWork> UseCase for RevokeDeveloperCredentialUseCase<U> {
     type Event = DeveloperCredentialRevoked;
 
     async fn validate(&self, command: &Self::Command) -> Result<(), UseCaseError> {
-        require_id(&command.principal_id)
+        require_id(command.principal_id.as_str())
     }
 
     /// The target must be the caller or a user it administers (see
@@ -207,10 +207,10 @@ impl<U: UnitOfWork> UseCase for RevokeDeveloperCredentialUseCase<U> {
             Err(e) => return Err(e),
         };
         let credential = DeveloperCredential {
-            principal_id: principal.id.to_string(),
+            principal_id: principal.id.clone(),
             secret_ref: None,
         };
-        let event = DeveloperCredentialRevoked::new(&ctx, principal.id.as_str());
+        let event = DeveloperCredentialRevoked::new(&ctx, &principal.id);
         self.unit_of_work
             .commit_delete(&credential, &*self.principal_repo, event, &command)
             .await

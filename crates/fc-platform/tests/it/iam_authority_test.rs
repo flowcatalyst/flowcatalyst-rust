@@ -3,6 +3,7 @@
 //! hold (owner rulings 13-15 of 2026-09-25). Requires Docker.
 
 use crate::support;
+use fc_platform::shared::id::PrincipalId;
 use fc_platform_core::shared::id::ClientId;
 
 use axum::http::StatusCode;
@@ -158,7 +159,9 @@ async fn service_account_all_applications_opt_in() {
     let p = app
         .repos
         .principal_repo
-        .find_by_id(body["principalId"].as_str().unwrap())
+        .find_by_id(&PrincipalId::from_wire(
+            body["principalId"].as_str().unwrap(),
+        ))
         .await
         .unwrap()
         .unwrap();
@@ -175,7 +178,9 @@ async fn service_account_all_applications_opt_in() {
     let p = app
         .repos
         .principal_repo
-        .find_by_id(body["principalId"].as_str().unwrap())
+        .find_by_id(&PrincipalId::from_wire(
+            body["principalId"].as_str().unwrap(),
+        ))
         .await
         .unwrap()
         .unwrap();
@@ -292,7 +297,7 @@ async fn principal_writes_need_a_user_permission_at_every_tier() {
     let p = app
         .repos
         .principal_repo
-        .find_by_id(&target)
+        .find_by_id(&PrincipalId::from_wire(target.as_str()))
         .await
         .unwrap()
         .unwrap();
@@ -680,7 +685,7 @@ async fn roles_of(app: &TestApp, id: &str) -> Vec<String> {
     let mut roles: Vec<String> = app
         .repos
         .principal_repo
-        .find_by_id(id)
+        .find_by_id(&PrincipalId::from_wire(id))
         .await
         .unwrap()
         .unwrap()
@@ -1117,7 +1122,7 @@ async fn application_sync_keeps_to_its_own_roles() {
     let mut kept = app
         .repos
         .principal_repo
-        .find_by_id(&named)
+        .find_by_id(&PrincipalId::from_wire(named.as_str()))
         .await
         .unwrap()
         .unwrap();

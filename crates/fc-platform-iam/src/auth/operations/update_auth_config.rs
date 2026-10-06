@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 use fc_platform_core::shared::id::ClientAuthConfigId;
+use fc_platform_core::shared::id::ClientId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -19,7 +20,7 @@ use fc_platform_core::usecase::{
 pub struct UpdateAuthConfigCommand {
     pub auth_config_id: ClientAuthConfigId,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub primary_client_id: Option<String>,
+    pub primary_client_id: Option<ClientId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_provider: Option<AuthProvider>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -34,10 +35,10 @@ pub struct UpdateAuthConfigCommand {
     pub oidc_client_secret_ref: Option<String>,
     /// Replaces the full list when `Some`; None leaves existing IDs.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub additional_client_ids: Option<Vec<String>>,
+    pub additional_client_ids: Option<Vec<ClientId>>,
     /// Replaces the PARTNER grant list when `Some`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub granted_client_ids: Option<Vec<String>>,
+    pub granted_client_ids: Option<Vec<ClientId>>,
     /// `ANCHOR` / `PARTNER` / `CLIENT`. Used by the /config-type endpoint.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_type: Option<AuthConfigType>,

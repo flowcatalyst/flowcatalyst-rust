@@ -7,6 +7,7 @@ use axum::{
     Json,
 };
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::PrincipalId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
@@ -223,9 +224,9 @@ pub struct AuditLogsState {
 
 /// Enrich audit logs with principal names from a batch lookup.
 pub async fn enrich_principal_names(logs: &mut [AuditLog], principal_repo: &PrincipalRepository) {
-    let principal_ids: Vec<String> = logs
+    let principal_ids: Vec<PrincipalId> = logs
         .iter()
-        .filter_map(|l| l.principal_id.clone())
+        .filter_map(|l| l.principal_id.clone().map(PrincipalId::from_wire))
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
@@ -237,7 +238,7 @@ pub async fn enrich_principal_names(logs: &mut [AuditLog], principal_repo: &Prin
     if let Ok(name_map) = principal_repo.find_names_by_ids(&principal_ids).await {
         for log in logs.iter_mut() {
             if let Some(pid) = &log.principal_id {
-                log.principal_name = name_map.get(pid).cloned();
+                log.principal_name = name_map.get(&PrincipalId::from_wire(pid.as_str())).cloned();
             }
         }
     }
@@ -249,8 +250,12 @@ pub async fn enrich_single_principal_name(
     principal_repo: &PrincipalRepository,
 ) {
     if let Some(pid) = &log.principal_id {
-        if let Ok(name_map) = principal_repo.find_names_by_ids(slice::from_ref(pid)).await {
-            log.principal_name = name_map.get(pid).cloned();
+        let pid = PrincipalId::from_wire(pid.as_str());
+        if let Ok(name_map) = principal_repo
+            .find_names_by_ids(slice::from_ref(&pid))
+            .await
+        {
+            log.principal_name = name_map.get(&pid).cloned();
         }
     }
 }

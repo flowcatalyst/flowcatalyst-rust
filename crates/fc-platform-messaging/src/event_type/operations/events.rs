@@ -9,6 +9,7 @@
 
 use crate::event_type::entity::EventType;
 use fc_platform_core::impl_domain_event;
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::EventTypeId;
 use fc_platform_core::usecase::domain_event::EventMetadata;
 use fc_platform_core::usecase::ExecutionContext;
@@ -50,7 +51,7 @@ pub struct EventTypeCreated {
     pub aggregate: String,
     pub event_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
 }
 
 impl_domain_event!(EventTypeCreated);

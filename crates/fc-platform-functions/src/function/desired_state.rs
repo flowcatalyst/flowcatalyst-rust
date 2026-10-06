@@ -40,6 +40,7 @@
 //! functions there are (Java reads settings and credentials per function).
 
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
@@ -112,7 +113,7 @@ pub struct FunctionEntry {
     pub application_id: ApplicationId,
     /// `None` for a platform-owned function.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
     /// The version's declared config keys that have a value.
     pub config: BTreeMap<String, String>,
     /// The version's declared secrets (and `db[].secretRef`s), decrypted,
@@ -487,7 +488,7 @@ impl DesiredStateBuilder {
                     application_id: f.application_id.clone(),
                     client_id: match &f.owner {
                         FunctionOwner::Platform => None,
-                        FunctionOwner::Client(id) => Some(id.clone()),
+                        FunctionOwner::Client(id) => Some(ClientId::from_wire(id.as_str())),
                     },
                     config,
                     secrets,
@@ -768,7 +769,7 @@ mod tests {
                 d.functions[0].application_id = ApplicationId::parse("app_2").unwrap()
             }),
             ("clientId", |d| {
-                d.functions[0].client_id = Some("clt_1".into())
+                d.functions[0].client_id = Some(ClientId::parse("clt_1").unwrap())
             }),
             ("config", |d| {
                 d.functions[0]

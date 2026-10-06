@@ -1,6 +1,7 @@
 //! EmailDomainMapping Entity
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::EmailDomainMappingId;
 use fc_platform_core::shared::id::IdentityProviderId;
 use fc_platform_core::usecase::UseCaseError;
@@ -27,9 +28,9 @@ pub struct EmailDomainMapping {
     pub email_domain: String,
     pub identity_provider_id: IdentityProviderId,
     pub scope_type: ScopeType,
-    pub primary_client_id: Option<String>,
-    pub additional_client_ids: Vec<String>,
-    pub granted_client_ids: Vec<String>,
+    pub primary_client_id: Option<ClientId>,
+    pub additional_client_ids: Vec<ClientId>,
+    pub granted_client_ids: Vec<ClientId>,
     pub required_oidc_tenant_id: Option<String>,
     pub allowed_role_ids: Vec<String>,
     pub sync_roles_from_idp: bool,

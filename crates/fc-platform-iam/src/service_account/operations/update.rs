@@ -2,6 +2,8 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::PrincipalId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -24,7 +26,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct UpdateServiceAccountCommand {
     /// Service account ID
-    pub id: String,
+    pub id: PrincipalId,
 
     /// Updated name
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -42,7 +44,7 @@ pub struct UpdateServiceAccountCommand {
     /// Updated client IDs. The principal's tier follows the new links (none
     /// → ANCHOR, one → CLIENT, several → PARTNER), as in Go.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_ids: Option<Vec<String>>,
+    pub client_ids: Option<Vec<ClientId>>,
 
     /// New webhook credentials, in plaintext: they replace the account's, as
     /// Go's update does, and their secrets are sealed before they are
@@ -208,11 +210,14 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = UpdateServiceAccountCommand {
-            id: "sa-123".to_string(),
+            id: PrincipalId::from_wire("sa-123"),
             name: Some("Updated Name".to_string()),
             description: None,
             scope: Some(UserScope::Partner),
-            client_ids: Some(vec!["client-1".to_string(), "client-2".to_string()]),
+            client_ids: Some(vec![
+                ClientId::from_wire("client-1"),
+                ClientId::from_wire("client-2"),
+            ]),
             webhook_credentials: None,
         };
 
@@ -228,7 +233,7 @@ mod tests {
         creds.token = Some("tok".to_string());
         creds.signing_secret = Some("sig".to_string());
         let cmd = UpdateServiceAccountCommand {
-            id: "sa-1".to_string(),
+            id: PrincipalId::from_wire("sa-1"),
             name: None,
             description: None,
             scope: None,

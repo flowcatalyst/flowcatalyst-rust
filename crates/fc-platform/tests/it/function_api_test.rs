@@ -107,7 +107,11 @@ async fn token(app: &TestApp, who: As<'_>) -> String {
             principal = principal.with_client_id(ClientId::parse(who.clients[0]).unwrap())
         }
         UserScope::Partner => {
-            principal.assigned_clients = who.clients.iter().map(|c| c.to_string()).collect()
+            principal.assigned_clients = who
+                .clients
+                .iter()
+                .map(|c| ClientId::parse(*c).unwrap())
+                .collect()
         }
         UserScope::Anchor => {}
     }

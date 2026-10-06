@@ -18,6 +18,7 @@ use fc_platform_core::shared::id::AppClientConfigId;
 use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::shared::id::ApplicationOpenApiSpecId;
 use fc_platform_core::shared::id::ClientAuthConfigId;
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::ConnectionId;
 use fc_platform_core::shared::id::CorsOriginId;
 use fc_platform_core::shared::id::EmailDomainMappingId;
@@ -180,7 +181,7 @@ fn application_created() {
 fn application_client_config_updated() {
     let command = UpdateApplicationClientConfigCommand {
         application_id: ApplicationId::parse("app_1").unwrap(),
-        client_id: "clt_1".to_string(),
+        client_id: ClientId::parse("clt_1").unwrap(),
         enabled: Some(true),
         base_url_override: None,
         config: None,
@@ -188,7 +189,7 @@ fn application_client_config_updated() {
     let config = ApplicationClientConfig {
         id: AppClientConfigId::from_wire("acc_1"),
         application_id: ApplicationId::parse("app_1").unwrap(),
-        client_id: "clt_1".to_string(),
+        client_id: ClientId::parse("clt_1").unwrap(),
         enabled: true,
         base_url_override: None,
         config_json: None,
@@ -254,7 +255,12 @@ fn idp_role_mapping_created() {
 
 #[test]
 fn client_created() {
-    let e = fixed!(ClientCreated::new(&ctx(), "clt_1", "Acme", "acme"));
+    let e = fixed!(ClientCreated::new(
+        &ctx(),
+        &ClientId::parse("clt_1").unwrap(),
+        "Acme",
+        "acme"
+    ));
     check(&e, EXPECTED_CLIENT_CREATED);
 }
 
@@ -324,7 +330,7 @@ fn event_type_created() {
     let mut event_type = EventType::new(code, "Shipment shipped");
     event_type.id = EventTypeId::parse("evt_type_1").unwrap();
     event_type.description = Some("A shipment left the warehouse".to_string());
-    event_type.client_id = Some("clt_1".to_string());
+    event_type.client_id = Some(ClientId::parse("clt_1").unwrap());
     let e = fixed!(EventTypeCreated::new(&ctx(), &event_type));
     check(&e, EXPECTED_EVENT_TYPE_CREATED);
 }
@@ -359,7 +365,7 @@ fn platform_config_property_set() {
         section: "limits".to_string(),
         property: "max_batch".to_string(),
         scope: "CLIENT".to_string(),
-        client_id: Some("clt_1".to_string()),
+        client_id: Some(ClientId::parse("clt_1").unwrap()),
         value_type: "NUMBER".to_string(),
         was_created: true,
     });
@@ -375,7 +381,7 @@ fn platform_config_property_set_from_the_aggregate() {
     let mut config = PlatformConfig::new("orders", "limits", "max_batch", "100");
     config.id = PlatformConfigId::parse("pcf_1").unwrap();
     config.scope = ConfigScope::Client;
-    config.client_id = Some("clt_1".to_string());
+    config.client_id = Some(ClientId::parse("clt_1").unwrap());
     config.value_type = ConfigValueType::Secret;
     let built = fixed!(PlatformConfigPropertySet::new(&ctx(), &config, true));
     let literal = fixed!(PlatformConfigPropertySet {
@@ -388,7 +394,7 @@ fn platform_config_property_set_from_the_aggregate() {
         section: "limits".to_string(),
         property: "max_batch".to_string(),
         scope: "CLIENT".to_string(),
-        client_id: Some("clt_1".to_string()),
+        client_id: Some(ClientId::parse("clt_1").unwrap()),
         value_type: "SECRET".to_string(),
         was_created: true,
     });
@@ -409,7 +415,11 @@ fn platform_config_access_granted() {
 /// Mirrors `CreateUserUseCase::execute`.
 #[test]
 fn user_created() {
-    let e = fixed!(UserCreated::new(&fresh_ctx(), "prn_1", "Jane@Example.COM"));
+    let e = fixed!(UserCreated::new(
+        &fresh_ctx(),
+        &PrincipalId::parse("prn_1").unwrap(),
+        "Jane@Example.COM"
+    ));
     check(&e, EXPECTED_USER_CREATED);
 }
 
@@ -428,7 +438,7 @@ fn user_logged_in() {
     };
     let e = fixed!(UserLoggedIn::new(
         &ctx(),
-        "prn_1",
+        &PrincipalId::parse("prn_1").unwrap(),
         "jane@example.com",
         "OIDC",
         Some("okta"),
@@ -442,7 +452,7 @@ fn user_logged_in() {
 fn roles_assigned() {
     let e = fixed!(RolesAssigned::new(
         &ctx(),
-        "prn_1",
+        &PrincipalId::parse("prn_1").unwrap(),
         s(&["a", "b"]),
         s(&["b"]),
         s(&["c"])
@@ -562,7 +572,7 @@ fn service_account_created() {
     check(&e, EXPECTED_SERVICE_ACCOUNT_CREATED);
     let result = CreateServiceAccountResult {
         event: e,
-        principal_id: "prn_1".to_string(),
+        principal_id: PrincipalId::parse("prn_1").unwrap(),
         auth_token: "fc_secret_token".to_string(),
         signing_secret: "secret_signing".to_string(),
     };
@@ -615,7 +625,7 @@ fn passkey_registered() {
     let e = fixed!(PasskeyRegistered::new(
         &ctx(),
         "pkc_1",
-        "prn_1",
+        &PrincipalId::parse("prn_1").unwrap(),
         Some("YubiKey".to_string())
     ));
     check(&e, EXPECTED_PASSKEY_REGISTERED);
@@ -835,13 +845,13 @@ fn service_account_commands_persist_no_generated_credentials() {
         name: "Orders bot".to_string(),
         description: None,
         scope: Some(UserScope::Client),
-        client_ids: s(&["clt_1"]),
+        client_ids: ClientId::from_wire_all(s(&["clt_1"])),
         application_id: Some(ApplicationId::parse("app_1").unwrap()),
         all_applications: false,
     };
     let result = CreateServiceAccountResult {
         event: fixed!(ServiceAccountCreated::new(&ctx(), &service_account())),
-        principal_id: "prn_1".to_string(),
+        principal_id: PrincipalId::parse("prn_1").unwrap(),
         auth_token: TOKEN.to_string(),
         signing_secret: SIGNING.to_string(),
     };
@@ -850,7 +860,7 @@ fn service_account_commands_persist_no_generated_credentials() {
     assert_no_plaintext(&rows, SIGNING);
 
     let regen_token = RegenerateAuthTokenCommand {
-        service_account_id: "sac_1".to_string(),
+        service_account_id: PrincipalId::from_wire("sac_1"),
     };
     let result = RegenerateAuthTokenResult {
         event: fixed!(ServiceAccountTokenRegenerated::new(
@@ -862,7 +872,7 @@ fn service_account_commands_persist_no_generated_credentials() {
     assert_no_plaintext(&persisted(&result, &regen_token), TOKEN);
 
     let regen_secret = RegenerateSigningSecretCommand {
-        service_account_id: "sac_1".to_string(),
+        service_account_id: PrincipalId::from_wire("sac_1"),
     };
     let result = RegenerateSigningSecretResult {
         event: fixed!(ServiceAccountSecretRegenerated::new(

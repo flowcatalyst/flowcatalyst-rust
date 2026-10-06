@@ -1,6 +1,7 @@
 //! Delete User Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::PrincipalId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -16,7 +17,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct DeleteUserCommand {
     /// Principal ID to delete
-    pub principal_id: String,
+    pub principal_id: PrincipalId,
 }
 
 impl AuditMasked for DeleteUserCommand {}
@@ -42,7 +43,7 @@ impl<U: UnitOfWork> UseCase for DeleteUserUseCase<U> {
     type Event = UserDeleted;
 
     async fn validate(&self, command: &DeleteUserCommand) -> Result<(), UseCaseError> {
-        if command.principal_id.trim().is_empty() {
+        if command.principal_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "PRINCIPAL_ID_REQUIRED",
                 "Principal ID is required",
@@ -78,7 +79,7 @@ impl<U: UnitOfWork> UseCase for DeleteUserUseCase<U> {
         ctx: ExecutionContext,
     ) -> Result<Committed<UserDeleted>, UseCaseError> {
         // Business rule: cannot delete yourself
-        if command.principal_id == ctx.principal_id {
+        if command.principal_id.as_str() == ctx.principal_id {
             return Err(UseCaseError::business_rule(
                 "CANNOT_DELETE_SELF",
                 "Cannot delete your own account",
@@ -96,7 +97,7 @@ impl<U: UnitOfWork> UseCase for DeleteUserUseCase<U> {
             )?;
 
         // Create domain event
-        let event = UserDeleted::new(&ctx, principal.id.as_str(), principal.email().unwrap_or(""));
+        let event = UserDeleted::new(&ctx, &principal.id, principal.email().unwrap_or(""));
 
         // Atomic commit with delete
         self.unit_of_work
@@ -112,7 +113,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = DeleteUserCommand {
-            principal_id: "user-123".to_string(),
+            principal_id: PrincipalId::from_wire("user-123"),
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

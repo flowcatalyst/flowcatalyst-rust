@@ -10,6 +10,7 @@
 //! Emits a single `ScheduledJobsSynced` summary event regardless of how many
 //! rows changed.
 
+use fc_platform_core::shared::id::ClientId;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -68,7 +69,7 @@ pub struct SyncScheduledJobsCommand {
     pub scope: String,
     /// None = platform-scoped jobs (anchor only); Some = client-scoped.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
     pub jobs: Vec<ScheduledJobSyncEntry>,
     #[serde(default)]
     pub archive_unlisted: bool,
@@ -127,7 +128,7 @@ impl<U: UnitOfWork> UseCase for SyncScheduledJobsUseCase<U> {
         command: &SyncScheduledJobsCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        match command.client_id.as_deref() {
+        match command.client_id.as_ref() {
             Some(cid) if !ctx.caller().can_access_client(cid) => Err(UseCaseError::verbatim(
                 PlatformError::forbidden(format!("No access to client: {cid}")),
             )),
@@ -150,7 +151,7 @@ impl<U: UnitOfWork> UseCase for SyncScheduledJobsUseCase<U> {
     ) -> Result<Committed<Self::Event>, UseCaseError> {
         // Diff the payload against the stored jobs: the rows to write and the
         // summary event.
-        let existing = match cmd.client_id.as_deref() {
+        let existing = match cmd.client_id.as_ref() {
             Some(cid) => self.repo.find_by_client(cid).await,
             None => {
                 self.repo
@@ -236,7 +237,7 @@ impl<U: UnitOfWork> UseCase for SyncScheduledJobsUseCase<U> {
                         .with_delivery_max_attempts(entry.delivery_max_attempts)
                         .with_created_by(ctx.principal_id.clone());
                     if let Some(c) = &cmd.client_id {
-                        job = job.with_client_id(parse_client_id(c)?);
+                        job = job.with_client_id(parse_client_id(c.as_str())?);
                     }
                     if let Some(d) = &entry.description {
                         job = job.with_description(d);

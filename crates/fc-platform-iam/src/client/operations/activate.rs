@@ -1,6 +1,7 @@
 //! Activate Client Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ClientId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -18,7 +19,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct ActivateClientCommand {
     /// Client ID to activate
-    pub client_id: String,
+    pub client_id: ClientId,
 }
 
 impl AuditMasked for ActivateClientCommand {}
@@ -44,7 +45,7 @@ impl<U: UnitOfWork> UseCase for ActivateClientUseCase<U> {
     type Event = ClientActivated;
 
     async fn validate(&self, command: &ActivateClientCommand) -> Result<(), UseCaseError> {
-        if command.client_id.trim().is_empty() {
+        if command.client_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "CLIENT_ID_REQUIRED",
                 "Client ID is required",
@@ -92,7 +93,7 @@ impl<U: UnitOfWork> UseCase for ActivateClientUseCase<U> {
         client.activate();
 
         // Create domain event
-        let event = ClientActivated::new(&ctx, client.id.as_str());
+        let event = ClientActivated::new(&ctx, &client.id);
 
         // Atomic commit
         self.unit_of_work
@@ -108,7 +109,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = ActivateClientCommand {
-            client_id: "client-123".to_string(),
+            client_id: ClientId::from_wire("client-123"),
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

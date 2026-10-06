@@ -3,6 +3,8 @@
 //! trusted devices. Decoupled from the principal aggregate: callers pass the
 //! user's id and, for email, the address.
 
+use fc_platform_core::shared::id::MfaTrustedDeviceId;
+use fc_platform_core::shared::id::PrincipalId;
 use std::sync::Arc;
 
 use chrono::{Duration, Utc};
@@ -67,7 +69,7 @@ impl MfaService {
     // ── status ──────────────────────────────────────────────────────────
 
     /// The user's confirmed factor types, oldest first.
-    pub async fn confirmed_methods(&self, principal_id: &str) -> Result<Vec<MethodType>> {
+    pub async fn confirmed_methods(&self, principal_id: &PrincipalId) -> Result<Vec<MethodType>> {
         Ok(self
             .repo
             .find_methods(principal_id)
@@ -78,7 +80,7 @@ impl MfaService {
             .collect())
     }
 
-    pub async fn has_confirmed_method(&self, principal_id: &str) -> Result<bool> {
+    pub async fn has_confirmed_method(&self, principal_id: &PrincipalId) -> Result<bool> {
         Ok(!self.confirmed_methods(principal_id).await?.is_empty())
     }
 
@@ -89,7 +91,7 @@ impl MfaService {
     /// data.
     pub async fn begin_totp_enrollment(
         &self,
-        principal_id: &str,
+        principal_id: &PrincipalId,
         account: &str,
     ) -> result::Result<TotpEnrollment, EnrollError> {
         let enc = self
@@ -122,7 +124,7 @@ impl MfaService {
     /// `Ok(false)` on a wrong code (the factor stays pending).
     pub async fn confirm_totp_enrollment(
         &self,
-        principal_id: &str,
+        principal_id: &PrincipalId,
         code: &str,
     ) -> result::Result<bool, EnrollError> {
         let enc = self
@@ -142,12 +144,16 @@ impl MfaService {
         let Some(step) = crypto::validate_totp(&secret, code, Utc::now().timestamp()) else {
             return Ok(false);
         };
-        if !self.repo.confirm_method(&method.id, Utc::now()).await? {
+        if !self
+            .repo
+            .confirm_method(method.id.as_str(), Utc::now())
+            .await?
+        {
             // A concurrent confirm won.
             return Err(EnrollError::AlreadyEnrolled);
         }
         self.repo
-            .claim_totp_step(&method.id, crypto::time_for_step(step))
+            .claim_totp_step(method.id.as_str(), crypto::time_for_step(step))
             .await?;
         Ok(true)
     }
@@ -158,7 +164,7 @@ impl MfaService {
     /// control.
     pub async fn begin_email_enrollment(
         &self,
-        principal_id: &str,
+        principal_id: &PrincipalId,
         email: &str,
     ) -> result::Result<(), EnrollError> {
         match self
@@ -182,7 +188,7 @@ impl MfaService {
     /// Check the enrolment PIN and confirm the email factor.
     pub async fn confirm_email_enrollment(
         &self,
-        principal_id: &str,
+        principal_id: &PrincipalId,
         code: &str,
     ) -> result::Result<bool, EnrollError> {
         if !self
@@ -197,19 +203,29 @@ impl MfaService {
             .await?
             .ok_or(EnrollError::NoPendingEnrollment)?;
         if !method.is_confirmed() {
-            self.repo.confirm_method(&method.id, Utc::now()).await?;
+            self.repo
+                .confirm_method(method.id.as_str(), Utc::now())
+                .await?;
         }
         Ok(true)
     }
 
     // ── login challenge ────────────────────────────────────────────────
 
-    pub async fn send_login_email_pin(&self, principal_id: &str, email: &str) -> Result<()> {
+    pub async fn send_login_email_pin(
+        &self,
+        principal_id: &PrincipalId,
+        email: &str,
+    ) -> Result<()> {
         self.issue_email_pin(principal_id, email, EmailPinPurpose::Login)
             .await
     }
 
-    pub async fn verify_login_email_pin(&self, principal_id: &str, code: &str) -> Result<bool> {
+    pub async fn verify_login_email_pin(
+        &self,
+        principal_id: &PrincipalId,
+        code: &str,
+    ) -> Result<bool> {
         self.verify_email_pin(principal_id, code, EmailPinPurpose::Login)
             .await
     }
@@ -217,7 +233,7 @@ impl MfaService {
     /// Check a TOTP code for a confirmed factor. A time-step already spent
     /// (by this or a concurrent request) is refused: the step is claimed in
     /// one guarded statement, so each code signs in at most once.
-    pub async fn verify_totp(&self, principal_id: &str, code: &str) -> Result<bool> {
+    pub async fn verify_totp(&self, principal_id: &PrincipalId, code: &str) -> Result<bool> {
         let Some(enc) = self.encryption.as_ref() else {
             return Err(PlatformError::internal(
                 "mfa: encryption not configured (set FLOWCATALYST_APP_KEY)",
@@ -243,12 +259,16 @@ impl MfaService {
             return Ok(false);
         };
         self.repo
-            .claim_totp_step(&method.id, crypto::time_for_step(step))
+            .claim_totp_step(method.id.as_str(), crypto::time_for_step(step))
             .await
     }
 
     /// Spend a recovery code: `true` once, then the code is burned.
-    pub async fn verify_recovery_code(&self, principal_id: &str, code: &str) -> Result<bool> {
+    pub async fn verify_recovery_code(
+        &self,
+        principal_id: &PrincipalId,
+        code: &str,
+    ) -> Result<bool> {
         let hash = crypto::sha256_hex(&crypto::normalize_recovery_code(code));
         self.repo.consume_recovery_code(principal_id, &hash).await
     }
@@ -257,7 +277,7 @@ impl MfaService {
 
     /// Replace the user's recovery codes with a fresh set; the plaintext
     /// codes, shown once.
-    pub async fn generate_recovery_codes(&self, principal_id: &str) -> Result<Vec<String>> {
+    pub async fn generate_recovery_codes(&self, principal_id: &PrincipalId) -> Result<Vec<String>> {
         let codes: Vec<String> = (0..RECOVERY_CODE_COUNT)
             .map(|_| crypto::random_recovery_code())
             .collect();
@@ -271,19 +291,23 @@ impl MfaService {
         Ok(codes)
     }
 
-    pub async fn remaining_recovery_codes(&self, principal_id: &str) -> Result<i64> {
+    pub async fn remaining_recovery_codes(&self, principal_id: &PrincipalId) -> Result<i64> {
         self.repo.count_unused_recovery_codes(principal_id).await
     }
 
     // ── removal / reset ────────────────────────────────────────────────
 
-    pub async fn remove_method(&self, principal_id: &str, method: MethodType) -> Result<u64> {
+    pub async fn remove_method(
+        &self,
+        principal_id: &PrincipalId,
+        method: MethodType,
+    ) -> Result<u64> {
         self.repo.delete_method(principal_id, method).await
     }
 
     /// Clear every factor, code, PIN and remembered device (admin reset,
     /// lost device).
-    pub async fn reset_all(&self, principal_id: &str) -> Result<()> {
+    pub async fn reset_all(&self, principal_id: &PrincipalId) -> Result<()> {
         self.repo.reset_all(principal_id).await
     }
 
@@ -293,7 +317,7 @@ impl MfaService {
     /// token for the cookie.
     pub async fn issue_trusted_device(
         &self,
-        principal_id: &str,
+        principal_id: &PrincipalId,
         label: Option<&str>,
         ttl: Duration,
     ) -> Result<String> {
@@ -311,7 +335,11 @@ impl MfaService {
 
     /// Whether `raw` is an unexpired remembered device of the user
     /// (stamping its use).
-    pub async fn verify_trusted_device(&self, principal_id: &str, raw: &str) -> Result<bool> {
+    pub async fn verify_trusted_device(
+        &self,
+        principal_id: &PrincipalId,
+        raw: &str,
+    ) -> Result<bool> {
         if raw.is_empty() {
             return Ok(false);
         }
@@ -320,15 +348,22 @@ impl MfaService {
             .await
     }
 
-    pub async fn list_trusted_devices(&self, principal_id: &str) -> Result<Vec<TrustedDevice>> {
+    pub async fn list_trusted_devices(
+        &self,
+        principal_id: &PrincipalId,
+    ) -> Result<Vec<TrustedDevice>> {
         self.repo.list_trusted_devices(principal_id).await
     }
 
-    pub async fn revoke_trusted_device(&self, principal_id: &str, id: &str) -> Result<u64> {
+    pub async fn revoke_trusted_device(
+        &self,
+        principal_id: &PrincipalId,
+        id: &MfaTrustedDeviceId,
+    ) -> Result<u64> {
         self.repo.delete_trusted_device(principal_id, id).await
     }
 
-    pub async fn revoke_all_trusted_devices(&self, principal_id: &str) -> Result<()> {
+    pub async fn revoke_all_trusted_devices(&self, principal_id: &PrincipalId) -> Result<()> {
         self.repo.delete_trusted_devices(principal_id).await
     }
 
@@ -338,7 +373,7 @@ impl MfaService {
     /// A delivery failure is returned: the user needs the PIN.
     async fn issue_email_pin(
         &self,
-        principal_id: &str,
+        principal_id: &PrincipalId,
         email: &str,
         purpose: EmailPinPurpose,
     ) -> Result<()> {
@@ -374,7 +409,7 @@ impl MfaService {
     /// exhausted all read as a wrong code.
     async fn verify_email_pin(
         &self,
-        principal_id: &str,
+        principal_id: &PrincipalId,
         code: &str,
         purpose: EmailPinPurpose,
     ) -> Result<bool> {
@@ -386,17 +421,21 @@ impl MfaService {
             return Ok(false);
         };
         if pin.is_expired() || pin.attempts >= EMAIL_PIN_MAX_ATTEMPTS {
-            if let Err(e) = self.repo.delete_email_pin(&pin.id).await {
+            if let Err(e) = self.repo.delete_email_pin(pin.id.as_str()).await {
                 warn!(error = %e, "could not delete the spent email PIN");
             }
             return Ok(false);
         }
         if crypto::constant_time_eq(&pin.pin_hash, &crypto::sha256_hex(code.trim())) {
-            return self.repo.delete_email_pin(&pin.id).await;
+            return self.repo.delete_email_pin(pin.id.as_str()).await;
         }
-        if let Some(n) = self.repo.increment_email_pin_attempts(&pin.id).await? {
+        if let Some(n) = self
+            .repo
+            .increment_email_pin_attempts(pin.id.as_str())
+            .await?
+        {
             if n >= EMAIL_PIN_MAX_ATTEMPTS {
-                if let Err(e) = self.repo.delete_email_pin(&pin.id).await {
+                if let Err(e) = self.repo.delete_email_pin(pin.id.as_str()).await {
                     warn!(error = %e, "could not delete the email PIN after its last attempt");
                 }
             }

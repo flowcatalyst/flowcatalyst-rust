@@ -34,7 +34,6 @@ use fc_platform_core::shared::caller_reach;
 use fc_platform_core::shared::enum_str;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::id::ClientId;
-use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_core::usecase::PgUnitOfWork;
 
@@ -419,7 +418,7 @@ pub async fn create_subscription(
         code: req.code,
         name: req.name,
         description: req.description,
-        client_id: req.client_id,
+        client_id: req.client_id.map(ClientId::from_wire),
         endpoint: req.endpoint,
         connection_id: req.connection_id.map(ConnectionId::from_wire),
         event_types: req
@@ -506,18 +505,20 @@ pub async fn list_subscriptions(
     // Go: the filters as given (no status filter means every status), then
     // `FilterClientScoped` — platform subscriptions to every holder of the
     // read permission, a client's only to callers reaching that client.
+    let client_filter = query
+        .client_id
+        .as_deref()
+        .filter(|c| !c.is_empty())
+        .map(ClientId::from_wire);
     let subscriptions = state
         .subscription_repo
-        .find_with_filters(
-            status.map(|s| s.as_str()),
-            query.client_id.as_deref().filter(|c| !c.is_empty()),
-        )
+        .find_with_filters(status.map(|s| s.as_str()), client_filter.as_ref())
         .await?;
     let filtered: Vec<SubscriptionResponse> = subscriptions
         .into_iter()
         .filter(|s| {
             s.client_id
-                .as_id_str()
+                .as_ref()
                 .is_none_or(|cid| caller_reach::reaches_client(&auth.0, cid))
         })
         .map(|s| s.into())

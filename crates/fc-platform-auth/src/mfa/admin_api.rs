@@ -4,6 +4,7 @@
 //! next sign-in if their domain requires 2FA. Mails the user and writes
 //! Go's `2FA_RESET_BY_ADMIN` audit row.
 
+use fc_platform_core::shared::id::PrincipalId;
 use std::sync::Arc;
 
 use axum::{
@@ -17,7 +18,6 @@ use fc_platform_core::principal_kind::UserScope;
 use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::authorization_service::AuthContext;
 use fc_platform_core::shared::error::PlatformError;
-use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_iam::principal::api::StatusChangeResponse;
 
@@ -57,7 +57,7 @@ pub async fn reset_user_two_factor(
     checks::can_write_principals(ctx)?;
     let p = state
         .principal_repo
-        .find_by_id(id)
+        .find_by_id(&PrincipalId::from_wire(id))
         .await?
         .ok_or_else(|| PlatformError::not_found("Principal", id))?;
     // A non-anchor administrator reaches only CLIENT-scope users (Go
@@ -68,7 +68,7 @@ pub async fn reset_user_two_factor(
             "Client administrators can only manage client-scope users",
         ));
     }
-    let in_scope = match p.client_id.as_id_str() {
+    let in_scope = match p.client_id.as_ref() {
         Some(client_id) => ctx.can_access_client(client_id),
         None => ctx.is_anchor() || ctx.has_permission(permissions::ADMIN_ALL),
     };
@@ -83,7 +83,7 @@ pub async fn reset_user_two_factor(
     }
     state
         .mfa
-        .reset_all(p.id.as_str())
+        .reset_all(&p.id)
         .await
         .map_err(|e| PlatformError::internal(format!("reset failed: {e}")))?;
     state.notifier.two_factor_reset(&email_of(&p)).await;
@@ -91,7 +91,7 @@ pub async fn reset_user_two_factor(
         &state.audit_log_repo,
         p.id.as_str(),
         super::audit::RESET_BY_ADMIN,
-        &ctx.principal_id,
+        ctx.principal_id.as_str(),
     )
     .await;
     Ok(StatusChangeResponse {

@@ -13,6 +13,7 @@
 use crate::platform_config::access_entity::PlatformConfigAccess;
 use crate::platform_config::entity::PlatformConfig;
 use fc_platform_core::impl_domain_event;
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::PlatformConfigAccessId;
 use fc_platform_core::shared::id::PlatformConfigId;
 use fc_platform_core::usecase::domain_event::EventMetadata;
@@ -46,7 +47,7 @@ pub struct PlatformConfigPropertySet {
     #[serde(skip)]
     pub scope: String,
     #[serde(skip)]
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
     #[serde(skip)]
     pub value_type: String,
     #[serde(skip)]

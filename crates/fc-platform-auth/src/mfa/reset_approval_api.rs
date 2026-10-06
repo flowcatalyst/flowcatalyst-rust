@@ -3,6 +3,8 @@
 //! approves (the user is emailed a reset link that also clears their 2FA)
 //! or denies them.
 
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::PrincipalId;
 use std::sync::Arc;
 
 use axum::{
@@ -54,7 +56,7 @@ pub struct ResetApprovalListResponse {
 /// access.
 fn can_write_principals_of_client(
     ctx: &AuthContext,
-    client_id: Option<&str>,
+    client_id: Option<&ClientId>,
 ) -> Result<(), PlatformError> {
     if !ctx.is_anchor() {
         let Some(client_id) = client_id else {
@@ -89,10 +91,7 @@ pub async fn list_reset_approvals(
     checks::can_write_principals(&auth.0)?;
     let scope = (!auth.0.is_anchor()).then_some(auth.0.accessible_clients.as_slice());
     let pending = state.approvals.list_pending(scope).await?;
-    let ids: Vec<String> = pending
-        .iter()
-        .map(|r| r.principal_id().to_string())
-        .collect();
+    let ids: Vec<PrincipalId> = pending.iter().map(|r| r.principal_id().clone()).collect();
     let people = state
         .principal_repo
         .find_names_and_emails_by_ids(&ids)
@@ -106,7 +105,7 @@ pub async fn list_reset_approvals(
                 principal_id: r.principal_id().to_string(),
                 email,
                 name,
-                client_id: r.client_id().map(str::to_string),
+                client_id: r.client_id().map(ClientId::to_string),
                 expires_at: r.expires_at(),
                 created_at: r.created_at(),
             }
@@ -149,7 +148,11 @@ pub async fn approve_reset_approval(
     can_write_principals_of_client(&auth.0, request.client_id())?;
     if !state
         .approvals
-        .decide(request.id(), Decision::Approved, &auth.0.principal_id)
+        .decide(
+            request.id(),
+            Decision::Approved,
+            auth.0.principal_id.as_str(),
+        )
         .await?
     {
         return Err(already_decided());
@@ -196,7 +199,7 @@ pub async fn deny_reset_approval(
     can_write_principals_of_client(&auth.0, request.client_id())?;
     if !state
         .approvals
-        .decide(request.id(), Decision::Denied, &auth.0.principal_id)
+        .decide(request.id(), Decision::Denied, auth.0.principal_id.as_str())
         .await?
     {
         return Err(already_decided());

@@ -22,6 +22,7 @@
 //! [`Authority`]: an [`AuthContext`] in a handler, a [`Caller`] in a use case.
 
 use crate::shared::id::ApplicationId;
+use crate::shared::id::ClientId;
 use std::sync::OnceLock;
 
 use crate::principal_kind::{PrincipalType, UserScope};
@@ -87,7 +88,7 @@ impl Caller {
     }
 
     /// Whether the caller holds client `client_id` (or every client).
-    pub fn can_access_client(&self, client_id: &str) -> bool {
+    pub fn can_access_client(&self, client_id: &ClientId) -> bool {
         Authority::can_access_client(self, client_id)
     }
 
@@ -161,7 +162,7 @@ impl Authority for Caller {
         self.auth().is_none_or(|a| a.is_anchor())
     }
 
-    fn can_access_client(&self, client_id: &str) -> bool {
+    fn can_access_client(&self, client_id: &ClientId) -> bool {
         self.auth().is_none_or(|a| a.can_access_client(client_id))
     }
 
@@ -181,11 +182,12 @@ impl Authority for Caller {
 mod tests {
     use super::*;
     use crate::shared::authorization_service::checks;
+    use crate::shared::id::PrincipalId;
     use std::collections::HashSet;
 
     fn client_user() -> AuthContext {
         AuthContext {
-            principal_id: "prn_1".into(),
+            principal_id: PrincipalId::parse("prn_1").unwrap(),
             principal_type: PrincipalType::User,
             scope: UserScope::Client,
             email: None,
@@ -209,8 +211,14 @@ mod tests {
             CallerCredential::Principal(Credential::SessionCookie)
         );
         assert!(!Authority::is_anchor(&caller));
-        assert!(Authority::can_access_client(&caller, "clt_a"));
-        assert!(!Authority::can_access_client(&caller, "clt_b"));
+        assert!(Authority::can_access_client(
+            &caller,
+            &ClientId::parse("clt_a").unwrap()
+        ));
+        assert!(!Authority::can_access_client(
+            &caller,
+            &ClientId::parse("clt_b").unwrap()
+        ));
         assert!(Authority::has_permission(&caller, "platform:iam:user:view"));
         assert!(!Authority::has_permission(
             &caller,
@@ -245,7 +253,10 @@ mod tests {
         assert_eq!(system.scope(), UserScope::Anchor);
         assert_eq!(system.credential(), CallerCredential::System);
         assert!(Authority::is_anchor(&system));
-        assert!(Authority::can_access_client(&system, "clt_any"));
+        assert!(Authority::can_access_client(
+            &system,
+            &ClientId::parse("clt_any").unwrap()
+        ));
         assert!(Authority::has_permission(
             &system,
             "platform:iam:user:create"

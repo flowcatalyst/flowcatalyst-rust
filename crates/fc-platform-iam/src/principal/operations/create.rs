@@ -1,6 +1,7 @@
 //! Create User Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ClientId;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -52,12 +53,12 @@ pub struct CreateUserCommand {
     /// Home client ID. For CLIENT scope, typically the user's single client.
     /// For PARTNER, the primary client the grants attach to (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
 
     /// Client IDs to grant access to. Persisted as `iam_client_access_grants`
     /// rows atomically with the principal insert (via `pg_persist`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub granted_client_ids: Vec<String>,
+    pub granted_client_ids: Vec<ClientId>,
 
     /// Initial password (optional, for embedded auth). Hashed by the use case.
     /// Never serialised: the UnitOfWork persists the command into
@@ -153,7 +154,7 @@ impl<U: UnitOfWork> UseCase for CreateUserUseCase<U> {
         }
         Ok(checks::require_user_admin(
             ctx.caller(),
-            command.client_id.as_deref(),
+            command.client_id.as_ref(),
         )?)
     }
 
@@ -187,7 +188,7 @@ impl<U: UnitOfWork> UseCase for CreateUserUseCase<U> {
 
         // Set home client_id if provided
         if let Some(ref client_id) = command.client_id {
-            principal = principal.with_client_id(parse_client_id(client_id)?);
+            principal = principal.with_client_id(parse_client_id(client_id.as_str())?);
         }
 
         // Grants — persisted atomically via `pg_persist` (syncs
@@ -233,7 +234,7 @@ impl<U: UnitOfWork> UseCase for CreateUserUseCase<U> {
             }
         }
 
-        let event = UserCreated::new(&ctx, principal.id.as_str(), &email);
+        let event = UserCreated::new(&ctx, &principal.id, &email);
 
         // Atomic commit — principal + event + audit log, in one transaction.
         self.unit_of_work
@@ -253,7 +254,7 @@ mod tests {
             email: "user@example.com".to_string(),
             name: Some("Test User".to_string()),
             scope: UserScope::Client,
-            client_id: Some("client-123".to_string()),
+            client_id: Some(ClientId::from_wire("client-123")),
             granted_client_ids: vec![],
             password: None,
             enforce_password_complexity: None,

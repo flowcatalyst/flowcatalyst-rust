@@ -86,11 +86,12 @@ mod tests {
     use super::*;
     use crate::shared::authorization_service::Credential;
     use crate::UserScope;
+    use fc_platform_core::shared::id::PrincipalId;
     use std::collections::HashSet;
 
     fn context(kind: PrincipalType, roles: &[&str], permissions: &[&str]) -> AuthContext {
         AuthContext {
-            principal_id: "prn_1".to_string(),
+            principal_id: PrincipalId::parse("prn_1").unwrap(),
             principal_type: kind,
             scope: UserScope::Anchor,
             email: None,

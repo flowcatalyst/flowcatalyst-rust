@@ -3,6 +3,7 @@
 //! source, and the ids to delete, for one application and client scope.
 
 use super::entity::Connection;
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::usecase::unit_of_work::HasId;
 
 /// Where a connection came from (Go `connection.Source`).
@@ -13,7 +14,7 @@ pub const SOURCE_UI: &str = "UI";
 #[derive(Debug, Clone)]
 pub struct ConnectionSyncPlan {
     pub application_code: String,
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
     /// Connections to upsert, with their stored source.
     pub saves: Vec<(Connection, String)>,
     /// Connection ids to delete.

@@ -14,6 +14,7 @@
 //! [`PrincipalRepository`](crate::principal::repository::PrincipalRepository) by the unit of work.
 //! `/oauth/token` verifies it (`auth::oauth_api`).
 
+use fc_platform_core::shared::id::PrincipalId;
 pub mod api;
 pub mod events;
 pub mod operations;
@@ -25,6 +26,6 @@ pub const DEVELOPER_ROLE: &str = "platform:developer";
 /// keyed hash, or none (revoked).
 #[derive(Debug, Clone)]
 pub struct DeveloperCredential {
-    pub principal_id: String,
+    pub principal_id: PrincipalId,
     pub secret_ref: Option<String>,
 }

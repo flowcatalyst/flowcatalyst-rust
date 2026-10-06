@@ -1,6 +1,7 @@
 //! Create ClientAuthConfig Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ClientId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -17,11 +18,11 @@ pub struct CreateAuthConfigCommand {
     pub email_domain: String,
     pub config_type: AuthConfigType,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub primary_client_id: Option<String>,
+    pub primary_client_id: Option<ClientId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub additional_client_ids: Option<Vec<String>>,
+    pub additional_client_ids: Option<Vec<ClientId>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub granted_client_ids: Option<Vec<String>>,
+    pub granted_client_ids: Option<Vec<ClientId>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_provider: Option<AuthProvider>,
     #[serde(skip_serializing_if = "Option::is_none")]

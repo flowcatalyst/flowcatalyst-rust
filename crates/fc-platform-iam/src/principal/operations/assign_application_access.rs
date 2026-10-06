@@ -5,6 +5,7 @@
 
 use async_trait::async_trait;
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::PrincipalId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -22,7 +23,7 @@ use std::collections::HashSet;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssignApplicationAccessCommand {
-    pub user_id: String,
+    pub user_id: PrincipalId,
     pub application_ids: Vec<ApplicationId>,
     /// Sets the all-applications flag; `None` leaves it unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -57,7 +58,7 @@ impl<U: UnitOfWork> UseCase for AssignApplicationAccessUseCase<U> {
     type Event = ApplicationAccessAssigned;
 
     async fn validate(&self, command: &AssignApplicationAccessCommand) -> Result<(), UseCaseError> {
-        if command.user_id.trim().is_empty() {
+        if command.user_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "USER_ID_REQUIRED",
                 "User ID is required",
@@ -158,7 +159,7 @@ impl<U: UnitOfWork> UseCase for AssignApplicationAccessUseCase<U> {
 
         let event = ApplicationAccessAssigned::new(
             &ctx,
-            principal.id.as_str(),
+            &principal.id,
             command.application_ids.clone(),
             added,
             removed,
@@ -177,7 +178,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = AssignApplicationAccessCommand {
-            user_id: "user-123".to_string(),
+            user_id: PrincipalId::from_wire("user-123"),
             application_ids: vec![
                 ApplicationId::parse("app_1").unwrap(),
                 ApplicationId::parse("app_2").unwrap(),

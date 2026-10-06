@@ -211,7 +211,7 @@ pub async fn complete(
         parked.oauth_client_id.as_deref(),
         parked.oauth_redirect_uri.as_deref(),
         parked.oauth_state.as_deref(),
-        parked.portal_client_id.as_deref(),
+        parked.portal_client_id.as_ref(),
     ) else {
         return coded(
             StatusCode::BAD_REQUEST,
@@ -259,7 +259,7 @@ pub async fn complete(
                 email: email.to_string(),
                 name: (!name.is_empty()).then(|| name.to_string()),
                 source: "JIT".to_string(),
-                portal_app_id: app.as_ref().map(|a| a.id.clone()),
+                portal_app_id: app.as_ref().map(|a| a.id.to_string()),
             };
             let use_case = EnsurePortalIdentityUseCase::new(
                 portal.identities.clone(),
@@ -313,7 +313,7 @@ pub async fn complete(
     flow.nonce = parked.oauth_nonce.clone();
     flow.code_challenge = parked.oauth_code_challenge.clone();
     flow.code_challenge_method = parked.oauth_code_challenge_method.clone();
-    let redirect_url = match issue_code(portal, &flow, &ident.id).await {
+    let redirect_url = match issue_code(portal, &flow, ident.id.as_str()).await {
         Ok(u) => u,
         Err(_) => {
             return coded(

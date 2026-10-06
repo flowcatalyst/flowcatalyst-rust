@@ -4,7 +4,9 @@
 //! Applications are global platform entities (not client-scoped).
 
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::OAuthClientId;
+use fc_platform_core::shared::id::PrincipalId;
 use std::sync::Arc;
 
 use axum::{
@@ -617,9 +619,7 @@ pub async fn delete_application_cascade(
             for sa in sas {
                 delete_sa_uc
                     .run(
-                        DeleteServiceAccountCommand {
-                            id: sa.id.to_string(),
-                        },
+                        DeleteServiceAccountCommand { id: sa.id.clone() },
                         ctx.clone(),
                     )
                     .await
@@ -752,7 +752,7 @@ pub async fn deactivate_application_cascade(
     let mut oauth_clients_to_deactivate: Vec<String> = Vec::new();
     for sa in &sas {
         let clients = oauth_client_repo
-            .find_by_service_account_principal_id(sa.id.as_str())
+            .find_by_service_account_principal_id(&sa.id)
             .await?;
         oauth_clients_to_deactivate.extend(
             clients
@@ -785,9 +785,7 @@ pub async fn deactivate_application_cascade(
                 }
                 deactivate_sa_uc
                     .run(
-                        DeactivateServiceAccountCommand {
-                            id: sa.id.to_string(),
-                        },
+                        DeactivateServiceAccountCommand { id: sa.id.clone() },
                         ctx.clone(),
                     )
                     .await
@@ -1043,7 +1041,7 @@ pub async fn provision_application_service_account(
                 application_ids: vec![app_id.clone()],
                 allowed_origins: Vec::new(),
                 service_account_principal_id: Some(sa_id.clone()),
-                created_by: Some(auth.principal_id.clone()),
+                created_by: Some(auth.principal_id.to_string()),
                 portal_client_id: None,
                 portal_app_id: None,
                 api_access: false,
@@ -1061,7 +1059,7 @@ pub async fn provision_application_service_account(
     // Fetch the SA for its display name. The OAuth client id + client_id
     // are the ones we minted above, so we don't need to re-read the row.
     let service_account = service_account_repo
-        .find_by_id(&sa_id)
+        .find_by_id(&PrincipalId::from_wire(sa_id.as_str()))
         .await?
         .ok_or_else(|| PlatformError::not_found("ServiceAccount", &sa_id))?;
 
@@ -1214,7 +1212,7 @@ pub async fn provision_application_login_client<U: UnitOfWork>(
         application_ids: vec![app.id.clone()],
         allowed_origins: req.allowed_origins.clone(),
         service_account_principal_id: None,
-        created_by: Some(auth.principal_id.clone()),
+        created_by: Some(auth.principal_id.to_string()),
         portal_client_id: None,
         portal_app_id: None,
         api_access: false,
@@ -1305,7 +1303,7 @@ pub async fn get_application_service_account<U: UnitOfWork>(
 
     let service_account = state
         .service_account_repo
-        .find_by_id(&sa_id)
+        .find_by_id(&PrincipalId::from_wire(sa_id.as_str()))
         .await?
         .ok_or_else(|| PlatformError::not_found("ServiceAccount", &sa_id))?;
 
@@ -1465,6 +1463,7 @@ pub async fn update_client_config<U: UnitOfWork>(
     Path((id, client_id)): Path<(String, String)>,
     Json(req): Json<ClientConfigRequest>,
 ) -> Result<Json<ClientConfigResponse>, PlatformError> {
+    let client_id = ClientId::from_wire(client_id);
     let id = ApplicationId::from_wire(id);
     checks::require_anchor(&auth.0)?;
     checks::require_permission(&auth.0, permissions::admin::APPLICATION_UPDATE)?;
@@ -1505,7 +1504,7 @@ pub async fn update_client_config<U: UnitOfWork>(
     Ok(Json(ClientConfigResponse {
         id: config.id.into_string(),
         application_id: config.application_id.into_string(),
-        client_id: config.client_id,
+        client_id: config.client_id.into_string(),
         client_name: client.name,
         client_identifier: client.identifier,
         enabled: config.enabled,
@@ -1540,6 +1539,7 @@ pub async fn enable_for_client<U: UnitOfWork>(
     auth: Authenticated,
     Path((id, client_id)): Path<(String, String)>,
 ) -> Result<StatusCode, PlatformError> {
+    let client_id = ClientId::from_wire(client_id);
     let id = ApplicationId::from_wire(id);
     checks::require_anchor(&auth.0)?;
     checks::require_permission(&auth.0, permissions::admin::APPLICATION_ENABLE_CLIENT)?;
@@ -1581,6 +1581,7 @@ pub async fn disable_for_client<U: UnitOfWork>(
     auth: Authenticated,
     Path((id, client_id)): Path<(String, String)>,
 ) -> Result<StatusCode, PlatformError> {
+    let client_id = ClientId::from_wire(client_id);
     let id = ApplicationId::from_wire(id);
     checks::require_anchor(&auth.0)?;
     checks::require_permission(&auth.0, permissions::admin::APPLICATION_DISABLE_CLIENT)?;
@@ -1699,7 +1700,7 @@ pub async fn attach_application_service_account(
                 application_id: id,
                 service_account_id: sa_id,
                 service_account_code: req.service_account_code,
-                service_principal_id: principal_id,
+                service_principal_id: PrincipalId::from_wire(principal_id),
             },
             ExecutionContext::from_auth(&auth.0),
         )
@@ -1729,6 +1730,7 @@ pub async fn get_application_client_config(
     auth: Authenticated,
     Path((id, client_id)): Path<(String, String)>,
 ) -> Result<Json<GoClientConfigResponse>, PlatformError> {
+    let client_id = ClientId::from_wire(client_id);
     let id = ApplicationId::from_wire(id);
     checks::require_permission(&auth.0, permissions::admin::APPLICATION_READ)?;
     let c = state
@@ -1746,7 +1748,7 @@ impl From<ApplicationClientConfig> for GoClientConfigResponse {
         Self {
             id: c.id.into_string(),
             application_id: c.application_id.into_string(),
-            client_id: c.client_id,
+            client_id: c.client_id.into_string(),
             enabled: c.enabled,
             base_url_override: c.base_url_override,
             config_json: c.config_json,
@@ -2007,8 +2009,10 @@ mod tests {
 
     #[test]
     fn go_client_config_answers_the_overrides_only_when_set() {
-        let mut config =
-            ApplicationClientConfig::new(ApplicationId::parse("app_1").unwrap(), "clt_1");
+        let mut config = ApplicationClientConfig::new(
+            ApplicationId::parse("app_1").unwrap(),
+            ClientId::parse("clt_1").unwrap(),
+        );
         let bare = serde_json::to_value(GoClientConfigResponse::from(config.clone())).unwrap();
         assert!(bare.get("baseUrlOverride").is_none());
         assert!(bare.get("configJson").is_none());

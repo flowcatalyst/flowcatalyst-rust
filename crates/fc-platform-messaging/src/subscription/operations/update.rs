@@ -17,7 +17,6 @@ use crate::{
 use fc_platform_core::directory::ServiceAccountDirectory;
 use fc_platform_core::shared::caller_reach;
 use fc_platform_core::shared::caller_reach::{non_blank, non_blank_id};
-use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::usecase::validate_delivery_url;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
@@ -159,7 +158,7 @@ impl<U: UnitOfWork> UseCase for UpdateSubscriptionUseCase<U> {
             .find_by_id(&command.subscription_id)
             .await?
         {
-            caller_reach::check_scope_access(ctx.caller(), target.client_id.as_id_str())?;
+            caller_reach::check_scope_access(ctx.caller(), target.client_id.as_ref())?;
         }
         Ok(())
     }

@@ -4,7 +4,6 @@
 
 use crate::support;
 use fc_platform_core::shared::id::ClientId;
-use fc_platform_core::shared::id::OptionIdExt;
 
 use axum::http::StatusCode;
 use serde_json::{json, Value};
@@ -1082,7 +1081,10 @@ async fn principals_are_bulk_imported_versioned_and_reassociated() {
         .await
         .unwrap()
         .expect("ann");
-    assert_eq!(ann.client_id.as_id_str(), Some(acme.as_str()));
+    assert_eq!(
+        ann.client_id.as_ref().map(ClientId::as_str),
+        Some(acme.as_str())
+    );
     assert!(ann.roles.iter().any(|r| r.role == "parity:importer"));
 
     // A second import skips the existing user.
@@ -1162,11 +1164,11 @@ async fn principals_are_bulk_imported_versioned_and_reassociated() {
     let ann = app
         .repos
         .principal_repo
-        .find_by_id(ann.id.as_str())
+        .find_by_id(&ann.id)
         .await
         .unwrap()
         .unwrap();
-    let mut grants = ann.assigned_clients.clone();
+    let mut grants = ClientId::into_strings(ann.assigned_clients.clone());
     grants.sort();
     let mut want = vec![acme.clone(), other.clone()];
     want.sort();
@@ -1297,7 +1299,8 @@ async fn application_service_accounts_attach_and_client_configs_read() {
 
     // Client configs.
     let client = insert_client(&app, "cfgclient").await;
-    let config = ApplicationClientConfig::new(application.id.clone(), &client);
+    let config =
+        ApplicationClientConfig::new(application.id.clone(), ClientId::from_wire(client.as_str()));
     app.repos
         .application_client_config_repo
         .insert(&config)

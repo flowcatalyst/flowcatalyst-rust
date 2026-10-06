@@ -4,7 +4,8 @@
 //! but doesn't decide the tier. Requires Docker.
 
 use crate::support;
-use fc_platform_core::shared::id::OptionIdExt;
+use fc_platform::shared::id::ClientId;
+use fc_platform::shared::id::PrincipalId;
 
 use axum::http::StatusCode;
 use serde_json::{json, Value};
@@ -46,7 +47,7 @@ async fn create_sa(app: &TestApp, body: Value) -> (StatusCode, Value) {
 async fn principal(app: &TestApp, id: &str) -> Principal {
     app.repos
         .principal_repo
-        .find_by_id(id)
+        .find_by_id(&PrincipalId::from_wire(id))
         .await
         .expect("find principal")
         .expect("service account principal")
@@ -98,7 +99,10 @@ async fn client_scope_service_account_is_not_anchor() {
     let id = body["principalId"].as_str().unwrap();
     let p = principal(&app, id).await;
     assert_eq!(p.scope, UserScope::Client);
-    assert_eq!(p.client_id.as_id_str(), Some(clt.as_str()));
+    assert_eq!(
+        p.client_id.as_ref().map(ClientId::as_str),
+        Some(clt.as_str())
+    );
 
     // The token carries CLIENT and only its client.
     let token = token(&app, &p);
@@ -241,7 +245,7 @@ async fn absent_scope_follows_the_client_links() {
             .as_str(),
     )
     .await;
-    let mut granted = p.assigned_clients.clone();
+    let mut granted = ClientId::into_strings(p.assigned_clients.clone());
     granted.sort();
     let mut expected = vec![a, b];
     expected.sort();
@@ -291,7 +295,7 @@ async fn update_moves_the_principal_reach() {
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
     let p = principal(&app, &id).await;
     assert_eq!(p.scope, UserScope::Client);
-    assert_eq!(p.client_id.as_id_str(), Some(b.as_str()));
+    assert_eq!(p.client_id.as_ref().map(ClientId::as_str), Some(b.as_str()));
     assert!(p.assigned_clients.is_empty());
 
     // A scope alone is stored as sent and leaves the principal as it is, as
@@ -303,7 +307,7 @@ async fn update_moves_the_principal_reach() {
     assert_eq!(read["clientIds"], json!([b]));
     let p = principal(&app, &id).await;
     assert_eq!(p.scope, UserScope::Client);
-    assert_eq!(p.client_id.as_id_str(), Some(b.as_str()));
+    assert_eq!(p.client_id.as_ref().map(ClientId::as_str), Some(b.as_str()));
     let resp = app.put(&path, &admin, json!({ "scope": "anchor" })).await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     assert_eq!(principal(&app, &id).await.scope, UserScope::Client);

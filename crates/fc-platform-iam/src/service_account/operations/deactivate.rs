@@ -1,6 +1,7 @@
 //! Deactivate Service Account Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::PrincipalId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -18,7 +19,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct DeactivateServiceAccountCommand {
     /// Service account ID
-    pub id: String,
+    pub id: PrincipalId,
 }
 
 impl AuditMasked for DeactivateServiceAccountCommand {}

@@ -13,6 +13,7 @@ use axum::{
     extract::{Path, State},
     Json,
 };
+use fc_platform_core::shared::id::ClientId;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -201,7 +202,7 @@ async fn sign(
     let client_code = match job.client_id.as_deref() {
         Some(c) => state
             .client_repo
-            .find_by_id(c)
+            .find_by_id(&ClientId::from_wire(c))
             .await
             .ok()
             .flatten()

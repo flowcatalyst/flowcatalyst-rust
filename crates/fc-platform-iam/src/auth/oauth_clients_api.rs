@@ -8,7 +8,10 @@ use axum::{
     Json,
 };
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::OAuthClientId;
+use fc_platform_core::shared::id::PortalAppId;
+use fc_platform_core::shared::id::PrincipalId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
@@ -229,9 +232,11 @@ impl From<OAuthClient> for OAuthClientResponse {
             application_ids: ApplicationId::into_strings(c.application_ids),
             applications: Vec::new(),
             allowed_origins: c.allowed_origins,
-            service_account_principal_id: c.service_account_principal_id,
-            portal_client_id: c.portal_client_id,
-            portal_app_id: c.portal_app_id,
+            service_account_principal_id: c
+                .service_account_principal_id
+                .map(PrincipalId::into_string),
+            portal_client_id: c.portal_client_id.map(ClientId::into_string),
+            portal_app_id: c.portal_app_id.map(PortalAppId::into_string),
             active: c.active,
             api_access: c.api_access,
             created_at: c.created_at.to_rfc3339(),
@@ -441,7 +446,7 @@ pub async fn create_oauth_client(
         Some(principal_id) => {
             let principal = state
                 .principal_repo
-                .find_by_id(&principal_id)
+                .find_by_id(&PrincipalId::from_wire(principal_id.as_str()))
                 .await?
                 .ok_or_else(|| PlatformError::not_found_code("Principal", &principal_id))?;
             if principal.principal_type != PrincipalType::Service {
@@ -470,8 +475,8 @@ pub async fn create_oauth_client(
         pkce_required: req.pkce_required.unwrap_or(true),
         application_ids: ApplicationId::from_wire_all(req.application_ids),
         allowed_origins: req.allowed_origins,
-        service_account_principal_id,
-        created_by: Some(auth.0.principal_id.clone()),
+        service_account_principal_id: service_account_principal_id.map(PrincipalId::from_wire),
+        created_by: Some(auth.0.principal_id.to_string()),
         portal_client_id,
         portal_app_id: req.portal_app_id,
         api_access: req.api_access.unwrap_or(false),

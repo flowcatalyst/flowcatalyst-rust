@@ -8,6 +8,8 @@
 
 use async_trait::async_trait;
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::OptionIdExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -34,7 +36,7 @@ pub struct ConnectionsSynced {
     pub metadata: EventMetadata,
     pub application_code: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
     pub created: u32,
     pub updated: u32,
     pub deleted: u32,
@@ -65,7 +67,7 @@ pub struct SyncConnectionsCommand {
     pub application_id: ApplicationId,
     pub application_code: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
     pub connections: Vec<SyncConnectionInput>,
     pub remove_unlisted: bool,
 }
@@ -129,7 +131,7 @@ impl<U: UnitOfWork> SyncConnectionsUseCase<U> {
             })?;
         let existing = self
             .connection_repo
-            .find_by_application_and_client(&command.application_code, command.client_id.as_deref())
+            .find_by_application_and_client(&command.application_code, command.client_id.as_ref())
             .await?;
         let syncable = |source: &str| source == SOURCE_API || source == SOURCE_CODE;
 
@@ -154,7 +156,7 @@ impl<U: UnitOfWork> SyncConnectionsUseCase<U> {
                 }
                 None => {
                     let mut c = Connection::new(&code, input.name.trim(), &service_account);
-                    c.client_id = parse_client_id_opt(command.client_id.as_deref())?;
+                    c.client_id = parse_client_id_opt(command.client_id.as_id_str())?;
                     c.description = input.description.clone();
                     c.external_id = input.external_id.clone();
                     saves.push((c, SOURCE_API.to_string()));
@@ -287,7 +289,7 @@ impl<U: UnitOfWork> UseCase for SyncConnectionsUseCase<U> {
                 &command.application_code,
             )));
         }
-        if let Some(client_id) = command.client_id.as_deref() {
+        if let Some(client_id) = command.client_id.as_ref() {
             if !ctx.caller().can_access_client(client_id) {
                 return Err(UseCaseError::verbatim(PlatformError::forbidden(format!(
                     "No access to client: {client_id}"

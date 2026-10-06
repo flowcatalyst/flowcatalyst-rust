@@ -5,6 +5,8 @@
 //! when the handler runs it inside `PgUnitOfWork::run`.
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::OptionIdExt;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -48,7 +50,7 @@ pub struct CreateIdentityProviderCommand {
     pub mapping_scope: Option<String>,
     /// Linked on mappings that are new (CLIENT) or have no client yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub primary_client_id: Option<String>,
+    pub primary_client_id: Option<ClientId>,
     /// Reconcile users' IDP_SYNC roles from the token at login.
     #[serde(default)]
     pub sync_roles_from_idp: bool,
@@ -120,7 +122,7 @@ impl<U: UnitOfWork> UseCase for CreateIdentityProviderUseCase<U> {
         validate_domains(&command.allowed_email_domains)?;
         validate_mapping_scope(
             command.mapping_scope.as_deref(),
-            command.primary_client_id.as_deref(),
+            command.primary_client_id.as_id_str(),
         )?;
         super::require_sealed_secret(command.oidc_client_secret_ref.as_deref())
     }
@@ -161,7 +163,7 @@ impl<U: UnitOfWork> UseCase for CreateIdentityProviderUseCase<U> {
         }
         let (scope, client) = validate_mapping_scope(
             command.mapping_scope.as_deref(),
-            command.primary_client_id.as_deref(),
+            command.primary_client_id.as_id_str(),
         )?;
         let domains = normalize_domains(&command.allowed_email_domains);
         require_scope_for_new_domains(&self.domains, &domains, scope).await?;
@@ -189,7 +191,7 @@ impl<U: UnitOfWork> UseCase for CreateIdentityProviderUseCase<U> {
                 &idp,
                 domain,
                 scope,
-                client.as_deref(),
+                client.as_ref(),
                 &ctx,
                 &command,
             )

@@ -3,6 +3,7 @@
 //! Services for creating and updating read model projections.
 //! Projections denormalize data for efficient querying.
 
+use fc_platform_core::shared::id::ClientId;
 use std::sync::Arc;
 use tracing::{debug, error, warn};
 
@@ -36,7 +37,11 @@ impl EventProjectionWriter {
     pub async fn project(&self, event: &Event) -> Result<()> {
         // Look up client name if client_id is set
         let client_name = if let Some(ref client_id) = event.client_id {
-            match self.client_repo.find_by_id(client_id).await {
+            match self
+                .client_repo
+                .find_by_id(&ClientId::from_wire(client_id.as_str()))
+                .await
+            {
                 Ok(Some(client)) => Some(client.name),
                 Ok(None) => {
                     warn!("Client {} not found for event {}", client_id, event.id);

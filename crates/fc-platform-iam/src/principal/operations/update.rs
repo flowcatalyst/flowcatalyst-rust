@@ -1,6 +1,8 @@
 //! Update User Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::PrincipalId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -25,7 +27,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct UpdateUserCommand {
     /// Principal ID to update
-    pub principal_id: String,
+    pub principal_id: PrincipalId,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -47,7 +49,7 @@ pub struct UpdateUserCommand {
     /// Home client ID. Required when scope becomes `CLIENT`; ignored for
     /// other scopes (the principal's `client_id` is nulled out).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
 
     /// Asserted against the stored email, never applied: a different value
     /// is refused with `EMAIL_IMMUTABLE` (Go `UpdateCommand.Email`).
@@ -78,7 +80,7 @@ impl<U: UnitOfWork> UseCase for UpdateUserUseCase<U> {
     type Event = UserUpdated;
 
     async fn validate(&self, command: &UpdateUserCommand) -> Result<(), UseCaseError> {
-        if command.principal_id.trim().is_empty() {
+        if command.principal_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "PRINCIPAL_ID_REQUIRED",
                 "Principal ID is required",
@@ -182,13 +184,13 @@ impl<U: UnitOfWork> UseCase for UpdateUserUseCase<U> {
             match principal.scope {
                 UserScope::Client => {
                     let cid = match &command.client_id {
-                        Some(raw) if raw.trim().is_empty() => {
+                        Some(raw) if raw.as_str().trim().is_empty() => {
                             return Err(UseCaseError::validation(
                                 "CLIENT_ID_REQUIRED",
                                 "client_id cannot be empty when scope is CLIENT",
                             ));
                         }
-                        Some(raw) => parse_client_id(raw)?,
+                        Some(raw) => parse_client_id(raw.as_str())?,
                         None => principal.client_id.clone().ok_or_else(|| {
                             UseCaseError::validation(
                                 "CLIENT_ID_REQUIRED",
@@ -218,7 +220,7 @@ impl<U: UnitOfWork> UseCase for UpdateUserUseCase<U> {
 
         principal.updated_at = chrono::Utc::now();
 
-        let event = UserUpdated::new(&ctx, principal.id.as_str(), &principal.name);
+        let event = UserUpdated::new(&ctx, &principal.id, &principal.name);
 
         self.unit_of_work
             .commit(&principal, &*self.principal_repo, event, &command)
@@ -233,7 +235,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = UpdateUserCommand {
-            principal_id: "user-123".to_string(),
+            principal_id: PrincipalId::from_wire("user-123"),
             name: Some("New Name".to_string()),
             first_name: None,
             last_name: None,

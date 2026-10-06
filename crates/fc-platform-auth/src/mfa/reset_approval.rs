@@ -7,6 +7,8 @@
 //! Go does.
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::PrincipalId;
 use serde::Serialize;
 use sqlx::PgPool;
 
@@ -64,8 +66,8 @@ impl ResetApprovalState {
 #[derive(Debug, Clone)]
 pub struct ResetApprovalRequest {
     id: String,
-    principal_id: String,
-    client_id: Option<String>,
+    principal_id: PrincipalId,
+    client_id: Option<ClientId>,
     reset_2fa: bool,
     note: Option<String>,
     state: ResetApprovalState,
@@ -77,11 +79,11 @@ impl ResetApprovalRequest {
     pub fn id(&self) -> &str {
         &self.id
     }
-    pub fn principal_id(&self) -> &str {
+    pub fn principal_id(&self) -> &PrincipalId {
         &self.principal_id
     }
-    pub fn client_id(&self) -> Option<&str> {
-        self.client_id.as_deref()
+    pub fn client_id(&self) -> Option<&ClientId> {
+        self.client_id.as_ref()
     }
     pub fn reset_2fa(&self) -> bool {
         self.reset_2fa
@@ -103,8 +105,8 @@ impl ResetApprovalRequest {
 #[derive(sqlx::FromRow)]
 struct ResetApprovalRow {
     id: String,
-    principal_id: String,
-    client_id: Option<String>,
+    principal_id: PrincipalId,
+    client_id: Option<ClientId>,
     status: String,
     reset_2fa: bool,
     note: Option<String>,
@@ -248,7 +250,7 @@ mod tests {
     ) -> ResetApprovalRow {
         ResetApprovalRow {
             id: "rar_1".to_string(),
-            principal_id: "prn_1".to_string(),
+            principal_id: PrincipalId::parse("prn_1").unwrap(),
             client_id: None,
             status: status.to_string(),
             reset_2fa: false,

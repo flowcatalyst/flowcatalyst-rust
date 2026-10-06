@@ -1,5 +1,6 @@
 //! Email Domain Mappings Admin API
 
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::EmailDomainMappingId;
 use fc_platform_core::shared::id::IdentityProviderId;
 use std::sync::Arc;
@@ -135,9 +136,9 @@ impl EmailDomainMappingResponse {
             email_domain: m.email_domain,
             identity_provider_id: m.identity_provider_id.into_string(),
             scope_type: m.scope_type.as_str().to_string(),
-            primary_client_id: m.primary_client_id,
-            additional_client_ids: m.additional_client_ids,
-            granted_client_ids: m.granted_client_ids,
+            primary_client_id: m.primary_client_id.map(ClientId::into_string),
+            additional_client_ids: ClientId::into_strings(m.additional_client_ids),
+            granted_client_ids: ClientId::into_strings(m.granted_client_ids),
             required_oidc_tenant_id: m.required_oidc_tenant_id,
             identity_provider_name,
             require_2fa: m.require_2fa,
@@ -204,9 +205,11 @@ pub async fn create_email_domain_mapping(
         email_domain: req.email_domain,
         identity_provider_id: IdentityProviderId::from_wire(req.identity_provider_id),
         scope_type: parse_scope_type(&req.scope_type)?,
-        primary_client_id: req.primary_client_id,
-        additional_client_ids: req.additional_client_ids.unwrap_or_default(),
-        granted_client_ids: req.granted_client_ids.unwrap_or_default(),
+        primary_client_id: req.primary_client_id.map(ClientId::from_wire),
+        additional_client_ids: ClientId::from_wire_all(
+            req.additional_client_ids.unwrap_or_default(),
+        ),
+        granted_client_ids: ClientId::from_wire_all(req.granted_client_ids.unwrap_or_default()),
         required_oidc_tenant_id: req.required_oidc_tenant_id,
         // Role sync lives on the identity provider (Go's 040).
         allowed_role_ids: Vec::new(),
@@ -373,10 +376,13 @@ pub async fn update_email_domain_mapping(
         scope_type: enum_str::parse_opt(req.scope_type.as_deref())?,
         // An explicit null clears: passed as blank, which the use case reads
         // as "no link".
-        primary_client_id: req.primary_client_id.map(Option::unwrap_or_default),
+        primary_client_id: req
+            .primary_client_id
+            .map(Option::unwrap_or_default)
+            .map(ClientId::from_wire),
         sync_roles_from_idp: None,
-        additional_client_ids: req.additional_client_ids,
-        granted_client_ids: req.granted_client_ids,
+        additional_client_ids: req.additional_client_ids.map(ClientId::from_wire_all),
+        granted_client_ids: req.granted_client_ids.map(ClientId::from_wire_all),
         required_oidc_tenant_id: req.required_oidc_tenant_id.map(Option::unwrap_or_default),
         allowed_role_ids: None,
         two_factor: TwoFactorPolicyUpdate {

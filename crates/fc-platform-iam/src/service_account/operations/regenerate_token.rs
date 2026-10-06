@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
+use fc_platform_core::shared::id::PrincipalId;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -36,7 +37,7 @@ fn generate_auth_token() -> String {
 #[serde(rename_all = "camelCase")]
 pub struct RegenerateAuthTokenCommand {
     /// Service account ID
-    pub service_account_id: String,
+    pub service_account_id: PrincipalId,
 }
 
 impl AuditMasked for RegenerateAuthTokenCommand {}
@@ -156,7 +157,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = RegenerateAuthTokenCommand {
-            service_account_id: "sa-123".to_string(),
+            service_account_id: PrincipalId::from_wire("sa-123"),
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

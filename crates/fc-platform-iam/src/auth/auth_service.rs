@@ -10,7 +10,7 @@ use chrono::{Duration, Utc};
 use dashmap::DashMap;
 use fc_platform_core::principal_kind::{PrincipalType, UserScope};
 use fc_platform_core::shared::error::{PlatformError, Result};
-use fc_platform_core::shared::id::OptionIdExt;
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::tsid;
 use jsonwebtoken::errors::ErrorKind;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
@@ -401,18 +401,14 @@ impl AccessTokenClaims {
 /// `["*"]`; partner → the assigned clients; client → the home client; each
 /// as `id:identifier` when the identifier is known, else the bare id.
 pub fn clients_claim(principal: &Principal) -> Vec<String> {
-    let pair = |id: &str| match principal.client_identifier_map.get(id) {
+    let pair = |id: &ClientId| match principal.client_identifier_map.get(id) {
         Some(identifier) => format!("{id}:{identifier}"),
         None => id.to_string(),
     };
     match principal.scope {
         UserScope::Anchor => vec!["*".to_string()],
-        UserScope::Partner => principal.assigned_clients.iter().map(|c| pair(c)).collect(),
-        UserScope::Client => principal
-            .client_id
-            .iter()
-            .map(|c| pair(c.as_str()))
-            .collect(),
+        UserScope::Partner => principal.assigned_clients.iter().map(pair).collect(),
+        UserScope::Client => principal.client_id.iter().map(pair).collect(),
     }
 }
 
@@ -1006,7 +1002,7 @@ impl AuthService {
         let now = Utc::now();
         let exp = now + Duration::seconds(self.config.access_token_expiry_secs);
         let claims = AccessTokenClaims {
-            sub: identity.id.clone(),
+            sub: identity.id.to_string(),
             iss: self.config.issuer.clone(),
             aud: self.config.audience.clone(),
             exp: exp.timestamp(),
@@ -1159,7 +1155,7 @@ impl AuthService {
         let now = Utc::now();
         let email = Some(identity.email.clone()).filter(|e| !e.is_empty());
         let claims = IdTokenClaims {
-            sub: identity.id.clone(),
+            sub: identity.id.to_string(),
             iss: self.config.issuer.clone(),
             aud: client_id.to_string(),
             exp: (now + Duration::seconds(ID_TOKEN_EXPIRY_SECS)).timestamp(),
@@ -1292,7 +1288,7 @@ impl AuthService {
             azp: Some(client_id.to_string()),
             principal_type: principal.principal_type,
             tier: principal.scope,
-            client_id: principal.client_id.as_id_str().map(String::from),
+            client_id: principal.client_id.as_ref().map(String::from),
             roles,
             applications: applications_claim(principal),
             all_applications: principal.all_applications,
@@ -1421,7 +1417,7 @@ mod tests {
         p.id = PrincipalId::parse("prn_ADA").unwrap();
         p.name = "Ada Lovelace".to_string();
         p.client_identifier_map
-            .insert("clt_A".to_string(), "acme".to_string());
+            .insert(ClientId::parse("clt_A").unwrap(), "acme".to_string());
         p.assign_role("hr:manager");
         p.assign_role("platform:viewer");
         p.all_applications = false;
@@ -1530,7 +1526,12 @@ mod tests {
     #[test]
     fn a_portal_access_token_has_an_empty_tier_and_grants_nothing() {
         let s = service();
-        let portal = PortalIdentity::new("clt_A", "pat@portal.test", "Pat", IdentitySource::Invite);
+        let portal = PortalIdentity::new(
+            &ClientId::parse("clt_A").unwrap(),
+            "pat@portal.test",
+            "Pat",
+            IdentitySource::Invite,
+        );
         let token = s
             .generate_portal_access_token(&portal, Some("oc_portal"))
             .unwrap();
@@ -1577,10 +1578,13 @@ mod tests {
 
         let mut partner = Principal::new_user("p@x.test", UserScope::Partner);
         partner.all_applications = false;
-        partner.assigned_clients = vec!["clt_B".to_string(), "clt_C".to_string()];
+        partner.assigned_clients = vec![
+            ClientId::parse("clt_B").unwrap(),
+            ClientId::parse("clt_C").unwrap(),
+        ];
         partner
             .client_identifier_map
-            .insert("clt_B".to_string(), "beta".to_string());
+            .insert(ClientId::parse("clt_B").unwrap(), "beta".to_string());
         let v = wire(&s.access_token_claims(&partner, 3600, &[], true, None, now()));
         assert_eq!(v["tier"], "PARTNER");
         assert_eq!(v["clients"], json!(["clt_B:beta", "clt_C"]));

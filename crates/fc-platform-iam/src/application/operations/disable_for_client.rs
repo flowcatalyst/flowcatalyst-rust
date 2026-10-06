@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -18,7 +19,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct DisableApplicationForClientCommand {
     pub application_id: ApplicationId,
-    pub client_id: String,
+    pub client_id: ClientId,
 }
 
 impl AuditMasked for DisableApplicationForClientCommand {}
@@ -52,7 +53,7 @@ impl<U: UnitOfWork> UseCase for DisableApplicationForClientUseCase<U> {
                 "Application ID is required",
             ));
         }
-        if command.client_id.trim().is_empty() {
+        if command.client_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "CLIENT_ID_REQUIRED",
                 "Client ID is required",
@@ -113,7 +114,7 @@ mod tests {
     fn test_command_serialization() {
         let cmd = DisableApplicationForClientCommand {
             application_id: ApplicationId::parse("app_123").unwrap(),
-            client_id: "client-456".to_string(),
+            client_id: ClientId::from_wire("client-456"),
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("applicationId"));

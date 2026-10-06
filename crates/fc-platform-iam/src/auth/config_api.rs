@@ -10,6 +10,7 @@ use axum::{
 };
 use fc_platform_core::shared::id::AnchorDomainId;
 use fc_platform_core::shared::id::ClientAuthConfigId;
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::IdpRoleMappingId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -270,9 +271,9 @@ impl From<ClientAuthConfig> for ClientAuthConfigResponse {
             id: c.id.into_string(),
             email_domain: c.email_domain,
             config_type: c.config_type.as_str().to_string(),
-            primary_client_id: c.primary_client_id,
-            additional_client_ids: c.additional_client_ids,
-            granted_client_ids: c.granted_client_ids,
+            primary_client_id: c.primary_client_id.map(ClientId::into_string),
+            additional_client_ids: ClientId::into_strings(c.additional_client_ids),
+            granted_client_ids: ClientId::into_strings(c.granted_client_ids),
             auth_provider: c.auth_provider.as_str().to_string(),
             oidc_issuer_url: c.oidc_issuer_url,
             oidc_client_id: c.oidc_client_id,
@@ -672,9 +673,9 @@ pub async fn create_client_auth_config(
     let cmd = CreateAuthConfigCommand {
         email_domain: req.email_domain.trim().to_lowercase(),
         config_type,
-        primary_client_id: req.primary_client_id,
-        additional_client_ids: req.additional_client_ids,
-        granted_client_ids: req.granted_client_ids,
+        primary_client_id: req.primary_client_id.map(ClientId::from_wire),
+        additional_client_ids: req.additional_client_ids.map(ClientId::from_wire_all),
+        granted_client_ids: req.granted_client_ids.map(ClientId::from_wire_all),
         auth_provider: Some(auth_provider),
         oidc_issuer_url: req.oidc_issuer_url,
         oidc_client_id: req.oidc_client_id,
@@ -792,15 +793,15 @@ pub async fn update_client_auth_config(
     )?;
     let cmd = UpdateAuthConfigCommand {
         auth_config_id: id,
-        primary_client_id: req.primary_client_id,
+        primary_client_id: req.primary_client_id.map(ClientId::from_wire),
         auth_provider,
         oidc_issuer_url: req.oidc_issuer_url,
         oidc_client_id: req.oidc_client_id,
         oidc_multi_tenant: req.oidc_multi_tenant,
         oidc_issuer_pattern: req.oidc_issuer_pattern,
         oidc_client_secret_ref,
-        additional_client_ids: req.additional_client_ids,
-        granted_client_ids: req.granted_client_ids,
+        additional_client_ids: req.additional_client_ids.map(ClientId::from_wire_all),
+        granted_client_ids: req.granted_client_ids.map(ClientId::from_wire_all),
         config_type: None,
     };
     let ctx = ExecutionContext::from_auth(&auth.0);
@@ -965,7 +966,7 @@ pub async fn create_internal_auth_config(
     let cmd = CreateAuthConfigCommand {
         email_domain: email_domain.clone(),
         config_type: parse_config_type(&req.config_type)?,
-        primary_client_id: req.primary_client_id.clone(),
+        primary_client_id: req.primary_client_id.clone().map(ClientId::from_wire),
         additional_client_ids: None,
         granted_client_ids: None,
         auth_provider: Some(AuthProvider::Internal),
@@ -1018,7 +1019,7 @@ pub async fn create_oidc_auth_config(
     let cmd = CreateAuthConfigCommand {
         email_domain: email_domain.clone(),
         config_type: parse_config_type(&req.config_type)?,
-        primary_client_id: req.primary_client_id.clone(),
+        primary_client_id: req.primary_client_id.clone().map(ClientId::from_wire),
         additional_client_ids: None,
         granted_client_ids: None,
         auth_provider: Some(AuthProvider::Oidc),
@@ -1123,7 +1124,7 @@ pub async fn update_client_binding(
 
     let cmd = UpdateAuthConfigCommand {
         auth_config_id: id,
-        primary_client_id: Some(req.primary_client_id),
+        primary_client_id: Some(ClientId::from_wire(req.primary_client_id)),
         auth_provider: None,
         oidc_issuer_url: None,
         oidc_client_id: None,
@@ -1180,7 +1181,7 @@ pub async fn update_additional_clients(
         oidc_multi_tenant: None,
         oidc_issuer_pattern: None,
         oidc_client_secret_ref: None,
-        additional_client_ids: Some(req.additional_client_ids),
+        additional_client_ids: Some(ClientId::from_wire_all(req.additional_client_ids)),
         granted_client_ids: None,
         config_type: None,
     };
@@ -1231,7 +1232,7 @@ pub async fn update_granted_clients(
         oidc_issuer_pattern: None,
         oidc_client_secret_ref: None,
         additional_client_ids: None,
-        granted_client_ids: Some(req.granted_client_ids),
+        granted_client_ids: Some(ClientId::from_wire_all(req.granted_client_ids)),
         config_type: None,
     };
     let ctx = ExecutionContext::from_auth(&auth.0);

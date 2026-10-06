@@ -8,7 +8,10 @@
 
 use async_trait::async_trait;
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::OAuthClientId;
+use fc_platform_core::shared::id::PortalAppId;
+use fc_platform_core::shared::id::PrincipalId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -39,7 +42,7 @@ pub struct CreateOAuthClientCommand {
     pub application_ids: Vec<ApplicationId>,
     pub allowed_origins: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub service_account_principal_id: Option<String>,
+    pub service_account_principal_id: Option<PrincipalId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
     /// Portal entry point owned by this tenant client (Go `PortalClientID`).
@@ -143,8 +146,14 @@ impl<U: UnitOfWork> UseCase for CreateOAuthClientUseCase<U> {
             .allowed_origins(command.allowed_origins.clone())
             .maybe_service_account_principal_id(command.service_account_principal_id.clone())
             .maybe_created_by(command.created_by.clone())
-            .maybe_portal_client_id(portal::trimmed_or_none(command.portal_client_id.as_deref()))
-            .maybe_portal_app_id(portal::trimmed_or_none(command.portal_app_id.as_deref()))
+            .maybe_portal_client_id(
+                portal::trimmed_or_none(command.portal_client_id.as_deref())
+                    .map(ClientId::from_wire),
+            )
+            .maybe_portal_app_id(
+                portal::trimmed_or_none(command.portal_app_id.as_deref())
+                    .map(PortalAppId::from_wire),
+            )
             .api_access(command.api_access)
             .build();
         portal::validate_oauth_client_plane(&client)?;

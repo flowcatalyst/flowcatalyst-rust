@@ -3,6 +3,8 @@
 //! wholesale on write. Writes happen only on the unit of work's transaction.
 
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::OptionIdExt;
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
@@ -21,7 +23,7 @@ struct FunctionRow {
     application_code: String,
     service_name: String,
     name: String,
-    client_id: Option<String>,
+    client_id: Option<ClientId>,
     runtime: String,
     description: Option<String>,
     status: String,
@@ -290,11 +292,11 @@ fn to_entity(row: FunctionRow, aliases: Vec<FunctionAlias>) -> Result<Function> 
                 &row.id,
             )
         })?;
-    let owner = FunctionOwner::of_client_id(row.client_id.as_deref()).map_err(|_| {
+    let owner = FunctionOwner::of_client_id(row.client_id.as_id_str()).map_err(|_| {
         corrupt_value(
             "fnr_functions",
             "client_id",
-            row.client_id.as_deref().unwrap_or(""),
+            row.client_id.as_id_str().unwrap_or(""),
             &row.id,
         )
     })?;

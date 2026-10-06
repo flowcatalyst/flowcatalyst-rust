@@ -1,6 +1,7 @@
 //! Delete Client Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ClientId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -16,7 +17,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteClientCommand {
-    pub client_id: String,
+    pub client_id: ClientId,
 }
 
 impl AuditMasked for DeleteClientCommand {}
@@ -41,7 +42,7 @@ impl<U: UnitOfWork> UseCase for DeleteClientUseCase<U> {
     type Event = ClientDeleted;
 
     async fn validate(&self, command: &DeleteClientCommand) -> Result<(), UseCaseError> {
-        if command.client_id.trim().is_empty() {
+        if command.client_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "CLIENT_ID_REQUIRED",
                 "Client ID is required",
@@ -80,10 +81,7 @@ impl<U: UnitOfWork> UseCase for DeleteClientUseCase<U> {
         // `iam_principals.client_id` is a code-enforced reference (no DB-level FK).
         // Silently orphaning a user's home client would change their scope
         // without explicit action — force the admin to migrate them first.
-        let home_principals = self
-            .client_repo
-            .count_home_principals(client.id.as_str())
-            .await?;
+        let home_principals = self.client_repo.count_home_principals(&client.id).await?;
         if home_principals > 0 {
             return Err(UseCaseError::business_rule(
                 "CLIENT_HAS_PRINCIPALS",
@@ -98,14 +96,8 @@ impl<U: UnitOfWork> UseCase for DeleteClientUseCase<U> {
         // Business rules: refuse when any code-enforced reference still
         // points at this client. None of these have DB-level FKs — each
         // must be explicitly unwired before deletion.
-        let grants = self
-            .client_repo
-            .count_access_grants(client.id.as_str())
-            .await?;
-        let configs = self
-            .client_repo
-            .count_client_configs(client.id.as_str())
-            .await?;
+        let grants = self.client_repo.count_access_grants(&client.id).await?;
+        let configs = self.client_repo.count_client_configs(&client.id).await?;
 
         let refs = [("access grants", grants), ("application configs", configs)];
         let blockers: Vec<String> = refs
@@ -125,7 +117,7 @@ impl<U: UnitOfWork> UseCase for DeleteClientUseCase<U> {
             ));
         }
 
-        let event = ClientDeleted::new(&ctx, client.id.as_str(), &client.identifier);
+        let event = ClientDeleted::new(&ctx, &client.id, &client.identifier);
 
         self.unit_of_work
             .commit_delete(&client, &*self.client_repo, event, &command)
@@ -140,7 +132,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = DeleteClientCommand {
-            client_id: "client-123".to_string(),
+            client_id: ClientId::from_wire("client-123"),
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("clientId"));

@@ -4,13 +4,14 @@
 //! just on the service account. The tier follows the links
 //! ([`crate::service_account::entity::ServiceAccount::link_clients`], Go's `applyClientReach`).
 
+use fc_platform_core::shared::id::ClientId;
 use std::collections::HashSet;
 
 use crate::client::repository::ClientRepository;
 use fc_platform_core::usecase::UseCaseError;
 
 /// Drop repeated client ids, keeping the first occurrence's position.
-pub fn dedupe_client_ids(client_ids: Vec<String>) -> Vec<String> {
+pub fn dedupe_client_ids(client_ids: Vec<ClientId>) -> Vec<ClientId> {
     let mut seen = HashSet::new();
     client_ids
         .into_iter()
@@ -23,7 +24,7 @@ pub fn dedupe_client_ids(client_ids: Vec<String>) -> Vec<String> {
 /// `requireClientsExist`).
 pub async fn require_clients_exist(
     clients: &ClientRepository,
-    client_ids: &[String],
+    client_ids: &[ClientId],
 ) -> Result<(), UseCaseError> {
     if client_ids.is_empty() {
         return Ok(());
@@ -45,7 +46,8 @@ mod tests {
 
     #[test]
     fn dedupe_keeps_first_occurrence_order() {
-        let got = dedupe_client_ids(vec!["b".into(), "a".into(), "b".into(), "c".into()]);
-        assert_eq!(got, vec!["b", "a", "c"]);
+        let id = |s: &str| ClientId::from_wire(s);
+        let got = dedupe_client_ids(vec![id("b"), id("a"), id("b"), id("c")]);
+        assert_eq!(got, vec![id("b"), id("a"), id("c")]);
     }
 }

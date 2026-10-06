@@ -4,6 +4,7 @@
 //! `reset2fa` option.
 
 use crate::support;
+use fc_platform::shared::id::PrincipalId;
 
 use std::sync::Arc;
 
@@ -67,7 +68,7 @@ async fn plant_token(
     reset_2fa: bool,
 ) {
     let mut token = PasswordResetToken::new(
-        principal_id,
+        PrincipalId::from_wire(principal_id),
         sha256_hex(raw),
         chrono::Utc::now() + chrono::Duration::hours(1),
     );
@@ -92,7 +93,7 @@ async fn token_row(app: &TestApp, principal_id: &str) -> Option<(String, String,
 async fn give_totp(app: &TestApp, principal_id: &str) -> String {
     let secret = crypto::new_totp_secret();
     let enc = EncryptionService::new(APP_KEY).unwrap();
-    let mut m = MfaMethod::new(principal_id, MethodType::Totp);
+    let mut m = MfaMethod::new(&PrincipalId::from_wire(principal_id), MethodType::Totp);
     m.secret_encrypted = Some(enc.encrypt(&secret).unwrap());
     m.confirmed_at = Some(chrono::Utc::now());
     MfaRepository::new(&app.pool)

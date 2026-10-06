@@ -7,6 +7,7 @@
 //! Docker.
 
 use crate::support;
+use fc_platform::shared::id::PrincipalId;
 use fc_platform_core::shared::id::ClientId;
 
 use std::collections::HashSet;
@@ -25,7 +26,7 @@ use support::TestApp;
 /// A principal caller with the given tier, clients and permissions.
 fn caller(scope: UserScope, clients: &[&str], perms: &[&str]) -> ExecutionContext {
     ExecutionContext::from_auth(&AuthContext {
-        principal_id: "prn_caller000001".to_string(),
+        principal_id: PrincipalId::parse("prn_caller000001").unwrap(),
         principal_type: PrincipalType::User,
         scope,
         email: Some("caller@authz.test".to_string()),
@@ -100,7 +101,7 @@ async fn user_writes_are_confined_to_the_callers_clients() {
         UpdateUserUseCase::new(app.repos.principal_repo.clone(), app.unit_of_work.clone());
     let admin = || caller(UserScope::Client, &[&mine], &["platform:iam:user:update"]);
     let cmd = |id: &str| UpdateUserCommand {
-        principal_id: id.to_string(),
+        principal_id: PrincipalId::from_wire(id),
         name: Some("Renamed".to_string()),
         first_name: None,
         last_name: None,
@@ -166,7 +167,7 @@ async fn role_assignment_is_bounded_by_the_callers_ceiling() {
         use_case
             .run(
                 AssignUserRolesCommand {
-                    user_id: target.id.to_string(),
+                    user_id: target.id.clone(),
                     roles: vec![super_admin.name.clone()],
                 },
                 anchor,
@@ -236,7 +237,7 @@ async fn platform_owner_writes_need_anchor_scope() {
         rendered(err).await,
         render(
             checks::require_anchor_scope(&AuthContext {
-                principal_id: "p".into(),
+                principal_id: PrincipalId::from_wire("p"),
                 principal_type: PrincipalType::User,
                 scope: UserScope::Client,
                 email: None,
@@ -282,7 +283,7 @@ async fn service_account_roles_are_bounded_in_the_use_case() {
         use_case
             .run(
                 AssignRolesCommand {
-                    service_account_id: "sac_missing00001".to_string(),
+                    service_account_id: PrincipalId::from_wire("sac_missing00001"),
                     roles: vec![],
                 },
                 anchor(),
@@ -317,7 +318,7 @@ async fn developer_credentials_are_confined_to_the_callers_clients() {
         use_case
             .run(
                 RevokeDeveloperCredentialCommand {
-                    principal_id: other.id.to_string(),
+                    principal_id: other.id.clone(),
                 },
                 caller(
                     UserScope::Client,

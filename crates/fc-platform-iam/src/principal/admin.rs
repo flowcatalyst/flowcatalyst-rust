@@ -8,6 +8,8 @@
 //! cases.
 
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::PrincipalId;
 use std::collections::HashSet;
 
 use crate::application::entity::Application;
@@ -30,7 +32,6 @@ use fc_platform_core::shared::authorization_service::AuthContext;
 use fc_platform_core::shared::caller_reach;
 use fc_platform_core::shared::enum_str::parse_opt;
 use fc_platform_core::shared::error::{NotFoundExt, PlatformError};
-use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::usecase::{ExecutionContext, UseCase};
 use std::collections::HashMap;
 use std::slice;
@@ -96,7 +97,7 @@ pub async fn create_user(
             "Client administrators can only create client-scope users",
         ));
     }
-    checks::require_user_admin(ctx, primary_client_id.as_deref())?;
+    checks::require_user_admin(ctx, primary_client_id.as_ref())?;
     // Before anything is written: a rejected redirect must not leave a user
     // whose invite was never minted (Go createUser).
     let invite_redirect = resolve_invite_redirect(req.invite_redirect_uri.as_deref())?;
@@ -105,15 +106,20 @@ pub async fn create_user(
     // ClientAccessGranted event via the grant use case rather than a fresh
     // UserCreated. Keeps events + audit logs accurate.
     let granted_client_ids = if scope == UserScope::Partner {
-        let client_id = primary_client_id.clone().unwrap_or_default();
+        let client_id = primary_client_id.clone().ok_or_else(|| {
+            PlatformError::bad_request_code(
+                "CLIENT_REQUIRED",
+                "clientId is required for partner users",
+            )
+        })?;
         if let Some(existing) = state.principal_repo.find_by_email(&req.email).await? {
-            let already_linked = existing.client_id.as_id_str() == Some(client_id.as_str())
-                || existing.assigned_clients.iter().any(|c| c == &client_id);
+            let already_linked = existing.client_id.as_ref() == Some(&client_id)
+                || existing.assigned_clients.contains(&client_id);
             if already_linked {
                 return Err(PlatformError::duplicate("Principal", "email", &req.email));
             }
             let cmd = GrantClientAccessCommand {
-                user_id: existing.id.to_string(),
+                user_id: existing.id.clone(),
                 client_id: client_id.clone(),
             };
             let exec = ExecutionContext::from_auth(ctx);
@@ -124,7 +130,7 @@ pub async fn create_user(
                 .into_result()?;
             let refreshed = state
                 .principal_repo
-                .find_by_id(existing.id.as_str())
+                .find_by_id(&existing.id)
                 .await?
                 .or_not_found("Principal", existing.id.as_str())?;
             return Ok(refreshed.into());
@@ -157,7 +163,7 @@ pub async fn create_user(
         .principal_repo
         .find_by_id(&event.principal_id)
         .await?
-        .or_not_found("Principal", &event.principal_id)?;
+        .or_not_found("Principal", event.principal_id.as_str())?;
 
     let invite_link = notify_new_user(
         state,
@@ -177,13 +183,13 @@ pub async fn create_user(
 pub async fn detail(
     state: &PrincipalsState,
     ctx: &AuthContext,
-    id: &str,
+    id: &PrincipalId,
 ) -> Result<PrincipalResponse, PlatformError> {
     // Go `getByID` (principal/api/api.go:288-323): a principal reads itself
     // with no permission; anyone else needs the user read permission, and a
     // principal of a client the caller does not reach answers the same 404
     // as a missing one.
-    let is_self = ctx.principal_id == id;
+    let is_self = &ctx.principal_id == id;
     if !is_self {
         checks::can_read_principals(ctx)?;
     }
@@ -191,9 +197,9 @@ pub async fn detail(
         .principal_repo
         .find_by_id(id)
         .await?
-        .or_not_found("Principal", id)?;
+        .or_not_found("Principal", id.as_str())?;
     if !is_self {
-        if let Some(cid) = principal.client_id.as_id_str() {
+        if let Some(cid) = principal.client_id.as_ref() {
             if !caller_reach::reaches_client(ctx, cid) {
                 return Err(PlatformError::not_found("Principal", id));
             }
@@ -202,7 +208,7 @@ pub async fn detail(
 
     // Go enriches the detail read with the confirmed second factors,
     // best-effort: a lookup failure leaves them out.
-    let methods: Vec<String> = match state.mfa_repo.find_methods(principal.id.as_str()).await {
+    let methods: Vec<String> = match state.mfa_repo.find_methods(&principal.id).await {
         Ok(methods) => methods
             .into_iter()
             .filter(Method::is_confirmed)
@@ -226,7 +232,7 @@ pub async fn list(
 
     // Validate client_id access upfront
     if let Some(ref client_id) = query.client_id {
-        if !ctx.can_access_client(client_id) {
+        if !ctx.can_access_client(&ClientId::from_wire(client_id.as_str())) {
             return Err(PlatformError::forbidden(format!(
                 "No access to client: {}",
                 client_id
@@ -238,7 +244,7 @@ pub async fn list(
     let principals = state
         .principal_repo
         .find_with_filters(
-            query.client_id.as_deref(),
+            query.client_id.as_deref().map(ClientId::from_wire).as_ref(),
             parse_opt(query.scope.as_deref())?,
             parse_opt(query.principal_type.as_deref())?,
             query.active_filter(),
@@ -256,7 +262,7 @@ pub async fn list(
                 return true;
             }
             match &p.client_id {
-                Some(cid) => ctx.can_access_client(cid.as_str()),
+                Some(cid) => ctx.can_access_client(cid),
                 None => p.scope == UserScope::Anchor && ctx.is_anchor(),
             }
         })
@@ -309,7 +315,7 @@ pub async fn list(
 pub async fn update(
     state: &PrincipalsState,
     ctx: &AuthContext,
-    id: &str,
+    id: &PrincipalId,
     req: UpdatePrincipalRequest,
 ) -> Result<PrincipalResponse, PlatformError> {
     use crate::principal::operations::UpdateUserCommand;
@@ -321,13 +327,13 @@ pub async fn update(
     // The use case applies the per-resource rules after loading the target
     // (Go `update`): the user's reach, and anchor-only scope/client changes.
     let cmd = UpdateUserCommand {
-        principal_id: id.to_string(),
+        principal_id: id.clone(),
         name: req.name,
         first_name: req.first_name,
         last_name: req.last_name,
         active: req.active,
         scope: parse_opt(req.scope.as_deref())?,
-        client_id: req.client_id,
+        client_id: req.client_id.map(ClientId::from_wire),
         email: req.email,
     };
     let exec = ExecutionContext::from_auth(ctx);
@@ -337,7 +343,7 @@ pub async fn update(
         .principal_repo
         .find_by_id(id)
         .await?
-        .or_not_found("Principal", id)?;
+        .or_not_found("Principal", id.as_str())?;
     Ok(refreshed.into())
 }
 
@@ -345,7 +351,7 @@ pub async fn update(
 pub async fn role_assignments(
     state: &PrincipalsState,
     ctx: &AuthContext,
-    id: &str,
+    id: &PrincipalId,
 ) -> Result<RolesListResponse, PlatformError> {
     checks::can_read_principals(ctx)?;
 
@@ -353,13 +359,13 @@ pub async fn role_assignments(
         .principal_repo
         .find_by_id(id)
         .await?
-        .or_not_found("Principal", id)?;
+        .or_not_found("Principal", id.as_str())?;
 
     // Go (principal/api/api.go, PR-4): a principal of a client the caller
     // does not reach answers the same 404 as a missing one.
     if !ctx.is_anchor() {
         if let Some(ref cid) = principal.client_id {
-            if !ctx.can_access_client(cid.as_str()) {
+            if !ctx.can_access_client(cid) {
                 return Err(PlatformError::not_found("Principal", id));
             }
         }
@@ -385,7 +391,7 @@ pub async fn role_assignments(
 pub async fn assign_role(
     state: &PrincipalsState,
     ctx: &AuthContext,
-    id: &str,
+    id: &PrincipalId,
     role: String,
 ) -> Result<PrincipalResponse, PlatformError> {
     use crate::principal::operations::AssignUserRolesCommand;
@@ -397,7 +403,7 @@ pub async fn assign_role(
     // the reach rule and the role ceiling.
     let principal = load_user_to_shape(state, id).await?;
     if !ctx.is_anchor() {
-        let allowed = client_application_ids(state, principal.client_id.as_id_str()).await?;
+        let allowed = client_application_ids(state, principal.client_id.as_ref()).await?;
         assert_assignable_roles(state, slice::from_ref(&role), &allowed).await?;
     }
     let mut roles: Vec<String> = principal.roles.iter().map(|r| r.role.clone()).collect();
@@ -406,7 +412,7 @@ pub async fn assign_role(
     }
 
     let cmd = AssignUserRolesCommand {
-        user_id: id.to_string(),
+        user_id: id.clone(),
         roles,
     };
     let exec = ExecutionContext::from_auth(ctx);
@@ -420,7 +426,7 @@ pub async fn assign_role(
         .principal_repo
         .find_by_id(id)
         .await?
-        .or_not_found("Principal", id)?;
+        .or_not_found("Principal", id.as_str())?;
     Ok(refreshed.into())
 }
 
@@ -429,7 +435,7 @@ pub async fn assign_role(
 pub async fn set_roles(
     state: &PrincipalsState,
     ctx: &AuthContext,
-    id: &str,
+    id: &PrincipalId,
     roles: Vec<String>,
 ) -> Result<BatchAssignRolesResponse, PlatformError> {
     use crate::principal::operations::AssignUserRolesCommand;
@@ -447,7 +453,7 @@ pub async fn set_roles(
     let removed: Vec<String> = old_roles.difference(&new_roles_set).cloned().collect();
 
     let cmd = AssignUserRolesCommand {
-        user_id: id.to_string(),
+        user_id: id.clone(),
         roles: desired,
     };
     let exec = ExecutionContext::from_auth(ctx);
@@ -461,7 +467,7 @@ pub async fn set_roles(
         .principal_repo
         .find_by_id(id)
         .await?
-        .or_not_found("Principal", id)?;
+        .or_not_found("Principal", id.as_str())?;
     let roles: Vec<RoleAssignmentDto> = refreshed
         .roles
         .iter()
@@ -485,7 +491,7 @@ pub async fn set_roles(
 pub async fn remove_role(
     state: &PrincipalsState,
     ctx: &AuthContext,
-    id: &str,
+    id: &PrincipalId,
     role: &str,
 ) -> Result<PrincipalResponse, PlatformError> {
     use crate::principal::operations::AssignUserRolesCommand;
@@ -498,7 +504,7 @@ pub async fn remove_role(
     // A client administrator removes only roles it could assign (Go
     // `removeRole`).
     if !ctx.is_anchor() {
-        let allowed = client_application_ids(state, principal.client_id.as_id_str()).await?;
+        let allowed = client_application_ids(state, principal.client_id.as_ref()).await?;
         assert_assignable_roles(state, &[role.to_string()], &allowed).await?;
     }
     let roles: Vec<String> = principal
@@ -509,7 +515,7 @@ pub async fn remove_role(
         .collect();
 
     let cmd = AssignUserRolesCommand {
-        user_id: id.to_string(),
+        user_id: id.clone(),
         roles,
     };
     let exec = ExecutionContext::from_auth(ctx);
@@ -523,7 +529,7 @@ pub async fn remove_role(
         .principal_repo
         .find_by_id(id)
         .await?
-        .or_not_found("Principal", id)?;
+        .or_not_found("Principal", id.as_str())?;
     Ok(refreshed.into())
 }
 
@@ -531,7 +537,7 @@ pub async fn remove_role(
 pub async fn client_grants(
     state: &PrincipalsState,
     ctx: &AuthContext,
-    id: &str,
+    id: &PrincipalId,
 ) -> Result<ClientAccessListResponse, PlatformError> {
     // Go `listClientAccess`: anchor reach alone (principal/api/api.go:1251),
     // then the grant rows themselves, each with its own id and date, oldest
@@ -552,7 +558,7 @@ pub async fn client_grants(
 pub async fn grant_client_access(
     state: &PrincipalsState,
     ctx: &AuthContext,
-    id: &str,
+    id: &PrincipalId,
     client_id: String,
 ) -> Result<ClientAccessGrantResponse, PlatformError> {
     use crate::principal::operations::GrantClientAccessCommand;
@@ -560,8 +566,8 @@ pub async fn grant_client_access(
     checks::can_grant_client_access(ctx)?;
 
     let cmd = GrantClientAccessCommand {
-        user_id: id.to_string(),
-        client_id: client_id.clone(),
+        user_id: id.clone(),
+        client_id: ClientId::from_wire(client_id.clone()),
     };
     let exec = ExecutionContext::from_auth(ctx);
     state
@@ -573,7 +579,7 @@ pub async fn grant_client_access(
     // The grant row just written (Go `grantClientAccess`).
     let grant = state
         .client_access_grant_repo
-        .find_by_principal_and_client(id, &client_id)
+        .find_by_principal_and_client(id, &ClientId::from_wire(client_id))
         .await?
         .ok_or_else(|| PlatformError::internal("grant not found after create"))?;
     Ok(grant.into())
@@ -583,16 +589,16 @@ pub async fn grant_client_access(
 pub async fn revoke_client_access(
     state: &PrincipalsState,
     ctx: &AuthContext,
-    id: &str,
-    client_id: &str,
+    id: &PrincipalId,
+    client_id: &ClientId,
 ) -> Result<(), PlatformError> {
     use crate::principal::operations::RevokeClientAccessCommand;
 
     checks::can_revoke_client_access(ctx)?;
 
     let cmd = RevokeClientAccessCommand {
-        user_id: id.to_string(),
-        client_id: client_id.to_string(),
+        user_id: id.clone(),
+        client_id: client_id.clone(),
     };
     let exec = ExecutionContext::from_auth(ctx);
     state
@@ -607,14 +613,14 @@ pub async fn revoke_client_access(
 pub async fn delete(
     state: &PrincipalsState,
     ctx: &AuthContext,
-    id: &str,
+    id: &PrincipalId,
 ) -> Result<(), PlatformError> {
     use crate::principal::operations::DeleteUserCommand;
 
     checks::can_delete_principals(ctx)?;
 
     let cmd = DeleteUserCommand {
-        principal_id: id.to_string(),
+        principal_id: id.clone(),
     };
     let exec = ExecutionContext::from_auth(ctx);
     state.delete_use_case.run(cmd, exec).await.into_result()?;
@@ -625,14 +631,14 @@ pub async fn delete(
 pub async fn activate(
     state: &PrincipalsState,
     ctx: &AuthContext,
-    id: &str,
+    id: &PrincipalId,
 ) -> Result<StatusChangeResponse, PlatformError> {
     use crate::principal::operations::ActivateUserCommand;
 
     checks::can_write_principals(ctx)?;
 
     let cmd = ActivateUserCommand {
-        principal_id: id.to_string(),
+        principal_id: id.clone(),
     };
     let exec = ExecutionContext::from_auth(ctx);
     state.activate_use_case.run(cmd, exec).await.into_result()?;
@@ -648,14 +654,14 @@ pub async fn activate(
 pub async fn deactivate(
     state: &PrincipalsState,
     ctx: &AuthContext,
-    id: &str,
+    id: &PrincipalId,
 ) -> Result<StatusChangeResponse, PlatformError> {
     use crate::principal::operations::DeactivateUserCommand;
 
     checks::can_write_principals(ctx)?;
 
     let cmd = DeactivateUserCommand {
-        principal_id: id.to_string(),
+        principal_id: id.clone(),
         reason: Some("Admin deactivated principal".to_string()),
     };
     let exec = ExecutionContext::from_auth(ctx);
@@ -677,7 +683,7 @@ pub async fn deactivate(
 pub async fn reset_password(
     state: &PrincipalsState,
     ctx: &AuthContext,
-    id: &str,
+    id: &PrincipalId,
     req: ResetPasswordRequest,
 ) -> Result<StatusChangeResponse, PlatformError> {
     use crate::principal::operations::ResetPasswordCommand;
@@ -685,7 +691,7 @@ pub async fn reset_password(
     checks::can_write_principals(ctx)?;
 
     let cmd = ResetPasswordCommand {
-        principal_id: id.to_string(),
+        principal_id: id.clone(),
         new_password: req.new_password,
         enforce_password_complexity: req.enforce_password_complexity,
     };
@@ -709,7 +715,7 @@ pub async fn reset_password(
 pub async fn send_password_reset(
     state: &PrincipalsState,
     ctx: &AuthContext,
-    id: &str,
+    id: &PrincipalId,
     reset_2fa: bool,
 ) -> Result<StatusChangeResponse, PlatformError> {
     checks::can_write_principals(ctx)?;
@@ -757,7 +763,12 @@ pub async fn send_password_reset(
 
     state
         .audit_service
-        .log(ctx, "Principal", id, "Password reset email sent by admin")
+        .log(
+            ctx,
+            "Principal",
+            id.as_str(),
+            "Password reset email sent by admin",
+        )
         .await;
 
     Ok(StatusChangeResponse {
@@ -838,14 +849,18 @@ pub async fn check_email_domain(
                     .iter()
                     .chain(m.granted_client_ids.iter())
                 {
-                    if !id.is_empty() && !allowed_client_ids.contains(id) {
-                        allowed_client_ids.push(id.clone());
+                    if !id.as_str().is_empty() && !allowed_client_ids.contains(&id.to_string()) {
+                        allowed_client_ids.push(id.to_string());
                     }
                 }
             }
             ScopeType::Client => {
-                if let Some(p) = m.primary_client_id.as_ref().filter(|p| !p.is_empty()) {
-                    allowed_client_ids.push(p.clone());
+                if let Some(p) = m
+                    .primary_client_id
+                    .as_ref()
+                    .filter(|p| !p.as_str().is_empty())
+                {
+                    allowed_client_ids.push(p.to_string());
                 }
             }
             ScopeType::Anchor => {}
@@ -874,7 +889,7 @@ pub async fn check_email_domain(
 pub async fn application_access(
     state: &PrincipalsState,
     ctx: &AuthContext,
-    id: &str,
+    id: &PrincipalId,
 ) -> Result<ApplicationAccessListResponse, PlatformError> {
     checks::can_read_principals(ctx)?;
 
@@ -882,13 +897,13 @@ pub async fn application_access(
         .principal_repo
         .find_by_id(id)
         .await?
-        .or_not_found("Principal", id)?;
+        .or_not_found("Principal", id.as_str())?;
 
     // Go (principal/api/api.go, PR-4): a principal of a client the caller
     // does not reach answers the same 404 as a missing one.
     if !ctx.is_anchor() {
         if let Some(ref cid) = principal.client_id {
-            if !ctx.can_access_client(cid.as_str()) {
+            if !ctx.can_access_client(cid) {
                 return Err(PlatformError::not_found("Principal", id));
             }
         }
@@ -932,7 +947,7 @@ fn access_rows(
 pub async fn set_application_access(
     state: &PrincipalsState,
     ctx: &AuthContext,
-    id: &str,
+    id: &PrincipalId,
     req: SetApplicationAccessRequest,
 ) -> Result<SetApplicationAccessResponse, PlatformError> {
     use crate::principal::operations::AssignApplicationAccessCommand;
@@ -966,7 +981,7 @@ pub async fn set_application_access(
         .map(ApplicationId::from_wire)
         .collect();
     if !ctx.is_anchor() {
-        let allowed = client_application_ids(state, principal.client_id.as_id_str()).await?;
+        let allowed = client_application_ids(state, principal.client_id.as_ref()).await?;
         if let Some(app_id) = application_ids.iter().find(|a| !allowed.contains(*a)) {
             return Err(PlatformError::forbidden_code(
                 "APP_FORBIDDEN",
@@ -1011,7 +1026,7 @@ pub async fn set_application_access(
     let removed_count = old_set.difference(&new_set).count();
 
     let cmd = AssignApplicationAccessCommand {
-        user_id: id.to_string(),
+        user_id: id.clone(),
         application_ids: application_ids.clone(),
         all_applications: req.all_applications,
     };
@@ -1041,7 +1056,7 @@ pub async fn set_application_access(
 pub async fn available_applications(
     state: &PrincipalsState,
     ctx: &AuthContext,
-    id: &str,
+    id: &PrincipalId,
 ) -> Result<AvailableApplicationsResponse, PlatformError> {
     checks::can_read_principals(ctx)?;
 
@@ -1049,13 +1064,13 @@ pub async fn available_applications(
         .principal_repo
         .find_by_id(id)
         .await?
-        .or_not_found("Principal", id)?;
+        .or_not_found("Principal", id.as_str())?;
 
     // Go listAvailableApplications (principal/api/api.go): a principal of a
     // client the caller does not reach answers the same 404 as a missing
     // one.
     if let Some(ref cid) = principal.client_id {
-        if !caller_reach::reaches_client(ctx, cid.as_str()) {
+        if !caller_reach::reaches_client(ctx, cid) {
             return Err(PlatformError::not_found("Principal", id));
         }
     }
@@ -1064,7 +1079,7 @@ pub async fn available_applications(
     // is bounded to the applications the target's client has enabled.
     let mut apps = state.application_repo.find_active().await?;
     if !ctx.is_anchor() {
-        let allowed: HashSet<ApplicationId> = match principal.client_id.as_id_str() {
+        let allowed: HashSet<ApplicationId> = match principal.client_id.as_ref() {
             Some(cid) => state
                 .app_client_config_repo
                 .find_by_client(cid)

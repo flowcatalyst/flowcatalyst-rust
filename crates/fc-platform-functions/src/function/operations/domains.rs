@@ -10,6 +10,7 @@
 //! while any public route is under the zone.
 
 use crate::function::operations::access::FunctionReach;
+use crate::function::OwnerClientId;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -73,7 +74,7 @@ impl<U: UnitOfWork> UseCase for ClaimFunctionDomainUseCase<U> {
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
         ctx.caller()
-            .check_scope_access(command.owner.client_id_or_none())
+            .check_scope_access(command.owner.client_id_typed().as_ref())
     }
 
     async fn execute(

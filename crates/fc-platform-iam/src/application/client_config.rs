@@ -3,6 +3,7 @@
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::AppClientConfigId;
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -10,7 +11,7 @@ use serde::{Deserialize, Serialize};
 pub struct ApplicationClientConfig {
     pub id: AppClientConfigId,
     pub application_id: ApplicationId,
-    pub client_id: String,
+    pub client_id: ClientId,
     pub enabled: bool,
     /// The base URL this client reaches the application at, when it is not
     /// the application's `default_base_url` (`app_client_configs.base_url_override`).
@@ -25,12 +26,12 @@ pub struct ApplicationClientConfig {
 }
 
 impl ApplicationClientConfig {
-    pub fn new(application_id: ApplicationId, client_id: impl Into<String>) -> Self {
+    pub fn new(application_id: ApplicationId, client_id: ClientId) -> Self {
         let now = Utc::now();
         Self {
             id: AppClientConfigId::generate(),
             application_id,
-            client_id: client_id.into(),
+            client_id,
             enabled: true,
             base_url_override: None,
             config_json: None,

@@ -7,6 +7,7 @@
 //! each payload carries exactly Go's `ToDataJSON` fields.
 
 use fc_platform_core::impl_domain_event;
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::SubscriptionId;
 use fc_platform_core::usecase::domain_event::EventMetadata;
 use fc_platform_core::usecase::ExecutionContext;
@@ -158,7 +159,7 @@ pub struct SubscriptionsSynced {
     pub metadata: EventMetadata,
     pub application_code: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
     pub created: u32,
     pub updated: u32,
     pub deleted: u32,

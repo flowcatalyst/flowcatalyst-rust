@@ -3,8 +3,10 @@
 //! move to an internal provider, the domain's federated users, in one
 //! transaction. The principal writes go through `PrincipalRepository`.
 
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::EmailDomainMappingId;
 use fc_platform_core::shared::id::IdentityProviderId;
+use fc_platform_core::shared::id::PrincipalId;
 use sqlx::PgPool;
 use std::sync::Arc;
 
@@ -22,8 +24,8 @@ pub struct ProviderMove {
     pub identity_provider_id: IdentityProviderId,
     /// Also link this primary client (an identity-provider claim of a
     /// mapping that had none).
-    pub primary_client_id: Option<String>,
-    pub reset_user_ids: Vec<String>,
+    pub primary_client_id: Option<ClientId>,
+    pub reset_user_ids: Vec<PrincipalId>,
 }
 
 impl HasId for ProviderMove {

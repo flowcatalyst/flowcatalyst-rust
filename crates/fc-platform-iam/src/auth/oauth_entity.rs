@@ -4,7 +4,10 @@
 
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::OAuthClientId;
+use fc_platform_core::shared::id::PortalAppId;
+use fc_platform_core::shared::id::PrincipalId;
 use serde::{Deserialize, Serialize};
 
 /// OAuth client type
@@ -111,7 +114,7 @@ pub struct OAuthClient {
 
     /// Service account principal ID (for client_credentials grant)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub service_account_principal_id: Option<String>,
+    pub service_account_principal_id: Option<PrincipalId>,
 
     /// Whether the client is active
     #[serde(default = "default_true")]
@@ -137,12 +140,12 @@ pub struct OAuthClient {
     /// must enter through `/portal/authorize` and its codes carry portal
     /// identity subjects.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub portal_client_id: Option<String>,
+    pub portal_client_id: Option<ClientId>,
 
     /// The portal app this portal client fronts (Go `PortalAppID`); `None`
     /// on a portal client is a legacy client-wide portal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub portal_app_id: Option<String>,
+    pub portal_app_id: Option<PortalAppId>,
 }
 
 fn default_true() -> bool {
@@ -173,11 +176,11 @@ impl OAuthClient {
         #[builder(default = true)] pkce_required: bool,
         #[builder(default)] application_ids: Vec<ApplicationId>,
         #[builder(default)] allowed_origins: Vec<String>,
-        service_account_principal_id: Option<String>,
+        service_account_principal_id: Option<PrincipalId>,
         #[builder(default)] api_access: bool,
         created_by: Option<String>,
-        portal_client_id: Option<String>,
-        portal_app_id: Option<String>,
+        portal_client_id: Option<ClientId>,
+        portal_app_id: Option<PortalAppId>,
     ) -> Self {
         let now = Utc::now();
         Self {
@@ -240,8 +243,8 @@ impl OAuthClient {
         self
     }
 
-    pub fn with_service_account(mut self, principal_id: impl Into<String>) -> Self {
-        self.service_account_principal_id = Some(principal_id.into());
+    pub fn with_service_account(mut self, principal_id: PrincipalId) -> Self {
+        self.service_account_principal_id = Some(principal_id);
         self
     }
 

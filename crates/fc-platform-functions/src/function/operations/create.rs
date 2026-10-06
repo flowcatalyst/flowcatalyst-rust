@@ -6,6 +6,8 @@
 //! `execute` checks the application once it is loaded.
 
 use crate::function::operations::access::FunctionReach;
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::OptionIdExt;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -37,14 +39,14 @@ pub struct CreateCommand {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
 }
 
 impl AuditMasked for CreateCommand {}
 
 impl CreateCommand {
     fn client_id(&self) -> Option<&str> {
-        blank_to_none(self.client_id.as_deref())
+        blank_to_none(self.client_id.as_id_str())
     }
 }
 
@@ -112,7 +114,8 @@ impl<U: UnitOfWork> UseCase for CreateFunctionUseCase<U> {
         command: &CreateCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        ctx.caller().check_scope_access(command.client_id())
+        ctx.caller()
+            .check_scope_access(command.client_id().map(ClientId::from_wire).as_ref())
     }
 
     async fn execute(
@@ -145,10 +148,10 @@ impl<U: UnitOfWork> UseCase for CreateFunctionUseCase<U> {
             Some(client_id) => {
                 let client = self
                     .clients
-                    .find_by_id(client_id)
+                    .find_by_id(&ClientId::from_wire(client_id))
                     .await?
                     .ok_or_else(|| resource_not_found("Client", client_id))?;
-                FunctionOwner::Client(client.id)
+                FunctionOwner::Client(client.id.into_string())
             }
             None => FunctionOwner::Platform,
         };
@@ -207,7 +210,7 @@ mod tests {
     #[test]
     fn blank_client_id_means_the_platform() {
         let cmd = CreateCommand {
-            client_id: Some("  ".into()),
+            client_id: Some(ClientId::from_wire("  ")),
             ..Default::default()
         };
         assert_eq!(cmd.client_id(), None);

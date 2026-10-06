@@ -232,7 +232,7 @@ async fn integral_syncs_a_user_with_its_password_hash() {
     let p = app
         .repos
         .principal_repo
-        .find_by_id(p.id.as_str())
+        .find_by_id(&p.id)
         .await
         .unwrap()
         .unwrap();

@@ -3,6 +3,7 @@
 //! Bulk creates/updates/deletes anchor-level subscriptions from an application SDK.
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::ConnectionId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -72,7 +73,7 @@ pub struct SyncSubscriptionsCommand {
     /// the application's client-less subscriptions). Go scopes the whole
     /// sync to (application, client).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
     pub subscriptions: Vec<SyncSubscriptionInput>,
     #[serde(default)]
     pub remove_unlisted: bool,
@@ -174,7 +175,7 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
         command: &SyncSubscriptionsCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        if let Some(client_id) = command.client_id.as_deref() {
+        if let Some(client_id) = command.client_id.as_ref() {
             if !ctx.caller().can_access_client(client_id) {
                 return Err(UseCaseError::verbatim(PlatformError::forbidden(format!(
                     "No access to client: {client_id}"
@@ -214,7 +215,7 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
         // matches only the client-less rows (Go FindByApplicationAndClient).
         let existing = self
             .subscription_repo
-            .find_by_application_and_client(&command.application_code, command.client_id.as_deref())
+            .find_by_application_and_client(&command.application_code, command.client_id.as_ref())
             .await?;
 
         let mut created_count = 0u32;
@@ -278,7 +279,7 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
                         .endpoint(&input.target)
                         .maybe_connection_id(connection_id)
                         .application_code(command.application_code.clone())
-                        .maybe_client_id(parse_client_id_opt(command.client_id.as_deref())?)
+                        .maybe_client_id(parse_client_id_opt(command.client_id.as_id_str())?)
                         .source(SubscriptionSource::Api)
                         .maybe_description(input.description.clone())
                         .event_types(bindings)
@@ -356,7 +357,7 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
         command: &SyncSubscriptionsCommand,
     ) -> Result<Vec<Option<ConnectionId>>, UseCaseError> {
         let app = command.application_code.as_str();
-        let client = command.client_id.as_deref();
+        let client = command.client_id.as_ref();
         let code_of = |i: &SyncSubscriptionInput| {
             i.connection_code
                 .as_deref()
@@ -383,11 +384,11 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
         for input in &command.subscriptions {
             if let Some(code) = code_of(input) {
                 let namespace = (!input.shared_connection).then_some(app);
-                let find = |client_id: Option<&str>| {
+                let find = |client_id: Option<&ClientId>| {
                     by_code.iter().find(|c| {
                         c.code == code
                             && c.application_code.as_deref() == namespace
-                            && c.client_id.as_id_str() == client_id
+                            && c.client_id.as_ref() == client_id
                     })
                 };
                 let found = client
@@ -429,7 +430,7 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
             })?;
             if connection
                 .client_id
-                .as_id_str()
+                .as_ref()
                 .is_some_and(|cid| Some(cid) != client)
             {
                 return Err(UseCaseError::validation(

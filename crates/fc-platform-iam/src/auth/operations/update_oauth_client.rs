@@ -6,7 +6,9 @@
 
 use async_trait::async_trait;
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::OAuthClientId;
+use fc_platform_core::shared::id::PortalAppId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -146,13 +148,15 @@ impl<U: UnitOfWork> UseCase for UpdateOAuthClientUseCase<U> {
             client.active = active;
         }
         if let Some(portal_client_id) = &command.portal_client_id {
-            client.portal_client_id = portal::trimmed_or_none(Some(portal_client_id));
+            client.portal_client_id =
+                portal::trimmed_or_none(Some(portal_client_id)).map(ClientId::from_wire);
             if client.portal_client_id.is_none() {
                 client.portal_app_id = None; // no portal, no portal app
             }
         }
         if let Some(portal_app_id) = &command.portal_app_id {
-            client.portal_app_id = portal::trimmed_or_none(Some(portal_app_id));
+            client.portal_app_id =
+                portal::trimmed_or_none(Some(portal_app_id)).map(PortalAppId::from_wire);
         }
         if let Some(ref scopes) = command.default_scopes {
             client.default_scopes = scopes.clone();

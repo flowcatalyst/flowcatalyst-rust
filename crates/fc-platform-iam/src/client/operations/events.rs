@@ -7,6 +7,7 @@
 //! carries exactly Go's `ToDataJSON` fields, since subscribers read them.
 
 use fc_platform_core::impl_domain_event;
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::usecase::domain_event::EventMetadata;
 use fc_platform_core::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
@@ -14,7 +15,7 @@ use serde::{Deserialize, Serialize};
 const SPEC_VERSION: &str = "1.0";
 const SOURCE: &str = "platform:admin";
 
-fn metadata(ctx: &ExecutionContext, event_type: &str, client_id: &str) -> EventMetadata {
+fn metadata(ctx: &ExecutionContext, event_type: &str, client_id: &ClientId) -> EventMetadata {
     EventMetadata::from_ctx(
         ctx,
         event_type,
@@ -31,7 +32,7 @@ fn metadata(ctx: &ExecutionContext, event_type: &str, client_id: &str) -> EventM
 pub struct ClientCreated {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub client_id: String,
+    pub client_id: ClientId,
     pub name: String,
     pub identifier: String,
 }
@@ -41,10 +42,10 @@ impl_domain_event!(ClientCreated);
 impl ClientCreated {
     pub const EVENT_TYPE: &'static str = "platform:admin:client:created";
 
-    pub fn new(ctx: &ExecutionContext, client_id: &str, name: &str, identifier: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, client_id: &ClientId, name: &str, identifier: &str) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, client_id),
-            client_id: client_id.to_string(),
+            client_id: client_id.clone(),
             name: name.to_string(),
             identifier: identifier.to_string(),
         }
@@ -57,7 +58,7 @@ impl ClientCreated {
 pub struct ClientUpdated {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub client_id: String,
+    pub client_id: ClientId,
     pub name: String,
 }
 
@@ -66,10 +67,10 @@ impl_domain_event!(ClientUpdated);
 impl ClientUpdated {
     pub const EVENT_TYPE: &'static str = "platform:admin:client:updated";
 
-    pub fn new(ctx: &ExecutionContext, client_id: &str, name: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, client_id: &ClientId, name: &str) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, client_id),
-            client_id: client_id.to_string(),
+            client_id: client_id.clone(),
             name: name.to_string(),
         }
     }
@@ -81,7 +82,7 @@ impl ClientUpdated {
 pub struct ClientActivated {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub client_id: String,
+    pub client_id: ClientId,
 }
 
 impl_domain_event!(ClientActivated);
@@ -89,10 +90,10 @@ impl_domain_event!(ClientActivated);
 impl ClientActivated {
     pub const EVENT_TYPE: &'static str = "platform:admin:client:activated";
 
-    pub fn new(ctx: &ExecutionContext, client_id: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, client_id: &ClientId) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, client_id),
-            client_id: client_id.to_string(),
+            client_id: client_id.clone(),
         }
     }
 }
@@ -103,7 +104,7 @@ impl ClientActivated {
 pub struct ClientSuspended {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub client_id: String,
+    pub client_id: ClientId,
     pub reason: String,
 }
 
@@ -112,10 +113,10 @@ impl_domain_event!(ClientSuspended);
 impl ClientSuspended {
     pub const EVENT_TYPE: &'static str = "platform:admin:client:suspended";
 
-    pub fn new(ctx: &ExecutionContext, client_id: &str, reason: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, client_id: &ClientId, reason: &str) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, client_id),
-            client_id: client_id.to_string(),
+            client_id: client_id.clone(),
             reason: reason.to_string(),
         }
     }
@@ -127,7 +128,7 @@ impl ClientSuspended {
 pub struct ClientDeleted {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub client_id: String,
+    pub client_id: ClientId,
     pub identifier: String,
 }
 
@@ -136,10 +137,10 @@ impl_domain_event!(ClientDeleted);
 impl ClientDeleted {
     pub const EVENT_TYPE: &'static str = "platform:admin:client:deleted";
 
-    pub fn new(ctx: &ExecutionContext, client_id: &str, identifier: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, client_id: &ClientId, identifier: &str) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, client_id),
-            client_id: client_id.to_string(),
+            client_id: client_id.clone(),
             identifier: identifier.to_string(),
         }
     }
@@ -152,7 +153,7 @@ impl ClientDeleted {
 pub struct ClientNoteAdded {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub client_id: String,
+    pub client_id: ClientId,
     pub category: String,
     pub text: String,
 }
@@ -162,10 +163,10 @@ impl_domain_event!(ClientNoteAdded);
 impl ClientNoteAdded {
     pub const EVENT_TYPE: &'static str = "platform:admin:client:note-added";
 
-    pub fn new(ctx: &ExecutionContext, client_id: &str, category: &str, text: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, client_id: &ClientId, category: &str, text: &str) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, client_id),
-            client_id: client_id.to_string(),
+            client_id: client_id.clone(),
             category: category.to_string(),
             text: text.to_string(),
         }
@@ -179,7 +180,12 @@ mod tests {
     #[test]
     fn test_client_created_event() {
         let ctx = ExecutionContext::system("user-123");
-        let event = ClientCreated::new(&ctx, "client-1", "Acme Corp", "acme-corp");
+        let event = ClientCreated::new(
+            &ctx,
+            &ClientId::from_wire("client-1"),
+            "Acme Corp",
+            "acme-corp",
+        );
 
         assert_eq!(event.metadata.event_type, "platform:admin:client:created");
         assert_eq!(event.metadata.source, "platform:admin");
@@ -194,7 +200,7 @@ mod tests {
     #[test]
     fn test_client_suspended_event() {
         let ctx = ExecutionContext::system("user-123");
-        let event = ClientSuspended::new(&ctx, "client-1", "Payment overdue");
+        let event = ClientSuspended::new(&ctx, &ClientId::from_wire("client-1"), "Payment overdue");
 
         assert_eq!(event.metadata.event_type, "platform:admin:client:suspended");
         assert_eq!(event.reason, "Payment overdue");

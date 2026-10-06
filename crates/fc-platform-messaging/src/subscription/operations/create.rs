@@ -1,9 +1,11 @@
 //! Create Subscription Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::ConnectionId;
 use fc_platform_core::shared::id::DispatchPoolId;
 use fc_platform_core::shared::id::EventTypeId;
+use fc_platform_core::shared::id::OptionIdExt;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -101,7 +103,7 @@ pub struct CreateSubscriptionCommand {
 
     /// Client ID (optional - null for anchor-level subscriptions)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
 
     /// Webhook endpoint URL
     pub endpoint: String,
@@ -231,7 +233,7 @@ impl<U: UnitOfWork> UseCase for CreateSubscriptionUseCase<U> {
         command: &CreateSubscriptionCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        check_scope_access(ctx.caller(), command.client_id.as_deref())?;
+        check_scope_access(ctx.caller(), command.client_id.as_ref())?;
         require_usable_signers(
             ctx.caller(),
             &*self.service_account_repo,
@@ -256,7 +258,7 @@ impl<U: UnitOfWork> UseCase for CreateSubscriptionUseCase<U> {
         // client), the key a UI/API create writes (Go FindByCode).
         let existing = self
             .subscription_repo
-            .find_by_code_in_scope(&code, None, command.client_id.as_deref())
+            .find_by_code_in_scope(&code, None, command.client_id.as_ref())
             .await?;
 
         if existing.is_some() {
@@ -274,7 +276,7 @@ impl<U: UnitOfWork> UseCase for CreateSubscriptionUseCase<U> {
             .endpoint(&command.endpoint)
             .maybe_connection_id(command.connection_id.clone())
             .maybe_description(command.description.clone())
-            .maybe_client_id(parse_client_id_opt(command.client_id.as_deref())?)
+            .maybe_client_id(parse_client_id_opt(command.client_id.as_id_str())?)
             .event_types(
                 command
                     .event_types
@@ -327,7 +329,7 @@ mod tests {
             code: "order-webhook".to_string(),
             name: "Order Webhook".to_string(),
             description: Some("Receives order events".to_string()),
-            client_id: Some("client-123".to_string()),
+            client_id: Some(ClientId::from_wire("client-123")),
             endpoint: "https://example.com/webhook".to_string(),
             connection_id: Some(ConnectionId::from_wire("conn-123")),
             event_types: vec![EventTypeBindingInput {

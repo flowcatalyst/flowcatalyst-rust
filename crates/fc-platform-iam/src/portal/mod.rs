@@ -33,6 +33,9 @@ use fc_platform_core::permissions;
 use fc_platform_core::shared::authorization_service::Authority;
 use fc_platform_core::shared::error;
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::OptionIdExt;
+use fc_platform_core::shared::id::PortalAppId;
 use fc_platform_core::usecase::UseCaseError;
 use repository::PortalAppRepository;
 use std::result;
@@ -45,7 +48,7 @@ use std::result;
 pub fn validate_oauth_client_plane(client: &OAuthClient) -> result::Result<(), UseCaseError> {
     let is_portal = client
         .portal_client_id
-        .as_deref()
+        .as_id_str()
         .is_some_and(|p| !p.is_empty());
     // Go validatePlaneFlags: portal identities never carry platform
     // authority, so a portal client cannot be an API-access client.
@@ -57,7 +60,7 @@ pub fn validate_oauth_client_plane(client: &OAuthClient) -> result::Result<(), U
     }
     if client
         .portal_app_id
-        .as_deref()
+        .as_id_str()
         .is_some_and(|a| !a.is_empty())
         && !is_portal
     {
@@ -81,23 +84,26 @@ pub async fn resolve_oauth_client_portal_app(
     let Some(app_id) = portal_app_id.map(str::trim).filter(|a| !a.is_empty()) else {
         return Ok(());
     };
-    let app = apps.find_by_id(app_id).await?.ok_or_else(|| {
-        PlatformError::from(UseCaseError::not_found(
-            error::not_found_code("PortalApp"),
-            format!("PortalApp not found: {app_id}"),
-        ))
-    })?;
+    let app = apps
+        .find_by_id(&PortalAppId::from_wire(app_id))
+        .await?
+        .ok_or_else(|| {
+            PlatformError::from(UseCaseError::not_found(
+                error::not_found_code("PortalApp"),
+                format!("PortalApp not found: {app_id}"),
+            ))
+        })?;
     if portal_client_id
         .as_deref()
         .map(str::trim)
-        .is_some_and(|pc| !pc.is_empty() && pc != app.client_id)
+        .is_some_and(|pc| !pc.is_empty() && pc != app.client_id.as_str())
     {
         return Err(PlatformError::from(UseCaseError::validation(
             "PORTAL_APP_CLIENT_MISMATCH",
             "portalAppId belongs to a different client than portalClientId",
         )));
     }
-    *portal_client_id = Some(app.client_id);
+    *portal_client_id = Some(app.client_id.into_string());
     Ok(())
 }
 
@@ -119,7 +125,7 @@ pub fn can_read_portal_users(ctx: &impl Authority, client_id: &str) -> Result<()
     if ctx.is_anchor() {
         return Ok(());
     }
-    if !ctx.can_access_client(client_id) {
+    if !ctx.can_access_client(&ClientId::from_wire(client_id)) {
         return Err(scope_forbidden());
     }
     let any = [
@@ -142,7 +148,7 @@ pub fn can_write_portal_users(ctx: &impl Authority, client_id: &str) -> Result<(
     if ctx.is_anchor() {
         return Ok(());
     }
-    if !ctx.can_access_client(client_id) {
+    if !ctx.can_access_client(&ClientId::from_wire(client_id)) {
         return Err(scope_forbidden());
     }
     if ctx.has_permission(permissions::iam::PORTAL_USER_MANAGE) {
@@ -165,11 +171,12 @@ mod tests {
     use fc_platform_core::principal_kind::UserScope;
     use fc_platform_core::shared::authorization_service::AuthContext;
     use fc_platform_core::shared::authorization_service::Credential;
+    use fc_platform_core::shared::id::PrincipalId;
     use std::collections::HashSet;
 
     fn ctx(scope: UserScope, clients: &[&str], perms: &[&str]) -> AuthContext {
         AuthContext {
-            principal_id: "prn_1".into(),
+            principal_id: PrincipalId::parse("prn_1").unwrap(),
             principal_type: PrincipalType::User,
             scope,
             email: None,

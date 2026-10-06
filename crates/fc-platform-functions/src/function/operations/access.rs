@@ -13,9 +13,11 @@
 use crate::function::domain_repository::FunctionDomainRepository;
 use crate::function::entity::{Function, FunctionDomain};
 use crate::function::repository::{FunctionRepository, OwnerReach};
+use crate::function::OwnerClientId;
 use crate::function::{FunctionAddress, FunctionOwner, Hostname};
 use fc_platform_core::shared::authorization_service::ApplicationScope;
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::usecase::UseCaseError;
 
 use fc_platform_core::shared::authorization_service::Authority;
@@ -31,7 +33,7 @@ pub use fc_platform_core::usecase::Caller;
 pub trait FunctionReach {
     /// Java `Checks.canAccessScope`: a client id needs access to that
     /// client; none (the platform) needs anchor scope.
-    fn can_access_scope(&self, client_id: Option<&str>) -> bool;
+    fn can_access_scope(&self, client_id: Option<&ClientId>) -> bool;
 
     /// The owner's reach alone: a client owner's client, or anchor scope
     /// for the platform.
@@ -46,7 +48,7 @@ pub trait FunctionReach {
 
     /// Java `Checks.checkScopeAccess`, for a create: nothing exists yet to
     /// hide, so this is a real 403 `SCOPE_FORBIDDEN`.
-    fn check_scope_access(&self, client_id: Option<&str>) -> Result<(), UseCaseError>;
+    fn check_scope_access(&self, client_id: Option<&ClientId>) -> Result<(), UseCaseError>;
 
     /// Java `Checks.checkApplicationAccess`: 403 `FORBIDDEN`
     /// `Not authorised for application '<code>'`.
@@ -66,7 +68,7 @@ pub trait FunctionReach {
 }
 
 impl FunctionReach for Caller {
-    fn can_access_scope(&self, client_id: Option<&str>) -> bool {
+    fn can_access_scope(&self, client_id: Option<&ClientId>) -> bool {
         match client_id {
             Some(id) => self.can_access_client(id),
             None => self.is_anchor(),
@@ -74,7 +76,7 @@ impl FunctionReach for Caller {
     }
 
     fn can_reach_owner(&self, owner: &FunctionOwner) -> bool {
-        self.can_access_scope(owner.client_id_or_none())
+        self.can_access_scope(owner.client_id_typed().as_ref())
     }
 
     fn can_reach(&self, f: &Function) -> bool {
@@ -85,7 +87,7 @@ impl FunctionReach for Caller {
         self.can_reach_owner(&d.owner)
     }
 
-    fn check_scope_access(&self, client_id: Option<&str>) -> Result<(), UseCaseError> {
+    fn check_scope_access(&self, client_id: Option<&ClientId>) -> Result<(), UseCaseError> {
         if self.can_access_scope(client_id) {
             return Ok(());
         }
@@ -181,11 +183,12 @@ pub(crate) mod tests {
     use fc_platform_core::principal_kind::{PrincipalType, UserScope};
     use fc_platform_core::shared::authorization_service::AuthContext;
     use fc_platform_core::shared::authorization_service::Credential;
+    use fc_platform_core::shared::id::PrincipalId;
     use std::collections::HashSet;
 
     pub(crate) fn caller(scope: UserScope, clients: &[&str], apps: Option<&[&str]>) -> Caller {
         Caller::from_auth(&AuthContext {
-            principal_id: "prn_1".into(),
+            principal_id: PrincipalId::parse("prn_1").unwrap(),
             principal_type: PrincipalType::User,
             scope,
             email: None,
@@ -253,8 +256,12 @@ pub(crate) mod tests {
     #[test]
     fn scope_and_application_checks_are_403_with_javas_codes() {
         let client = caller(UserScope::Client, &["clt_1"], Some(&["app_1"]));
-        assert!(client.check_scope_access(Some("clt_1")).is_ok());
-        let err = client.check_scope_access(Some("clt_2")).unwrap_err();
+        assert!(client
+            .check_scope_access(Some(&ClientId::parse("clt_1").unwrap()))
+            .is_ok());
+        let err = client
+            .check_scope_access(Some(&ClientId::parse("clt_2").unwrap()))
+            .unwrap_err();
         assert_eq!(
             (err.http_status_code(), err.code()),
             (403, "SCOPE_FORBIDDEN")

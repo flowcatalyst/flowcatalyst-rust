@@ -1,6 +1,7 @@
 //! PlatformConfig Repository — PostgreSQL via SQLx
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::PlatformConfigId;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
@@ -18,7 +19,7 @@ struct PlatformConfigRow {
     section: String,
     property: String,
     scope: String,
-    client_id: Option<String>,
+    client_id: Option<ClientId>,
     value_type: String,
     value: String,
     description: Option<String>,
@@ -77,7 +78,7 @@ impl PlatformConfigRepository {
         section: &str,
         property: &str,
         scope: &str,
-        client_id: Option<&str>,
+        client_id: Option<&ClientId>,
     ) -> Result<Option<PlatformConfig>> {
         let row = if let Some(cid) = client_id {
             sqlx::query_as::<_, PlatformConfigRow>(
@@ -113,7 +114,7 @@ impl PlatformConfigRepository {
         app_code: &str,
         section: &str,
         scope: Option<&str>,
-        client_id: Option<&str>,
+        client_id: Option<&ClientId>,
     ) -> Result<Vec<PlatformConfig>> {
         let mut qb: QueryBuilder<Postgres> =
             QueryBuilder::new("SELECT * FROM app_platform_configs WHERE application_code = ");
@@ -138,7 +139,7 @@ impl PlatformConfigRepository {
         &self,
         app_code: &str,
         scope: Option<&str>,
-        client_id: Option<&str>,
+        client_id: Option<&ClientId>,
     ) -> Result<Vec<PlatformConfig>> {
         let mut qb: QueryBuilder<Postgres> =
             QueryBuilder::new("SELECT * FROM app_platform_configs WHERE application_code = ");
@@ -206,7 +207,7 @@ impl PlatformConfigRepository {
         section: &str,
         property: &str,
         scope: &str,
-        client_id: Option<&str>,
+        client_id: Option<&ClientId>,
     ) -> Result<bool> {
         let result = if let Some(cid) = client_id {
             sqlx::query(

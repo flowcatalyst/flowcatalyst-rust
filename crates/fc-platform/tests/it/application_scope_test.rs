@@ -9,6 +9,7 @@
 
 use crate::support;
 use fc_platform::shared::id::ApplicationId;
+use fc_platform::shared::id::PrincipalId;
 
 use axum::http::StatusCode;
 use serde_json::{json, Value};
@@ -326,7 +327,7 @@ async fn provisioned_service_account_reaches_only_its_application() {
     let principal = app
         .repos
         .principal_repo
-        .find_by_id(&principal_id)
+        .find_by_id(&PrincipalId::from_wire(principal_id.as_str()))
         .await
         .expect("find principal")
         .expect("provisioned principal");
@@ -467,7 +468,7 @@ async fn mint_with_role(app: &TestApp, id: &str, role: &str) -> (String, bool, V
     let mut p = app
         .repos
         .principal_repo
-        .find_by_id(id)
+        .find_by_id(&PrincipalId::from_wire(id))
         .await
         .unwrap()
         .unwrap();

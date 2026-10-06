@@ -1,6 +1,7 @@
 //! PlatformConfig Entity
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::PlatformConfigId;
 use serde::{Deserialize, Serialize};
 
@@ -36,7 +37,7 @@ pub struct PlatformConfig {
     pub section: String,
     pub property: String,
     pub scope: ConfigScope,
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
     pub value_type: ConfigValueType,
     pub value: String,
     pub description: Option<String>,

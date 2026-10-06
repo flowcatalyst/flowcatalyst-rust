@@ -7,15 +7,12 @@
 
 use base64::engine::general_purpose;
 use chrono::{DateTime, Duration, Utc};
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::OAuthClientId;
-use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::id::PortalAppId;
+use fc_platform_core::shared::id::PortalIdentityId;
 use fc_platform_core::usecase::HasId;
 use serde::{Deserialize, Serialize};
-
-/// Prefix of a portal identity id (Go `tsid.PortalUser`): `ptu_…`.
-pub const PORTAL_USER_PREFIX: &str = "ptu";
-/// Prefix of a portal app id (Go `tsid.PortalApp`): `pta_…`.
-pub const PORTAL_APP_PREFIX: &str = "pta";
 
 /// Whether `subject` is a portal identity id rather than a principal id. Reset
 /// tokens and authorization codes key both populations in one column; the
@@ -105,7 +102,7 @@ impl AccessState {
 /// One identity's access to one portal app.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppGrant {
-    pub app_id: String,
+    pub app_id: PortalAppId,
     pub source: IdentitySource,
     pub granted_at: DateTime<Utc>,
 }
@@ -113,8 +110,8 @@ pub struct AppGrant {
 /// One portal end-user identity in one client's portal context.
 #[derive(Debug, Clone)]
 pub struct PortalIdentity {
-    pub id: String,
-    pub client_id: String,
+    pub id: PortalIdentityId,
+    pub client_id: ClientId,
     /// Stored lower-cased.
     pub email: String,
     /// Empty when unknown (stored NULL).
@@ -135,16 +132,16 @@ pub struct PortalIdentity {
     pub apps: Vec<AppGrant>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    revoked: Vec<String>,
+    revoked: Vec<PortalAppId>,
 }
 
 impl PortalIdentity {
     /// A fresh ACTIVE identity; the email is normalised to lower case.
-    pub fn new(client_id: &str, email: &str, name: &str, source: IdentitySource) -> Self {
+    pub fn new(client_id: &ClientId, email: &str, name: &str, source: IdentitySource) -> Self {
         let now = Utc::now();
         Self {
-            id: tsid::generate_with_prefix(PORTAL_USER_PREFIX),
-            client_id: client_id.to_string(),
+            id: PortalIdentityId::generate(),
+            client_id: client_id.clone(),
             email: normalize_email(email),
             name: name.to_string(),
             password_hash: None,
@@ -163,8 +160,8 @@ impl PortalIdentity {
     /// Rebuild from stored columns (the repository's row mapping).
     #[allow(clippy::too_many_arguments)]
     pub fn from_parts(
-        id: String,
-        client_id: String,
+        id: PortalIdentityId,
+        client_id: ClientId,
         email: String,
         name: Option<String>,
         password_hash: Option<String>,
@@ -202,18 +199,18 @@ impl PortalIdentity {
         self.status == IdentityStatus::Active && self.has_password()
     }
 
-    pub fn has_app(&self, app_id: &str) -> bool {
-        self.apps.iter().any(|g| g.app_id == app_id)
+    pub fn has_app(&self, app_id: &PortalAppId) -> bool {
+        self.apps.iter().any(|g| &g.app_id == app_id)
     }
 
     /// Add the app grant, reporting whether it was new.
-    pub fn grant(&mut self, app_id: &str, source: IdentitySource) -> bool {
-        if app_id.is_empty() || self.has_app(app_id) {
+    pub fn grant(&mut self, app_id: &PortalAppId, source: IdentitySource) -> bool {
+        if app_id.as_str().is_empty() || self.has_app(app_id) {
             return false;
         }
         self.revoked.retain(|id| id != app_id);
         self.apps.push(AppGrant {
-            app_id: app_id.to_string(),
+            app_id: app_id.clone(),
             source,
             granted_at: Utc::now(),
         });
@@ -222,18 +219,18 @@ impl PortalIdentity {
 
     /// Remove the app grant, reporting whether one existed. The removal is
     /// recorded so `persist` deletes exactly this grant row.
-    pub fn revoke(&mut self, app_id: &str) -> bool {
+    pub fn revoke(&mut self, app_id: &PortalAppId) -> bool {
         let before = self.apps.len();
-        self.apps.retain(|g| g.app_id != app_id);
+        self.apps.retain(|g| &g.app_id != app_id);
         if self.apps.len() == before {
             return false;
         }
-        self.revoked.push(app_id.to_string());
+        self.revoked.push(app_id.clone());
         true
     }
 
     /// App ids revoked since load (what `persist` deletes).
-    pub fn revoked_apps(&self) -> &[String] {
+    pub fn revoked_apps(&self) -> &[PortalAppId] {
         &self.revoked
     }
 
@@ -255,7 +252,7 @@ impl PortalIdentity {
 
 impl HasId for PortalIdentity {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 
@@ -278,8 +275,8 @@ pub fn email_domain_of(email: &str) -> String {
 /// API by `code`; OAuth clients link to it (`oauth_clients.portal_app_id`).
 #[derive(Debug, Clone)]
 pub struct PortalApp {
-    pub id: String,
-    pub client_id: String,
+    pub id: PortalAppId,
+    pub client_id: ClientId,
     pub code: String,
     pub name: String,
     pub description: Option<String>,
@@ -290,11 +287,11 @@ pub struct PortalApp {
 
 impl PortalApp {
     /// A fresh active app; the code is normalised.
-    pub fn new(client_id: &str, code: &str, name: &str) -> Self {
+    pub fn new(client_id: &ClientId, code: &str, name: &str) -> Self {
         let now = Utc::now();
         Self {
-            id: tsid::generate_with_prefix(PORTAL_APP_PREFIX),
-            client_id: client_id.to_string(),
+            id: PortalAppId::generate(),
+            client_id: client_id.clone(),
             code: normalize_app_code(code),
             name: name.trim().to_string(),
             description: None,
@@ -307,7 +304,7 @@ impl PortalApp {
 
 impl HasId for PortalApp {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 
@@ -352,8 +349,8 @@ pub struct PortalOAuthClient {
     pub client_name: String,
     pub active: bool,
     pub pkce_required: bool,
-    pub portal_client_id: Option<String>,
-    pub portal_app_id: Option<String>,
+    pub portal_client_id: Option<ClientId>,
+    pub portal_app_id: Option<PortalAppId>,
     pub redirect_uris: Vec<String>,
 }
 
@@ -366,7 +363,7 @@ pub const FLOW_TTL_MINUTES: i64 = 15;
 pub struct LoginFlow {
     pub id: String,
     pub oauth_client_id: String,
-    pub portal_client_id: String,
+    pub portal_client_id: ClientId,
     pub redirect_uri: String,
     pub scope: Option<String>,
     pub state: String,
@@ -382,7 +379,7 @@ impl LoginFlow {
     /// the default TTL.
     pub fn new(
         oauth_client_id: &str,
-        portal_client_id: &str,
+        portal_client_id: &ClientId,
         redirect_uri: &str,
         state: &str,
     ) -> Self {
@@ -390,7 +387,7 @@ impl LoginFlow {
         Self {
             id: random_token(32),
             oauth_client_id: oauth_client_id.to_string(),
-            portal_client_id: portal_client_id.to_string(),
+            portal_client_id: portal_client_id.clone(),
             redirect_uri: redirect_uri.to_string(),
             scope: None,
             state: state.to_string(),
@@ -422,13 +419,18 @@ mod tests {
     use super::*;
 
     fn ident() -> PortalIdentity {
-        PortalIdentity::new("clt_1", "  Pat@Example.COM ", "Pat", IdentitySource::Invite)
+        PortalIdentity::new(
+            &ClientId::parse("clt_1").unwrap(),
+            "  Pat@Example.COM ",
+            "Pat",
+            IdentitySource::Invite,
+        )
     }
 
     #[test]
     fn new_identity_is_active_and_lower_cased() {
         let i = ident();
-        assert!(i.id.starts_with("ptu_") && i.id.len() == 17);
+        assert!(i.id.as_str().starts_with("ptu_") && i.id.as_str().len() == 17);
         assert_eq!(i.email, "pat@example.com");
         assert_eq!(i.status, IdentityStatus::Active);
         assert!(!i.can_sign_in_with_password());
@@ -445,19 +447,24 @@ mod tests {
         assert_eq!(i.state(now), AccessState::Active);
         i.status = IdentityStatus::Disabled;
         assert_eq!(i.state(now), AccessState::Suspended);
-        let jit = PortalIdentity::new("clt_1", "a@b.c", "", IdentitySource::Jit);
+        let jit = PortalIdentity::new(
+            &ClientId::parse("clt_1").unwrap(),
+            "a@b.c",
+            "",
+            IdentitySource::Jit,
+        );
         assert_eq!(jit.state(now), AccessState::Active);
     }
 
     #[test]
     fn grant_and_revoke_track_removals() {
         let mut i = ident();
-        assert!(i.grant("pta_1", IdentitySource::Admin));
-        assert!(!i.grant("pta_1", IdentitySource::Admin));
-        assert!(i.revoke("pta_1"));
-        assert_eq!(i.revoked_apps(), ["pta_1".to_string()]);
-        assert!(!i.revoke("pta_1"));
-        assert!(i.grant("pta_1", IdentitySource::Admin));
+        assert!(i.grant(&PortalAppId::parse("pta_1").unwrap(), IdentitySource::Admin));
+        assert!(!i.grant(&PortalAppId::parse("pta_1").unwrap(), IdentitySource::Admin));
+        assert!(i.revoke(&PortalAppId::parse("pta_1").unwrap()));
+        assert_eq!(i.revoked_apps(), [PortalAppId::parse("pta_1").unwrap()]);
+        assert!(!i.revoke(&PortalAppId::parse("pta_1").unwrap()));
+        assert!(i.grant(&PortalAppId::parse("pta_1").unwrap(), IdentitySource::Admin));
         assert!(i.revoked_apps().is_empty());
     }
 

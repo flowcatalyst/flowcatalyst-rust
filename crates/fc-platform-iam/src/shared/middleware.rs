@@ -11,6 +11,7 @@ pub use fc_platform_core::shared::middleware::*;
 use crate::{auth::auth_service::AuthService, shared::authorization_service::AuthorizationService};
 use fc_platform_core::shared::authorization_service::AuthContext;
 use fc_platform_core::shared::error;
+use fc_platform_core::shared::id::PrincipalId;
 use std::sync::Arc;
 
 /// Application state containing shared services
@@ -32,7 +33,7 @@ impl TokenAuthenticator for AppState {
             return Ok(None);
         };
         self.authz_service
-            .session_context(&session.principal_id)
+            .session_context(&PrincipalId::from_wire(session.principal_id.as_str()))
             .await
     }
 }
@@ -137,8 +138,8 @@ mod tests {
     /// Generate a valid access token for a partner-scoped user with multiple clients
     fn generate_partner_token(auth_service: &AuthService) -> String {
         let mut principal = Principal::new_user("partner@example.com", UserScope::Partner);
-        principal.grant_client_access("client-1");
-        principal.grant_client_access("client-2");
+        principal.grant_client_access(ClientId::from_wire("client-1"));
+        principal.grant_client_access(ClientId::from_wire("client-2"));
         auth_service.generate_access_token(&principal).unwrap()
     }
 
@@ -495,8 +496,12 @@ mod tests {
             .unwrap();
 
         assert!(auth.0.is_anchor());
-        assert!(auth.0.can_access_client("any-client-id"));
-        assert!(auth.0.can_access_client("another-client"));
+        assert!(auth
+            .0
+            .can_access_client(&ClientId::from_wire("any-client-id")));
+        assert!(auth
+            .0
+            .can_access_client(&ClientId::from_wire("another-client")));
         assert_eq!(auth.0.scope, UserScope::Anchor);
         assert!(auth.0.accessible_clients.contains(&"*".to_string()));
     }
@@ -557,8 +562,12 @@ mod tests {
 
         assert!(!auth.0.is_anchor());
         assert_eq!(auth.0.scope, UserScope::Client);
-        assert!(auth.0.can_access_client("clt_abc"));
-        assert!(!auth.0.can_access_client("other-client"));
+        assert!(auth
+            .0
+            .can_access_client(&ClientId::parse("clt_abc").unwrap()));
+        assert!(!auth
+            .0
+            .can_access_client(&ClientId::from_wire("other-client")));
         assert_eq!(auth.0.email, Some("user@client.com".to_string()));
     }
 
@@ -575,9 +584,9 @@ mod tests {
 
         assert!(!auth.0.is_anchor());
         assert_eq!(auth.0.scope, UserScope::Partner);
-        assert!(auth.0.can_access_client("client-1"));
-        assert!(auth.0.can_access_client("client-2"));
-        assert!(!auth.0.can_access_client("client-3"));
+        assert!(auth.0.can_access_client(&ClientId::from_wire("client-1")));
+        assert!(auth.0.can_access_client(&ClientId::from_wire("client-2")));
+        assert!(!auth.0.can_access_client(&ClientId::from_wire("client-3")));
         assert_eq!(auth.0.email, Some("partner@example.com".to_string()));
     }
 

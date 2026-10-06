@@ -10,6 +10,7 @@
 //! runs the use case in one transaction (`PgUnitOfWork::run`), so the
 //! provider and its mappings land together or not at all.
 
+use fc_platform_core::shared::id::ClientId;
 use serde::Serialize;
 use std::sync::Arc;
 
@@ -70,11 +71,11 @@ pub fn validate_domains(domains: &[String]) -> Result<(), UseCaseError> {
 pub fn validate_mapping_scope(
     mapping_scope: Option<&str>,
     primary_client_id: Option<&str>,
-) -> Result<(Option<ScopeType>, Option<String>), UseCaseError> {
+) -> Result<(Option<ScopeType>, Option<ClientId>), UseCaseError> {
     let client = primary_client_id
         .map(str::trim)
         .filter(|c| !c.is_empty())
-        .map(str::to_string);
+        .map(ClientId::from_wire);
     let Some(scope) = mapping_scope else {
         if client.is_some() {
             return Err(UseCaseError::validation(
@@ -142,7 +143,7 @@ pub async fn map_domain<U, C>(
     idp: &IdentityProvider,
     domain: &str,
     scope: Option<ScopeType>,
-    client: Option<&str>,
+    client: Option<&ClientId>,
     ctx: &ExecutionContext,
     command: &C,
 ) -> Result<(), UseCaseError>
@@ -159,7 +160,7 @@ where
         })?;
         let mut mapping = EmailDomainMapping::new(domain, idp.id.clone(), scope);
         if scope == ScopeType::Client {
-            mapping.primary_client_id = client.map(str::to_string);
+            mapping.primary_client_id = client.cloned();
         }
         operations::require_tenant_pin(idp.oidc_multi_tenant, &mapping)?;
         let event = EmailDomainMappingCreated::new(ctx, &mapping.id, &mapping.email_domain);
@@ -170,7 +171,7 @@ where
     };
     let link = client
         .filter(|_| existing.primary_client_id.is_none())
-        .map(str::to_string);
+        .cloned();
     if existing.identity_provider_id == idp.id {
         let Some(link) = link else {
             return Ok(());
@@ -193,7 +194,7 @@ pub async fn move_mapping<U, C>(
     deps: &DomainDeps,
     mapping: &EmailDomainMapping,
     target: &IdentityProvider,
-    link_client: Option<String>,
+    link_client: Option<ClientId>,
     ctx: &ExecutionContext,
     command: &C,
 ) -> Result<(), UseCaseError>
@@ -210,6 +211,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fc_platform_core::shared::id::OptionIdExt;
 
     #[test]
     fn domains_are_normalised_and_deduplicated() {
@@ -228,17 +230,27 @@ mod tests {
             validate_mapping_scope(None, None),
             Ok((None, None))
         ));
-        let err = validate_mapping_scope(None, Some("clt_1")).unwrap_err();
+        let err = validate_mapping_scope(None, Some(ClientId::parse("clt_1").unwrap().as_str()))
+            .unwrap_err();
         assert_eq!(err.code(), "MAPPING_SCOPE_REQUIRED");
         let err = validate_mapping_scope(Some("PARTNER"), None).unwrap_err();
         assert_eq!(err.code(), "INVALID_MAPPING_SCOPE");
-        let err = validate_mapping_scope(Some("CLIENT"), Some(" ")).unwrap_err();
+        let err = validate_mapping_scope(Some("CLIENT"), Some(ClientId::from_wire(" ").as_str()))
+            .unwrap_err();
         assert_eq!(err.code(), "PRIMARY_CLIENT_REQUIRED");
-        let err = validate_mapping_scope(Some("ANCHOR"), Some("clt_1")).unwrap_err();
+        let err = validate_mapping_scope(
+            Some("ANCHOR"),
+            Some(ClientId::parse("clt_1").unwrap().as_str()),
+        )
+        .unwrap_err();
         assert_eq!(err.code(), "PRIMARY_CLIENT_NOT_ALLOWED");
-        let (scope, client) = validate_mapping_scope(Some("CLIENT"), Some(" clt_1 ")).unwrap();
+        let (scope, client) = validate_mapping_scope(
+            Some("CLIENT"),
+            Some(ClientId::from_wire(" clt_1 ").as_str()),
+        )
+        .unwrap();
         assert_eq!(scope, Some(ScopeType::Client));
-        assert_eq!(client.as_deref(), Some("clt_1"));
+        assert_eq!(client.as_id_str(), Some("clt_1"));
     }
 
     #[test]

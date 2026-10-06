@@ -1,6 +1,7 @@
 //! Create Dispatch Pool Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ClientId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -28,7 +29,7 @@ pub struct CreateDispatchPoolCommand {
 
     /// Client ID (null for anchor-level)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
 
     /// Rate limit (messages per minute)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -120,7 +121,7 @@ impl<U: UnitOfWork> UseCase for CreateDispatchPoolUseCase<U> {
         command: &CreateDispatchPoolCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        caller_reach::check_scope_access(ctx.caller(), command.client_id.as_deref())
+        caller_reach::check_scope_access(ctx.caller(), command.client_id.as_ref())
     }
 
     async fn execute(
@@ -135,7 +136,7 @@ impl<U: UnitOfWork> UseCase for CreateDispatchPoolUseCase<U> {
         // Business rule: code must be unique
         let existing = self
             .dispatch_pool_repo
-            .find_by_code(code, command.client_id.as_deref())
+            .find_by_code(code, command.client_id.as_ref())
             .await?;
         if existing.is_some() {
             return Err(UseCaseError::business_rule(
@@ -152,7 +153,7 @@ impl<U: UnitOfWork> UseCase for CreateDispatchPoolUseCase<U> {
         }
 
         if let Some(ref client_id) = command.client_id {
-            pool = pool.with_client_id(parse_client_id(client_id)?);
+            pool = pool.with_client_id(parse_client_id(client_id.as_str())?);
         }
 
         pool.rate_limit = command.rate_limit;
@@ -181,7 +182,7 @@ mod tests {
             code: "main-pool".to_string(),
             name: "Main Pool".to_string(),
             description: Some("Primary dispatch pool".to_string()),
-            client_id: Some("client-123".to_string()),
+            client_id: Some(ClientId::from_wire("client-123")),
             rate_limit: Some(1000),
             concurrency: Some(10),
         };

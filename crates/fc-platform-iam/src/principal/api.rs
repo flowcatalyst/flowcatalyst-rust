@@ -4,6 +4,7 @@
 
 use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::shared::id::IdentityProviderId;
+use fc_platform_core::shared::id::PrincipalId;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -61,7 +62,7 @@ use fc_platform_core::principal_kind::UserScope;
 use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::authorization_service::AuthContext;
 use fc_platform_core::shared::error::{NotFoundExt, PlatformError};
-use fc_platform_core::shared::id::{ClientId, OptionIdExt};
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_core::usecase::Committed;
 use fc_platform_core::usecase::{ExecutionContext, PgUnitOfWork, UseCase};
@@ -340,7 +341,7 @@ impl From<ClientAccessGrant> for ClientAccessGrantResponse {
     fn from(g: ClientAccessGrant) -> Self {
         Self {
             id: g.id.into_string(),
-            client_id: g.client_id,
+            client_id: g.client_id.into_string(),
             // Go's `jsontime` layout: six fractional digits, `Z`.
             granted_at: g
                 .granted_at
@@ -393,7 +394,7 @@ impl From<&RoleAssignment> for RoleAssignmentResponse {
     fn from(r: &RoleAssignment) -> Self {
         Self {
             role: r.role.clone(),
-            client_id: r.client_id.clone(),
+            client_id: r.client_id.clone().map(ClientId::into_string),
             assigned_at: r.assigned_at.to_rfc3339(),
         }
     }
@@ -529,7 +530,7 @@ impl From<Principal> for PrincipalResponse {
             idp_type,
             roles: p.roles.iter().map(|r| r.role.clone()).collect(),
             is_anchor_user: p.scope == UserScope::Anchor,
-            granted_client_ids: p.assigned_clients,
+            granted_client_ids: ClientId::into_strings(p.assigned_clients),
             created_at: p.created_at.to_rfc3339(),
             updated_at: p.updated_at.to_rfc3339(),
             has_developer_credential: p.has_developer_credential,
@@ -761,13 +762,13 @@ pub(super) async fn notify_new_user(
 pub(super) async fn load_administered_user(
     state: &PrincipalsState,
     ctx: &AuthContext,
-    id: &str,
+    id: &PrincipalId,
 ) -> Result<Principal, PlatformError> {
     let target = state
         .principal_repo
         .find_by_id(id)
         .await?
-        .or_not_found("Principal", id)?;
+        .or_not_found("Principal", id.as_str())?;
     super::operations::access::require_user_resource_access(ctx, &target, "Principal")?;
     Ok(target)
 }
@@ -777,22 +778,22 @@ pub(super) async fn load_administered_user(
 /// one is `Principal_NOT_FOUND`. The use case applies the reach rule.
 pub(super) async fn load_user_to_shape(
     state: &PrincipalsState,
-    id: &str,
+    id: &PrincipalId,
 ) -> Result<Principal, PlatformError> {
     state
         .principal_repo
         .find_by_id(id)
         .await?
-        .or_not_found("Principal", id)
+        .or_not_found("Principal", id.as_str())
 }
 
 /// Go `clientAppIDs`: the applications a client is entitled to (an enabled
 /// client config), the bound a client administrator is held to.
 pub(super) async fn client_application_ids(
     state: &PrincipalsState,
-    client_id: Option<&str>,
+    client_id: Option<&ClientId>,
 ) -> Result<HashSet<ApplicationId>, PlatformError> {
-    let Some(client_id) = client_id.filter(|c| !c.is_empty()) else {
+    let Some(client_id) = client_id.filter(|c| !c.as_str().is_empty()) else {
         return Ok(Default::default());
     };
     Ok(state
@@ -892,7 +893,7 @@ pub(super) async fn bounded_role_set(
     if ctx.is_anchor() {
         return Ok(requested);
     }
-    let allowed = client_application_ids(state, target.client_id.as_id_str()).await?;
+    let allowed = client_application_ids(state, target.client_id.as_ref()).await?;
     assert_assignable_roles(state, &requested, &allowed).await?;
     let current: Vec<String> = target.roles.iter().map(|r| r.role.clone()).collect();
     let mut out = requested;
@@ -981,8 +982,8 @@ pub async fn create_principal(
         .as_deref()
         .map(str::trim)
         .filter(|c| !c.is_empty())
-        .map(str::to_string);
-    require_user_admin(ctx, client_id.as_deref())?;
+        .map(ClientId::from_wire);
+    require_user_admin(ctx, client_id.as_ref())?;
     let invite_redirect = resolve_invite_redirect(req.invite_redirect_uri.as_deref())?;
 
     // Go's CreateUser validation (principal/operations/create.go:39-65),
@@ -1036,7 +1037,7 @@ pub async fn create_principal(
         email: email.clone(),
         name: req.name.clone(),
         scope,
-        client_id,
+        client_id: client_id.map(ClientId::from_wire),
         granted_client_ids: Vec::new(),
         password: password.clone(),
         enforce_password_complexity: None,
@@ -1067,7 +1068,7 @@ pub async fn create_principal(
     Ok((
         StatusCode::CREATED,
         Json(CreatePrincipalResponse {
-            id: event.principal_id,
+            id: event.principal_id.into_string(),
             invite_link,
         }),
     ))
@@ -1092,7 +1093,7 @@ fn go_email_pattern() -> &'static regex::Regex {
 /// may not create a clientless principal.
 fn require_user_admin(
     ctx: &AuthContext,
-    target_client_id: Option<&str>,
+    target_client_id: Option<&ClientId>,
 ) -> Result<(), PlatformError> {
     if !ctx.is_anchor() {
         let Some(client_id) = target_client_id else {
@@ -1140,16 +1141,20 @@ pub(super) fn resolve_invite_redirect(raw: Option<&str>) -> Result<Option<String
 pub(super) async fn resolve_client_ref(
     state: &PrincipalsState,
     reference: &str,
-) -> Result<String, PlatformError> {
-    if let Some(client) = state.client_repo.find_by_id(reference).await? {
-        return Ok(client.id.to_string());
+) -> Result<ClientId, PlatformError> {
+    if let Some(client) = state
+        .client_repo
+        .find_by_id(&ClientId::from_wire(reference))
+        .await?
+    {
+        return Ok(client.id);
     }
     if let Some(client) = state
         .client_repo
         .find_by_identifier(&reference.to_lowercase())
         .await?
     {
-        return Ok(client.id.to_string());
+        return Ok(client.id);
     }
     Err(PlatformError::Coded {
         status: StatusCode::NOT_FOUND,
@@ -1170,8 +1175,8 @@ pub fn derive_user_scope(
     requested: Option<&str>,
     is_anchor_domain: bool,
     mapping: Option<&EmailDomainMapping>,
-    client_id: Option<String>,
-) -> Result<(UserScope, Option<String>), PlatformError> {
+    client_id: Option<ClientId>,
+) -> Result<(UserScope, Option<ClientId>), PlatformError> {
     use crate::email_domain_mapping::entity::ScopeType;
     let scope = requested
         .map(str::trim)
@@ -1196,13 +1201,13 @@ pub fn derive_user_scope(
                     "PARTNER scope requires a PARTNER email-domain mapping for the email's domain",
                 ));
             };
-            let Some(client_id) = client_id.filter(|c| !c.is_empty()) else {
+            let Some(client_id) = client_id.filter(|c| !c.as_str().is_empty()) else {
                 return Err(PlatformError::bad_request_code(
                     "CLIENT_REQUIRED",
                     "clientId is required for partner users",
                 ));
             };
-            let allowed = m.primary_client_id.as_deref() == Some(client_id.as_str())
+            let allowed = m.primary_client_id.as_ref() == Some(&client_id)
                 || m.granted_client_ids.contains(&client_id);
             if !allowed {
                 return Err(PlatformError::bad_request_code(
@@ -1250,6 +1255,7 @@ pub async fn get_principal(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<PrincipalResponse>, PlatformError> {
+    let id = PrincipalId::from_wire(id);
     // A principal reads itself with no permission (Go `getByID`).
     if auth.0.principal_id != id {
         checks::can_read_principals(&auth.0)?;
@@ -1314,6 +1320,7 @@ pub async fn update_principal(
     Path(id): Path<String>,
     Json(req): Json<UpdatePrincipalRequest>,
 ) -> Result<Json<PrincipalResponse>, PlatformError> {
+    let id = PrincipalId::from_wire(id);
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
     checks::can_write_principals(&auth.0)?;
@@ -1340,6 +1347,7 @@ pub async fn get_roles(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<RolesListResponse>, PlatformError> {
+    let id = PrincipalId::from_wire(id);
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
     checks::can_read_principals(&auth.0)?;
@@ -1370,6 +1378,7 @@ pub async fn assign_role(
     Path(id): Path<String>,
     Json(req): Json<AssignRoleRequest>,
 ) -> Result<Json<PrincipalResponse>, PlatformError> {
+    let id = PrincipalId::from_wire(id);
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
     checks::can_assign_principal_roles(&auth.0)?;
@@ -1400,6 +1409,7 @@ pub async fn batch_assign_roles(
     Path(id): Path<String>,
     Json(req): Json<BatchAssignRolesRequest>,
 ) -> Result<Json<BatchAssignRolesResponse>, PlatformError> {
+    let id = PrincipalId::from_wire(id);
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
     checks::can_assign_principal_roles(&auth.0)?;
@@ -1429,6 +1439,7 @@ pub async fn remove_role(
     auth: Authenticated,
     Path((id, role)): Path<(String, String)>,
 ) -> Result<Json<PrincipalResponse>, PlatformError> {
+    let id = PrincipalId::from_wire(id);
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
     checks::can_assign_principal_roles(&auth.0)?;
@@ -1457,6 +1468,7 @@ pub async fn get_client_access(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ClientAccessListResponse>, PlatformError> {
+    let id = PrincipalId::from_wire(id);
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
     checks::require_anchor_scope(&auth.0)?;
@@ -1487,6 +1499,7 @@ pub async fn grant_client_access(
     Path(id): Path<String>,
     Json(req): Json<GrantClientAccessRequest>,
 ) -> Result<Json<ClientAccessGrantResponse>, PlatformError> {
+    let id = PrincipalId::from_wire(id);
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
     checks::can_grant_client_access(&auth.0)?;
@@ -1516,6 +1529,8 @@ pub async fn revoke_client_access(
     auth: Authenticated,
     Path((id, client_id)): Path<(String, String)>,
 ) -> Result<StatusCode, PlatformError> {
+    let client_id = ClientId::from_wire(client_id);
+    let id = PrincipalId::from_wire(id);
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
     checks::can_revoke_client_access(&auth.0)?;
@@ -1544,6 +1559,7 @@ pub async fn delete_principal(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = PrincipalId::from_wire(id);
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
     checks::can_delete_principals(&auth.0)?;
@@ -1687,6 +1703,7 @@ pub async fn activate_principal(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<StatusChangeResponse>, PlatformError> {
+    let id = PrincipalId::from_wire(id);
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
     checks::can_write_principals(&auth.0)?;
@@ -1716,6 +1733,7 @@ pub async fn deactivate_principal(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<StatusChangeResponse>, PlatformError> {
+    let id = PrincipalId::from_wire(id);
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
     checks::can_write_principals(&auth.0)?;
@@ -1748,6 +1766,7 @@ pub async fn reset_password(
     Path(id): Path<String>,
     Json(req): Json<ResetPasswordRequest>,
 ) -> Result<Json<StatusChangeResponse>, PlatformError> {
+    let id = PrincipalId::from_wire(id);
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
     checks::can_write_principals(&auth.0)?;
@@ -1796,6 +1815,7 @@ pub async fn send_password_reset(
     Path(id): Path<String>,
     body: Bytes,
 ) -> Result<Json<StatusChangeResponse>, PlatformError> {
+    let id = PrincipalId::from_wire(id);
     // An optional body `{"reset2fa": true}` also clears the user's 2FA when
     // they complete the reset (Go sendPasswordResetInput, the lost-device
     // path); no body is the plain reset email.
@@ -1867,6 +1887,7 @@ pub async fn get_application_access(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ApplicationAccessListResponse>, PlatformError> {
+    let id = PrincipalId::from_wire(id);
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
     checks::can_read_principals(&auth.0)?;
@@ -1899,6 +1920,7 @@ pub async fn set_application_access(
     Path(id): Path<String>,
     Json(req): Json<SetApplicationAccessRequest>,
 ) -> Result<Json<SetApplicationAccessResponse>, PlatformError> {
+    let id = PrincipalId::from_wire(id);
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
     checks::can_write_principals(&auth.0)?;
@@ -1930,6 +1952,7 @@ pub async fn get_available_applications(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<AvailableApplicationsResponse>, PlatformError> {
+    let id = PrincipalId::from_wire(id);
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
     checks::can_read_principals(&auth.0)?;
@@ -2055,8 +2078,8 @@ pub async fn bulk_import_principals(
     auth: Authenticated,
     Json(req): Json<BulkImportRequest>,
 ) -> Result<Json<BulkImportResponse>, PlatformError> {
-    let client_id = req.client_id.trim().to_string();
-    if client_id.is_empty() {
+    let client_id = ClientId::from_wire(req.client_id.trim());
+    if client_id.as_str().is_empty() {
         return Err(PlatformError::bad_request_code(
             "CLIENT_REQUIRED",
             "A target client is required",
@@ -2206,13 +2229,12 @@ pub async fn bulk_import_principals(
         let domain = email.split('@').nth(1).unwrap_or_default();
         let mapping = mappings.get(domain);
         if let Some(m) = mapping {
-            let owners: Vec<&str> = m
+            let owners: Vec<&ClientId> = m
                 .primary_client_id
                 .iter()
-                .map(String::as_str)
-                .chain(m.additional_client_ids.iter().map(String::as_str))
+                .chain(m.additional_client_ids.iter())
                 .collect();
-            if !owners.is_empty() && !owners.contains(&client_id.as_str()) {
+            if !owners.is_empty() && !owners.contains(&&client_id) {
                 results.push(row(
                     n,
                     email,
@@ -2230,7 +2252,7 @@ pub async fn bulk_import_principals(
             email: email.to_string(),
             name: Some(r.name.clone()),
             scope: UserScope::Client,
-            client_id: Some(client_id.clone()),
+            client_id: Some(ClientId::from_wire(client_id.clone())),
             granted_client_ids: Vec::new(),
             password: None,
             enforce_password_complexity: None,
@@ -2307,6 +2329,7 @@ pub async fn get_principal_version(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<PrincipalVersionResponse>, PlatformError> {
+    let id = PrincipalId::from_wire(id);
     if auth.0.principal_id != id {
         checks::require_permission(&auth.0, permissions::iam::USER_READ)?;
         let p = state
@@ -2314,7 +2337,7 @@ pub async fn get_principal_version(
             .find_by_id(&id)
             .await?
             .ok_or_else(|| PlatformError::not_found_code("Principal", &id))?;
-        if let Some(client) = p.client_id.as_id_str() {
+        if let Some(client) = p.client_id.as_ref() {
             if !auth.0.can_access_client(client) {
                 return Err(PlatformError::not_found_code("Principal", &id));
             }
@@ -2355,8 +2378,11 @@ pub async fn set_principal_client_association(
     Path(id): Path<String>,
     Json(req): Json<ClientAssociationRequest>,
 ) -> Result<Json<PrincipalResponse>, PlatformError> {
+    let id = PrincipalId::from_wire(id);
     checks::can_grant_client_access(&auth.0)?;
-    Ok(Json(client_association(&state, &auth.0, &id, req).await?))
+    Ok(Json(
+        client_association(&state, &auth.0, id.as_str(), req).await?,
+    ))
 }
 
 /// The body of `PUT /api/principals/{id}/client-association`, shared with
@@ -2372,7 +2398,7 @@ pub async fn client_association(
         .set_client_association_use_case
         .run(
             SetClientAssociationCommand {
-                user_id: id.to_string(),
+                user_id: PrincipalId::from_wire(id),
                 client_id: req.client_id,
                 mode: req.mode,
             },
@@ -2382,7 +2408,7 @@ pub async fn client_association(
         .into_result()?;
     let p = state
         .principal_repo
-        .find_by_id(id)
+        .find_by_id(&PrincipalId::from_wire(id))
         .await?
         .ok_or_else(|| PlatformError::not_found_code("Principal", id))?;
     Ok(p.into())
@@ -2403,12 +2429,12 @@ mod tests {
             IdentityProviderId::parse("idp_1").unwrap(),
             scope_type,
         );
-        m.primary_client_id = primary.map(String::from);
-        m.granted_client_ids = granted.iter().map(|g| g.to_string()).collect();
+        m.primary_client_id = primary.map(String::from).map(ClientId::from_wire);
+        m.granted_client_ids = ClientId::from_wire_all(granted.iter().copied());
         m
     }
 
-    fn code(r: Result<(UserScope, Option<String>), PlatformError>) -> String {
+    fn code(r: Result<(UserScope, Option<ClientId>), PlatformError>) -> String {
         match r {
             Err(PlatformError::Coded { code, status, .. }) => {
                 assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -2427,18 +2453,18 @@ mod tests {
         // Absent → CLIENT with the requested client; an anchor domain alone
         // doesn't make an anchor.
         assert_eq!(
-            derive_user_scope(None, true, None, clt()).unwrap(),
-            (UserScope::Client, clt())
+            derive_user_scope(None, true, None, clt().map(ClientId::from_wire)).unwrap(),
+            (UserScope::Client, clt().map(ClientId::from_wire))
         );
         // CLIENT falls back to a CLIENT mapping's primary.
         let client_map = mapping(ScopeType::Client, Some("clt_9"), &["clt_8"]);
         assert_eq!(
             derive_user_scope(Some("client"), false, Some(&client_map), None).unwrap(),
-            (UserScope::Client, Some("clt_9".to_string()))
+            (UserScope::Client, Some(ClientId::from_wire("clt_9")))
         );
         // ANCHOR needs the anchor domain (or an ANCHOR mapping); no client.
         assert_eq!(
-            derive_user_scope(Some("ANCHOR"), true, None, clt()).unwrap(),
+            derive_user_scope(Some("ANCHOR"), true, None, clt().map(ClientId::from_wire)).unwrap(),
             (UserScope::Anchor, None)
         );
         let anchor_map = mapping(ScopeType::Anchor, None, &[]);
@@ -2457,13 +2483,18 @@ mod tests {
                 Some("PARTNER"),
                 false,
                 Some(&partner_map),
-                Some("clt_2".into())
+                Some(ClientId::parse("clt_2").unwrap())
             )
             .unwrap(),
-            (UserScope::Partner, Some("clt_2".to_string()))
+            (UserScope::Partner, Some(ClientId::from_wire("clt_2")))
         );
         assert_eq!(
-            code(derive_user_scope(Some("PARTNER"), false, None, clt())),
+            code(derive_user_scope(
+                Some("PARTNER"),
+                false,
+                None,
+                clt().map(ClientId::from_wire)
+            )),
             "PARTNER_DOMAIN_REQUIRED"
         );
         assert_eq!(
@@ -2480,7 +2511,7 @@ mod tests {
                 Some("PARTNER"),
                 false,
                 Some(&partner_map),
-                Some("clt_3".into())
+                Some(ClientId::parse("clt_3").unwrap())
             )),
             "CLIENT_NOT_ALLOWED"
         );
@@ -2598,7 +2629,7 @@ mod tests {
             user_identity: Some(UserIdentity::new("jane@example.com")),
             service_account_id: None,
             roles: vec![RoleAssignment::new("platform:admin")],
-            assigned_clients: vec!["clt_CLIENT1234567".to_string()],
+            assigned_clients: vec![ClientId::parse("clt_CLIENT1234567").unwrap()],
             client_identifier_map: HashMap::new(),
             accessible_application_ids: vec![],
             application_code_map: HashMap::new(),

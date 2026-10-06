@@ -1,6 +1,7 @@
 //! Deactivate User Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::PrincipalId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -16,7 +17,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct DeactivateUserCommand {
     /// Principal ID to deactivate
-    pub principal_id: String,
+    pub principal_id: PrincipalId,
 
     /// Reason for deactivation (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -46,7 +47,7 @@ impl<U: UnitOfWork> UseCase for DeactivateUserUseCase<U> {
     type Event = UserDeactivated;
 
     async fn validate(&self, command: &DeactivateUserCommand) -> Result<(), UseCaseError> {
-        if command.principal_id.trim().is_empty() {
+        if command.principal_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "PRINCIPAL_ID_REQUIRED",
                 "Principal ID is required",
@@ -103,7 +104,7 @@ impl<U: UnitOfWork> UseCase for DeactivateUserUseCase<U> {
         principal.deactivate();
 
         // Create domain event
-        let event = UserDeactivated::new(&ctx, principal.id.as_str());
+        let event = UserDeactivated::new(&ctx, &principal.id);
 
         // Atomic commit
         self.unit_of_work
@@ -119,7 +120,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = DeactivateUserCommand {
-            principal_id: "user-123".to_string(),
+            principal_id: PrincipalId::from_wire("user-123"),
             reason: Some("Policy violation".to_string()),
         };
 

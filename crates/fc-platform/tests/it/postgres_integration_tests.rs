@@ -85,7 +85,7 @@ async fn test_client_crud() {
 
     // Read
     let found = repo
-        .find_by_id(client.id.as_str())
+        .find_by_id(&client.id)
         .await
         .expect("Failed to find client");
     assert!(found.is_some());
@@ -113,7 +113,7 @@ async fn test_client_crud() {
         .await
         .expect("Failed to update client");
 
-    let suspended = repo.find_by_id(client.id.as_str()).await.unwrap().unwrap();
+    let suspended = repo.find_by_id(&client.id).await.unwrap().unwrap();
     assert_eq!(suspended.status, ClientStatus::Suspended);
     assert_eq!(
         suspended.status_reason,
@@ -128,7 +128,7 @@ async fn test_client_not_found() {
     let repo = ClientRepository::new(&pool);
 
     let result = repo
-        .find_by_id("nonexistent-id")
+        .find_by_id(&ClientId::from_wire("nonexistent-id"))
         .await
         .expect("Query should succeed");
     assert!(result.is_none());
@@ -151,7 +151,7 @@ async fn test_principal_user_crud() {
 
     // Read
     let found = repo
-        .find_by_id(principal.id.as_str())
+        .find_by_id(&principal.id)
         .await
         .expect("Failed to find principal");
     assert!(found.is_some());
@@ -174,11 +174,7 @@ async fn test_principal_user_crud() {
     p.deactivate();
     repo.update(&p).await.expect("Failed to update principal");
 
-    let deactivated = repo
-        .find_by_id(principal.id.as_str())
-        .await
-        .unwrap()
-        .unwrap();
+    let deactivated = repo.find_by_id(&principal.id).await.unwrap().unwrap();
     assert!(!deactivated.active);
 }
 
@@ -193,11 +189,7 @@ async fn test_principal_service_account() {
         .await
         .expect("Failed to insert service principal");
 
-    let found = repo
-        .find_by_id(principal.id.as_str())
-        .await
-        .unwrap()
-        .unwrap();
+    let found = repo.find_by_id(&principal.id).await.unwrap().unwrap();
     assert!(found.is_service());
     assert_eq!(found.name, "My Service");
 }
@@ -225,13 +217,13 @@ async fn test_principal_with_client_access() {
         .expect("Failed to insert principal");
 
     let found = principal_repo
-        .find_by_id(principal.id.as_str())
+        .find_by_id(&principal.id)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(found.client_id, Some(client.id.clone()));
     assert_eq!(found.scope, UserScope::Client);
-    assert!(found.can_access_client(client.id.as_str()));
+    assert!(found.can_access_client(&client.id));
 }
 
 // ─── Role Repository Tests ───────────────────────────────────────────────
@@ -399,7 +391,7 @@ async fn test_token_generation_from_db_principal() {
 
     // Load from DB
     let loaded = principal_repo
-        .find_by_id(principal.id.as_str())
+        .find_by_id(&principal.id)
         .await
         .unwrap()
         .unwrap();
@@ -436,13 +428,13 @@ async fn test_multiple_clients_with_partner_principal() {
 
     // Create partner with access to both
     let mut principal = Principal::new_user("partner@example.com", UserScope::Partner);
-    principal.grant_client_access(&client1.id);
-    principal.grant_client_access(&client2.id);
+    principal.grant_client_access(client1.id.clone());
+    principal.grant_client_access(client2.id.clone());
     principal_repo.insert(&principal).await.unwrap();
 
     // Verify access
     let loaded = principal_repo
-        .find_by_id(principal.id.as_str())
+        .find_by_id(&principal.id)
         .await
         .unwrap()
         .unwrap();
@@ -513,14 +505,14 @@ async fn test_all_applications_migration_is_idempotent() {
 
     assert!(
         !repo
-            .find_by_id(service.id.as_str())
+            .find_by_id(&service.id)
             .await
             .unwrap()
             .unwrap()
             .all_applications
     );
     assert!(
-        repo.find_by_id(user.id.as_str())
+        repo.find_by_id(&user.id)
             .await
             .unwrap()
             .unwrap()
@@ -565,7 +557,7 @@ async fn test_unit_of_work_commit() {
     // Commit an event via UnitOfWork
     let uow = PgUnitOfWork::new(pool.clone());
     let ctx = ExecutionContext::system("test-principal-id");
-    let event = ClientCreated::new(&ctx, client.id.as_str(), &client.name, &client.identifier);
+    let event = ClientCreated::new(&ctx, &client.id, &client.name, &client.identifier);
 
     #[derive(serde::Serialize)]
     struct CreateClientCommand {
@@ -623,8 +615,7 @@ async fn test_unit_of_work_unique_violation_is_duplicate_key() {
         let repo = &client_repo;
         let ctx = &ctx;
         async move {
-            let event =
-                ClientCreated::new(ctx, client.id.as_str(), &client.name, &client.identifier);
+            let event = ClientCreated::new(ctx, &client.id, &client.name, &client.identifier);
             let command = CreateClientCommand {
                 name: client.name.clone(),
             };
@@ -1027,7 +1018,7 @@ async fn test_service_account_crud() {
 
     // Find by ID
     let found = repo
-        .find_by_id(svc.id.as_str())
+        .find_by_id(&svc.id)
         .await
         .expect("Failed to find service account");
     assert!(found.is_some());

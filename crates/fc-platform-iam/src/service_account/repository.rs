@@ -7,6 +7,8 @@
 
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::PrincipalId;
 use sqlx::PgPool;
 
 use crate::service_account::entity::{AccountRow, ServiceAccount};
@@ -26,16 +28,17 @@ use fc_platform_core::usecase::Persist;
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Formatter;
+use std::slice::from_ref;
 
 /// Row mapping for iam_principals table (SERVICE type rows)
 #[derive(sqlx::FromRow, Clone)]
 struct PrincipalRow {
-    id: String,
+    id: PrincipalId,
     #[sqlx(rename = "type")]
     #[allow(dead_code)]
     principal_type: String,
     scope: Option<String>,
-    client_id: Option<String>,
+    client_id: Option<ClientId>,
     application_id: Option<ApplicationId>,
     name: String,
     active: bool,
@@ -58,7 +61,7 @@ struct ServiceAccountRow {
     /// The requested scope, stored as sent (Go's 035).
     scope: Option<String>,
     /// The client links (Go's 035). NULL on rows written before the column.
-    client_ids: Option<Vec<String>>,
+    client_ids: Option<Vec<ClientId>>,
     #[allow(dead_code)]
     active: bool,
     wh_auth_type: Option<String>,
@@ -79,14 +82,14 @@ struct ServiceAccountRow {
 /// Row mapping for iam_client_access_grants (a PARTNER account's clients)
 #[derive(sqlx::FromRow)]
 struct ClientGrantRow {
-    principal_id: String,
-    client_id: String,
+    principal_id: PrincipalId,
+    client_id: ClientId,
 }
 
 /// Row mapping for iam_principal_application_access
 #[derive(sqlx::FromRow)]
 struct ApplicationGrantRow {
-    principal_id: String,
+    principal_id: PrincipalId,
     application_id: ApplicationId,
 }
 
@@ -94,14 +97,14 @@ struct ApplicationGrantRow {
 #[derive(Default)]
 struct Grants {
     roles: Vec<RoleAssignment>,
-    clients: Vec<String>,
+    clients: Vec<ClientId>,
     applications: Vec<ApplicationId>,
 }
 
 /// Row mapping for iam_principal_roles junction table
 #[derive(sqlx::FromRow)]
 struct PrincipalRoleRow {
-    principal_id: String,
+    principal_id: PrincipalId,
     role_name: String,
     assignment_source: Option<String>,
     assigned_at: DateTime<Utc>,
@@ -154,11 +157,11 @@ struct SigningAccountRow {
     reference: String,
     code: String,
     application_id: Option<String>,
-    client_ids: Option<Vec<String>>,
-    principal_id: Option<String>,
+    client_ids: Option<Vec<ClientId>>,
+    principal_id: Option<PrincipalId>,
     scope: Option<String>,
-    client_id: Option<String>,
-    granted: Vec<String>,
+    client_id: Option<ClientId>,
+    granted: Vec<ClientId>,
 }
 
 pub struct ServiceAccountRepository {
@@ -213,7 +216,7 @@ impl ServiceAccountRepository {
     /// Find by principal ID (the ID returned in API responses).
     /// Find by id: the SERVICE principal's id, or the account's own
     /// (`iam_service_accounts.id`, the id the API answers with, as Go's).
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<ServiceAccount>> {
+    pub async fn find_by_id(&self, id: &PrincipalId) -> Result<Option<ServiceAccount>> {
         let principal = sqlx::query_as::<_, PrincipalRow>(
             "SELECT id, type, scope, client_id, application_id, name, active, \
              service_account_id, all_applications, created_at, updated_at \
@@ -468,7 +471,10 @@ impl ServiceAccountRepository {
     /// The application the principal acts as: its linked service account's
     /// `application_id` (Java `SigningReach.callerApplicationId`). `None`
     /// for a user, an unknown principal, or an account of no application.
-    pub async fn caller_application_id(&self, principal_id: &str) -> Result<Option<ApplicationId>> {
+    pub async fn caller_application_id(
+        &self,
+        principal_id: &PrincipalId,
+    ) -> Result<Option<ApplicationId>> {
         let row = sqlx::query_as::<_, (Option<String>,)>(
             "SELECT sa.application_id FROM iam_principals p \
              JOIN iam_service_accounts sa ON sa.id = p.service_account_id WHERE p.id = $1",
@@ -483,7 +489,7 @@ impl ServiceAccountRepository {
     }
 
     /// Find service accounts by client ID.
-    pub async fn find_by_client(&self, client_id: &str) -> Result<Vec<ServiceAccount>> {
+    pub async fn find_by_client(&self, client_id: &ClientId) -> Result<Vec<ServiceAccount>> {
         let principals = sqlx::query_as::<_, PrincipalRow>(
             "SELECT id, type, scope, client_id, application_id, name, active, \
              service_account_id, all_applications, created_at, updated_at \
@@ -549,7 +555,7 @@ impl ServiceAccountRepository {
         Ok(())
     }
 
-    pub async fn delete(&self, id: &str) -> Result<bool> {
+    pub async fn delete(&self, id: &PrincipalId) -> Result<bool> {
         // Delete the principal (CASCADE will clean up roles)
         let result = sqlx::query("DELETE FROM iam_principals WHERE id = $1")
             .bind(id)
@@ -597,7 +603,7 @@ impl ServiceAccountRepository {
             return Ok(vec![]);
         }
 
-        let principal_ids: Vec<String> = principals.iter().map(|p| p.id.clone()).collect();
+        let principal_ids: Vec<PrincipalId> = principals.iter().map(|p| p.id.clone()).collect();
 
         // Batch-load service account details
         let sa_ids: Vec<String> = principals
@@ -652,7 +658,7 @@ impl ServiceAccountRepository {
             principal.scope.as_deref(),
             "iam_principals",
             "scope",
-            &principal.id,
+            principal.id.as_str(),
         )?
         .unwrap_or(UserScope::Client);
         // The clients the principal actually reaches at that scope. A stale
@@ -699,7 +705,7 @@ impl ServiceAccountRepository {
 
         Ok(ServiceAccount {
             // The principal ID is what gets returned to clients
-            id: decode_id(&principal.id, "iam_principals", "id", &principal.id)?,
+            id: decode_id(&principal.id, "iam_principals", "id", principal.id.as_str())?,
             code,
             name: principal.name,
             description: sa_row.and_then(|sa| sa.description.clone()),
@@ -727,14 +733,17 @@ impl ServiceAccountRepository {
         })
     }
 
-    async fn load_one(&self, principal_id: &str) -> Result<Grants> {
-        let mut grants = self.load_grants(&[principal_id.to_string()]).await?;
+    async fn load_one(&self, principal_id: &PrincipalId) -> Result<Grants> {
+        let mut grants = self.load_grants(from_ref(principal_id)).await?;
         Ok(grants.remove(principal_id).unwrap_or_default())
     }
 
     /// Batch-load roles, client grants and application grants for
     /// principals, one query per junction table.
-    async fn load_grants(&self, principal_ids: &[String]) -> Result<HashMap<String, Grants>> {
+    async fn load_grants(
+        &self,
+        principal_ids: &[PrincipalId],
+    ) -> Result<HashMap<PrincipalId, Grants>> {
         let (roles, clients, applications) = tokio::try_join!(
             sqlx::query_as::<_, PrincipalRoleRow>(
                 "SELECT principal_id, role_name, assignment_source, assigned_at, assigned_by \
@@ -756,7 +765,7 @@ impl ServiceAccountRepository {
             .fetch_all(&self.pool),
         )?;
 
-        let mut map: HashMap<String, Grants> = HashMap::new();
+        let mut map: HashMap<PrincipalId, Grants> = HashMap::new();
         for r in roles {
             map.entry(r.principal_id.clone())
                 .or_default()
@@ -764,13 +773,13 @@ impl ServiceAccountRepository {
                 .push(RoleAssignment::try_from(r)?);
         }
         for g in clients {
-            map.entry(g.principal_id)
+            map.entry(g.principal_id.clone())
                 .or_default()
                 .clients
                 .push(g.client_id);
         }
         for a in applications {
-            map.entry(a.principal_id)
+            map.entry(a.principal_id.clone())
                 .or_default()
                 .applications
                 .push(a.application_id);
@@ -782,15 +791,18 @@ impl ServiceAccountRepository {
 /// The account row a principal's `service_account_id` names: its own `sac_…`
 /// id, or (legacy, older Go rows) the principal's own id. Anything else is a
 /// corrupt row.
-fn account_row(principal_id: &str, service_account_id: Option<&str>) -> Result<Option<AccountRow>> {
+fn account_row(
+    principal_id: &PrincipalId,
+    service_account_id: Option<&str>,
+) -> Result<Option<AccountRow>> {
     match service_account_id {
         None => Ok(None),
-        Some(v) if v == principal_id => Ok(Some(AccountRow::SharedWithPrincipal)),
+        Some(v) if v == principal_id.as_str() => Ok(Some(AccountRow::SharedWithPrincipal)),
         Some(v) => Ok(Some(AccountRow::Own(decode_id(
             v,
             "iam_principals",
             "service_account_id",
-            principal_id,
+            principal_id.as_str(),
         )?))),
     }
 }
@@ -813,7 +825,7 @@ impl Persist<ServiceAccount> for ServiceAccountRepository {
             UserScope::Client => sa.principal_client_ids.first(),
             UserScope::Anchor | UserScope::Partner => None,
         };
-        let granted_client_ids: &[String] = match sa.scope {
+        let granted_client_ids: &[ClientId] = match sa.scope {
             UserScope::Partner => &sa.principal_client_ids,
             UserScope::Anchor | UserScope::Client => &[],
         };
@@ -1022,15 +1034,20 @@ impl Persist<ServiceAccount> for ServiceAccountRepository {
 #[async_trait::async_trait]
 impl ServiceAccountDirectory for ServiceAccountRepository {
     async fn find_by_id(&self, id: &str) -> Result<Option<ServiceAccountRef>> {
-        Ok(ServiceAccountRepository::find_by_id(self, id)
-            .await?
-            .map(|sa| ServiceAccountRef {
-                id: sa.id.into_string(),
-                code: sa.code,
-            }))
+        Ok(
+            ServiceAccountRepository::find_by_id(self, &PrincipalId::from_wire(id))
+                .await?
+                .map(|sa| ServiceAccountRef {
+                    id: sa.id.into_string(),
+                    code: sa.code,
+                }),
+        )
     }
 
-    async fn caller_application_id(&self, principal_id: &str) -> Result<Option<ApplicationId>> {
+    async fn caller_application_id(
+        &self,
+        principal_id: &PrincipalId,
+    ) -> Result<Option<ApplicationId>> {
         ServiceAccountRepository::caller_application_id(self, principal_id).await
     }
 
@@ -1056,22 +1073,41 @@ mod account_row_tests {
     #[test]
     fn a_legacy_link_to_the_principals_own_id_is_shared() {
         assert_eq!(
-            account_row("prn_0000000000001", Some("prn_0000000000001")).unwrap(),
+            account_row(
+                &PrincipalId::parse("prn_0000000000001").unwrap(),
+                Some("prn_0000000000001")
+            )
+            .unwrap(),
             Some(AccountRow::SharedWithPrincipal)
         );
     }
 
     #[test]
     fn a_sac_link_is_the_accounts_own_row() {
-        let row = account_row("prn_0000000000001", Some("sac_0000000000002")).unwrap();
+        let row = account_row(
+            &PrincipalId::parse("prn_0000000000001").unwrap(),
+            Some("sac_0000000000002"),
+        )
+        .unwrap();
         assert!(matches!(row, Some(AccountRow::Own(id)) if id.as_str() == "sac_0000000000002"));
     }
 
     #[test]
     fn no_link_is_none_and_another_principals_id_is_corrupt() {
-        assert_eq!(account_row("prn_0000000000001", None).unwrap(), None);
-        assert!(account_row("prn_0000000000001", Some("prn_0000000000009")).is_err());
-        assert!(account_row("prn_0000000000001", Some("junk")).is_err());
+        assert_eq!(
+            account_row(&PrincipalId::parse("prn_0000000000001").unwrap(), None).unwrap(),
+            None
+        );
+        assert!(account_row(
+            &PrincipalId::parse("prn_0000000000001").unwrap(),
+            Some("prn_0000000000009")
+        )
+        .is_err());
+        assert!(account_row(
+            &PrincipalId::parse("prn_0000000000001").unwrap(),
+            Some("junk")
+        )
+        .is_err());
     }
 }
 
@@ -1082,7 +1118,7 @@ mod tests {
 
     fn principal_row() -> PrincipalRow {
         PrincipalRow {
-            id: "prn_1".to_string(),
+            id: PrincipalId::parse("prn_1").unwrap(),
             principal_type: "SERVICE".to_string(),
             scope: None,
             client_id: None,
@@ -1161,7 +1197,7 @@ mod tests {
             principal,
             Some(&sa_row(Some("BEARER_TOKEN"), None)),
             Grants {
-                clients: granted.iter().map(|s| s.to_string()).collect(),
+                clients: ClientId::from_wire_all(granted.iter().copied()),
                 ..Grants::default()
             },
         )
@@ -1170,24 +1206,44 @@ mod tests {
     fn scoped(scope: Option<&str>, client_id: Option<&str>) -> PrincipalRow {
         PrincipalRow {
             scope: scope.map(str::to_string),
-            client_id: client_id.map(str::to_string),
+            client_id: client_id.map(ClientId::from_wire),
             ..principal_row()
         }
     }
 
     #[test]
     fn scope_reads_from_the_principal_row_with_the_links_it_reaches() {
-        let anchor = build(scoped(Some("ANCHOR"), Some("clt_stale")), &["clt_g"]).unwrap();
+        let anchor = build(
+            scoped(
+                Some("ANCHOR"),
+                Some(ClientId::parse("clt_stale").unwrap().as_str()),
+            ),
+            &["clt_g"],
+        )
+        .unwrap();
         assert_eq!(anchor.scope, UserScope::Anchor);
         assert!(anchor.principal_client_ids.is_empty());
 
-        let client = build(scoped(Some("CLIENT"), Some("clt_home")), &["clt_g"]).unwrap();
+        let client = build(
+            scoped(
+                Some("CLIENT"),
+                Some(ClientId::parse("clt_home").unwrap().as_str()),
+            ),
+            &["clt_g"],
+        )
+        .unwrap();
         assert_eq!(client.scope, UserScope::Client);
-        assert_eq!(client.principal_client_ids, vec!["clt_home"]);
+        assert_eq!(
+            ClientId::into_strings(client.principal_client_ids.clone()),
+            vec!["clt_home"]
+        );
 
         let partner = build(scoped(Some("PARTNER"), None), &["clt_1", "clt_2"]).unwrap();
         assert_eq!(partner.scope, UserScope::Partner);
-        assert_eq!(partner.principal_client_ids, vec!["clt_1", "clt_2"]);
+        assert_eq!(
+            ClientId::into_strings(partner.principal_client_ids.clone()),
+            vec!["clt_1", "clt_2"]
+        );
     }
 
     #[test]
@@ -1203,24 +1259,37 @@ mod tests {
         // As Go reads them: the stored values, whatever the principal reaches.
         let row = ServiceAccountRow {
             scope: Some("PARTNER".to_string()),
-            client_ids: Some(vec!["clt_1".to_string()]),
+            client_ids: Some(vec![ClientId::parse("clt_1").unwrap()]),
             ..sa_row(Some("BEARER_TOKEN"), None)
         };
         let sa = ServiceAccountRepository::build_service_account_sync(
-            scoped(Some("CLIENT"), Some("clt_1")),
+            scoped(
+                Some("CLIENT"),
+                Some(ClientId::parse("clt_1").unwrap().as_str()),
+            ),
             Some(&row),
             Grants::default(),
         )
         .unwrap();
         assert_eq!(sa.requested_scope.as_deref(), Some("PARTNER"));
-        assert_eq!(sa.client_ids, vec!["clt_1"]);
+        assert_eq!(ClientId::into_strings(sa.client_ids.clone()), vec!["clt_1"]);
         assert_eq!(sa.scope, UserScope::Client);
 
         // NULL columns (rows written before them): no links, no scope.
-        let sa = build(scoped(Some("CLIENT"), Some("clt_home")), &[]).unwrap();
+        let sa = build(
+            scoped(
+                Some("CLIENT"),
+                Some(ClientId::parse("clt_home").unwrap().as_str()),
+            ),
+            &[],
+        )
+        .unwrap();
         assert!(sa.client_ids.is_empty());
         assert!(sa.requested_scope.is_none());
-        assert_eq!(sa.principal_client_ids, vec!["clt_home"]);
+        assert_eq!(
+            ClientId::into_strings(sa.principal_client_ids.clone()),
+            vec!["clt_home"]
+        );
     }
 
     #[test]

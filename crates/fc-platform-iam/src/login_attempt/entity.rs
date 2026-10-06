@@ -1,6 +1,7 @@
 //! LoginAttempt Entity
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::PrincipalId;
 use fc_platform_core::shared::tsid;
 use fc_platform_core::shared::tsid::EntityType;
 use serde::{Deserialize, Serialize};
@@ -41,7 +42,7 @@ pub struct LoginAttempt {
     pub outcome: LoginOutcome,
     pub failure_reason: Option<String>,
     pub identifier: Option<String>,
-    pub principal_id: Option<String>,
+    pub principal_id: Option<PrincipalId>,
     pub ip_address: Option<String>,
     pub user_agent: Option<String>,
     pub attempted_at: DateTime<Utc>,

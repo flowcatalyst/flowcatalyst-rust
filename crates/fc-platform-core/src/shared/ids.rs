@@ -248,3 +248,45 @@ impl IdKind for FunctionRouteKind {
     const ENTITY: EntityType = EntityType::FunctionRoute;
 }
 pub type FunctionRouteId = Id<FunctionRouteKind>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum PortalIdentityKind {}
+impl IdKind for PortalIdentityKind {
+    const ENTITY: EntityType = EntityType::PortalIdentity;
+}
+pub type PortalIdentityId = Id<PortalIdentityKind>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum PortalAppKind {}
+impl IdKind for PortalAppKind {
+    const ENTITY: EntityType = EntityType::PortalApp;
+}
+pub type PortalAppId = Id<PortalAppKind>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum MfaMethodKind {}
+impl IdKind for MfaMethodKind {
+    const ENTITY: EntityType = EntityType::MfaMethod;
+}
+pub type MfaMethodId = Id<MfaMethodKind>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum MfaRecoveryCodeKind {}
+impl IdKind for MfaRecoveryCodeKind {
+    const ENTITY: EntityType = EntityType::MfaRecoveryCode;
+}
+pub type MfaRecoveryCodeId = Id<MfaRecoveryCodeKind>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum MfaEmailPinKind {}
+impl IdKind for MfaEmailPinKind {
+    const ENTITY: EntityType = EntityType::MfaEmailPin;
+}
+pub type MfaEmailPinId = Id<MfaEmailPinKind>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum MfaTrustedDeviceKind {}
+impl IdKind for MfaTrustedDeviceKind {
+    const ENTITY: EntityType = EntityType::MfaTrustedDevice;
+}
+pub type MfaTrustedDeviceId = Id<MfaTrustedDeviceKind>;

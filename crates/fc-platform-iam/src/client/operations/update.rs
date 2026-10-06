@@ -1,6 +1,7 @@
 //! Update Client Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ClientId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -17,7 +18,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct UpdateClientCommand {
     /// Client ID to update
-    pub client_id: String,
+    pub client_id: ClientId,
 
     /// New name (optional, 1-100 chars)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -48,7 +49,7 @@ impl<U: UnitOfWork> UseCase for UpdateClientUseCase<U> {
 
     async fn validate(&self, command: &UpdateClientCommand) -> Result<(), UseCaseError> {
         // client_id is required
-        if command.client_id.trim().is_empty() {
+        if command.client_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "CLIENT_ID_REQUIRED",
                 "Client ID is required",
@@ -132,7 +133,7 @@ impl<U: UnitOfWork> UseCase for UpdateClientUseCase<U> {
         client.updated_at = chrono::Utc::now();
 
         // Create domain event
-        let event = ClientUpdated::new(&ctx, client.id.as_str(), &client.name);
+        let event = ClientUpdated::new(&ctx, &client.id, &client.name);
 
         // Atomic commit
         self.unit_of_work
@@ -148,7 +149,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = UpdateClientCommand {
-            client_id: "client-123".to_string(),
+            client_id: ClientId::from_wire("client-123"),
             name: Some("New Name".to_string()),
         };
 

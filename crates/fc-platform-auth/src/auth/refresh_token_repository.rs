@@ -7,6 +7,7 @@ use crate::auth::refresh_token;
 use crate::auth::refresh_token::RefreshToken;
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::error::Result;
+use fc_platform_core::shared::id::PrincipalId;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
@@ -106,11 +107,10 @@ impl From<PayloadRow> for RefreshToken {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string(),
-            principal_id: p
-                .get("accountId")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
+            // Tolerant read: a payload without an account id reads as blank, as before.
+            principal_id: PrincipalId::from_wire(
+                p.get("accountId").and_then(|v| v.as_str()).unwrap_or(""),
+            ),
             oauth_client_id: p.get("clientId").and_then(|v| v.as_str()).map(String::from),
             scopes,
             accessible_clients,
@@ -290,7 +290,7 @@ impl RefreshTokenRepository {
     }
 
     /// Find all tokens for a principal
-    pub async fn find_by_principal(&self, principal_id: &str) -> Result<Vec<RefreshToken>> {
+    pub async fn find_by_principal(&self, principal_id: &PrincipalId) -> Result<Vec<RefreshToken>> {
         let rows = sqlx::query_as::<_, PayloadRow>(
             r#"SELECT * FROM oauth_oidc_payloads
             WHERE type = $1 AND payload->>'accountId' = $2"#,
@@ -303,7 +303,10 @@ impl RefreshTokenRepository {
     }
 
     /// Find all active tokens for a principal
-    pub async fn find_active_by_principal(&self, principal_id: &str) -> Result<Vec<RefreshToken>> {
+    pub async fn find_active_by_principal(
+        &self,
+        principal_id: &PrincipalId,
+    ) -> Result<Vec<RefreshToken>> {
         let rows = sqlx::query_as::<_, PayloadRow>(
             r#"SELECT * FROM oauth_oidc_payloads
             WHERE type = $1
@@ -369,7 +372,7 @@ impl RefreshTokenRepository {
     /// Revoke all tokens for a principal (logout all devices).
     ///
     /// Single UPDATE instead of N individual revocations.
-    pub async fn revoke_all_for_principal(&self, principal_id: &str) -> Result<u64> {
+    pub async fn revoke_all_for_principal(&self, principal_id: &PrincipalId) -> Result<u64> {
         let now = Utc::now();
         let result = sqlx::query(
             r#"UPDATE oauth_oidc_payloads
@@ -512,7 +515,7 @@ impl RefreshTokenRepository {
     /// Count active tokens for a principal.
     ///
     /// Uses a single COUNT query instead of loading all tokens into memory.
-    pub async fn count_active_for_principal(&self, principal_id: &str) -> Result<u64> {
+    pub async fn count_active_for_principal(&self, principal_id: &PrincipalId) -> Result<u64> {
         let (count,) = sqlx::query_as::<_, (i64,)>(
             r#"SELECT COUNT(*) FROM oauth_oidc_payloads
             WHERE type = $1

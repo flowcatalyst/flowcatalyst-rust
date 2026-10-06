@@ -556,7 +556,7 @@ async fn email_codes_and_remembered_devices() {
         let id = user.id.clone();
         async move {
             mfa.replace_email_pin(
-                id.as_str(),
+                &id,
                 purpose,
                 &crypto::sha256_hex("424242"),
                 chrono::Utc::now() + chrono::Duration::minutes(10),

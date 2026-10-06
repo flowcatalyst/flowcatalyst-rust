@@ -41,7 +41,6 @@ use fc_platform_core::permissions;
 use fc_platform_core::principal_kind::UserScope;
 use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::authorization_service::Authority;
-use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
@@ -98,7 +97,7 @@ pub fn administers(caller: &impl Authority, target: &Principal) -> bool {
     if target.scope != UserScope::Client {
         return false;
     }
-    match target.client_id.as_id_str() {
+    match target.client_id.as_ref() {
         Some(client_id) => caller.can_access_client(client_id),
         None => caller.has_permission(permissions::ADMIN_ALL),
     }
@@ -274,11 +273,7 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
                             "principal sync: passwordHash ignored for an existing principal"
                         );
                     }
-                    row_events.push(RecordedEvent::of(&UserUpdated::new(
-                        &ctx,
-                        p.id.as_str(),
-                        &p.name,
-                    ))?);
+                    row_events.push(RecordedEvent::of(&UserUpdated::new(&ctx, &p.id, &p.name))?);
                     updated += 1;
                     p
                 }
@@ -292,11 +287,7 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
                     if let (Some(hash), Some(identity)) = (hash, p.user_identity.as_mut()) {
                         identity.password_hash = Some(hash.to_string());
                     }
-                    row_events.push(RecordedEvent::of(&UserCreated::new(
-                        &ctx,
-                        p.id.as_str(),
-                        email,
-                    ))?);
+                    row_events.push(RecordedEvent::of(&UserCreated::new(&ctx, &p.id, email))?);
                     created += 1;
                     p
                 }
@@ -332,11 +323,7 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
                 }
                 p.roles.retain(|ra| !is_own_sdk_role(ra, app_code));
                 p.updated_at = now;
-                row_events.push(RecordedEvent::of(&UserUpdated::new(
-                    &ctx,
-                    p.id.as_str(),
-                    &p.name,
-                ))?);
+                row_events.push(RecordedEvent::of(&UserUpdated::new(&ctx, &p.id, &p.name))?);
                 deactivated += 1;
                 principals.push(p);
             }

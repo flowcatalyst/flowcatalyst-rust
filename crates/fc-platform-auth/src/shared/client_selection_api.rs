@@ -11,6 +11,8 @@
 //! like no credential at all.
 
 use axum::{extract::State, Json};
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::PrincipalId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -18,7 +20,6 @@ use utoipa::ToSchema;
 
 use fc_platform_core::principal_kind::UserScope;
 use fc_platform_core::shared::error::PlatformError;
-use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_iam::auth::auth_service::AuthService;
 use fc_platform_iam::client::entity::Client;
@@ -129,8 +130,8 @@ impl ClientSelectionState {
     /// Add active grants to client IDs list
     async fn add_active_grants(
         &self,
-        client_ids: &mut Vec<String>,
-        principal_id: &str,
+        client_ids: &mut Vec<ClientId>,
+        principal_id: &PrincipalId,
     ) -> Result<(), PlatformError> {
         let grants = self.grant_repo.find_by_principal(principal_id).await?;
         for grant in grants {
@@ -145,22 +146,22 @@ impl ClientSelectionState {
     async fn get_accessible_client_ids(
         &self,
         principal: &Principal,
-    ) -> Result<Vec<String>, PlatformError> {
+    ) -> Result<Vec<ClientId>, PlatformError> {
         match principal.scope {
             UserScope::Anchor => {
                 // Anchor users have access to all active clients
                 let clients = self.client_repo.find_active().await?;
-                Ok(clients.into_iter().map(|c| c.id.into_string()).collect())
+                Ok(clients.into_iter().map(|c| c.id).collect())
             }
             UserScope::Client => {
                 // Client users have access to their home client + explicit grants
                 let mut client_ids = Vec::new();
                 if let Some(ref home_client) = principal.client_id {
-                    client_ids.push(home_client.to_string());
+                    client_ids.push(home_client.clone());
                 }
 
                 // Add non-expired explicit grants
-                self.add_active_grants(&mut client_ids, principal.id.as_str())
+                self.add_active_grants(&mut client_ids, &principal.id)
                     .await?;
 
                 Ok(client_ids)
@@ -170,7 +171,7 @@ impl ClientSelectionState {
                 let mut client_ids = principal.assigned_clients.clone();
 
                 // Add non-expired explicit grants
-                self.add_active_grants(&mut client_ids, principal.id.as_str())
+                self.add_active_grants(&mut client_ids, &principal.id)
                     .await?;
 
                 Ok(client_ids)
@@ -189,7 +190,7 @@ impl ClientSelectionState {
         }
 
         let accessible = self.get_accessible_client_ids(principal).await?;
-        Ok(accessible.iter().any(|c| c == client_id))
+        Ok(accessible.iter().any(|c| c.as_str() == client_id))
     }
 
     /// Resolve permissions for a set of roles
@@ -247,7 +248,7 @@ pub async fn list_accessible_clients(
 
     Ok(Json(AccessibleClientsResponse {
         clients,
-        current_client_id: principal.client_id.as_id_str().map(String::from),
+        current_client_id: principal.client_id.as_ref().map(String::from),
         global_access,
     }))
 }
@@ -284,7 +285,7 @@ pub async fn switch_client(
     // Load the client
     let client = state
         .client_repo
-        .find_by_id(&req.client_id)
+        .find_by_id(&ClientId::from_wire(req.client_id.as_str()))
         .await?
         .ok_or_else(|| PlatformError::not_found("Client", &req.client_id))?;
 
@@ -334,7 +335,7 @@ pub async fn get_current_client(
     let principal = state.session_principal(&auth).await?;
 
     let client = if let Some(ref client_id) = principal.client_id {
-        if let Some(c) = state.client_repo.find_by_id(client_id.as_str()).await? {
+        if let Some(c) = state.client_repo.find_by_id(client_id).await? {
             Some(ClientInfo {
                 id: c.id.to_string(),
                 name: c.name,

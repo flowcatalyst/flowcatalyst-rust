@@ -1,6 +1,7 @@
 //! Update Email Domain Mapping Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::EmailDomainMappingId;
 use fc_platform_core::shared::id::IdentityProviderId;
 use serde::{Deserialize, Serialize};
@@ -27,13 +28,13 @@ pub struct UpdateEmailDomainMappingCommand {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scope_type: Option<ScopeType>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub primary_client_id: Option<String>,
+    pub primary_client_id: Option<ClientId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sync_roles_from_idp: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub additional_client_ids: Option<Vec<String>>,
+    pub additional_client_ids: Option<Vec<ClientId>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub granted_client_ids: Option<Vec<String>>,
+    pub granted_client_ids: Option<Vec<ClientId>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub required_oidc_tenant_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -147,7 +148,7 @@ impl<U: UnitOfWork> UseCase for UpdateEmailDomainMappingUseCase<U> {
         // mapping, which the handler passes as blank).
         if let Some(ref primary_client_id) = command.primary_client_id {
             mapping.primary_client_id =
-                Some(primary_client_id.clone()).filter(|c| !c.trim().is_empty());
+                Some(primary_client_id.clone()).filter(|c| !c.as_str().trim().is_empty());
         }
         if let Some(sync_roles) = command.sync_roles_from_idp {
             mapping.sync_roles_from_idp = sync_roles;
@@ -209,10 +210,13 @@ mod tests {
         let cmd = UpdateEmailDomainMappingCommand {
             mapping_id: EmailDomainMappingId::parse("edm_123").unwrap(),
             scope_type: Some(ScopeType::Partner),
-            primary_client_id: Some("client-456".to_string()),
+            primary_client_id: Some(ClientId::parse("clt_456").unwrap()),
             sync_roles_from_idp: Some(true),
-            additional_client_ids: Some(vec!["c1".to_string(), "c2".to_string()]),
-            granted_client_ids: Some(vec!["g1".to_string()]),
+            additional_client_ids: Some(vec![
+                ClientId::parse("clt_c1").unwrap(),
+                ClientId::parse("clt_c2").unwrap(),
+            ]),
+            granted_client_ids: Some(vec![ClientId::parse("clt_g1").unwrap()]),
             allowed_role_ids: Some(vec!["r1".to_string(), "r2".to_string()]),
             identity_provider_id: None,
             required_oidc_tenant_id: None,

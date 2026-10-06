@@ -92,7 +92,6 @@ impl DispatchPool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fc_platform_core::shared::id::OptionIdExt;
     use std::str::FromStr;
 
     #[test]
@@ -182,7 +181,7 @@ mod tests {
             .with_concurrency(20);
 
         assert_eq!(pool.description, Some("A test pool".to_string()));
-        assert_eq!(pool.client_id.as_id_str(), Some("clt_1"));
+        assert_eq!(pool.client_id, Some(ClientId::parse("clt_1").unwrap()));
         assert_eq!(pool.rate_limit, Some(200));
         assert_eq!(pool.concurrency, 20);
     }

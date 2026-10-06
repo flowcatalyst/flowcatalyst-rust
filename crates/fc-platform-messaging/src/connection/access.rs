@@ -7,7 +7,6 @@ use crate::connection::entity::Connection;
 use fc_platform_core::shared::authorization_service::AuthContext;
 use fc_platform_core::shared::caller_reach::reaches_client;
 use fc_platform_core::shared::error::PlatformError;
-use fc_platform_core::shared::id::OptionIdExt;
 
 /// A platform connection is visible to every holder of the read
 /// permission; a client's only to callers reaching that client (Go
@@ -15,7 +14,7 @@ use fc_platform_core::shared::id::OptionIdExt;
 pub fn is_visible(auth: &AuthContext, connection: &Connection) -> bool {
     connection
         .client_id
-        .as_id_str()
+        .as_ref()
         .is_none_or(|cid| reaches_client(auth, cid))
 }
 

@@ -5,6 +5,7 @@
 //! transaction as the mapping. Moving to an OIDC provider resets nobody.
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::EmailDomainMappingId;
 use fc_platform_core::shared::id::IdentityProviderId;
 use serde::{Deserialize, Serialize};
@@ -128,7 +129,7 @@ pub(crate) async fn plan_move(
     principal_repo: &PrincipalRepository,
     mapping: &EmailDomainMapping,
     target: &IdentityProvider,
-    link_client: Option<String>,
+    link_client: Option<ClientId>,
     ctx: &ExecutionContext,
 ) -> Result<(ProviderMove, EmailDomainMappingProviderChanged), UseCaseError> {
     super::require_tenant_pin(target.oidc_multi_tenant, mapping)?;

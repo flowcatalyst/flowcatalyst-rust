@@ -3,6 +3,7 @@
 //! Backend-For-Frontend endpoints for event type management.
 //! Provides a UI-friendly view of event types at `/bff/event-types`.
 
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::EventTypeId;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -406,7 +407,10 @@ pub async fn create_event_type(
     checks::can_write_event_types(&auth.0)?;
 
     // Validate client access if specified
-    access::ensure_can_create(&auth.0, req.client_id.as_deref())?;
+    access::ensure_can_create(
+        &auth.0,
+        req.client_id.as_deref().map(ClientId::from_wire).as_ref(),
+    )?;
 
     let ctx = ExecutionContext::from_auth(&auth.0);
 
@@ -414,7 +418,7 @@ pub async fn create_event_type(
         code: CreateEventTypeCommand::parse_code(&req.code, &req.name)?,
         name: req.name,
         description: req.description,
-        client_id: req.client_id,
+        client_id: req.client_id.map(ClientId::from_wire),
         client_scoped: req.client_scoped,
         schema: None,
     };

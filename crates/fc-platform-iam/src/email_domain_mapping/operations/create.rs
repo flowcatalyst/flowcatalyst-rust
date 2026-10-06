@@ -1,6 +1,7 @@
 //! Create Email Domain Mapping Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::IdentityProviderId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -22,11 +23,11 @@ pub struct CreateEmailDomainMappingCommand {
     pub identity_provider_id: IdentityProviderId,
     pub scope_type: ScopeType,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub primary_client_id: Option<String>,
+    pub primary_client_id: Option<ClientId>,
     #[serde(default)]
-    pub additional_client_ids: Vec<String>,
+    pub additional_client_ids: Vec<ClientId>,
     #[serde(default)]
-    pub granted_client_ids: Vec<String>,
+    pub granted_client_ids: Vec<ClientId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub required_oidc_tenant_id: Option<String>,
     #[serde(default)]
@@ -101,7 +102,7 @@ impl<U: UnitOfWork> UseCase for CreateEmailDomainMappingUseCase<U> {
         }
         super::create_rules::validate_scope(
             command.scope_type,
-            command.primary_client_id.as_deref(),
+            command.primary_client_id.as_ref(),
         )?;
 
         entity::validate_two_factor(
@@ -191,7 +192,7 @@ mod tests {
             email_domain: "example.com".to_string(),
             identity_provider_id: IdentityProviderId::parse("idp_123").unwrap(),
             scope_type: ScopeType::Anchor,
-            primary_client_id: Some("client-456".to_string()),
+            primary_client_id: Some(ClientId::from_wire("clt_456")),
             sync_roles_from_idp: true,
             additional_client_ids: vec![],
             granted_client_ids: vec![],
@@ -206,7 +207,7 @@ mod tests {
         assert!(json.contains("identityProviderId"));
         assert!(json.contains("idp_123"));
         assert!(json.contains("primaryClientId"));
-        assert!(json.contains("client-456"));
+        assert!(json.contains("clt_456"));
         assert!(json.contains("syncRolesFromIdp"));
 
         let deserialized: CreateEmailDomainMappingCommand = serde_json::from_str(&json).unwrap();
@@ -218,7 +219,7 @@ mod tests {
         assert_eq!(deserialized.scope_type, ScopeType::Anchor);
         assert_eq!(
             deserialized.primary_client_id,
-            Some("client-456".to_string())
+            Some(ClientId::parse("clt_456").unwrap())
         );
         assert!(deserialized.sync_roles_from_idp);
     }

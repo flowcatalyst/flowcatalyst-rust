@@ -12,6 +12,8 @@ use axum::{
 };
 use base64::Engine as _;
 use chrono::Utc;
+use fc_platform_core::shared::id::OptionIdExt;
+use fc_platform_core::shared::id::PrincipalId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{error, info, warn};
@@ -359,7 +361,7 @@ pub async fn authorize(
     // portal identities.
     if client
         .portal_client_id
-        .as_deref()
+        .as_id_str()
         .is_some_and(|p| !p.is_empty())
     {
         return (
@@ -616,7 +618,7 @@ async fn signed_in_user(
     };
     Ok(state
         .principal_repo
-        .find_by_id(&session.principal_id)
+        .find_by_id(&PrincipalId::from_wire(session.principal_id.as_str()))
         .await?
         .filter(|p| p.active && p.principal_type == PrincipalType::User)
         .map(|_| session))
@@ -1362,7 +1364,7 @@ async fn handle_authorization_code_grant(
     // tokens (Java S2.2).
     let principal = match state
         .principal_repo
-        .find_by_id(&auth_code.principal_id)
+        .find_by_id(&PrincipalId::from_wire(auth_code.principal_id.as_str()))
         .await
     {
         Ok(Some(p)) if p.active => p,
@@ -1452,7 +1454,7 @@ async fn handle_authorization_code_grant(
         .unwrap_or(false);
 
     let refresh_token = if has_offline_access {
-        let (raw_token, token_entity) = RefreshToken::generate_token_pair(principal.id.as_str());
+        let (raw_token, token_entity) = RefreshToken::generate_token_pair(principal.id.clone());
         let scopes: Vec<String> = auth_code
             .scope
             .as_deref()
@@ -1848,7 +1850,7 @@ async fn handle_client_credentials_grant(
             let attempt = LoginAttempt {
                 identifier: Some(client_id.clone()),
                 ip_address: ip.clone(),
-                principal_id: Some(p.id.to_string()),
+                principal_id: Some(p.id.clone()),
                 failure_reason: Some(
                     "Client not properly configured (linked principal is not a service account)"
                         .to_string(),
@@ -1911,7 +1913,7 @@ async fn handle_client_credentials_grant(
         let attempt = LoginAttempt {
             identifier: Some(client_id.clone()),
             ip_address: ip.clone(),
-            principal_id: Some(principal.id.to_string()),
+            principal_id: Some(principal.id.clone()),
             failure_reason: Some("requested scope exceeds granted permissions".to_string()),
             ..LoginAttempt::new(AttemptType::ServiceAccountToken, LoginOutcome::Failure)
         };
@@ -1953,7 +1955,7 @@ async fn handle_client_credentials_grant(
     let attempt = LoginAttempt {
         identifier: Some(client_id.clone()),
         ip_address: ip.clone(),
-        principal_id: Some(principal.id.to_string()),
+        principal_id: Some(principal.id.clone()),
         ..LoginAttempt::new(AttemptType::ServiceAccountToken, LoginOutcome::Success)
     };
     if let Err(e) = state.login_attempt_repo.create(&attempt).await {
@@ -2003,7 +2005,11 @@ async fn handle_developer_credential_grant(
         )
             .into_response()
     };
-    let principal = match state.principal_repo.find_by_id(&client_id).await {
+    let principal = match state
+        .principal_repo
+        .find_by_id(&PrincipalId::from_wire(client_id.as_str()))
+        .await
+    {
         Ok(Some(p)) if p.active && p.principal_type == PrincipalType::User => p,
         Ok(_) => return invalid(),
         Err(e) => {
@@ -2020,7 +2026,7 @@ async fn handle_developer_credential_grant(
     }
     let stored = match state
         .principal_repo
-        .find_developer_secret(principal.id.as_str())
+        .find_developer_secret(&principal.id)
         .await
     {
         Ok(Some((Some(stored), _))) => stored,
@@ -2032,7 +2038,7 @@ async fn handle_developer_credential_grant(
     };
     let record = |outcome, reason: Option<&str>| LoginAttempt {
         identifier: Some(client_id.clone()),
-        principal_id: Some(principal.id.to_string()),
+        principal_id: Some(principal.id.clone()),
         failure_reason: reason.map(String::from),
         ip_address: ip.clone(),
         ..LoginAttempt::new(AttemptType::DeveloperToken, outcome)
@@ -2052,10 +2058,7 @@ async fn handle_developer_credential_grant(
         if let Some(enc) = state.encryption_service.as_deref() {
             if let Err(e) = state
                 .principal_repo
-                .rewrite_developer_secret_ref(
-                    principal.id.as_str(),
-                    &enc.hash_secret(&client_secret),
-                )
+                .rewrite_developer_secret_ref(&principal.id, &enc.hash_secret(&client_secret))
                 .await
             {
                 warn!(principal_id = %principal.id, error = %e, "Could not migrate developer client secret to hashed form");
@@ -2395,7 +2398,11 @@ pub async fn userinfo(State(state): State<OAuthState>, headers: HeaderMap) -> Re
     let mut roles = claims.roles.clone();
     let mut applications = claims.applications.clone();
     let mut clients = claims.clients.clone();
-    if let Ok(Some(principal)) = state.principal_repo.find_by_id(&claims.sub).await {
+    if let Ok(Some(principal)) = state
+        .principal_repo
+        .find_by_id(&PrincipalId::from_wire(claims.sub.as_str()))
+        .await
+    {
         if principal.active {
             roles = auth_service::role_names(&principal);
             applications = auth_service::applications_claim(&principal);

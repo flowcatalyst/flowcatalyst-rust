@@ -65,6 +65,14 @@ pub enum EntityType {
     FunctionVersion,
     FunctionDomain,
     FunctionRoute,
+    // The portal identity plane and the two-factor tables (prefixes the code
+    // minted with `generate_with_prefix` before the kinds existed).
+    PortalIdentity,
+    PortalApp,
+    MfaMethod,
+    MfaRecoveryCode,
+    MfaEmailPin,
+    MfaTrustedDevice,
 }
 
 impl EntityType {
@@ -111,6 +119,12 @@ impl EntityType {
             EntityType::FunctionVersion => "fnv",
             EntityType::FunctionDomain => "fnd",
             EntityType::FunctionRoute => "fnr",
+            EntityType::PortalIdentity => "ptu",
+            EntityType::PortalApp => "pta",
+            EntityType::MfaMethod => "mfm",
+            EntityType::MfaRecoveryCode => "mrc",
+            EntityType::MfaEmailPin => "mep",
+            EntityType::MfaTrustedDevice => "mtd",
         }
     }
 }
@@ -297,6 +311,16 @@ mod tests {
         let id = generate(EntityType::FunctionVersion);
         assert_eq!(id.len(), 17);
         assert!(id.starts_with("fnv_"));
+    }
+
+    #[test]
+    fn portal_and_mfa_prefixes_are_the_ones_already_stored() {
+        assert_eq!(EntityType::PortalIdentity.prefix(), "ptu");
+        assert_eq!(EntityType::PortalApp.prefix(), "pta");
+        assert_eq!(EntityType::MfaMethod.prefix(), "mfm");
+        assert_eq!(EntityType::MfaRecoveryCode.prefix(), "mrc");
+        assert_eq!(EntityType::MfaEmailPin.prefix(), "mep");
+        assert_eq!(EntityType::MfaTrustedDevice.prefix(), "mtd");
     }
 
     #[test]

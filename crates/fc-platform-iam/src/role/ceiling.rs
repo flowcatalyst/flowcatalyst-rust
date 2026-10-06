@@ -201,12 +201,15 @@ pub async fn require_role_ref_change<A: Authority + Sync + ?Sized>(
     require_roles(Some(caller), &names, &definitions)
 }
 
+#[cfg(test)]
+use fc_platform_core::shared::id::PrincipalId;
+
 /// A caller for unit tests: the given tier, clients and permissions. The
 /// one place these IAM tests build an [`fc_platform_core::shared::authorization_service::AuthContext`] by hand.
 #[cfg(test)]
 pub(crate) fn test_caller(scope: UserScope, clients: &[&str], perms: &[&str]) -> AuthContext {
     AuthContext {
-        principal_id: "prn_caller".to_string(),
+        principal_id: PrincipalId::parse("prn_caller").unwrap(),
         principal_type: PrincipalType::User,
         scope,
         email: None,

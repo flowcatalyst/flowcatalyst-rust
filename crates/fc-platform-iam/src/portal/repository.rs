@@ -10,8 +10,12 @@
 //! reset tokens, the invite bookkeeping, the password set by a confirmed
 //! invite/reset, and the last-login stamp.
 
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::IdentityProviderId;
 use fc_platform_core::shared::id::OAuthClientId;
+use fc_platform_core::shared::id::PasswordResetTokenId;
+use fc_platform_core::shared::id::PortalAppId;
+use fc_platform_core::shared::id::PortalIdentityId;
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
@@ -22,8 +26,6 @@ use super::entity::{
     PortalIdentity, PortalOAuthClient,
 };
 use fc_platform_core::shared::error::{PlatformError, Result};
-use fc_platform_core::shared::tsid;
-use fc_platform_core::shared::tsid::EntityType;
 use fc_platform_core::usecase::DbTx;
 use fc_platform_core::usecase::Persist;
 
@@ -31,8 +33,8 @@ use fc_platform_core::usecase::Persist;
 
 #[derive(sqlx::FromRow)]
 struct IdentityRow {
-    id: String,
-    client_id: String,
+    id: PortalIdentityId,
+    client_id: ClientId,
     email: String,
     name: Option<String>,
     password_hash: Option<String>,
@@ -73,8 +75,8 @@ impl TryFrom<IdentityRow> for PortalIdentity {
 
 #[derive(sqlx::FromRow)]
 struct GrantRow {
-    identity_id: String,
-    portal_app_id: String,
+    identity_id: PortalIdentityId,
+    portal_app_id: PortalAppId,
     source: String,
     granted_at: DateTime<Utc>,
 }
@@ -88,13 +90,13 @@ const NOT_ASSIGNED: &str =
     "NOT EXISTS (SELECT 1 FROM portal_identity_apps g WHERE g.identity_id = pi.id)";
 
 /// Narrows a client's identities for the admin list (Go `SearchFilter`).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct IdentitySearch {
-    pub client_id: String,
+    pub client_id: ClientId,
     /// Prefix (TERM%) matched case-insensitively against email and name.
     pub query: String,
     /// Only identities granted this app.
-    pub app_id: Option<String>,
+    pub app_id: Option<PortalAppId>,
     /// Only identities granted no app at all.
     pub unassigned: bool,
     pub offset: i64,
@@ -111,7 +113,7 @@ impl PortalIdentityRepository {
     }
 
     /// The identity with its app grants.
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<PortalIdentity>> {
+    pub async fn find_by_id(&self, id: &PortalIdentityId) -> Result<Option<PortalIdentity>> {
         let sql = format!("SELECT {IDENTITY_COLUMNS} FROM portal_identities pi WHERE pi.id = $1");
         let row = sqlx::query_as::<_, IdentityRow>(&sql)
             .bind(id)
@@ -123,7 +125,7 @@ impl PortalIdentityRepository {
     /// The identity for (client, email); the email is matched lower-cased.
     pub async fn find_by_client_and_email(
         &self,
-        client_id: &str,
+        client_id: &ClientId,
         email: &str,
     ) -> Result<Option<PortalIdentity>> {
         let sql = format!(
@@ -188,7 +190,7 @@ impl PortalIdentityRepository {
     }
 
     /// A client's identities holding no portal-app grant, oldest first.
-    pub async fn find_unassigned(&self, client_id: &str) -> Result<Vec<PortalIdentity>> {
+    pub async fn find_unassigned(&self, client_id: &ClientId) -> Result<Vec<PortalIdentity>> {
         let sql = format!(
             "SELECT {IDENTITY_COLUMNS} FROM portal_identities pi \
              WHERE pi.client_id = $1 AND {NOT_ASSIGNED} ORDER BY pi.created_at, pi.id"
@@ -201,7 +203,7 @@ impl PortalIdentityRepository {
     }
 
     /// How many of a client's identities hold no portal-app grant.
-    pub async fn count_unassigned(&self, client_id: &str) -> Result<i64> {
+    pub async fn count_unassigned(&self, client_id: &ClientId) -> Result<i64> {
         let sql = format!(
             "SELECT COUNT(*) FROM portal_identities pi WHERE pi.client_id = $1 AND {NOT_ASSIGNED}"
         );
@@ -216,7 +218,7 @@ impl PortalIdentityRepository {
         if idents.is_empty() {
             return Ok(());
         }
-        let ids: Vec<String> = idents.iter().map(|i| i.id.clone()).collect();
+        let ids: Vec<PortalIdentityId> = idents.iter().map(|i| i.id.clone()).collect();
         let rows = sqlx::query_as::<_, GrantRow>(
             "SELECT identity_id, portal_app_id, source, granted_at FROM portal_identity_apps \
              WHERE identity_id = ANY($1) ORDER BY granted_at",
@@ -224,7 +226,7 @@ impl PortalIdentityRepository {
         .bind(&ids)
         .fetch_all(&self.pool)
         .await?;
-        let mut by_identity: HashMap<String, Vec<AppGrant>> = HashMap::new();
+        let mut by_identity: HashMap<PortalIdentityId, Vec<AppGrant>> = HashMap::new();
         for r in rows {
             by_identity
                 .entry(r.identity_id)
@@ -242,7 +244,7 @@ impl PortalIdentityRepository {
     }
 
     /// Best-effort stamp of a successful login.
-    pub async fn touch_last_login(&self, id: &str) -> Result<()> {
+    pub async fn touch_last_login(&self, id: &PortalIdentityId) -> Result<()> {
         sqlx::query(
             "UPDATE portal_identities SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1",
         )
@@ -255,7 +257,7 @@ impl PortalIdentityRepository {
     /// Record the latest invite. `expires_at` `None` = an SSO invite.
     pub async fn mark_invited(
         &self,
-        id: &str,
+        id: &PortalIdentityId,
         at: DateTime<Utc>,
         expires_at: Option<DateTime<Utc>>,
     ) -> Result<()> {
@@ -272,7 +274,7 @@ impl PortalIdentityRepository {
     }
 
     /// Write a freshly set password (the invite/reset confirm path).
-    pub async fn set_password_hash(&self, id: &str, hash: &str) -> Result<()> {
+    pub async fn set_password_hash(&self, id: &PortalIdentityId, hash: &str) -> Result<()> {
         let done = sqlx::query(
             "UPDATE portal_identities SET password_hash = $2, updated_at = NOW() WHERE id = $1",
         )
@@ -301,7 +303,7 @@ impl Persist<PortalIdentity> for PortalIdentityRepository {
     /// grant in `apps` is inserted if missing, nothing else is touched.
     async fn persist(&self, i: &PortalIdentity, tx: &mut DbTx<'_>) -> Result<()> {
         let name = (!i.name.is_empty()).then_some(i.name.as_str());
-        let row_id: String = sqlx::query_scalar(
+        let row_id: PortalIdentityId = sqlx::query_scalar(
             "INSERT INTO portal_identities \
                  (id, client_id, email, name, password_hash, status, source, last_login_at, \
                   created_at, updated_at) \
@@ -336,7 +338,7 @@ impl Persist<PortalIdentity> for PortalIdentityRepository {
             .await?;
         }
         if !i.apps.is_empty() {
-            let app_ids: Vec<&str> = i.apps.iter().map(|g| g.app_id.as_str()).collect();
+            let app_ids: Vec<&PortalAppId> = i.apps.iter().map(|g| &g.app_id).collect();
             let sources: Vec<&str> = i.apps.iter().map(|g| g.source.as_str()).collect();
             let granted: Vec<DateTime<Utc>> = i.apps.iter().map(|g| g.granted_at).collect();
             sqlx::query(
@@ -369,8 +371,8 @@ impl Persist<PortalIdentity> for PortalIdentityRepository {
 
 #[derive(sqlx::FromRow)]
 struct AppRow {
-    id: String,
-    client_id: String,
+    id: PortalAppId,
+    client_id: ClientId,
     code: String,
     name: String,
     description: Option<String>,
@@ -399,7 +401,7 @@ const APP_SELECT: &str = "SELECT pa.id, pa.client_id, pa.code, pa.name, pa.descr
 
 #[derive(sqlx::FromRow)]
 struct LinkedRow {
-    portal_app_id: String,
+    portal_app_id: PortalAppId,
     id: String,
     client_id: String,
     client_name: String,
@@ -414,7 +416,7 @@ impl PortalAppRepository {
         Self { pool: pool.clone() }
     }
 
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<PortalApp>> {
+    pub async fn find_by_id(&self, id: &PortalAppId) -> Result<Option<PortalApp>> {
         let sql = format!("{APP_SELECT} WHERE pa.id = $1");
         let row = sqlx::query_as::<_, AppRow>(&sql)
             .bind(id)
@@ -426,7 +428,7 @@ impl PortalAppRepository {
     /// The client's app with that (normalised) code.
     pub async fn find_by_client_and_code(
         &self,
-        client_id: &str,
+        client_id: &ClientId,
         code: &str,
     ) -> Result<Option<PortalApp>> {
         let sql = format!("{APP_SELECT} WHERE pa.client_id = $1 AND pa.code = $2");
@@ -455,7 +457,7 @@ impl PortalAppRepository {
     }
 
     /// A client's apps by name; `None` lists every client's (anchor views).
-    pub async fn find_by_client(&self, client_id: Option<&str>) -> Result<Vec<PortalApp>> {
+    pub async fn find_by_client(&self, client_id: Option<&ClientId>) -> Result<Vec<PortalApp>> {
         let sql =
             format!("{APP_SELECT} WHERE ($1::text IS NULL OR pa.client_id = $1) ORDER BY pa.name");
         let rows = sqlx::query_as::<_, AppRow>(&sql)
@@ -466,11 +468,11 @@ impl PortalAppRepository {
     }
 
     /// The number of identities granted each app.
-    pub async fn grant_counts(&self, app_ids: &[String]) -> Result<HashMap<String, i64>> {
+    pub async fn grant_counts(&self, app_ids: &[PortalAppId]) -> Result<HashMap<PortalAppId, i64>> {
         if app_ids.is_empty() {
             return Ok(HashMap::new());
         }
-        let rows = sqlx::query_as::<_, (String, i64)>(
+        let rows = sqlx::query_as::<_, (PortalAppId, i64)>(
             "SELECT portal_app_id, COUNT(*) FROM portal_identity_apps \
              WHERE portal_app_id = ANY($1) GROUP BY portal_app_id",
         )
@@ -483,9 +485,9 @@ impl PortalAppRepository {
     /// The OAuth clients linked to each app, by client name.
     pub async fn linked_oauth_clients(
         &self,
-        app_ids: &[String],
-    ) -> Result<HashMap<String, Vec<LinkedOAuthClient>>> {
-        let mut out: HashMap<String, Vec<LinkedOAuthClient>> = HashMap::new();
+        app_ids: &[PortalAppId],
+    ) -> Result<HashMap<PortalAppId, Vec<LinkedOAuthClient>>> {
+        let mut out: HashMap<PortalAppId, Vec<LinkedOAuthClient>> = HashMap::new();
         if app_ids.is_empty() {
             return Ok(out);
         }
@@ -553,6 +555,8 @@ struct PortalOAuthClientRow {
     client_name: String,
     active: bool,
     pkce_required: bool,
+    // Read as stored: a legacy row may hold a blank here, which strict id
+    // decoding would refuse and the portal plane treats as "not set".
     portal_client_id: Option<String>,
     portal_app_id: Option<String>,
 }
@@ -587,7 +591,10 @@ impl PortalOAuthClientReader {
 
     /// Portal-flagged OAuth clients owned by a tenant client, by name (Go
     /// `OAuthClientRepo.FindByPortalClient`).
-    pub async fn find_by_portal_client(&self, client_id: &str) -> Result<Vec<PortalOAuthClient>> {
+    pub async fn find_by_portal_client(
+        &self,
+        client_id: &ClientId,
+    ) -> Result<Vec<PortalOAuthClient>> {
         let sql = format!("{OAUTH_SELECT} WHERE portal_client_id = $1 ORDER BY client_name");
         let rows = sqlx::query_as::<_, PortalOAuthClientRow>(&sql)
             .bind(client_id)
@@ -620,8 +627,8 @@ impl PortalOAuthClientReader {
                 client_name: r.client_name,
                 active: r.active,
                 pkce_required: r.pkce_required,
-                portal_client_id: r.portal_client_id,
-                portal_app_id: r.portal_app_id,
+                portal_client_id: r.portal_client_id.map(ClientId::from_wire),
+                portal_app_id: r.portal_app_id.map(PortalAppId::from_wire),
             })
             .collect())
     }
@@ -633,7 +640,7 @@ impl PortalOAuthClientReader {
 struct FlowRow {
     id: String,
     oauth_client_id: String,
-    portal_client_id: String,
+    portal_client_id: ClientId,
     redirect_uri: String,
     scope: Option<String>,
     state: String,
@@ -735,13 +742,23 @@ impl PortalFlowRepository {
 
 // ── Reset / invite tokens keyed by portal identities (infrastructure) ────
 
-/// One `iam_password_reset_tokens` row as the portal plane reads it.
-#[derive(Debug, Clone, sqlx::FromRow)]
+/// One `iam_password_reset_tokens` row whose subject is a portal identity.
+#[derive(Debug, Clone)]
 pub struct PortalResetToken {
-    pub id: String,
-    pub principal_id: String,
+    pub id: PasswordResetTokenId,
+    pub identity_id: PortalIdentityId,
     pub expires_at: DateTime<Utc>,
     pub redirect_uri: Option<String>,
+}
+
+/// The table holds principal and portal-identity subjects in one column, so
+/// the subject is read as stored and only a `ptu_` one becomes a token here.
+#[derive(sqlx::FromRow)]
+struct ResetTokenRow {
+    id: PasswordResetTokenId,
+    principal_id: String,
+    expires_at: DateTime<Utc>,
+    redirect_uri: Option<String>,
 }
 
 impl PortalResetToken {
@@ -762,7 +779,7 @@ impl PortalResetTokenRepository {
     }
 
     /// Invalidate every outstanding token of the subject.
-    pub async fn delete_for_subject(&self, subject_id: &str) -> Result<()> {
+    pub async fn delete_for_subject(&self, subject_id: &PortalIdentityId) -> Result<()> {
         sqlx::query("DELETE FROM iam_password_reset_tokens WHERE principal_id = $1")
             .bind(subject_id)
             .execute(&self.pool)
@@ -773,7 +790,7 @@ impl PortalResetTokenRepository {
     /// Store a fresh token (`purpose` is Go's `reset` or `invite`).
     pub async fn issue(
         &self,
-        subject_id: &str,
+        subject_id: &PortalIdentityId,
         token_hash: &str,
         expires_at: DateTime<Utc>,
         purpose: &str,
@@ -784,7 +801,7 @@ impl PortalResetTokenRepository {
                  (id, principal_id, token_hash, expires_at, created_at, purpose, redirect_uri) \
              VALUES ($1, $2, $3, $4, NOW(), $5, $6)",
         )
-        .bind(tsid::generate(EntityType::PasswordResetToken))
+        .bind(PasswordResetTokenId::generate())
         .bind(subject_id)
         .bind(token_hash)
         .bind(expires_at)
@@ -795,15 +812,24 @@ impl PortalResetTokenRepository {
         Ok(())
     }
 
-    /// The token with that hash, whoever its subject is.
+    /// The token with that hash, when its subject is a portal identity (a
+    /// principal's token is the shared reset handlers' to answer).
     pub async fn find_by_hash(&self, token_hash: &str) -> Result<Option<PortalResetToken>> {
-        Ok(sqlx::query_as::<_, PortalResetToken>(
+        let row = sqlx::query_as::<_, ResetTokenRow>(
             "SELECT id, principal_id, expires_at, redirect_uri FROM iam_password_reset_tokens \
              WHERE token_hash = $1",
         )
         .bind(token_hash)
         .fetch_optional(&self.pool)
-        .await?)
+        .await?;
+        Ok(row.and_then(|r| {
+            Some(PortalResetToken {
+                identity_id: PortalIdentityId::parse(r.principal_id).ok()?,
+                id: r.id,
+                expires_at: r.expires_at,
+                redirect_uri: r.redirect_uri,
+            })
+        }))
     }
 }
 
@@ -817,7 +843,7 @@ pub struct PortalOidcState {
     pub identity_provider_id: IdentityProviderId,
     pub nonce: String,
     pub code_verifier: String,
-    pub portal_client_id: Option<String>,
+    pub portal_client_id: Option<ClientId>,
     pub oauth_client_id: Option<String>,
     pub oauth_redirect_uri: Option<String>,
     pub oauth_scope: Option<String>,

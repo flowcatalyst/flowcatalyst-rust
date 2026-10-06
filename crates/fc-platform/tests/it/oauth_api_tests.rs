@@ -11,6 +11,7 @@ use fc_platform::domain::{Principal, PrincipalType, UserScope};
 use fc_platform::shared::authorization_service::Credential;
 use fc_platform::shared::id::EmailDomainMappingId;
 use fc_platform::shared::id::IdentityProviderId;
+use fc_platform::shared::id::PrincipalId;
 use fc_platform_core::shared::id::ClientId;
 
 /// Create a test AuthService with HS256 (no RSA keys needed)
@@ -115,8 +116,8 @@ fn test_token_claims_for_client_scope_user() {
 fn test_token_claims_for_partner_scope_user() {
     let auth_service = test_auth_service();
     let mut principal = Principal::new_user("partner@example.com", UserScope::Partner);
-    principal.grant_client_access("client-1");
-    principal.grant_client_access("client-2");
+    principal.grant_client_access(ClientId::from_wire("client-1"));
+    principal.grant_client_access(ClientId::from_wire("client-2"));
     let token = auth_service.generate_access_token(&principal).unwrap();
 
     let claims = auth_service.validate_token(&token).unwrap();
@@ -361,10 +362,11 @@ fn test_refresh_token_hash_different_for_different_tokens() {
 fn test_refresh_token_pair_generation() {
     use fc_platform::RefreshToken;
 
-    let (raw_token, entity) = RefreshToken::generate_token_pair("principal-123");
+    let (raw_token, entity) =
+        RefreshToken::generate_token_pair(PrincipalId::from_wire("principal-123"));
 
     assert!(!raw_token.is_empty());
-    assert_eq!(entity.principal_id, "principal-123");
+    assert_eq!(entity.principal_id, PrincipalId::from_wire("principal-123"));
     assert!(!entity.token_hash.is_empty());
     assert!(entity.is_valid());
     assert!(!entity.revoked);
@@ -374,24 +376,47 @@ fn test_refresh_token_pair_generation() {
 
 #[test]
 fn test_user_scope_anchor_access() {
-    assert!(UserScope::Anchor.can_access_client("any-client", None, &[]));
+    assert!(UserScope::Anchor.can_access_client(&ClientId::from_wire("any-client"), None, &[]));
     assert!(UserScope::Anchor.is_anchor());
 }
 
 #[test]
 fn test_user_scope_client_access() {
-    assert!(UserScope::Client.can_access_client("my-client", Some("my-client"), &[]));
-    assert!(!UserScope::Client.can_access_client("other-client", Some("my-client"), &[]));
+    assert!(UserScope::Client.can_access_client(
+        &ClientId::from_wire("my-client"),
+        Some(&ClientId::from_wire("my-client")),
+        &[]
+    ));
+    assert!(!UserScope::Client.can_access_client(
+        &ClientId::from_wire("other-client"),
+        Some(&ClientId::from_wire("my-client")),
+        &[]
+    ));
     assert!(!UserScope::Client.is_anchor());
 }
 
 #[test]
 fn test_user_scope_partner_access() {
-    let assigned = vec!["client-1".to_string(), "client-2".to_string()];
+    let assigned = vec![
+        ClientId::from_wire("client-1"),
+        ClientId::from_wire("client-2"),
+    ];
 
-    assert!(UserScope::Partner.can_access_client("client-1", None, &assigned));
-    assert!(UserScope::Partner.can_access_client("client-2", None, &assigned));
-    assert!(!UserScope::Partner.can_access_client("client-3", None, &assigned));
+    assert!(UserScope::Partner.can_access_client(
+        &ClientId::from_wire("client-1"),
+        None,
+        &assigned
+    ));
+    assert!(UserScope::Partner.can_access_client(
+        &ClientId::from_wire("client-2"),
+        None,
+        &assigned
+    ));
+    assert!(!UserScope::Partner.can_access_client(
+        &ClientId::from_wire("client-3"),
+        None,
+        &assigned
+    ));
 }
 
 // ─── Domain Event Tests ────────────────────────────────────────────────────
@@ -420,7 +445,7 @@ fn test_user_logged_in_event() {
     });
     let event = UserLoggedIn::new(
         &ctx,
-        "principal-123",
+        &PrincipalId::from_wire("principal-123"),
         "user@example.com",
         "OIDC",
         Some("inhance-entra"),
@@ -431,7 +456,7 @@ fn test_user_logged_in_event() {
     assert_eq!(event.metadata.event_type, "platform:iam:user:logged-in");
     assert_eq!(event.metadata.source, "platform:iam");
     assert!(event.metadata.subject.contains("principal-123"));
-    assert_eq!(event.user_id, "principal-123");
+    assert_eq!(event.user_id, PrincipalId::from_wire("principal-123"));
     assert_eq!(event.email, "user@example.com");
     assert_eq!(
         event.identity_provider_code,
@@ -457,7 +482,7 @@ fn test_user_logged_in_event_internal() {
     };
     let event = UserLoggedIn::new(
         &ctx,
-        "principal-123",
+        &PrincipalId::from_wire("principal-123"),
         "admin@example.com",
         "INTERNAL",
         None,
@@ -478,7 +503,7 @@ fn test_auth_context_permission_matching() {
     use fc_platform::service::AuthContext;
 
     let ctx = AuthContext {
-        principal_id: "p-123".to_string(),
+        principal_id: PrincipalId::from_wire("p-123"),
         principal_type: PrincipalType::User,
         scope: UserScope::Anchor,
         email: Some("admin@example.com".to_string()),
@@ -508,7 +533,7 @@ fn test_auth_context_permission_matching() {
     assert!(!ctx.has_permission("platform:iam:user:read"));
 
     // Client access with wildcard
-    assert!(ctx.can_access_client("any-client"));
+    assert!(ctx.can_access_client(&ClientId::from_wire("any-client")));
     assert!(ctx.is_anchor());
 }
 
@@ -517,7 +542,7 @@ fn test_auth_context_multiple_permissions_check() {
     use fc_platform::service::AuthContext;
 
     let ctx = AuthContext {
-        principal_id: "p-123".to_string(),
+        principal_id: PrincipalId::from_wire("p-123"),
         principal_type: PrincipalType::User,
         scope: UserScope::Client,
         email: Some("user@client.com".to_string()),

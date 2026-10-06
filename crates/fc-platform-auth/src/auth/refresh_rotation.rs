@@ -188,6 +188,7 @@ async fn not_valid(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fc_platform_core::shared::id::PrincipalId;
     use std::mem;
     use std::sync::Mutex;
 
@@ -305,7 +306,7 @@ mod tests {
     }
 
     fn issued(client: Option<&str>) -> (String, RefreshToken) {
-        let (raw, token) = RefreshToken::generate_token_pair("prn_1");
+        let (raw, token) = RefreshToken::generate_token_pair(PrincipalId::parse("prn_1").unwrap());
         let token = match client {
             Some(c) => token.with_oauth_client(c),
             None => token,

@@ -1,6 +1,8 @@
 //! Create Connection Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::OptionIdExt;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -39,7 +41,7 @@ pub struct CreateConnectionCommand {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub external_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
     /// The owning application (`None`: shared). The handler has already
     /// resolved it within the caller's application scope.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -112,7 +114,7 @@ impl<U: UnitOfWork> UseCase for CreateConnectionUseCase<U> {
         command: &CreateConnectionCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        check_scope_access(ctx.caller(), command.client_id.as_deref())
+        check_scope_access(ctx.caller(), command.client_id.as_ref())
     }
 
     async fn execute(
@@ -153,7 +155,7 @@ impl<U: UnitOfWork> UseCase for CreateConnectionUseCase<U> {
             .find_by_code_in_scope(
                 &code,
                 command.application_code.as_deref(),
-                command.client_id.as_deref(),
+                command.client_id.as_ref(),
             )
             .await?;
         if existing.is_some() {
@@ -166,7 +168,7 @@ impl<U: UnitOfWork> UseCase for CreateConnectionUseCase<U> {
         let mut connection = Connection::new(&code, name, &command.service_account_id);
         connection.application_code = command.application_code.clone();
         connection.description = command.description.clone();
-        connection.client_id = parse_client_id_opt(command.client_id.as_deref())?;
+        connection.client_id = parse_client_id_opt(command.client_id.as_id_str())?;
         if let Some(ref ext_id) = command.external_id {
             connection.external_id = Some(ext_id.clone());
         }

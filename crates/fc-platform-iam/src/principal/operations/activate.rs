@@ -1,6 +1,7 @@
 //! Activate User Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::PrincipalId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -16,7 +17,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct ActivateUserCommand {
     /// Principal ID to activate
-    pub principal_id: String,
+    pub principal_id: PrincipalId,
 }
 
 impl AuditMasked for ActivateUserCommand {}
@@ -42,7 +43,7 @@ impl<U: UnitOfWork> UseCase for ActivateUserUseCase<U> {
     type Event = UserActivated;
 
     async fn validate(&self, command: &ActivateUserCommand) -> Result<(), UseCaseError> {
-        if command.principal_id.trim().is_empty() {
+        if command.principal_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "PRINCIPAL_ID_REQUIRED",
                 "Principal ID is required",
@@ -99,7 +100,7 @@ impl<U: UnitOfWork> UseCase for ActivateUserUseCase<U> {
         principal.activate();
 
         // Create domain event
-        let event = UserActivated::new(&ctx, principal.id.as_str());
+        let event = UserActivated::new(&ctx, &principal.id);
 
         // Atomic commit
         self.unit_of_work
@@ -115,7 +116,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = ActivateUserCommand {
-            principal_id: "user-123".to_string(),
+            principal_id: PrincipalId::from_wire("user-123"),
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

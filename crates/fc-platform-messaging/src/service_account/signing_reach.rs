@@ -31,6 +31,7 @@
 
 use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::shared::id::ConnectionId;
+use fc_platform_core::shared::id::PrincipalId;
 use std::fmt;
 
 use crate::connection::repository::ConnectionRepository;
@@ -39,7 +40,6 @@ use fc_platform_core::permissions;
 use fc_platform_core::shared::authorization_service::AuthContext;
 use fc_platform_core::shared::caller_reach;
 use fc_platform_core::shared::error::Result;
-use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::usecase::UseCaseError;
 
 /// The account facts the check reads (fc-platform-iam: its repository
@@ -114,7 +114,9 @@ impl SigningReach {
         let application_id = if is_super_admin(caller) {
             None
         } else {
-            accounts.caller_application_id(&caller.principal_id).await?
+            accounts
+                .caller_application_id(&PrincipalId::from_wire(caller.principal_id.as_str()))
+                .await?
         };
         Ok(SigningReach::new(caller.clone(), application_id))
     }
@@ -235,7 +237,7 @@ pub async fn require_usable_signers(
             }
             None => {}
             Some(connection) => {
-                if !caller_reach::reaches_scope(caller, connection.client_id.as_id_str()) {
+                if !caller_reach::reaches_scope(caller, connection.client_id.as_ref()) {
                     return Err(UseCaseError::forbidden(
                         "CONNECTION_OUT_OF_REACH",
                         format!(
@@ -279,11 +281,12 @@ pub(crate) mod tests {
     use super::*;
     use fc_platform_core::principal_kind::{PrincipalType, UserScope};
     use fc_platform_core::shared::authorization_service::Credential;
+    use fc_platform_core::shared::id::ClientId;
     use std::collections::HashSet;
 
     pub(crate) fn caller(scope: UserScope, clients: &[&str], perms: &[&str]) -> AuthContext {
         AuthContext {
-            principal_id: "prn_caller".into(),
+            principal_id: PrincipalId::parse("prn_caller").unwrap(),
             principal_type: PrincipalType::Service,
             scope,
             email: None,
@@ -308,7 +311,7 @@ pub(crate) mod tests {
     }
 
     fn clients(ids: &[&str]) -> AccountReach {
-        AccountReach::of_clients(ids.iter().map(|c| c.to_string()).collect())
+        AccountReach::of_clients(ClientId::from_wire_all(ids.iter().copied()))
     }
 
     #[test]

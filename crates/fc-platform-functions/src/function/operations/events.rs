@@ -15,7 +15,9 @@
 //! No event carries a secret value, a config value or a signer list: keys
 //! and counts only.
 
+use crate::function::OwnerClientId;
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
 use serde::Serialize;
 
 use crate::function::entity::{
@@ -68,7 +70,7 @@ pub struct FunctionCreated {
     pub address: String,
     pub application_id: ApplicationId,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
     pub runtime: String,
 }
 impl_domain_event!(FunctionCreated);
@@ -80,7 +82,7 @@ impl FunctionCreated {
             function_id: f.id.clone(),
             address: f.address.render(),
             application_id: f.application_id.clone(),
-            client_id: f.owner.client_id_or_none().map(str::to_string),
+            client_id: f.owner.client_id_typed(),
             runtime: f.runtime.as_str().to_string(),
         }
     }

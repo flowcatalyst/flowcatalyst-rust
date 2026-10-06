@@ -9,11 +9,14 @@
 use crate::dispatch_pool::entity::DispatchPool;
 use fc_platform_core::shared::authorization_service::AuthContext;
 use fc_platform_core::shared::error::PlatformError;
-use fc_platform_core::shared::id::OptionIdExt;
+use fc_platform_core::shared::id::ClientId;
 
 /// Creating a pool: an anchor anywhere; anyone else only for a client they
 /// can access (a platform-wide pool needs an anchor).
-pub fn ensure_can_create(auth: &AuthContext, client_id: Option<&str>) -> Result<(), PlatformError> {
+pub fn ensure_can_create(
+    auth: &AuthContext,
+    client_id: Option<&ClientId>,
+) -> Result<(), PlatformError> {
     if auth.is_anchor() {
         return Ok(());
     }
@@ -33,7 +36,7 @@ pub fn is_visible(auth: &AuthContext, pool: &DispatchPool) -> bool {
     auth.is_anchor()
         || pool
             .client_id
-            .as_id_str()
+            .as_ref()
             .is_none_or(|cid| auth.can_access_client(cid))
 }
 
@@ -57,7 +60,7 @@ pub fn ensure_modifiable(
     if auth.is_anchor() {
         return Ok(());
     }
-    match pool.client_id.as_id_str() {
+    match pool.client_id.as_ref() {
         Some(cid) if auth.can_access_client(cid) => Ok(()),
         Some(_) => Err(PlatformError::forbidden("No access to this dispatch pool")),
         None => Err(PlatformError::forbidden(format!(

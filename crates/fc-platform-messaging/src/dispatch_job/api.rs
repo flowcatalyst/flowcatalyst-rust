@@ -7,6 +7,7 @@ use axum::{
     extract::{Path, Query, State},
     Json,
 };
+use fc_platform_core::shared::id::ClientId;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -620,7 +621,7 @@ impl From<RecordedAttempt> for DispatchAttemptResponse {
 
 /// Go's `CheckScopeAccess` on a job read by id: 403 `SCOPE_FORBIDDEN`.
 fn check_job_scope(auth: &Authenticated, client_id: Option<&str>) -> Result<(), PlatformError> {
-    checks::check_scope_access(&auth.0, client_id)
+    checks::check_scope_access(&auth.0, client_id.map(ClientId::from_wire).as_ref())
 }
 
 /// Get dispatch job by ID
@@ -752,10 +753,10 @@ async fn with_client_identifiers(
     }
     let identifiers: HashMap<String, String> = state
         .client_repo
-        .find_by_ids(&ids)
+        .find_by_ids(&ClientId::from_wire_all(ids))
         .await?
         .into_iter()
-        .map(|c| (c.id, c.identifier))
+        .map(|c| (c.id.into_string(), c.identifier))
         .collect();
     for row in &mut rows {
         row.client_identifier = row
@@ -796,7 +797,13 @@ pub async fn get_jobs_for_event(
         .await?;
     let filtered: Vec<DispatchJobReadResponse> = jobs
         .into_iter()
-        .filter(|j| checks::check_scope_access(&auth.0, j.client_id.as_deref()).is_ok())
+        .filter(|j| {
+            checks::check_scope_access(
+                &auth.0,
+                j.client_id.as_deref().map(ClientId::from_wire).as_ref(),
+            )
+            .is_ok()
+        })
         .map(Into::into)
         .collect();
 

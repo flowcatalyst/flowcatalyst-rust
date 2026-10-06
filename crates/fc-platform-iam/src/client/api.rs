@@ -3,6 +3,7 @@
 //! REST endpoints for client management.
 
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
 use std::sync::Arc;
 
 use axum::{
@@ -295,6 +296,7 @@ pub async fn get_client(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ClientResponse>, PlatformError> {
+    let id = ClientId::from_wire(id);
     checks::can_read_clients(&auth.0)?;
 
     // Check access
@@ -344,7 +346,7 @@ pub async fn list_clients(
     // Filter by access
     let filtered: Vec<ClientResponse> = clients
         .into_iter()
-        .filter(|c| auth.0.is_anchor() || auth.0.can_access_client(c.id.as_str()))
+        .filter(|c| auth.0.is_anchor() || auth.0.can_access_client(&c.id))
         .map(|c| c.into())
         .collect();
 
@@ -377,6 +379,7 @@ pub async fn update_client(
     Path(id): Path<String>,
     Json(req): Json<UpdateClientRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = ClientId::from_wire(id);
     use crate::client::operations::UpdateClientCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
@@ -412,6 +415,7 @@ pub async fn delete_client(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = ClientId::from_wire(id);
     use crate::client::operations::DeleteClientCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
@@ -451,6 +455,7 @@ pub async fn activate_client(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<StatusChangeResponse>, PlatformError> {
+    let id = ClientId::from_wire(id);
     use crate::client::operations::ActivateClientCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
@@ -503,6 +508,7 @@ pub async fn suspend_client(
     Path(id): Path<String>,
     Json(req): Json<StatusChangeRequest>,
 ) -> Result<Json<StatusChangeResponse>, PlatformError> {
+    let id = ClientId::from_wire(id);
     use crate::client::operations::SuspendClientCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
@@ -553,6 +559,7 @@ pub async fn deactivate_client(
     Path(id): Path<String>,
     Json(req): Json<StatusChangeRequest>,
 ) -> Result<Json<StatusChangeResponse>, PlatformError> {
+    let id = ClientId::from_wire(id);
     // Deactivation is a soft delete — `DeleteClientUseCase` handles it.
     // The reason string is retained in logs; the use case emits the
     // `ClientDeleted` domain event + audit record.
@@ -615,7 +622,7 @@ pub async fn search_clients(
     } else {
         clients
             .into_iter()
-            .filter(|c| auth.0.can_access_client(c.id.as_str()))
+            .filter(|c| auth.0.can_access_client(&c.id))
             .collect()
     };
 
@@ -657,7 +664,7 @@ pub async fn get_client_by_identifier(
         .ok_or_else(|| PlatformError::not_found("Client", &identifier))?;
 
     // Check access
-    access::ensure_visible(&auth.0, client.id.as_str())?;
+    access::ensure_visible(&auth.0, &client.id)?;
 
     Ok(Json(client.into()))
 }
@@ -684,6 +691,7 @@ pub async fn add_note(
     Path(id): Path<String>,
     Json(req): Json<AddNoteRequest>,
 ) -> Result<Json<AddNoteResponse>, PlatformError> {
+    let id = ClientId::from_wire(id);
     use crate::client::operations::AddClientNoteCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
@@ -728,6 +736,7 @@ pub async fn get_client_applications(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ClientApplicationsResponse>, PlatformError> {
+    let id = ClientId::from_wire(id);
     // Check access
     access::ensure_visible(&auth.0, &id)?;
 
@@ -801,7 +810,7 @@ pub async fn enable_application(
 
     let command = EnableApplicationForClientCommand {
         application_id: ApplicationId::from_wire(application_id),
-        client_id: id,
+        client_id: ClientId::from_wire(id),
     };
     let ctx = ExecutionContext::from_auth(&auth.0);
     use_case.run(command, ctx).await.into_result()?;
@@ -838,7 +847,7 @@ pub async fn disable_application(
 
     let command = DisableApplicationForClientCommand {
         application_id: ApplicationId::from_wire(application_id),
-        client_id: id,
+        client_id: ClientId::from_wire(id),
     };
     let ctx = ExecutionContext::from_auth(&auth.0);
     use_case.run(command, ctx).await.into_result()?;
@@ -868,6 +877,7 @@ pub async fn update_client_applications(
     Path(id): Path<String>,
     Json(req): Json<UpdateClientApplicationsRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = ClientId::from_wire(id);
     checks::can_update_clients(&auth.0)?;
 
     use fc_platform_core::usecase::{ExecutionContext, UseCase};

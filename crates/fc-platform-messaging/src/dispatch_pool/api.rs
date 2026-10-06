@@ -30,7 +30,6 @@ use fc_platform_core::shared::caller_reach;
 use fc_platform_core::shared::enum_str;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::id::ClientId;
-use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_core::usecase::{ExecutionContext, UnitOfWork, UseCase};
 
@@ -181,7 +180,7 @@ pub async fn create_dispatch_pool<U: UnitOfWork>(
         code: req.code,
         name: req.name,
         description: req.description,
-        client_id: req.client_id,
+        client_id: req.client_id.map(ClientId::from_wire),
         rate_limit: req.rate_limit,
         concurrency: req.concurrency,
     };
@@ -229,7 +228,7 @@ pub async fn get_dispatch_pool<U: UnitOfWork>(
     // Check access
     if !auth.0.is_anchor() {
         if let Some(ref client_id) = pool.client_id {
-            if !auth.0.can_access_client(client_id.as_str()) {
+            if !auth.0.can_access_client(client_id) {
                 return Err(PlatformError::forbidden("No access to this dispatch pool"));
             }
         }
@@ -260,18 +259,20 @@ pub async fn list_dispatch_pools<U: UnitOfWork>(
     // Go: the filters as given (no status filter means every status), then
     // `FilterClientScoped`.
     let status_filter: Option<DispatchPoolStatus> = enum_str::parse_opt(query.status.as_deref())?;
+    let client_filter = query
+        .client_id
+        .as_deref()
+        .filter(|c| !c.is_empty())
+        .map(ClientId::from_wire);
     let pools = state
         .dispatch_pool_repo
-        .find_with_filters(
-            status_filter,
-            query.client_id.as_deref().filter(|c| !c.is_empty()),
-        )
+        .find_with_filters(status_filter, client_filter.as_ref())
         .await?;
     let filtered: Vec<DispatchPoolResponse> = pools
         .into_iter()
         .filter(|p| {
             p.client_id
-                .as_id_str()
+                .as_ref()
                 .is_none_or(|cid| caller_reach::reaches_client(&auth.0, cid))
         })
         .map(|p| p.into())

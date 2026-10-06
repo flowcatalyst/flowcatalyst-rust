@@ -1,6 +1,7 @@
 //! LoginAttempt Repository — PostgreSQL via SQLx
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::PrincipalId;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{AttemptType, LoginAttempt, LoginOutcome};
@@ -15,7 +16,7 @@ struct LoginAttemptRow {
     outcome: String,
     failure_reason: Option<String>,
     identifier: Option<String>,
-    principal_id: Option<String>,
+    principal_id: Option<PrincipalId>,
     ip_address: Option<String>,
     user_agent: Option<String>,
     attempted_at: DateTime<Utc>,

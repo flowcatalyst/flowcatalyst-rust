@@ -8,6 +8,7 @@
 //!   that old home client too. Existing grants are kept.
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::PrincipalId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -24,7 +25,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetClientAssociationCommand {
-    pub user_id: String,
+    pub user_id: PrincipalId,
     pub client_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
@@ -53,7 +54,7 @@ impl<U: UnitOfWork> SetClientAssociationUseCase<U> {
 
     async fn require_client(&self, client_id: &str) -> Result<ClientId, UseCaseError> {
         self.client_repo
-            .find_by_id(client_id)
+            .find_by_id(&ClientId::from_wire(client_id))
             .await
             .or_not_found("CLIENT_NOT_FOUND", format!("Client not found: {client_id}"))
             .map(|client| client.id)
@@ -66,7 +67,7 @@ impl<U: UnitOfWork> UseCase for SetClientAssociationUseCase<U> {
     type Event = UserUpdated;
 
     async fn validate(&self, c: &SetClientAssociationCommand) -> Result<(), UseCaseError> {
-        if c.user_id.trim().is_empty() {
+        if c.user_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "USER_ID_REQUIRED",
                 "User ID is required",
@@ -135,10 +136,10 @@ impl<U: UnitOfWork> UseCase for SetClientAssociationUseCase<U> {
                     .as_id_str()
                     .filter(|h| !h.is_empty() && *h != target)
                 {
-                    grants.push(home.to_string());
+                    grants.push(ClientId::from_wire(home));
                 }
             }
-            grants.push(target_id.into_string());
+            grants.push(target_id);
             for g in grants {
                 if !p.assigned_clients.contains(&g) {
                     p.assigned_clients.push(g);
@@ -153,7 +154,7 @@ impl<U: UnitOfWork> UseCase for SetClientAssociationUseCase<U> {
             ));
         }
         p.updated_at = chrono::Utc::now();
-        let event = UserUpdated::new(&ctx, p.id.as_str(), &p.name);
+        let event = UserUpdated::new(&ctx, &p.id, &p.name);
         self.unit_of_work
             .commit(&p, &*self.principal_repo, event, &command)
             .await

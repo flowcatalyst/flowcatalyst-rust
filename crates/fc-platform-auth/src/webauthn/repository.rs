@@ -1,6 +1,8 @@
 //! WebAuthn Credential Repository — PostgreSQL via SQLx.
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::PrincipalId;
+use fc_platform_core::shared::id::WebauthnCredentialId;
 use sqlx::PgPool;
 use webauthn_rs::prelude::Passkey;
 
@@ -29,8 +31,8 @@ impl TryFrom<WebauthnCredentialRow> for WebauthnCredential {
             PlatformError::internal(format!("corrupt passkey blob for {}: {}", r.id, e))
         })?;
         Ok(Self {
-            id: r.id,
-            principal_id: r.principal_id,
+            id: WebauthnCredentialId::from_wire(r.id),
+            principal_id: PrincipalId::from_wire(r.principal_id),
             passkey,
             name: r.name,
             created_at: r.created_at,
@@ -93,7 +95,7 @@ impl WebauthnCredentialRepository {
 
 impl HasId for WebauthnCredential {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 

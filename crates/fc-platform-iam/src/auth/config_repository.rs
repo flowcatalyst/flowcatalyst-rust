@@ -4,7 +4,9 @@ use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::AnchorDomainId;
 use fc_platform_core::shared::id::ClientAccessGrantId;
 use fc_platform_core::shared::id::ClientAuthConfigId;
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::IdpRoleMappingId;
+use fc_platform_core::shared::id::PrincipalId;
 use sqlx::PgPool;
 
 use crate::auth::config_entity::{AnchorDomain, ClientAuthConfig, IdpRoleMapping};
@@ -42,7 +44,7 @@ struct ClientAuthConfigRow {
     id: ClientAuthConfigId,
     email_domain: String,
     config_type: String,
-    primary_client_id: Option<String>,
+    primary_client_id: Option<ClientId>,
     additional_client_ids: serde_json::Value,
     granted_client_ids: serde_json::Value,
     auth_provider: String,
@@ -70,9 +72,9 @@ impl TryFrom<ClientAuthConfigRow> for ClientAuthConfig {
             "auth_provider",
             r.id.as_str(),
         )?;
-        let additional_client_ids: Vec<String> =
+        let additional_client_ids: Vec<ClientId> =
             serde_json::from_value(r.additional_client_ids).unwrap_or_default();
-        let granted_client_ids: Vec<String> =
+        let granted_client_ids: Vec<ClientId> =
             serde_json::from_value(r.granted_client_ids).unwrap_or_default();
         Ok(Self {
             id: r.id,
@@ -96,8 +98,8 @@ impl TryFrom<ClientAuthConfigRow> for ClientAuthConfig {
 #[derive(sqlx::FromRow)]
 struct ClientAccessGrantRow {
     id: ClientAccessGrantId,
-    principal_id: String,
-    client_id: String,
+    principal_id: PrincipalId,
+    client_id: ClientId,
     granted_by: String,
     granted_at: DateTime<Utc>,
     created_at: DateTime<Utc>,
@@ -287,7 +289,7 @@ impl ClientAuthConfigRepository {
         row.map(ClientAuthConfig::try_from).transpose()
     }
 
-    pub async fn find_by_client_id(&self, client_id: &str) -> Result<Vec<ClientAuthConfig>> {
+    pub async fn find_by_client_id(&self, client_id: &ClientId) -> Result<Vec<ClientAuthConfig>> {
         let rows = sqlx::query_as::<_, ClientAuthConfigRow>(
             "SELECT * FROM tnt_client_auth_configs WHERE primary_client_id = $1",
         )
@@ -388,7 +390,10 @@ impl ClientAccessGrantRepository {
     }
 
     /// A principal's grants, oldest first (Go `FindByPrincipal`).
-    pub async fn find_by_principal(&self, principal_id: &str) -> Result<Vec<ClientAccessGrant>> {
+    pub async fn find_by_principal(
+        &self,
+        principal_id: &PrincipalId,
+    ) -> Result<Vec<ClientAccessGrant>> {
         let rows = sqlx::query_as::<_, ClientAccessGrantRow>(
             "SELECT * FROM iam_client_access_grants WHERE principal_id = $1
              ORDER BY granted_at, id",
@@ -399,7 +404,7 @@ impl ClientAccessGrantRepository {
         Ok(rows.into_iter().map(ClientAccessGrant::from).collect())
     }
 
-    pub async fn find_by_client(&self, client_id: &str) -> Result<Vec<ClientAccessGrant>> {
+    pub async fn find_by_client(&self, client_id: &ClientId) -> Result<Vec<ClientAccessGrant>> {
         let rows = sqlx::query_as::<_, ClientAccessGrantRow>(
             "SELECT * FROM iam_client_access_grants WHERE client_id = $1",
         )
@@ -411,8 +416,8 @@ impl ClientAccessGrantRepository {
 
     pub async fn find_by_principal_and_client(
         &self,
-        principal_id: &str,
-        client_id: &str,
+        principal_id: &PrincipalId,
+        client_id: &ClientId,
     ) -> Result<Option<ClientAccessGrant>> {
         let row = sqlx::query_as::<_, ClientAccessGrantRow>(
             "SELECT * FROM iam_client_access_grants WHERE principal_id = $1 AND client_id = $2",
@@ -434,8 +439,8 @@ impl ClientAccessGrantRepository {
 
     pub async fn delete_by_principal_and_client(
         &self,
-        principal_id: &str,
-        client_id: &str,
+        principal_id: &PrincipalId,
+        client_id: &ClientId,
     ) -> Result<bool> {
         let result = sqlx::query(
             "DELETE FROM iam_client_access_grants WHERE principal_id = $1 AND client_id = $2",

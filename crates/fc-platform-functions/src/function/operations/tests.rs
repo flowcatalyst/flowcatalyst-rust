@@ -14,6 +14,7 @@
 )]
 
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -212,7 +213,7 @@ async fn create_for_a_client_out_of_scope_is_403_scope_forbidden() {
         client.clone(),
         ops.create(),
         CreateCommand {
-            client_id: Some("clt_2".into()),
+            client_id: Some(ClientId::parse("clt_2").unwrap()),
             ..create_command()
         },
     )

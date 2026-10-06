@@ -7,6 +7,7 @@
 //! emitted their own event.
 
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -28,7 +29,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateClientApplicationsCommand {
-    pub client_id: String,
+    pub client_id: ClientId,
     /// Authoritative list. Apps in here become enabled; existing enabled apps
     /// not in here become disabled.
     pub enabled_application_ids: Vec<ApplicationId>,
@@ -68,7 +69,7 @@ impl<U: UnitOfWork> UseCase for UpdateClientApplicationsUseCase<U> {
         &self,
         command: &UpdateClientApplicationsCommand,
     ) -> Result<(), UseCaseError> {
-        if command.client_id.trim().is_empty() {
+        if command.client_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "CLIENT_ID_REQUIRED",
                 "Client ID is required",
@@ -142,7 +143,7 @@ impl<U: UnitOfWork> UseCase for UpdateClientApplicationsUseCase<U> {
                     c.enable();
                     c
                 }
-                None => ApplicationClientConfig::new(app_id.clone(), &command.client_id),
+                None => ApplicationClientConfig::new(app_id.clone(), command.client_id.clone()),
             };
             to_persist.push(cfg);
             enabled_added.push(app_id.clone());
@@ -184,7 +185,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = UpdateClientApplicationsCommand {
-            client_id: "clt_123".to_string(),
+            client_id: ClientId::parse("clt_123").unwrap(),
             enabled_application_ids: vec![
                 ApplicationId::parse("app_a").unwrap(),
                 ApplicationId::parse("app_b").unwrap(),

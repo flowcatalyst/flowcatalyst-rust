@@ -4,6 +4,7 @@ use axum::{
     extract::{Query, State},
     Json,
 };
+use fc_platform_core::shared::id::PrincipalId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
@@ -58,7 +59,7 @@ impl From<LoginAttempt> for LoginAttemptResponse {
             outcome: a.outcome.as_str().to_string(),
             failure_reason: a.failure_reason,
             identifier: a.identifier,
-            principal_id: a.principal_id,
+            principal_id: a.principal_id.map(PrincipalId::into_string),
             ip_address: a.ip_address,
             user_agent: a.user_agent,
             attempted_at: a.attempted_at.to_rfc3339(),

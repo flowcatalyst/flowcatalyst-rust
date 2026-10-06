@@ -10,6 +10,7 @@
 //! The step token stands in for a session, so these routes are public (like
 //! `/auth/login`), rate-limited with it, and every failure is the same 401.
 
+use fc_platform_core::shared::id::PrincipalId;
 use std::sync::Arc;
 
 use axum::{
@@ -33,7 +34,6 @@ use crate::auth::login_backoff::{self, record_user_login_attempt, BackoffDecisio
 use crate::auth::session_cookie::SessionCookieConfig;
 use fc_platform_core::permissions;
 use fc_platform_core::shared::error::PlatformError;
-use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::shared::middleware::ClientIp;
 use fc_platform_core::shared::rate_limit_store::{
     within_mail_budget, Bucket, RateLimitPolicies, RateLimitStore,
@@ -320,7 +320,7 @@ impl TwoFactorLogin {
         record_user_login_attempt(
             &self.login_attempt_repo,
             Some(&email.to_lowercase()),
-            Some(p.id.as_str()),
+            Some(&p.id),
             ip,
             LoginOutcome::Success,
             None,
@@ -335,7 +335,7 @@ impl TwoFactorLogin {
             email,
             roles,
             permissions: Some(permissions).filter(|p| !p.is_empty()),
-            client_id: p.client_id.as_id_str().map(String::from),
+            client_id: p.client_id.as_ref().map(String::from),
             recovery_codes,
             sso_managed: self.sso_managed(p, None).await,
         };
@@ -382,7 +382,7 @@ impl TwoFactorLogin {
             .as_ref()
             .is_some_and(|m| m.remember_device_enabled);
 
-        let confirmed = self.mfa.confirmed_methods(p.id.as_str()).await?;
+        let confirmed = self.mfa.confirmed_methods(&p.id).await?;
         let mut usable = method_strings(&confirmed);
         if domain_requires {
             let allowed = eval.allowed_methods();
@@ -392,11 +392,7 @@ impl TwoFactorLogin {
         if !usable.is_empty() {
             if remember_allowed {
                 if let Some(c) = jar.get(self.trusted_device_cookie_name()) {
-                    if self
-                        .mfa
-                        .verify_trusted_device(p.id.as_str(), c.value())
-                        .await?
-                    {
+                    if self.mfa.verify_trusted_device(&p.id, c.value()).await? {
                         return Ok(None);
                     }
                 }
@@ -442,7 +438,11 @@ impl TwoFactorLogin {
     ) -> Result<Principal, Box<Response>> {
         let invalid = || Box::new(unauthorized("Invalid or expired session"));
         let subject = self.tokens.parse(token, purpose).ok_or_else(invalid)?;
-        match self.principal_repo.find_by_id(&subject).await {
+        match self
+            .principal_repo
+            .find_by_id(&PrincipalId::from_wire(subject))
+            .await
+        {
             Ok(Some(p)) if p.active => Ok(p),
             _ => Err(invalid()),
         }
@@ -453,20 +453,14 @@ impl TwoFactorLogin {
     /// channel, so an email-only user never gets them (Go
     /// `ensureRecoveryCodes`).
     pub async fn ensure_recovery_codes(&self, p: &Principal) -> Option<Vec<String>> {
-        let confirmed = self.mfa.confirmed_methods(p.id.as_str()).await.ok()?;
+        let confirmed = self.mfa.confirmed_methods(&p.id).await.ok()?;
         if !confirmed.contains(&MethodType::Totp) {
             return None;
         }
-        if self
-            .mfa
-            .remaining_recovery_codes(p.id.as_str())
-            .await
-            .ok()?
-            > 0
-        {
+        if self.mfa.remaining_recovery_codes(&p.id).await.ok()? > 0 {
             return None;
         }
-        match self.mfa.generate_recovery_codes(p.id.as_str()).await {
+        match self.mfa.generate_recovery_codes(&p.id).await {
             Ok(codes) => {
                 self.notifier.recovery_codes_regenerated(&email_of(p)).await;
                 Some(codes)
@@ -494,11 +488,7 @@ impl TwoFactorLogin {
         let label = user_agent_label(headers);
         let raw = match self
             .mfa
-            .issue_trusted_device(
-                p.id.as_str(),
-                label.as_deref(),
-                chrono::Duration::days(days),
-            )
+            .issue_trusted_device(&p.id, label.as_deref(), chrono::Duration::days(days))
             .await
         {
             Ok(raw) => raw,
@@ -587,7 +577,7 @@ pub async fn verify(
             record_user_login_attempt(
                 &s.login_attempt_repo,
                 Some(&email),
-                Some(p.id.as_str()),
+                Some(&p.id),
                 ip,
                 LoginOutcome::Failure,
                 Some("Invalid 2FA code"),
@@ -597,9 +587,9 @@ pub async fn verify(
         }
     }
     let result = match method.as_str() {
-        "TOTP" => s.mfa.verify_totp(p.id.as_str(), &req.code).await,
-        "EMAIL_PIN" => s.mfa.verify_login_email_pin(p.id.as_str(), &req.code).await,
-        "RECOVERY_CODE" => s.mfa.verify_recovery_code(p.id.as_str(), &req.code).await,
+        "TOTP" => s.mfa.verify_totp(&p.id, &req.code).await,
+        "EMAIL_PIN" => s.mfa.verify_login_email_pin(&p.id, &req.code).await,
+        "RECOVERY_CODE" => s.mfa.verify_recovery_code(&p.id, &req.code).await,
         _ => {
             return coded(
                 StatusCode::BAD_REQUEST,
@@ -623,7 +613,7 @@ pub async fn verify(
         record_user_login_attempt(
             &s.login_attempt_repo,
             Some(&email),
-            Some(p.id.as_str()),
+            Some(&p.id),
             ip,
             LoginOutcome::Failure,
             Some("Invalid 2FA code"),
@@ -686,7 +676,7 @@ pub async fn challenge_email(
         warn!(principal_id = %p.id, "2FA email challenge rate limited; no code sent");
         return Json(json!({ "message": CODE_SENT })).into_response();
     }
-    if let Err(e) = s.mfa.send_login_email_pin(p.id.as_str(), &email).await {
+    if let Err(e) = s.mfa.send_login_email_pin(&p.id, &email).await {
         error!(principal_id = %p.id, error = %e, "send email pin failed");
         return coded(
             StatusCode::BAD_GATEWAY,
@@ -729,11 +719,7 @@ pub async fn enroll_totp_begin(State(s): State<Arc<TwoFactorLogin>>, body: Bytes
             "authenticator app is not permitted for this domain",
         );
     }
-    match s
-        .mfa
-        .begin_totp_enrollment(p.id.as_str(), &email_of(&p))
-        .await
-    {
+    match s.mfa.begin_totp_enrollment(&p.id, &email_of(&p)).await {
         Ok(e) => Json(json!({ "secret": e.secret, "uri": e.uri, "qr": e.qr })).into_response(),
         Err(e) => enroll_error(e),
     }
@@ -758,11 +744,7 @@ pub async fn enroll_totp_confirm(
         Ok(p) => p,
         Err(resp) => return *resp,
     };
-    match s
-        .mfa
-        .confirm_totp_enrollment(p.id.as_str(), &req.code)
-        .await
-    {
+    match s.mfa.confirm_totp_enrollment(&p.id, &req.code).await {
         Ok(true) => {}
         Ok(false) => {
             return coded(
@@ -814,7 +796,7 @@ pub async fn enroll_email_begin(State(s): State<Arc<TwoFactorLogin>>, body: Byte
     if email.is_empty() {
         return coded(StatusCode::BAD_REQUEST, "NO_EMAIL", "account has no email");
     }
-    match s.mfa.begin_email_enrollment(p.id.as_str(), &email).await {
+    match s.mfa.begin_email_enrollment(&p.id, &email).await {
         Ok(()) => Json(json!({ "message": CODE_SENT })).into_response(),
         Err(e) => enroll_error(e),
     }
@@ -838,11 +820,7 @@ pub async fn enroll_email_confirm(
         Ok(p) => p,
         Err(resp) => return *resp,
     };
-    match s
-        .mfa
-        .confirm_email_enrollment(p.id.as_str(), &req.code)
-        .await
-    {
+    match s.mfa.confirm_email_enrollment(&p.id, &req.code).await {
         Ok(true) => {}
         Ok(false) => {
             return coded(

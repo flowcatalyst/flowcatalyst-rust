@@ -3,6 +3,7 @@
 
 use crate::support;
 use fc_platform::shared::id::IdentityProviderId;
+use fc_platform::shared::id::PrincipalId;
 
 use axum::{
     body::Body,
@@ -321,7 +322,7 @@ async fn the_session_cookie_is_the_subject_reloaded_per_request() {
     let mut granted = app
         .repos
         .principal_repo
-        .find_by_id(user.id.as_str())
+        .find_by_id(&user.id)
         .await
         .unwrap()
         .unwrap();
@@ -505,7 +506,7 @@ async fn authorize_reads_only_an_active_users_session_cookie() {
     let mut inactive = app
         .repos
         .principal_repo
-        .find_by_id(user.id.as_str())
+        .find_by_id(&user.id)
         .await
         .unwrap()
         .unwrap();
@@ -568,14 +569,14 @@ async fn client_selection_and_passkeys_take_the_session_cookie_only() {
     for client in &clients {
         app.repos
             .principal_repo
-            .grant_client_access(partner.id.as_str(), client.id.as_str())
+            .grant_client_access(&partner.id, &client.id)
             .await
             .unwrap();
     }
     let partner = app
         .repos
         .principal_repo
-        .find_by_id(partner.id.as_str())
+        .find_by_id(&partner.id)
         .await
         .unwrap()
         .unwrap();
@@ -852,7 +853,7 @@ async fn client_credentials_requires_a_service_principal() {
     ] {
         let client = OAuthClient::confidential(client_id, client_id)
             .with_secret_ref(secret_ref.clone())
-            .with_service_account(principal_id);
+            .with_service_account(PrincipalId::from_wire(principal_id));
         app.repos.oauth_client_repo.insert(&client).await.unwrap();
     }
 

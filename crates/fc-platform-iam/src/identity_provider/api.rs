@@ -4,6 +4,7 @@ use axum::{
     extract::{Path, State},
     Json,
 };
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::IdentityProviderId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -244,7 +245,7 @@ pub async fn create_identity_provider(
         oidc_issuer_pattern: req.oidc_issuer_pattern,
         allowed_email_domains: req.allowed_email_domains.unwrap_or_default(),
         mapping_scope: req.mapping_scope,
-        primary_client_id: req.primary_client_id,
+        primary_client_id: req.primary_client_id.map(ClientId::from_wire),
         sync_roles_from_idp: req.sync_roles_from_idp,
         allowed_role_ids,
     };
@@ -370,7 +371,7 @@ pub async fn update_identity_provider(
         oidc_issuer_pattern: req.oidc_issuer_pattern,
         allowed_email_domains: req.allowed_email_domains,
         mapping_scope: req.mapping_scope,
-        primary_client_id: req.primary_client_id,
+        primary_client_id: req.primary_client_id.map(ClientId::from_wire),
         sync_roles_from_idp: req.sync_roles_from_idp,
         allowed_role_ids: req.allowed_role_ids,
     };

@@ -14,6 +14,7 @@ use axum::{
     Json,
 };
 use axum_extra::extract::cookie::CookieJar;
+use fc_platform_core::shared::id::PrincipalId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
@@ -28,7 +29,6 @@ use axum::body::Bytes;
 use axum::response::Response;
 use fc_platform_core::permissions;
 use fc_platform_core::shared::error::PlatformError;
-use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::shared::middleware::{ClientIp, OptionalAuth};
 use fc_platform_iam::auth::auth_service;
 use fc_platform_iam::auth::auth_service::AuthService;
@@ -260,7 +260,7 @@ async fn login_response(state: &AuthState, jar: CookieJar, principal: Principal)
         email: principal_email,
         roles,
         permissions: permissions.ok().filter(|p| !p.is_empty()),
-        client_id: principal.client_id.as_id_str().map(String::from),
+        client_id: principal.client_id.as_ref().map(String::from),
         sso_managed: sso_managed.unwrap_or(false),
     };
 
@@ -310,7 +310,7 @@ pub async fn password_login(
         return Err(PlatformError::login_backoff(retry_after_secs));
     }
 
-    let record_failure = |principal_id: Option<String>, reason: &'static str| {
+    let record_failure = |principal_id: Option<PrincipalId>, reason: &'static str| {
         let repo = state.login_attempt_repo.clone();
         let email = email.clone();
         let ip = ip.map(str::to_owned);
@@ -318,7 +318,7 @@ pub async fn password_login(
             record_user_login_attempt(
                 &repo,
                 Some(&email),
-                principal_id.as_deref(),
+                principal_id.as_ref(),
                 ip.as_deref(),
                 LoginOutcome::Failure,
                 Some(reason),
@@ -375,7 +375,7 @@ pub async fn password_login(
             Ok(new_hash) => {
                 if let Err(e) = state
                     .principal_repo
-                    .update_password_hash(principal.id.as_str(), &new_hash)
+                    .update_password_hash(&principal.id, &new_hash)
                     .await
                 {
                     tracing::warn!(principal_id = %principal.id, error = %e, "password rehash persist failed; login continues");
@@ -411,7 +411,7 @@ pub async fn password_login(
     record_user_login_attempt(
         &state.login_attempt_repo,
         Some(&email),
-        Some(principal.id.as_str()),
+        Some(&principal.id),
         ip,
         LoginOutcome::Success,
         None,
@@ -552,7 +552,7 @@ pub async fn get_current_user(
         email: principal.email().unwrap_or_default().to_string(),
         roles,
         permissions: Some(permissions).filter(|p| !p.is_empty()),
-        client_id: principal.client_id.as_id_str().map(String::from),
+        client_id: principal.client_id.as_ref().map(String::from),
         sso_managed,
         scope: principal.scope.as_str().to_string(),
     }))

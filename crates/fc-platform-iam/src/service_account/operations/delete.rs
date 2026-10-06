@@ -1,6 +1,7 @@
 //! Delete Service Account Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::PrincipalId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -17,7 +18,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct DeleteServiceAccountCommand {
     /// Service account ID
-    pub id: String,
+    pub id: PrincipalId,
 }
 
 impl AuditMasked for DeleteServiceAccountCommand {}
@@ -96,7 +97,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = DeleteServiceAccountCommand {
-            id: "sa-123".to_string(),
+            id: PrincipalId::from_wire("sa-123"),
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

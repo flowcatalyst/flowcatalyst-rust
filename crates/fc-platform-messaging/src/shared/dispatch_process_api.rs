@@ -45,6 +45,7 @@
 //! process leaves a claim behind. At-least-once: after such a death the
 //! subscriber may see the message twice.
 
+use fc_platform_core::shared::id::ClientId;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -200,7 +201,11 @@ impl ClientCodeResolver {
                 return code.clone();
             }
         }
-        match self.clients.find_by_id(client_id).await {
+        match self
+            .clients
+            .find_by_id(&ClientId::from_wire(client_id))
+            .await
+        {
             Ok(found) => {
                 let code = found.map(|c| c.identifier).filter(|s| !s.is_empty());
                 self.cache

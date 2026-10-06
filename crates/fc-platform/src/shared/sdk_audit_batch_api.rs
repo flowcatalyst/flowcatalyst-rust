@@ -16,6 +16,7 @@
 //! case. The whole batch costs one lookup query per code kind and one insert.
 
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
 use std::collections::{BTreeSet, HashMap};
 
 use axum::{
@@ -166,7 +167,7 @@ fn distinct_codes<'a>(codes: impl Iterator<Item = Option<&'a String>>) -> Vec<St
 fn plan_batch(
     items: Vec<BatchAuditLogItem>,
     app_ids: &HashMap<String, ApplicationId>,
-    client_ids: &HashMap<String, String>,
+    client_ids: &HashMap<String, ClientId>,
     auth: &AuthContext,
     now: DateTime<Utc>,
 ) -> (Vec<AuditLog>, Vec<BatchAuditLogResult>) {
@@ -199,7 +200,7 @@ fn plan_batch(
             _ => None,
         };
 
-        if let Some(cid) = client_id.as_deref() {
+        if let Some(cid) = client_id.as_ref() {
             if !auth.can_access_client(cid) {
                 warn!(
                     client_id = %cid,
@@ -248,7 +249,7 @@ fn plan_batch(
         );
         log.performed_at = performed_at;
         log.application_id = application_id;
-        log.client_id = client_id;
+        log.client_id = client_id.map(ClientId::into_string);
 
         results.push(BatchAuditLogResult::success(log.id.clone()));
         logs.push(log);
@@ -295,12 +296,13 @@ mod tests {
     use super::*;
     use crate::principal::entity::{PrincipalType, UserScope};
     use crate::shared::authorization_service::Credential;
+    use fc_platform_core::shared::id::PrincipalId;
     use serde_json::json;
     use std::collections::HashSet;
 
     fn ctx(scope: UserScope, clients: &[&str]) -> AuthContext {
         AuthContext {
-            principal_id: "prn_caller".to_string(),
+            principal_id: PrincipalId::parse("prn_caller").unwrap(),
             principal_type: PrincipalType::Service,
             scope,
             email: None,
@@ -318,10 +320,10 @@ mod tests {
             .items
     }
 
-    fn map(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+    fn map(pairs: &[(&str, &str)]) -> HashMap<String, ClientId> {
         pairs
             .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .map(|(k, v)| (k.to_string(), ClientId::parse(*v).unwrap()))
             .collect()
     }
 

@@ -6,6 +6,9 @@
 //! path runs as the system actor inside an authenticated SSO callback (Go's
 //! operations are `Authorize: Public` for the same reason).
 
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::PortalAppId;
+use fc_platform_core::shared::id::PortalIdentityId;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -72,11 +75,14 @@ impl<U: UnitOfWork> EnsurePortalIdentityUseCase<U> {
         cmd: &EnsureCommand,
         ctx: &ExecutionContext,
     ) -> Result<(PortalIdentity, IdentityEnsured), UseCaseError> {
-        if self.clients.find_by_id(&cmd.client_id).await?.is_none() {
+        let client_id = ClientId::from_wire(cmd.client_id.as_str());
+        if self.clients.find_by_id(&client_id).await?.is_none() {
             return Err(not_found("Client", &cmd.client_id));
         }
         let app: Option<PortalApp> = match cmd.portal_app_id.as_deref().filter(|s| !s.is_empty()) {
-            Some(app_id) => Some(load_client_app(&self.apps, &cmd.client_id, app_id).await?),
+            Some(app_id) => Some(
+                load_client_app(&self.apps, &client_id, &PortalAppId::from_wire(app_id)).await?,
+            ),
             None => None,
         };
         let source = if cmd.source == "JIT" {
@@ -86,17 +92,12 @@ impl<U: UnitOfWork> EnsurePortalIdentityUseCase<U> {
         };
         let existing = self
             .identities
-            .find_by_client_and_email(&cmd.client_id, &cmd.email)
+            .find_by_client_and_email(&client_id, &cmd.email)
             .await?;
         let created = existing.is_none();
         let trimmed_name = cmd.name.as_deref().map(str::trim);
         let mut ident = match existing {
-            None => PortalIdentity::new(
-                &cmd.client_id,
-                &cmd.email,
-                trimmed_name.unwrap_or(""),
-                source,
-            ),
+            None => PortalIdentity::new(&client_id, &cmd.email, trimmed_name.unwrap_or(""), source),
             Some(mut ident) => {
                 ident.status = IdentityStatus::Active;
                 if let Some(name) = trimmed_name.filter(|n| !n.is_empty()) {
@@ -210,14 +211,14 @@ async fn load_grant_targets(
     cmd: &AppGrantCommand,
 ) -> Result<(PortalIdentity, PortalApp), UseCaseError> {
     let ident = identities
-        .find_by_id(&cmd.identity_id)
+        .find_by_id(&PortalIdentityId::from_wire(cmd.identity_id.as_str()))
         .await?
-        .filter(|i| i.client_id == cmd.client_id)
+        .filter(|i| i.client_id.as_str() == cmd.client_id)
         .ok_or_else(|| not_found("PortalIdentity", &cmd.identity_id))?;
     let app = apps
-        .find_by_id(&cmd.portal_app_id)
+        .find_by_id(&PortalAppId::from_wire(cmd.portal_app_id.as_str()))
         .await?
-        .filter(|a| a.client_id == cmd.client_id)
+        .filter(|a| a.client_id.as_str() == cmd.client_id)
         .ok_or_else(|| not_found("PortalApp", &cmd.portal_app_id))?;
     Ok((ident, app))
 }
@@ -390,16 +391,18 @@ impl<U: UnitOfWork> SetPortalIdentityStatusUseCase<U> {
         ctx: &ExecutionContext,
     ) -> Result<(PortalIdentity, IdentityStatusSet), UseCaseError> {
         let found = if !cmd.id.trim().is_empty() {
-            self.identities.find_by_id(&cmd.id).await?
+            self.identities
+                .find_by_id(&PortalIdentityId::from_wire(cmd.id.as_str()))
+                .await?
         } else {
             self.identities
-                .find_by_client_and_email(&cmd.client_id, &cmd.email)
+                .find_by_client_and_email(&ClientId::from_wire(cmd.client_id.as_str()), &cmd.email)
                 .await?
         };
         let mut ident = found.ok_or_else(|| not_found("PortalIdentity", &cmd.id))?;
         // The admin surface is per-client: another client's identity is not
         // mutable through this client's gate.
-        if !cmd.client_id.is_empty() && ident.client_id != cmd.client_id {
+        if !cmd.client_id.is_empty() && ident.client_id.as_str() != cmd.client_id {
             return Err(not_found("PortalIdentity", &cmd.id));
         }
         // `validate` already refused a status that doesn't parse; parse again
@@ -497,9 +500,9 @@ impl<U: UnitOfWork> DeletePortalIdentityUseCase<U> {
     ) -> Result<(PortalIdentity, IdentityDeleted), UseCaseError> {
         let ident = self
             .identities
-            .find_by_id(&cmd.id)
+            .find_by_id(&PortalIdentityId::from_wire(cmd.id.as_str()))
             .await?
-            .filter(|i| cmd.client_id.is_empty() || i.client_id == cmd.client_id)
+            .filter(|i| cmd.client_id.is_empty() || i.client_id.as_str() == cmd.client_id)
             .ok_or_else(|| not_found("PortalIdentity", &cmd.id))?;
         let event = IdentityDeleted::new(ctx, &ident.id, &ident.client_id, &ident.email);
         Ok((ident, event))

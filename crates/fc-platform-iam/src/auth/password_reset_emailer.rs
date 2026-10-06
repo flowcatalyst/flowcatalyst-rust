@@ -3,6 +3,7 @@
 //! `password_reset_api`, and the admin send-reset and create-user paths).
 
 use chrono::{Duration, Utc};
+use fc_platform_core::shared::id::PrincipalId;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tracing::warn;
@@ -77,7 +78,7 @@ impl PasswordResetEmailer {
 
         let raw_token = self
             .mint(
-                principal.id.as_str(),
+                &principal.id,
                 TokenPurpose::Reset,
                 Utc::now() + Duration::minutes(RESET_TOKEN_TTL_MINUTES),
                 options,
@@ -113,7 +114,7 @@ impl PasswordResetEmailer {
         }
 
         // Best-effort domain event.
-        let event = PasswordResetRequested::new(principal.id.as_str(), &email);
+        let event = PasswordResetRequested::new(&principal.id, &email);
         let command = serde_json::json!({ "principalId": principal.id, "email": email });
         if let Err(e) = self.unit_of_work.emit_event(event, &command).await {
             warn!("Failed to emit PasswordResetRequested event: {}", e);
@@ -140,7 +141,7 @@ impl PasswordResetEmailer {
         };
         let raw_token = self
             .mint(
-                principal.id.as_str(),
+                &principal.id,
                 TokenPurpose::Invite,
                 Utc::now() + Duration::hours(INVITE_TOKEN_TTL_HOURS),
                 ResetOptions {
@@ -198,7 +199,7 @@ impl PasswordResetEmailer {
         }
         let raw_token = self
             .mint(
-                principal.id.as_str(),
+                &principal.id,
                 TokenPurpose::Invite,
                 Utc::now() + Duration::hours(INVITE_TOKEN_TTL_HOURS),
                 ResetOptions {
@@ -218,7 +219,7 @@ impl PasswordResetEmailer {
     /// token.
     async fn mint(
         &self,
-        principal_id: &str,
+        principal_id: &PrincipalId,
         purpose: TokenPurpose,
         expires_at: chrono::DateTime<Utc>,
         options: ResetOptions,
@@ -227,7 +228,8 @@ impl PasswordResetEmailer {
             .delete_by_principal_id(principal_id)
             .await?;
         let raw_token = generate_raw_token();
-        let mut token = PasswordResetToken::new(principal_id, hash_token(&raw_token), expires_at);
+        let mut token =
+            PasswordResetToken::new(principal_id.clone(), hash_token(&raw_token), expires_at);
         token.purpose = purpose;
         token.reset_2fa = options.reset_2fa;
         token.requires_factor = options.requires_factor;

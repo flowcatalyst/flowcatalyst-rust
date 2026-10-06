@@ -238,7 +238,7 @@ async fn upsert_client(
         .map_err(|e| anyhow!("looking up OAuth client {client_id}: {e:?}"))?;
     let principal = match existing
         .as_ref()
-        .and_then(|c| c.service_account_principal_id.as_deref())
+        .and_then(|c| c.service_account_principal_id.as_ref())
     {
         Some(id) => repos
             .principal_repo
@@ -300,7 +300,7 @@ async fn upsert_client(
             client.set_secret_ref(secret_ref);
             client.active = true;
             client.client_type = OAuthClientType::Confidential;
-            client.service_account_principal_id = Some(principal.id.to_string());
+            client.service_account_principal_id = Some(principal.id.clone());
             if !client.grant_types.contains(&GrantType::ClientCredentials) {
                 client.grant_types.push(GrantType::ClientCredentials);
             }
@@ -312,7 +312,7 @@ async fn upsert_client(
         }
         None => {
             let client = OAuthClient::confidential(client_id, name)
-                .with_service_account(principal.id.to_string())
+                .with_service_account(principal.id.clone())
                 .with_secret_ref(secret_ref);
             repos
                 .oauth_client_repo

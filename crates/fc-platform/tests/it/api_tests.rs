@@ -2,8 +2,8 @@
 //!
 //! Tests for platform domain models, authorization, and error handling.
 
+use fc_platform::shared::id::PrincipalId;
 use fc_platform_core::shared::id::ClientId;
-use fc_platform_core::shared::id::OptionIdExt;
 use std::collections::HashSet;
 
 use fc_platform::domain::{Principal, PrincipalType, UserScope};
@@ -44,7 +44,8 @@ mod domain_tests {
     #[test]
     fn test_principal_client_scoped_role_assignment() {
         let mut principal = Principal::new_user("test@example.com", UserScope::Partner);
-        principal.assign_role_for_client("client-admin".to_string(), "client123".to_string());
+        principal
+            .assign_role_for_client("client-admin".to_string(), ClientId::from_wire("client123"));
 
         // Should have a role with the client_id set
         let role = principal
@@ -52,7 +53,10 @@ mod domain_tests {
             .iter()
             .find(|r| r.role == "client-admin")
             .unwrap();
-        assert_eq!(role.client_id, Some("client123".to_string()));
+        assert_eq!(
+            role.client_id,
+            Some(ClientId::from_wire("client123".to_string()))
+        );
     }
 
     #[test]
@@ -73,18 +77,25 @@ mod domain_tests {
         let mut principal = Principal::new_user("test@example.com", UserScope::Partner);
         let client_id = tsid::generate(EntityType::Client);
 
-        principal.grant_client_access(client_id.clone());
-        assert!(principal.assigned_clients.contains(&client_id));
+        principal.grant_client_access(ClientId::from_wire(client_id.clone()));
+        assert!(principal
+            .assigned_clients
+            .contains(&ClientId::from_wire(client_id.as_str())));
 
-        principal.revoke_client_access(&client_id);
-        assert!(!principal.assigned_clients.contains(&client_id));
+        principal.revoke_client_access(&ClientId::from_wire(client_id.as_str()));
+        assert!(!principal
+            .assigned_clients
+            .contains(&ClientId::from_wire(client_id.as_str())));
     }
 
     #[test]
     fn test_principal_with_client_id() {
         let principal = Principal::new_user("test@example.com", UserScope::Client)
             .with_client_id(ClientId::parse("clt_client123").unwrap());
-        assert_eq!(principal.client_id.as_id_str(), Some("clt_client123"));
+        assert_eq!(
+            principal.client_id.as_ref().map(ClientId::as_str),
+            Some("clt_client123")
+        );
     }
 
     #[test]
@@ -108,7 +119,7 @@ mod authorization_tests {
 
     fn create_auth_context(permissions: Vec<&str>, scope: &str, clients: Vec<&str>) -> AuthContext {
         AuthContext {
-            principal_id: tsid::generate(EntityType::Principal),
+            principal_id: PrincipalId::generate(),
             principal_type: PrincipalType::User,
             scope: scope.parse().unwrap(),
             email: Some("test@example.com".to_string()),
@@ -136,8 +147,8 @@ mod authorization_tests {
     fn test_partner_scope() {
         let ctx = create_auth_context(vec![], "PARTNER", vec!["client1", "client2"]);
         assert!(!ctx.is_anchor());
-        assert!(ctx.can_access_client("client1"));
-        assert!(ctx.can_access_client("client2"));
+        assert!(ctx.can_access_client(&ClientId::from_wire("client1")));
+        assert!(ctx.can_access_client(&ClientId::from_wire("client2")));
     }
 
     #[test]
@@ -170,16 +181,16 @@ mod authorization_tests {
     #[test]
     fn test_client_access_specific() {
         let ctx = create_auth_context(vec![], "CLIENT", vec!["client1", "client2"]);
-        assert!(ctx.can_access_client("client1"));
-        assert!(ctx.can_access_client("client2"));
-        assert!(!ctx.can_access_client("client3"));
+        assert!(ctx.can_access_client(&ClientId::from_wire("client1")));
+        assert!(ctx.can_access_client(&ClientId::from_wire("client2")));
+        assert!(!ctx.can_access_client(&ClientId::from_wire("client3")));
     }
 
     #[test]
     fn test_anchor_all_clients() {
         let ctx = create_auth_context(vec![], "ANCHOR", vec!["*"]);
-        assert!(ctx.can_access_client("any_client"));
-        assert!(ctx.can_access_client("another_client"));
+        assert!(ctx.can_access_client(&ClientId::from_wire("any_client")));
+        assert!(ctx.can_access_client(&ClientId::from_wire("another_client")));
     }
 
     #[test]

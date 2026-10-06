@@ -97,7 +97,6 @@ impl Connection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fc_platform_core::shared::id::OptionIdExt;
     use std::str::FromStr;
 
     #[test]
@@ -130,7 +129,7 @@ mod tests {
 
         assert_eq!(conn.description, Some("A test connection".to_string()));
         assert_eq!(conn.external_id, Some("ext-123".to_string()));
-        assert_eq!(conn.client_id.as_id_str(), Some("clt_1"));
+        assert_eq!(conn.client_id, Some(ClientId::parse("clt_1").unwrap()));
         assert_eq!(conn.client_identifier, Some("client-ident-1".to_string()));
     }
 

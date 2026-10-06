@@ -1,6 +1,7 @@
 //! DispatchPool Repository — PostgreSQL via SQLx
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::DispatchPoolId;
 use sqlx::PgPool;
 
@@ -113,7 +114,7 @@ impl DispatchPoolRepository {
     pub async fn find_by_code(
         &self,
         code: &str,
-        client_id: Option<&str>,
+        client_id: Option<&ClientId>,
     ) -> Result<Option<DispatchPool>> {
         let row = if let Some(cid) = client_id {
             sqlx::query_as::<_, DispatchPoolRow>(
@@ -174,7 +175,7 @@ impl DispatchPoolRepository {
     pub async fn find_with_filters(
         &self,
         status: Option<DispatchPoolStatus>,
-        client_id: Option<&str>,
+        client_id: Option<&ClientId>,
     ) -> Result<Vec<DispatchPool>> {
         let rows = sqlx::query_as::<_, DispatchPoolRow>(
             "SELECT * FROM msg_dispatch_pools \
@@ -210,7 +211,7 @@ impl DispatchPoolRepository {
         rows.into_iter().map(DispatchPool::try_from).collect()
     }
 
-    pub async fn find_by_client(&self, client_id: Option<&str>) -> Result<Vec<DispatchPool>> {
+    pub async fn find_by_client(&self, client_id: Option<&ClientId>) -> Result<Vec<DispatchPool>> {
         let rows = if let Some(cid) = client_id {
             sqlx::query_as::<_, DispatchPoolRow>(
                 "SELECT * FROM msg_dispatch_pools WHERE client_id = $1 OR client_id IS NULL",

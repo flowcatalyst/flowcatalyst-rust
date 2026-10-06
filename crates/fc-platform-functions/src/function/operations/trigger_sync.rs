@@ -61,7 +61,6 @@ use crate::function::trigger_object_repository::{
 use crate::function::version_repository::FunctionVersionRepository;
 use crate::function::{Manifest, PoolUrlTemplate, ScheduleSpec, SubscriptionSpec, LIVE_ALIAS};
 use fc_platform_core::directory::ApplicationDirectory;
-use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::usecase::parse_client_id_opt;
 use fc_platform_core::usecase::AuditMasked;
@@ -872,7 +871,7 @@ impl TriggerSync {
                     code: key.to_string(),
                     name,
                     description: None,
-                    client_id: client_id.map(ClientId::into_string),
+                    client_id,
                     endpoint,
                     connection_id: None,
                     event_types: binding_input,
@@ -967,7 +966,7 @@ impl TriggerSync {
                     code: key.to_string(),
                     name: d.name.clone(),
                     description: None,
-                    client_id: client_id.map(ClientId::into_string),
+                    client_id,
                     application_id: Some(f.application_id.clone()),
                     crons: d.crons.clone(),
                     timezone: d.timezone.clone(),

@@ -4,6 +4,7 @@ use axum::{
     extract::{Query, State},
     Json,
 };
+use fc_platform_core::shared::id::ClientId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
@@ -140,7 +141,7 @@ pub(super) async fn get_login_theme(
 async fn theme_document(
     config_repo: &PlatformConfigRepository,
     scope: &str,
-    client_id: Option<&str>,
+    client_id: Option<&ClientId>,
 ) -> Option<serde_json::Map<String, serde_json::Value>> {
     match config_repo
         .find_by_key("platform", "login", "theme", scope, client_id)
@@ -174,7 +175,9 @@ pub async fn load_client_login_theme(
         .await
         .unwrap_or_default();
     if let Some(cid) = client_id {
-        if let Some(overlay) = theme_document(config_repo, "CLIENT", Some(cid)).await {
+        if let Some(overlay) =
+            theme_document(config_repo, "CLIENT", Some(&ClientId::from_wire(cid))).await
+        {
             merged.extend(overlay);
         }
     }

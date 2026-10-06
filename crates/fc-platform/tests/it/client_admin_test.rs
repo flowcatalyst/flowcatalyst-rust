@@ -49,7 +49,7 @@ async fn setup() -> Fixture {
     // Only hr is enabled for my client.
     app.repos
         .application_client_config_repo
-        .enable_for_client(&hr.id, mine.id.as_str())
+        .enable_for_client(&hr.id, &mine.id)
         .await
         .expect("enable hr");
     for (application, name) in [(&hr, "clerk"), (&other_app, "clerk")] {
@@ -208,7 +208,7 @@ async fn a_client_admin_assigns_only_its_clients_application_roles() {
         .app
         .repos
         .principal_repo
-        .find_by_id(member.id.as_str())
+        .find_by_id(&member.id)
         .await
         .unwrap()
         .unwrap();

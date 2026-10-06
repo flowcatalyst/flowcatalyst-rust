@@ -9,6 +9,8 @@
 
 use fc_platform_core::impl_domain_event;
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::PrincipalId;
 use fc_platform_core::usecase::domain_event::EventMetadata;
 use fc_platform_core::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
@@ -16,7 +18,7 @@ use serde::{Deserialize, Serialize};
 const SPEC_VERSION: &str = "1.0";
 const SOURCE: &str = "platform:iam";
 
-fn metadata(ctx: &ExecutionContext, event_type: &str, principal_id: &str) -> EventMetadata {
+fn metadata(ctx: &ExecutionContext, event_type: &str, principal_id: &PrincipalId) -> EventMetadata {
     EventMetadata::from_ctx(
         ctx,
         event_type,
@@ -33,7 +35,7 @@ fn metadata(ctx: &ExecutionContext, event_type: &str, principal_id: &str) -> Eve
 pub struct UserCreated {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub principal_id: String,
+    pub principal_id: PrincipalId,
     pub email: String,
 }
 
@@ -42,10 +44,10 @@ impl_domain_event!(UserCreated);
 impl UserCreated {
     pub const EVENT_TYPE: &'static str = "platform:iam:user:created";
 
-    pub fn new(ctx: &ExecutionContext, principal_id: &str, email: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, principal_id: &PrincipalId, email: &str) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, principal_id),
-            principal_id: principal_id.to_string(),
+            principal_id: principal_id.clone(),
             email: email.to_string(),
         }
     }
@@ -57,7 +59,7 @@ impl UserCreated {
 pub struct UserUpdated {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub principal_id: String,
+    pub principal_id: PrincipalId,
     pub name: String,
 }
 
@@ -66,10 +68,10 @@ impl_domain_event!(UserUpdated);
 impl UserUpdated {
     pub const EVENT_TYPE: &'static str = "platform:iam:user:updated";
 
-    pub fn new(ctx: &ExecutionContext, principal_id: &str, name: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, principal_id: &PrincipalId, name: &str) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, principal_id),
-            principal_id: principal_id.to_string(),
+            principal_id: principal_id.clone(),
             name: name.to_string(),
         }
     }
@@ -81,7 +83,7 @@ impl UserUpdated {
 pub struct UserActivated {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub principal_id: String,
+    pub principal_id: PrincipalId,
 }
 
 impl_domain_event!(UserActivated);
@@ -89,10 +91,10 @@ impl_domain_event!(UserActivated);
 impl UserActivated {
     pub const EVENT_TYPE: &'static str = "platform:iam:user:activated";
 
-    pub fn new(ctx: &ExecutionContext, principal_id: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, principal_id: &PrincipalId) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, principal_id),
-            principal_id: principal_id.to_string(),
+            principal_id: principal_id.clone(),
         }
     }
 }
@@ -104,7 +106,7 @@ impl UserActivated {
 pub struct UserDeactivated {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub principal_id: String,
+    pub principal_id: PrincipalId,
 }
 
 impl_domain_event!(UserDeactivated);
@@ -112,10 +114,10 @@ impl_domain_event!(UserDeactivated);
 impl UserDeactivated {
     pub const EVENT_TYPE: &'static str = "platform:iam:user:deactivated";
 
-    pub fn new(ctx: &ExecutionContext, principal_id: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, principal_id: &PrincipalId) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, principal_id),
-            principal_id: principal_id.to_string(),
+            principal_id: principal_id.clone(),
         }
     }
 }
@@ -127,7 +129,7 @@ impl UserDeactivated {
 pub struct UserDeleted {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub principal_id: String,
+    pub principal_id: PrincipalId,
     pub email: String,
 }
 
@@ -136,10 +138,10 @@ impl_domain_event!(UserDeleted);
 impl UserDeleted {
     pub const EVENT_TYPE: &'static str = "platform:iam:user:deleted";
 
-    pub fn new(ctx: &ExecutionContext, principal_id: &str, email: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, principal_id: &PrincipalId, email: &str) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, principal_id),
-            principal_id: principal_id.to_string(),
+            principal_id: principal_id.clone(),
             email: email.to_string(),
         }
     }
@@ -152,7 +154,7 @@ impl UserDeleted {
 pub struct RolesAssigned {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub principal_id: String,
+    pub principal_id: PrincipalId,
     pub roles: Vec<String>,
     pub added: Vec<String>,
     pub removed: Vec<String>,
@@ -165,14 +167,14 @@ impl RolesAssigned {
 
     pub fn new(
         ctx: &ExecutionContext,
-        principal_id: &str,
+        principal_id: &PrincipalId,
         roles: Vec<String>,
         added: Vec<String>,
         removed: Vec<String>,
     ) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, principal_id),
-            principal_id: principal_id.to_string(),
+            principal_id: principal_id.clone(),
             roles,
             added,
             removed,
@@ -186,8 +188,8 @@ impl RolesAssigned {
 pub struct ClientAccessGranted {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub principal_id: String,
-    pub client_id: String,
+    pub principal_id: PrincipalId,
+    pub client_id: ClientId,
 }
 
 impl_domain_event!(ClientAccessGranted);
@@ -195,11 +197,11 @@ impl_domain_event!(ClientAccessGranted);
 impl ClientAccessGranted {
     pub const EVENT_TYPE: &'static str = "platform:iam:user:client-access-granted";
 
-    pub fn new(ctx: &ExecutionContext, principal_id: &str, client_id: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, principal_id: &PrincipalId, client_id: &ClientId) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, principal_id),
-            principal_id: principal_id.to_string(),
-            client_id: client_id.to_string(),
+            principal_id: principal_id.clone(),
+            client_id: client_id.clone(),
         }
     }
 }
@@ -210,8 +212,8 @@ impl ClientAccessGranted {
 pub struct ClientAccessRevoked {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub principal_id: String,
-    pub client_id: String,
+    pub principal_id: PrincipalId,
+    pub client_id: ClientId,
 }
 
 impl_domain_event!(ClientAccessRevoked);
@@ -219,11 +221,11 @@ impl_domain_event!(ClientAccessRevoked);
 impl ClientAccessRevoked {
     pub const EVENT_TYPE: &'static str = "platform:iam:user:client-access-revoked";
 
-    pub fn new(ctx: &ExecutionContext, principal_id: &str, client_id: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, principal_id: &PrincipalId, client_id: &ClientId) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, principal_id),
-            principal_id: principal_id.to_string(),
-            client_id: client_id.to_string(),
+            principal_id: principal_id.clone(),
+            client_id: client_id.clone(),
         }
     }
 }
@@ -257,7 +259,7 @@ pub struct FederatedClaims {
 pub struct UserLoggedIn {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub user_id: String,
+    pub user_id: PrincipalId,
     pub email: String,
     pub login_method: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -274,7 +276,7 @@ impl UserLoggedIn {
 
     pub fn new(
         ctx: &ExecutionContext,
-        user_id: &str,
+        user_id: &PrincipalId,
         email: &str,
         login_method: &str,
         identity_provider_code: Option<&str>,
@@ -290,7 +292,7 @@ impl UserLoggedIn {
                 format!("platform.user.{}", user_id),
                 format!("platform:user:{}", user_id),
             ),
-            user_id: user_id.to_string(),
+            user_id: user_id.clone(),
             email: email.to_string(),
             login_method: login_method.to_string(),
             identity_provider_code: identity_provider_code.map(String::from),
@@ -359,7 +361,7 @@ impl PrincipalsSynced {
 pub struct ApplicationAccessAssigned {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub user_id: String,
+    pub user_id: PrincipalId,
     pub application_ids: Vec<ApplicationId>,
     pub added: Vec<String>,
     pub removed: Vec<String>,
@@ -372,14 +374,14 @@ impl ApplicationAccessAssigned {
 
     pub fn new(
         ctx: &ExecutionContext,
-        user_id: &str,
+        user_id: &PrincipalId,
         application_ids: Vec<ApplicationId>,
         added: Vec<String>,
         removed: Vec<String>,
     ) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, user_id),
-            user_id: user_id.to_string(),
+            user_id: user_id.clone(),
             application_ids,
             added,
             removed,
@@ -395,7 +397,7 @@ impl ApplicationAccessAssigned {
 pub struct PasswordResetRequested {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub principal_id: String,
+    pub principal_id: PrincipalId,
     pub email: String,
 }
 
@@ -404,7 +406,7 @@ impl_domain_event!(PasswordResetRequested);
 impl PasswordResetRequested {
     pub const EVENT_TYPE: &'static str = "platform:iam:user:password-reset-requested";
 
-    pub fn new(principal_id: &str, email: &str) -> Self {
+    pub fn new(principal_id: &PrincipalId, email: &str) -> Self {
         // Password reset is unauthenticated — attribute it to "system".
         Self {
             metadata: metadata(
@@ -412,7 +414,7 @@ impl PasswordResetRequested {
                 Self::EVENT_TYPE,
                 principal_id,
             ),
-            principal_id: principal_id.to_string(),
+            principal_id: principal_id.clone(),
             email: email.to_string(),
         }
     }
@@ -424,7 +426,7 @@ impl PasswordResetRequested {
 pub struct PasswordResetCompleted {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub principal_id: String,
+    pub principal_id: PrincipalId,
 }
 
 impl_domain_event!(PasswordResetCompleted);
@@ -434,10 +436,10 @@ impl PasswordResetCompleted {
 
     /// The event attributed to the caller in `ctx` (an admin, or the
     /// principal completing a self-service reset), keeping its trace ids.
-    pub fn from_ctx(ctx: &ExecutionContext, principal_id: &str) -> Self {
+    pub fn from_ctx(ctx: &ExecutionContext, principal_id: &PrincipalId) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, principal_id),
-            principal_id: principal_id.to_string(),
+            principal_id: principal_id.clone(),
         }
     }
 }
@@ -449,7 +451,7 @@ mod tests {
     #[test]
     fn test_user_created_event() {
         let ctx = ExecutionContext::system("admin-123");
-        let event = UserCreated::new(&ctx, "user-1", "user@example.com");
+        let event = UserCreated::new(&ctx, &PrincipalId::from_wire("user-1"), "user@example.com");
 
         assert_eq!(event.metadata.event_type, "platform:iam:user:created");
         assert_eq!(event.metadata.subject, "platform.principal.user-1");
@@ -466,7 +468,7 @@ mod tests {
     #[test]
     fn test_user_deactivated_event() {
         let ctx = ExecutionContext::system("admin-123");
-        let event = UserDeactivated::new(&ctx, "user-1");
+        let event = UserDeactivated::new(&ctx, &PrincipalId::from_wire("user-1"));
 
         assert_eq!(event.metadata.event_type, "platform:iam:user:deactivated");
         assert_eq!(
@@ -480,7 +482,7 @@ mod tests {
         let ctx = ExecutionContext::system("usr_1");
         let event = UserLoggedIn::new(
             &ctx,
-            "usr_1",
+            &PrincipalId::from_wire("usr_1"),
             "a@b.c",
             "OIDC",
             None,

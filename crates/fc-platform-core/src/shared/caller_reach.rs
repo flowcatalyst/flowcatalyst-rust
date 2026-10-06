@@ -5,6 +5,7 @@
 use crate::permissions;
 use crate::shared::authorization_service::Authority;
 use crate::shared::error::{PlatformError, Result};
+use crate::shared::id::ClientId;
 use crate::shared::id::Id;
 use crate::usecase::UseCaseError;
 use std::result;
@@ -21,14 +22,14 @@ pub fn client_ids(ctx: &impl Authority) -> Vec<String> {
 /// Whether the caller may act within client `client_id`: an anchor always,
 /// otherwise as [`Authority::can_access_client`] says (Java
 /// `AuthContext.canAccessClient`).
-pub fn reaches_client(ctx: &impl Authority, client_id: &str) -> bool {
+pub fn reaches_client(ctx: &impl Authority, client_id: &ClientId) -> bool {
     ctx.is_anchor() || ctx.can_access_client(client_id)
 }
 
 /// Whether the caller reaches a resource owned by `client_id`, where `None`
 /// is the platform, which only an anchor reaches (Java
 /// `Checks.canAccessScope`).
-pub fn reaches_scope(ctx: &impl Authority, client_id: Option<&str>) -> bool {
+pub fn reaches_scope(ctx: &impl Authority, client_id: Option<&ClientId>) -> bool {
     match client_id {
         Some(id) => reaches_client(ctx, id),
         None => ctx.is_anchor(),
@@ -68,7 +69,7 @@ pub fn require_writable_client(
                 "clientId is required: a client-scoped caller cannot write platform-scoped rows",
             )),
         },
-        Some(id) if reaches_client(ctx, &id) => Ok(Some(id)),
+        Some(id) if reaches_client(ctx, &ClientId::from_wire(id.as_str())) => Ok(Some(id)),
         Some(id) => Err(PlatformError::forbidden_code(
             "FORBIDDEN",
             format!("No access to client: {id}"),
@@ -88,7 +89,7 @@ pub fn read_client_filter(
 ) -> Result<Option<Vec<String>>> {
     if !requested.is_empty() {
         for cid in &requested {
-            if !ctx.can_access_client(cid) {
+            if !ctx.can_access_client(&ClientId::from_wire(cid.as_str())) {
                 return Err(PlatformError::forbidden(format!(
                     "No access to client: {}",
                     cid
@@ -107,7 +108,11 @@ pub fn read_client_filter(
 /// A single event or dispatch job is visible when it is platform-scoped or
 /// the caller can access its client; `what` names it in the refusal ("No
 /// access to this event").
-pub fn ensure_row_visible(ctx: &impl Authority, client_id: Option<&str>, what: &str) -> Result<()> {
+pub fn ensure_row_visible(
+    ctx: &impl Authority,
+    client_id: Option<&ClientId>,
+    what: &str,
+) -> Result<()> {
     match client_id {
         Some(cid) if !ctx.can_access_client(cid) => Err(PlatformError::forbidden(format!(
             "No access to this {what}"
@@ -119,7 +124,7 @@ pub fn ensure_row_visible(ctx: &impl Authority, client_id: Option<&str>, what: &
 /// Go `auth.CanAccessScope` (shared/auth/auth.go:400): a client's resource
 /// needs that client; a platform resource (`None`) needs anchor scope or
 /// the super-admin wildcard.
-pub fn can_access_scope(ctx: &impl Authority, client_id: Option<&str>) -> bool {
+pub fn can_access_scope(ctx: &impl Authority, client_id: Option<&ClientId>) -> bool {
     match client_id {
         Some(id) => reaches_client(ctx, id),
         None => ctx.is_anchor() || ctx.has_permission(permissions::ADMIN_ALL),
@@ -131,7 +136,7 @@ pub fn can_access_scope(ctx: &impl Authority, client_id: Option<&str>) -> bool {
 /// with Go's two messages.
 pub fn check_scope_access(
     ctx: &impl Authority,
-    client_id: Option<&str>,
+    client_id: Option<&ClientId>,
 ) -> result::Result<(), UseCaseError> {
     if can_access_scope(ctx, client_id) {
         return Ok(());
@@ -147,7 +152,7 @@ pub fn check_scope_access(
 }
 
 /// [`check_scope_access`] for a handler.
-pub fn require_scope_access(ctx: &impl Authority, client_id: Option<&str>) -> Result<()> {
+pub fn require_scope_access(ctx: &impl Authority, client_id: Option<&ClientId>) -> Result<()> {
     check_scope_access(ctx, client_id).map_err(Into::into)
 }
 
@@ -156,11 +161,12 @@ mod tests {
     use super::*;
     use crate::principal_kind::{PrincipalType, UserScope};
     use crate::shared::authorization_service::{AuthContext, Credential};
+    use crate::shared::id::PrincipalId;
     use std::collections::HashSet;
 
     fn caller(scope: UserScope, clients: &[&str], perms: &[&str]) -> AuthContext {
         AuthContext {
-            principal_id: "prn_caller".into(),
+            principal_id: PrincipalId::parse("prn_caller").unwrap(),
             principal_type: PrincipalType::Service,
             scope,
             email: None,
@@ -202,8 +208,8 @@ mod tests {
             .contains("No access to client: clt_b"));
         let none = ctx(UserScope::Client, &[]);
         assert_eq!(read_client_filter(&none, vec![]).unwrap(), None);
-        assert!(ensure_row_visible(&c, Some("clt_b"), "event").is_err());
-        assert!(ensure_row_visible(&c, Some("clt_a"), "event").is_ok());
+        assert!(ensure_row_visible(&c, Some(&ClientId::parse("clt_b").unwrap()), "event").is_err());
+        assert!(ensure_row_visible(&c, Some(&ClientId::parse("clt_a").unwrap()), "event").is_ok());
         assert!(ensure_row_visible(&c, None, "event").is_ok());
     }
 
@@ -211,13 +217,13 @@ mod tests {
     fn only_an_anchor_reaches_the_platform() {
         let c = ctx(UserScope::Partner, &["clt_a", "clt_b"]);
         assert_eq!(client_ids(&c), vec!["clt_a", "clt_b"]);
-        assert!(reaches_client(&c, "clt_a"));
-        assert!(!reaches_client(&c, "clt_c"));
+        assert!(reaches_client(&c, &ClientId::parse("clt_a").unwrap()));
+        assert!(!reaches_client(&c, &ClientId::parse("clt_c").unwrap()));
         assert!(!reaches_scope(&c, None));
         assert!(reaches_scope(&ctx(UserScope::Anchor, &["*"]), None));
         assert!(reaches_scope(
             &ctx(UserScope::Anchor, &["*"]),
-            Some("clt_c")
+            Some(&ClientId::parse("clt_c").unwrap())
         ));
     }
 

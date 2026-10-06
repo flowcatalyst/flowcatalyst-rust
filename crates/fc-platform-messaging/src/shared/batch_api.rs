@@ -273,7 +273,7 @@ pub async fn batch_events(
             Some(id) => Some(id),
             None => match caller_reach::non_blank(item.client_code) {
                 Some(code) => match client_ids_by_code.get(&code) {
-                    Some(id) => Some(id.clone()),
+                    Some(id) => Some(id.to_string()),
                     None if auth.0.is_anchor() => None,
                     None => {
                         return Err(PlatformError::forbidden_code(

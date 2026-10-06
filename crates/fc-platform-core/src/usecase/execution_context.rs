@@ -62,7 +62,7 @@ impl ExecutionContext {
     /// the principal recorded is the caller's, and the caller carries its
     /// full authority (tier, clients, permissions, credential).
     pub fn from_auth(auth: &AuthContext) -> Self {
-        Self::fresh(auth.principal_id.clone(), Caller::from_auth(auth))
+        Self::fresh(auth.principal_id.to_string(), Caller::from_auth(auth))
     }
 
     /// A platform-internal execution ([`Caller::system`]): startup sync,
@@ -138,6 +138,7 @@ mod tests {
     use crate::principal_kind::UserScope;
     use crate::shared::authorization_service::Credential;
     use crate::shared::id::ApplicationId;
+    use crate::shared::id::PrincipalId;
 
     #[test]
     fn test_system_context() {
@@ -154,7 +155,7 @@ mod tests {
     #[test]
     fn from_auth_records_the_principal_and_carries_its_authority() {
         let auth = AuthContext {
-            principal_id: "prn_1".into(),
+            principal_id: PrincipalId::parse("prn_1").unwrap(),
             principal_type: PrincipalType::User,
             scope: UserScope::Client,
             email: None,

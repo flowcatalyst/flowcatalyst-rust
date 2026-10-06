@@ -1,6 +1,8 @@
 //! `fnr_domains` (Java `function/FunctionDomainRepository.java`).
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::OptionIdExt;
 use sqlx::PgPool;
 
 use super::entity::FunctionDomain;
@@ -12,7 +14,7 @@ use fc_platform_core::usecase::{DbTx, Persist};
 #[derive(sqlx::FromRow)]
 struct DomainRow {
     id: String,
-    client_id: Option<String>,
+    client_id: Option<ClientId>,
     hostname: String,
     created_at: DateTime<Utc>,
 }
@@ -109,11 +111,11 @@ impl FunctionDomainRepository {
 }
 
 fn to_entity(row: DomainRow) -> Result<FunctionDomain> {
-    let owner = FunctionOwner::of_client_id(row.client_id.as_deref()).map_err(|_| {
+    let owner = FunctionOwner::of_client_id(row.client_id.as_id_str()).map_err(|_| {
         corrupt_value(
             "fnr_domains",
             "client_id",
-            row.client_id.as_deref().unwrap_or(""),
+            row.client_id.as_id_str().unwrap_or(""),
             &row.id,
         )
     })?;

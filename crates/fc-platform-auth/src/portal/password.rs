@@ -17,6 +17,7 @@
 //! case: a credential-set on a confirmed token emits no domain event there
 //! either).
 
+use fc_platform_core::shared::id::PortalIdentityId;
 use std::sync::Arc;
 
 use axum::{
@@ -32,7 +33,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
-use super::entity::{is_portal_subject, random_token, IdentityStatus};
+use super::entity::{random_token, IdentityStatus};
 use super::repository::{PortalIdentityRepository, PortalResetToken, PortalResetTokenRepository};
 use axum::body;
 use axum::extract::Query;
@@ -84,7 +85,7 @@ impl PortalPasswords {
     /// the set-password link.
     async fn mint_invite_link(
         &self,
-        identity_id: &str,
+        identity_id: &PortalIdentityId,
         redirect_uri: Option<&str>,
     ) -> Result<String> {
         self.tokens.delete_for_subject(identity_id).await?;
@@ -106,7 +107,7 @@ impl PortalPasswords {
     /// report when it expires (Go `PortalInviteLink`).
     pub async fn portal_invite_link(
         &self,
-        identity_id: &str,
+        identity_id: &PortalIdentityId,
         redirect_uri: Option<&str>,
     ) -> Result<(String, DateTime<Utc>)> {
         let expires = Utc::now() + Duration::hours(INVITE_TOKEN_TTL_HOURS);
@@ -118,7 +119,7 @@ impl PortalPasswords {
     /// `SendPortalInvite`); a delivery failure is an error.
     pub async fn send_portal_invite(
         &self,
-        identity_id: &str,
+        identity_id: &PortalIdentityId,
         email: &str,
         redirect_uri: Option<&str>,
     ) -> Result<DateTime<Utc>> {
@@ -151,7 +152,7 @@ impl PortalPasswords {
     /// portal reset link (Go `SendPortalReset`).
     pub async fn send_portal_reset(
         &self,
-        identity_id: &str,
+        identity_id: &PortalIdentityId,
         email: &str,
         redirect_uri: Option<&str>,
     ) -> Result<()> {
@@ -243,7 +244,7 @@ pub async fn confirm_portal_reset(
     if token.is_expired() {
         if let Err(e) = passwords
             .tokens
-            .delete_for_subject(&token.principal_id)
+            .delete_for_subject(&token.identity_id)
             .await
         {
             warn!(error = %e, "could not delete the expired portal reset tokens");
@@ -254,7 +255,7 @@ pub async fn confirm_portal_reset(
             "Reset token has expired.",
         );
     }
-    let ident = match passwords.identities.find_by_id(&token.principal_id).await {
+    let ident = match passwords.identities.find_by_id(&token.identity_id).await {
         Ok(i) => i,
         Err(e) => return e.into_response(),
     };
@@ -365,8 +366,7 @@ async fn portal_token(passwords: &PortalPasswords, raw: &str) -> Option<PortalRe
         return None;
     }
     match passwords.tokens.find_by_hash(&hash_token(raw)).await {
-        Ok(Some(t)) if is_portal_subject(&t.principal_id) => Some(t),
-        Ok(_) => None,
+        Ok(t) => t,
         Err(e) => {
             warn!(error = %e, "portal reset token lookup failed");
             None

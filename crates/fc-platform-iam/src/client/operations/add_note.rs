@@ -1,6 +1,7 @@
 //! Add Client Note Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ClientId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -17,7 +18,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AddClientNoteCommand {
-    pub client_id: String,
+    pub client_id: ClientId,
     pub category: String,
     pub text: String,
 }
@@ -44,7 +45,7 @@ impl<U: UnitOfWork> UseCase for AddClientNoteUseCase<U> {
     type Event = ClientNoteAdded;
 
     async fn validate(&self, command: &AddClientNoteCommand) -> Result<(), UseCaseError> {
-        if command.client_id.trim().is_empty() {
+        if command.client_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "CLIENT_ID_REQUIRED",
                 "Client ID is required",
@@ -100,7 +101,7 @@ impl<U: UnitOfWork> UseCase for AddClientNoteUseCase<U> {
         let note = ClientNote::new(category, text).with_author(&ctx.principal_id);
         client.add_note(note);
 
-        let event = ClientNoteAdded::new(&ctx, client.id.as_str(), category, text);
+        let event = ClientNoteAdded::new(&ctx, &client.id, category, text);
 
         self.unit_of_work
             .commit(&client, &*self.client_repo, event, &command)
@@ -115,7 +116,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = AddClientNoteCommand {
-            client_id: "client-123".to_string(),
+            client_id: ClientId::from_wire("client-123"),
             category: "general".to_string(),
             text: "Important note".to_string(),
         };

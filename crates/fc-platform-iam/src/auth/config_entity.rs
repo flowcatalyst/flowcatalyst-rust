@@ -3,6 +3,7 @@
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::AnchorDomainId;
 use fc_platform_core::shared::id::ClientAuthConfigId;
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::IdpRoleMappingId;
 use serde::{Deserialize, Serialize};
 
@@ -69,9 +70,9 @@ pub struct ClientAuthConfig {
     pub id: ClientAuthConfigId,
     pub email_domain: String,
     pub config_type: AuthConfigType,
-    pub primary_client_id: Option<String>,
-    pub additional_client_ids: Vec<String>,
-    pub granted_client_ids: Vec<String>,
+    pub primary_client_id: Option<ClientId>,
+    pub additional_client_ids: Vec<ClientId>,
+    pub granted_client_ids: Vec<ClientId>,
     pub auth_provider: AuthProvider,
     pub oidc_issuer_url: Option<String>,
     pub oidc_client_id: Option<String>,
@@ -107,9 +108,9 @@ impl ClientAuthConfig {
         Self::new_internal(email_domain, AuthConfigType::Partner)
     }
 
-    pub fn new_client(email_domain: impl Into<String>, client_id: impl Into<String>) -> Self {
+    pub fn new_client(email_domain: impl Into<String>, client_id: ClientId) -> Self {
         let mut config = Self::new_internal(email_domain, AuthConfigType::Client);
-        config.primary_client_id = Some(client_id.into());
+        config.primary_client_id = Some(client_id);
         config
     }
 
@@ -140,7 +141,7 @@ impl ClientAuthConfig {
     }
 
     /// Get all accessible client IDs for this config
-    pub fn accessible_clients(&self) -> Vec<String> {
+    pub fn accessible_clients(&self) -> Vec<ClientId> {
         let mut clients = Vec::new();
         if let Some(ref primary) = self.primary_client_id {
             clients.push(primary.clone());

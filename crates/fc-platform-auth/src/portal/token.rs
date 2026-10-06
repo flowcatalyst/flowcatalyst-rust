@@ -15,6 +15,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use fc_platform_core::shared::id::PortalIdentityId;
 use serde_json::json;
 use tracing::error;
 
@@ -43,7 +44,11 @@ pub async fn redeem_portal_code(
     code: &AuthorizationCode,
     client_id: &str,
 ) -> Response {
-    let ident = match portal.identities.find_by_id(&code.principal_id).await {
+    let ident = match portal
+        .identities
+        .find_by_id(&PortalIdentityId::from_wire(code.principal_id.as_str()))
+        .await
+    {
         Ok(i) => i,
         Err(e) => {
             error!(error = %e, "portal identity lookup failed");
@@ -92,7 +97,7 @@ pub async fn redeem_portal_code(
             &ident,
             &code.client_id,
             code.nonce.clone(),
-            &ident.client_id,
+            ident.client_id.as_str(),
             app.as_ref().map(|a| (a.id.as_str(), a.code.as_str())),
         ) {
             Ok(t) => Some(t),

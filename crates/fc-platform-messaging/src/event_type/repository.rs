@@ -1,6 +1,7 @@
 //! EventType Repository — PostgreSQL via SQLx
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::EventTypeId;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
@@ -415,7 +416,7 @@ impl EventTypeRepository {
     pub async fn find_with_filters(
         &self,
         application: Option<&str>,
-        client_id: Option<&str>,
+        client_id: Option<&ClientId>,
         status: Option<EventTypeStatus>,
         subdomain: Option<&str>,
         aggregate: Option<&str>,

@@ -11,6 +11,7 @@ use crate::application::client_config::ApplicationClientConfig;
 use fc_platform_core::impl_domain_event;
 use fc_platform_core::shared::id::AppClientConfigId;
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::usecase::domain_event::{null_if_empty, EventMetadata};
 use fc_platform_core::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
@@ -197,7 +198,7 @@ pub struct ApplicationEnabledForClient {
     #[serde(skip)]
     pub metadata: EventMetadata,
     pub application_id: ApplicationId,
-    pub client_id: String,
+    pub client_id: ClientId,
     pub config_id: AppClientConfigId,
 }
 
@@ -209,13 +210,13 @@ impl ApplicationEnabledForClient {
     pub fn new(
         ctx: &ExecutionContext,
         application_id: &ApplicationId,
-        client_id: &str,
+        client_id: &ClientId,
         config_id: &AppClientConfigId,
     ) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, application_id),
             application_id: application_id.clone(),
-            client_id: client_id.to_string(),
+            client_id: client_id.clone(),
             config_id: config_id.clone(),
         }
     }
@@ -228,7 +229,7 @@ pub struct ApplicationDisabledForClient {
     #[serde(skip)]
     pub metadata: EventMetadata,
     pub application_id: ApplicationId,
-    pub client_id: String,
+    pub client_id: ClientId,
     pub config_id: AppClientConfigId,
 }
 
@@ -240,13 +241,13 @@ impl ApplicationDisabledForClient {
     pub fn new(
         ctx: &ExecutionContext,
         application_id: &ApplicationId,
-        client_id: &str,
+        client_id: &ClientId,
         config_id: &AppClientConfigId,
     ) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, application_id),
             application_id: application_id.clone(),
-            client_id: client_id.to_string(),
+            client_id: client_id.clone(),
             config_id: config_id.clone(),
         }
     }
@@ -261,7 +262,7 @@ pub struct ApplicationClientConfigUpdated {
     #[serde(skip)]
     pub metadata: EventMetadata,
     pub application_id: ApplicationId,
-    pub client_id: String,
+    pub client_id: ClientId,
     pub config_id: AppClientConfigId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
@@ -307,7 +308,7 @@ impl ApplicationClientConfigUpdated {
 pub struct ClientApplicationsUpdated {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub client_id: String,
+    pub client_id: ClientId,
     /// Final, authoritative set of enabled applications after the update.
     #[serde(serialize_with = "null_if_empty")]
     pub enabled_application_ids: Vec<ApplicationId>,
@@ -326,7 +327,7 @@ impl ClientApplicationsUpdated {
 
     pub fn new(
         ctx: &ExecutionContext,
-        client_id: &str,
+        client_id: &ClientId,
         enabled_application_ids: Vec<ApplicationId>,
         enabled_added: Vec<ApplicationId>,
         disabled_removed: Vec<ApplicationId>,
@@ -340,7 +341,7 @@ impl ClientApplicationsUpdated {
                 format!("platform.client.{}", client_id),
                 format!("platform:client:{}", client_id),
             ),
-            client_id: client_id.to_string(),
+            client_id: client_id.clone(),
             enabled_application_ids,
             enabled_added,
             disabled_removed,
@@ -392,7 +393,13 @@ mod tests {
     #[test]
     fn client_applications_updated_empty_lists_are_null() {
         let ctx = ExecutionContext::system("admin-123");
-        let event = ClientApplicationsUpdated::new(&ctx, "clt_1", vec![], vec![], vec![]);
+        let event = ClientApplicationsUpdated::new(
+            &ctx,
+            &ClientId::parse("clt_1").unwrap(),
+            vec![],
+            vec![],
+            vec![],
+        );
         assert_eq!(
             serde_json::to_value(&event).unwrap(),
             serde_json::json!({
