@@ -39,6 +39,7 @@
 //! The reads are batched: a fixed number of queries per build, however many
 //! functions there are (Java reads settings and credentials per function).
 
+use fc_platform_core::shared::id::ApplicationId;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
@@ -108,7 +109,7 @@ pub struct FunctionEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub webhook_signing_secret: Option<String>,
     /// Always carried, a platform-owned function's too.
-    pub application_id: String,
+    pub application_id: ApplicationId,
     /// `None` for a platform-owned function.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
@@ -402,7 +403,7 @@ impl DesiredStateBuilder {
             .collect::<IndexSet<_>>()
             .into_iter()
             .collect();
-        let signing_applications: Vec<String> = selected
+        let signing_applications: Vec<ApplicationId> = selected
             .iter()
             .filter(|s| has_webhook_endpoint(&s.version.manifest))
             .map(|s| s.function.application_id.clone())
@@ -764,7 +765,7 @@ mod tests {
                 d.functions[0].webhook_signing_secret = Some("other".into())
             }),
             ("applicationId", |d| {
-                d.functions[0].application_id = "app_2".into()
+                d.functions[0].application_id = ApplicationId::parse("app_2").unwrap()
             }),
             ("clientId", |d| {
                 d.functions[0].client_id = Some("clt_1".into())
@@ -817,7 +818,7 @@ mod tests {
             manifest: JsonNode::object(),
             signer: None,
             webhook_signing_secret: Some("SIGNING_MARKER".into()),
-            application_id: "app_1".into(),
+            application_id: ApplicationId::parse("app_1").unwrap(),
             client_id: None,
             config: BTreeMap::from([("PLAIN".into(), "shown".into())]),
             secrets: BTreeMap::from([("API_KEY".into(), "SECRET_MARKER".into())]),

@@ -15,6 +15,7 @@
 //! Each method is the repository method of the same name, and returns the
 //! fields its callers read; the implementations run the same queries.
 
+use crate::shared::id::ApplicationId;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -55,7 +56,7 @@ pub trait ClientDirectory: Send + Sync {
 /// An application, as the other domains look it up.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApplicationRef {
-    pub id: String,
+    pub id: ApplicationId,
     pub code: String,
     pub name: String,
     pub active: bool,
@@ -66,10 +67,10 @@ pub struct ApplicationRef {
 /// `ApplicationRepository`'s lookups (fc-platform-iam).
 #[async_trait]
 pub trait ApplicationDirectory: Send + Sync {
-    async fn find_by_id(&self, id: &str) -> Result<Option<ApplicationRef>>;
+    async fn find_by_id(&self, id: &ApplicationId) -> Result<Option<ApplicationRef>>;
     async fn find_by_code(&self, code: &str) -> Result<Option<ApplicationRef>>;
     /// Application ids by code, for the codes that exist.
-    async fn find_ids_by_codes(&self, codes: &[String]) -> Result<HashMap<String, String>>;
+    async fn find_ids_by_codes(&self, codes: &[String]) -> Result<HashMap<String, ApplicationId>>;
     async fn find_all(&self) -> Result<Vec<ApplicationRef>>;
 }
 
@@ -117,7 +118,7 @@ impl AccountReach {
 pub struct SigningAccount {
     pub code: String,
     /// The application the account belongs to, if any.
-    pub application_id: Option<String>,
+    pub application_id: Option<ApplicationId>,
     pub reach: AccountReach,
 }
 
@@ -135,7 +136,7 @@ pub trait ServiceAccountDirectory: Send + Sync {
     async fn find_by_id(&self, id: &str) -> Result<Option<ServiceAccountRef>>;
     /// The application a caller *is*: its SERVICE principal's linked
     /// account's `application_id`.
-    async fn caller_application_id(&self, principal_id: &str) -> Result<Option<String>>;
+    async fn caller_application_id(&self, principal_id: &str) -> Result<Option<ApplicationId>>;
     /// The accounts the references name (an account id or its principal's),
     /// by reference.
     async fn find_signing_accounts(
@@ -143,7 +144,10 @@ pub trait ServiceAccountDirectory: Send + Sync {
         references: &[String],
     ) -> Result<HashMap<String, SigningAccount>>;
     /// Whether the application's oldest active account has a signing secret.
-    async fn oldest_active_has_signing_secret(&self, application_id: &str) -> Result<bool>;
+    async fn oldest_active_has_signing_secret(
+        &self,
+        application_id: &ApplicationId,
+    ) -> Result<bool>;
 }
 
 // ── Principals ───────────────────────────────────────────────────────────
@@ -203,12 +207,15 @@ pub enum ById {
 #[async_trait]
 pub trait OutboundCredentialSource: Send + Sync {
     /// The application's oldest active account's credentials (cached).
-    async fn for_application(&self, application_id: &str) -> Result<Option<OutboundCredentials>>;
+    async fn for_application(
+        &self,
+        application_id: &ApplicationId,
+    ) -> Result<Option<OutboundCredentials>>;
     /// A named account's (cached).
     async fn by_service_account_id(&self, id: &str) -> Result<ById>;
     /// Several applications' credentials, read now (not cached).
     async fn for_applications_fresh(
         &self,
-        application_ids: &[String],
-    ) -> Result<HashMap<String, OutboundCredentials>>;
+        application_ids: &[ApplicationId],
+    ) -> Result<HashMap<ApplicationId, OutboundCredentials>>;
 }

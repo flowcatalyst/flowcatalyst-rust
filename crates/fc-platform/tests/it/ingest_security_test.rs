@@ -61,7 +61,7 @@ async fn create_application(app: &TestApp, code: &str) -> String {
         .insert(&application)
         .await
         .expect("insert application");
-    application.id
+    application.id.into_string()
 }
 
 /// A service account and its SERVICE principal, as Go's provisioning leaves

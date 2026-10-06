@@ -1,5 +1,7 @@
 //! OpenAPI spec domain events.
 
+use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ApplicationOpenApiSpecId;
 use serde::{Deserialize, Serialize};
 
 use crate::application_openapi_spec::entity::OpenApiSpec;
@@ -16,9 +18,9 @@ pub struct ApplicationOpenApiSpecSynced {
     #[serde(skip)]
     pub metadata: EventMetadata,
 
-    pub application_id: String,
+    pub application_id: ApplicationId,
     pub application_code: String,
-    pub spec_id: String,
+    pub spec_id: ApplicationOpenApiSpecId,
     pub version: String,
     pub spec_hash: String,
     /// Some when a prior CURRENT was archived in this sync.
@@ -44,13 +46,13 @@ impl ApplicationOpenApiSpecSynced {
     /// changed nothing sets those fields.
     pub fn new(
         ctx: &ExecutionContext,
-        application_id: &str,
+        application_id: &ApplicationId,
         application_code: &str,
         spec: &OpenApiSpec,
     ) -> Self {
         Self {
             metadata: Self::metadata_for(ctx, application_id, &spec.id),
-            application_id: application_id.to_string(),
+            application_id: application_id.clone(),
             application_code: application_code.to_string(),
             spec_id: spec.id.clone(),
             version: spec.version.clone(),
@@ -64,8 +66,8 @@ impl ApplicationOpenApiSpecSynced {
     /// Metadata for this event, raised inside `ctx`.
     pub fn metadata_for(
         ctx: &ExecutionContext,
-        application_id: &str,
-        spec_id: &str,
+        application_id: &ApplicationId,
+        spec_id: &ApplicationOpenApiSpecId,
     ) -> EventMetadata {
         EventMetadata::from_ctx(
             ctx,

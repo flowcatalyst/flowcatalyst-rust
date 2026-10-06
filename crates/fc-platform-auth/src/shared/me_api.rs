@@ -4,6 +4,7 @@ use axum::{
     extract::{Path, State},
     Json,
 };
+use fc_platform_core::shared::id::ApplicationId;
 use serde::Serialize;
 use std::sync::Arc;
 use utoipa::ToSchema;
@@ -256,7 +257,7 @@ pub async fn list_my_client_applications(
         .into_iter()
         .filter(|a| enabled_app_ids.contains(&a.id.as_str()))
         .map(|a| MyApplicationResponse {
-            id: a.id,
+            id: a.id.into_string(),
             code: a.code,
             name: a.name,
             description: a.description,
@@ -392,7 +393,7 @@ pub async fn list_my_applications(
         .principal_repo
         .find_by_id(&auth.0.principal_id)
         .await?;
-    let accessible_ids: HashSet<String> = principal
+    let accessible_ids: HashSet<ApplicationId> = principal
         .map(|p| p.accessible_application_ids.into_iter().collect())
         .unwrap_or_default();
 
@@ -400,7 +401,7 @@ pub async fn list_my_applications(
         .into_iter()
         .filter(|a| auth.0.is_anchor() || accessible_ids.contains(&a.id))
         .map(|a| MyApplicationResponse {
-            id: a.id,
+            id: a.id.into_string(),
             code: a.code,
             name: a.name,
             description: a.description,

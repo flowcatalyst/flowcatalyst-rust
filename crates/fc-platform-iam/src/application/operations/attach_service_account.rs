@@ -10,6 +10,7 @@
 //! both roll back.
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ApplicationId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -24,7 +25,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AttachServiceAccountToApplicationCommand {
-    pub application_id: String,
+    pub application_id: ApplicationId,
     /// The account's own id (`sac_…`), as sent: what the event and the
     /// audited command carry (Go `AttachServiceAccountCommand`).
     pub service_account_id: String,
@@ -62,7 +63,7 @@ impl<U: UnitOfWork> UseCase for AttachServiceAccountToApplicationUseCase<U> {
         &self,
         command: &AttachServiceAccountToApplicationCommand,
     ) -> Result<(), UseCaseError> {
-        if command.application_id.trim().is_empty() {
+        if command.application_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "APPLICATION_ID_REQUIRED",
                 "Application ID is required",

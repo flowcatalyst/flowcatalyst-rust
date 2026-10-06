@@ -6,6 +6,7 @@
 //! summarising the diff. Replaces N enable/disable round-trips that each
 //! emitted their own event.
 
+use fc_platform_core::shared::id::ApplicationId;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -30,7 +31,7 @@ pub struct UpdateClientApplicationsCommand {
     pub client_id: String,
     /// Authoritative list. Apps in here become enabled; existing enabled apps
     /// not in here become disabled.
-    pub enabled_application_ids: Vec<String>,
+    pub enabled_application_ids: Vec<ApplicationId>,
 }
 
 impl AuditMasked for UpdateClientApplicationsCommand {}
@@ -115,25 +116,21 @@ impl<U: UnitOfWork> UseCase for UpdateClientApplicationsUseCase<U> {
         // 3. Load current configs to compute the diff.
         let current_configs = self.config_repo.find_by_client(&command.client_id).await?;
 
-        let desired: HashSet<&str> = command
-            .enabled_application_ids
-            .iter()
-            .map(String::as_str)
-            .collect();
-        let currently_enabled: HashSet<&str> = current_configs
+        let desired: HashSet<&ApplicationId> = command.enabled_application_ids.iter().collect();
+        let currently_enabled: HashSet<&ApplicationId> = current_configs
             .iter()
             .filter(|c| c.enabled)
-            .map(|c| c.application_id.as_str())
+            .map(|c| &c.application_id)
             .collect();
 
         let mut to_persist: Vec<ApplicationClientConfig> = Vec::new();
-        let mut enabled_added: Vec<String> = Vec::new();
-        let mut disabled_removed: Vec<String> = Vec::new();
+        let mut enabled_added: Vec<ApplicationId> = Vec::new();
+        let mut disabled_removed: Vec<ApplicationId> = Vec::new();
 
         // Enable: requested but not currently enabled. Either flip an existing
         // disabled row, or create a fresh enabled row.
         for app_id in &command.enabled_application_ids {
-            if currently_enabled.contains(app_id.as_str()) {
+            if currently_enabled.contains(app_id) {
                 continue;
             }
             let existing = current_configs
@@ -145,7 +142,7 @@ impl<U: UnitOfWork> UseCase for UpdateClientApplicationsUseCase<U> {
                     c.enable();
                     c
                 }
-                None => ApplicationClientConfig::new(app_id, &command.client_id),
+                None => ApplicationClientConfig::new(app_id.clone(), &command.client_id),
             };
             to_persist.push(cfg);
             enabled_added.push(app_id.clone());
@@ -153,7 +150,7 @@ impl<U: UnitOfWork> UseCase for UpdateClientApplicationsUseCase<U> {
 
         // Disable: currently enabled but not requested.
         for cfg in &current_configs {
-            if cfg.enabled && !desired.contains(cfg.application_id.as_str()) {
+            if cfg.enabled && !desired.contains(&cfg.application_id) {
                 let mut c = cfg.clone();
                 c.disable();
                 disabled_removed.push(c.application_id.clone());
@@ -188,7 +185,10 @@ mod tests {
     fn test_command_serialization() {
         let cmd = UpdateClientApplicationsCommand {
             client_id: "clt_123".to_string(),
-            enabled_application_ids: vec!["app_a".to_string(), "app_b".to_string()],
+            enabled_application_ids: vec![
+                ApplicationId::parse("app_a").unwrap(),
+                ApplicationId::parse("app_b").unwrap(),
+            ],
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("clientId"));

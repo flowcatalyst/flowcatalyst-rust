@@ -1,6 +1,7 @@
 //! Create Service Account Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ApplicationId;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -117,7 +118,7 @@ pub struct CreateServiceAccountCommand {
     /// bound to it and granted it; otherwise it starts with no application
     /// access at all (owner ruling).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub application_id: Option<String>,
+    pub application_id: Option<ApplicationId>,
 
     /// Grant the account every application, present and future (Go's
     /// `allApplications`, serviceaccount/operations/create.go:21-24). Off by
@@ -187,8 +188,8 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
         if command.all_applications
             && command
                 .application_id
-                .as_deref()
-                .is_some_and(|id| !id.trim().is_empty())
+                .as_ref()
+                .is_some_and(|id| !id.as_str().trim().is_empty())
         {
             return Err(UseCaseError::validation(
                 "ALL_APPLICATIONS_WITH_APPLICATION_ID",

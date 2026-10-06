@@ -137,6 +137,7 @@ mod tests {
     use crate::principal_kind::PrincipalType;
     use crate::principal_kind::UserScope;
     use crate::shared::authorization_service::Credential;
+    use crate::shared::id::ApplicationId;
 
     #[test]
     fn test_system_context() {
@@ -169,7 +170,9 @@ mod tests {
         assert!(!ctx.caller().is_system());
         assert!(ctx.caller().application_scope().is_none());
         let scoped = ctx.with_application_scope(ApplicationScope::All);
-        assert!(scoped.caller().allows_application("app_1"));
+        assert!(scoped
+            .caller()
+            .allows_application(&ApplicationId::parse("app_1").unwrap()));
     }
 
     #[test]

@@ -8,6 +8,7 @@
 //! as an application that doesn't exist. Requires Docker.
 
 use crate::support;
+use fc_platform::shared::id::ApplicationId;
 
 use axum::http::StatusCode;
 use serde_json::{json, Value};
@@ -104,7 +105,8 @@ async fn service_account_is_confined_to_its_applications() {
     // all-applications flag and one access grant for its application.
     let sa_a = token_for(
         &app,
-        Principal::new_service("sa_a", "SA A", UserScope::Anchor).with_application_id(&app_a.id),
+        Principal::new_service("sa_a", "SA A", UserScope::Anchor)
+            .with_application_id(app_a.id.clone()),
         &[&app_a],
     )
     .await;
@@ -145,7 +147,7 @@ async fn service_account_is_confined_to_its_applications() {
     let sa_many = token_for(
         &app,
         Principal::new_service("sa_many", "SA Many", UserScope::Anchor)
-            .with_application_id(&app_a.id),
+            .with_application_id(app_a.id.clone()),
         &[&app_a, &app_c],
     )
     .await;
@@ -213,7 +215,7 @@ async fn service_account_is_confined_to_its_applications() {
     // As in Go, the flag reaches every application even for an account made
     // for one application.
     let mut bound_all = Principal::new_service("sa_bound_all", "SA Bound All", UserScope::Anchor)
-        .with_application_id(&app_a.id);
+        .with_application_id(app_a.id.clone());
     bound_all.all_applications = true;
     let sa_bound_all = token_for(&app, bound_all, &[]).await;
     for code in ["scope-a", "scope-b", "scope-c"] {
@@ -253,7 +255,8 @@ async fn service_account_is_confined_to_its_applications() {
     // B's service account reaches B.
     let sa_b = token_for(
         &app,
-        Principal::new_service("sa_b", "SA B", UserScope::Anchor).with_application_id(&app_b.id),
+        Principal::new_service("sa_b", "SA B", UserScope::Anchor)
+            .with_application_id(app_b.id.clone()),
         &[&app_b],
     )
     .await;
@@ -364,7 +367,7 @@ async fn platform_config_is_confined_to_the_callers_applications() {
     let sa_a = token_for(
         &app,
         Principal::new_service("sa_cfg_a", "SA Cfg A", UserScope::Anchor)
-            .with_application_id(&app_a.id),
+            .with_application_id(app_a.id.clone()),
         &[&app_a],
     )
     .await;
@@ -473,7 +476,7 @@ async fn mint_with_role(app: &TestApp, id: &str, role: &str) -> (String, bool, V
     (
         app.auth_service.generate_access_token(&p).unwrap(),
         p.all_applications,
-        p.accessible_application_ids,
+        ApplicationId::into_strings(p.accessible_application_ids),
     )
 }
 
@@ -539,7 +542,7 @@ async fn created_service_account_reaches_only_granted_applications() {
     assert_eq!(resp.status(), StatusCode::OK);
     // The endpoint drops the cached scope, so the grant applies at once.
     let (sa, _, granted) = mint_with_role(&app, &id, &role).await;
-    assert_eq!(granted, vec![app_x.id.clone()]);
+    assert_eq!(granted, vec![app_x.id.to_string()]);
     assert_eq!(sync_roles(&app, &sa, "new-x").await.0, StatusCode::OK);
     assert_eq!(
         sync_roles(&app, &sa, "new-y").await.0,
@@ -646,7 +649,7 @@ async fn all_applications_toggle() {
     // An account made for one application may be given every application
     // too, as in Go: the flag is the whole rule.
     let bound = Principal::new_service("sa_tog_bound", "SA Bound", UserScope::Anchor)
-        .with_application_id(&app_a.id);
+        .with_application_id(app_a.id.clone());
     let bound_id = bound.id.clone();
     token_for(&app, bound, &[]).await;
     let resp = app

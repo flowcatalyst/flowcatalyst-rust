@@ -76,7 +76,7 @@ async fn a_disabled_client_config_no_longer_blocks_the_delete_and_goes_with_it()
     toggle(&app, &admin, &freed, &client_a, "enable").await;
     toggle(&app, &admin, &freed, &client_a, "disable").await;
     assert_eq!(
-        config_rows(&app, &freed.id).await,
+        config_rows(&app, freed.id.as_str()).await,
         1,
         "disable keeps the row"
     );
@@ -86,7 +86,7 @@ async fn a_disabled_client_config_no_longer_blocks_the_delete_and_goes_with_it()
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
-    assert_eq!(config_rows(&app, &freed.id).await, 0);
+    assert_eq!(config_rows(&app, freed.id.as_str()).await, 0);
     assert!(app
         .repos
         .application_repo
@@ -115,7 +115,7 @@ async fn a_disabled_client_config_no_longer_blocks_the_delete_and_goes_with_it()
         "{body}"
     );
     assert_eq!(
-        config_rows(&app, &held.id).await,
+        config_rows(&app, held.id.as_str()).await,
         2,
         "a refused delete removes nothing"
     );

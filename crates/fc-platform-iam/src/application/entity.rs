@@ -2,8 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::authorization_service::ScopedApplication;
-use fc_platform_core::shared::tsid;
-use fc_platform_core::shared::tsid::EntityType;
+use fc_platform_core::shared::id::ApplicationId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,7 +22,7 @@ fc_platform_core::shared::enum_str::str_enum!(ApplicationType, "application type
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Application {
-    pub id: String,
+    pub id: ApplicationId,
     #[serde(rename = "type")]
     pub application_type: ApplicationType,
     pub code: String,
@@ -44,7 +43,7 @@ impl Application {
     pub fn new(code: impl Into<String>, name: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
-            id: tsid::generate(EntityType::Application),
+            id: ApplicationId::generate(),
             application_type: ApplicationType::Application,
             code: code.into(),
             name: name.into(),
@@ -98,7 +97,7 @@ impl Application {
 }
 
 impl ScopedApplication for Application {
-    fn application_id(&self) -> &str {
+    fn application_id(&self) -> &ApplicationId {
         &self.id
     }
 }
@@ -112,17 +111,17 @@ mod tests {
     fn test_new_application() {
         let app = Application::new("my-app", "My Application");
 
-        assert!(!app.id.is_empty());
+        assert!(!app.id.as_str().is_empty());
         assert!(
-            app.id.starts_with("app_"),
+            app.id.as_str().starts_with("app_"),
             "ID should have app_ prefix, got: {}",
             app.id
         );
         assert_eq!(
-            app.id.len(),
+            app.id.as_str().len(),
             17,
             "Typed ID should be 17 chars, got: {}",
-            app.id.len()
+            app.id.as_str().len()
         );
         assert_eq!(app.code, "my-app");
         assert_eq!(app.name, "My Application");

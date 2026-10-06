@@ -12,6 +12,7 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
+use fc_platform::shared::id::ApplicationId;
 use fc_platform::application::operations::{
     UpdateClientApplicationsCommand, UpdateClientApplicationsUseCase,
 };
@@ -276,7 +277,7 @@ async fn client_drawer(cx: &Cx, id: String, editing: Signal<bool>) -> Result<imp
             .into_iter()
             .map(|a| AppRow {
                 enabled: enabled.contains(a.id.as_str()),
-                id: a.id,
+                id: a.id.into_string(),
                 code: a.code,
                 name: a.name,
                 active: a.active,
@@ -757,7 +758,7 @@ async fn applications(cx: &Cx, Form(form): Form<HashMap<String, String>>) -> Res
     .run(
         UpdateClientApplicationsCommand {
             client_id: id.clone(),
-            enabled_application_ids,
+            enabled_application_ids: ApplicationId::from_wire_all(enabled_application_ids),
         },
         ExecutionContext::from_auth(auth),
     )

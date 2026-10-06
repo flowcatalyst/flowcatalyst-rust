@@ -3,6 +3,7 @@
 //! REST endpoints for service account management.
 //! Base path: /api/service-accounts
 
+use fc_platform_core::shared::id::ApplicationId;
 use std::sync::Arc;
 
 use axum::{
@@ -294,7 +295,7 @@ impl From<ServiceAccount> for ServiceAccountResponse {
             active: sa.active,
             client_ids: sa.client_ids,
             scope: sa.requested_scope,
-            application_id: sa.application_id,
+            application_id: sa.application_id.map(ApplicationId::into_string),
             auth_type: sa.webhook_credentials.auth_type.as_str().to_string(),
             roles: sa.roles.iter().map(|r| r.role.clone()).collect(),
             principal_id: None,
@@ -466,7 +467,10 @@ pub async fn list_service_accounts<U: UnitOfWork>(
     let mut accounts = if let Some(client_id) = query.client_id {
         state.repo.find_by_client(&client_id).await?
     } else if let Some(app_id) = query.application_id {
-        state.repo.find_by_application(&app_id).await?
+        state
+            .repo
+            .find_by_application(&ApplicationId::from_wire(app_id))
+            .await?
     } else {
         state.repo.find_all().await?
     };

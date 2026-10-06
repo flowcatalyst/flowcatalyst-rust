@@ -4,6 +4,7 @@
 //! Permissions are stored in the iam_role_permissions junction table.
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ApplicationId;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 use std::collections::HashSet;
 
@@ -20,7 +21,7 @@ use std::iter;
 #[derive(sqlx::FromRow)]
 struct RoleRow {
     id: String,
-    application_id: Option<String>,
+    application_id: Option<ApplicationId>,
     application_code: Option<String>,
     name: String,
     display_name: String,
@@ -154,7 +155,10 @@ impl RoleRepository {
         self.hydrate_roles(rows).await
     }
 
-    pub async fn find_by_application_id(&self, application_id: &str) -> Result<Vec<AuthRole>> {
+    pub async fn find_by_application_id(
+        &self,
+        application_id: &ApplicationId,
+    ) -> Result<Vec<AuthRole>> {
         let rows = sqlx::query_as::<_, RoleRow>(
             "SELECT * FROM iam_roles WHERE application_id = $1 ORDER BY name",
         )
@@ -293,7 +297,7 @@ impl RoleRepository {
     pub async fn filter_roles_for_applications(
         &self,
         role_names: &[String],
-        application_ids: &[String],
+        application_ids: &[ApplicationId],
     ) -> Result<Vec<String>> {
         if role_names.is_empty() || application_ids.is_empty() {
             return Ok(vec![]);

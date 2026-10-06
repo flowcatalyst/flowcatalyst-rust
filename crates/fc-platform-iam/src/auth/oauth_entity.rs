@@ -3,6 +3,7 @@
 //! Represents OAuth 2.0 client registrations for external applications.
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::shared::tsid;
 use fc_platform_core::shared::tsid::EntityType;
 use serde::{Deserialize, Serialize};
@@ -103,7 +104,7 @@ pub struct OAuthClient {
 
     /// Application IDs this client can access
     #[serde(default)]
-    pub application_ids: Vec<String>,
+    pub application_ids: Vec<ApplicationId>,
 
     /// Allowed CORS origins
     #[serde(default)]
@@ -171,7 +172,7 @@ impl OAuthClient {
         #[builder(default = vec![GrantType::AuthorizationCode])] grant_types: Vec<GrantType>,
         #[builder(default)] default_scopes: Vec<String>,
         #[builder(default = true)] pkce_required: bool,
-        #[builder(default)] application_ids: Vec<String>,
+        #[builder(default)] application_ids: Vec<ApplicationId>,
         #[builder(default)] allowed_origins: Vec<String>,
         service_account_principal_id: Option<String>,
         #[builder(default)] api_access: bool,

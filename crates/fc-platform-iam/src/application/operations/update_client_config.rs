@@ -6,6 +6,7 @@
 //! `ApplicationClientConfigUpdated` event + audit log.
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ApplicationId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -23,7 +24,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateApplicationClientConfigCommand {
-    pub application_id: String,
+    pub application_id: ApplicationId,
     pub client_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
@@ -68,7 +69,7 @@ impl<U: UnitOfWork> UseCase for UpdateApplicationClientConfigUseCase<U> {
         &self,
         command: &UpdateApplicationClientConfigCommand,
     ) -> Result<(), UseCaseError> {
-        if command.application_id.trim().is_empty() {
+        if command.application_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "APPLICATION_ID_REQUIRED",
                 "Application ID is required",
@@ -124,7 +125,7 @@ impl<U: UnitOfWork> UseCase for UpdateApplicationClientConfigUseCase<U> {
             .find_by_application_and_client(&command.application_id, &command.client_id)
             .await?
             .unwrap_or_else(|| {
-                ApplicationClientConfig::new(&command.application_id, &command.client_id)
+                ApplicationClientConfig::new(command.application_id.clone(), &command.client_id)
             });
 
         if let Some(enabled) = command.enabled {

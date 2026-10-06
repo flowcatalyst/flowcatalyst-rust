@@ -5,6 +5,7 @@
 //! the emitted event is specific to the action taken.
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ApplicationId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -33,7 +34,7 @@ pub struct UpdateOAuthClientCommand {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pkce_required: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub application_ids: Option<Vec<String>>,
+    pub application_ids: Option<Vec<ApplicationId>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allowed_origins: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]

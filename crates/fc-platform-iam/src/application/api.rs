@@ -3,6 +3,7 @@
 //! REST endpoints for application management.
 //! Applications are global platform entities (not client-scoped).
 
+use fc_platform_core::shared::id::ApplicationId;
 use std::sync::Arc;
 
 use axum::{
@@ -159,7 +160,7 @@ pub struct ApplicationResponse {
 impl From<Application> for ApplicationResponse {
     fn from(a: Application) -> Self {
         Self {
-            id: a.id,
+            id: a.id.into_string(),
             application_type: a.application_type.as_str().to_string(),
             code: a.code,
             name: a.name,
@@ -215,7 +216,7 @@ impl From<ServiceAccount> for ServiceAccountResponse {
             name: sa.name,
             description: sa.description,
             active: sa.active,
-            application_id: sa.application_id,
+            application_id: sa.application_id.map(ApplicationId::into_string),
             created_at: sa.created_at.to_rfc3339(),
         }
     }
@@ -425,6 +426,7 @@ pub async fn get_application<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ApplicationResponse>, PlatformError> {
+    let id = ApplicationId::from_wire(id);
     checks::can_read_applications(&auth.0)?;
 
     let app = state
@@ -517,6 +519,7 @@ pub async fn update_application<U: UnitOfWork>(
     Path(id): Path<String>,
     Json(req): Json<UpdateApplicationRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = ApplicationId::from_wire(id);
     checks::can_write_applications(&auth.0)?;
     checks::require_anchor(&auth.0)?;
 
@@ -559,6 +562,7 @@ pub async fn delete_application<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = ApplicationId::from_wire(id);
     checks::can_delete_applications(&auth.0)?;
     checks::require_anchor(&auth.0)?;
 
@@ -580,7 +584,7 @@ pub async fn delete_application_cascade(
     pg_unit_of_work: &PgUnitOfWork,
     service_account_repo: &Arc<ServiceAccountRepository>,
     application_repo: &Arc<ApplicationRepository>,
-    id: &str,
+    id: &ApplicationId,
     auth: &AuthContext,
 ) -> Result<(), PlatformError> {
     use crate::application::operations::{DeleteApplicationCommand, DeleteApplicationUseCase};
@@ -596,7 +600,7 @@ pub async fn delete_application_cascade(
     let sas = service_account_repo.find_by_application(id).await?;
 
     let auth = auth.clone();
-    let app_id_for_closure = id.to_owned();
+    let app_id_for_closure = id.clone();
     let sa_repo = service_account_repo.clone();
     let app_repo = application_repo.clone();
 
@@ -656,6 +660,7 @@ pub async fn activate_application<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ApplicationResponse>, PlatformError> {
+    let id = ApplicationId::from_wire(id);
     checks::can_write_applications(&auth.0)?;
     checks::require_anchor(&auth.0)?;
 
@@ -700,6 +705,7 @@ pub async fn deactivate_application<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ApplicationResponse>, PlatformError> {
+    let id = ApplicationId::from_wire(id);
     checks::can_write_applications(&auth.0)?;
     checks::require_anchor(&auth.0)?;
 
@@ -729,7 +735,7 @@ pub async fn deactivate_application_cascade(
     service_account_repo: &Arc<ServiceAccountRepository>,
     oauth_client_repo: &Arc<OAuthClientRepository>,
     application_repo: &Arc<ApplicationRepository>,
-    id: &str,
+    id: &ApplicationId,
     auth: &AuthContext,
 ) -> Result<(), PlatformError> {
     use crate::auth::operations::{DeactivateOAuthClientCommand, DeactivateOAuthClientUseCase};
@@ -751,7 +757,7 @@ pub async fn deactivate_application_cascade(
     }
 
     let auth = auth.clone();
-    let app_id_for_closure = id.to_owned();
+    let app_id_for_closure = id.clone();
     let sa_repo = service_account_repo.clone();
     let oauth_repo = oauth_client_repo.clone();
     let app_repo = application_repo.clone();
@@ -873,6 +879,7 @@ pub async fn provision_service_account<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<ProvisionServiceAccountResponse>), PlatformError> {
+    let id = ApplicationId::from_wire(id);
     checks::require_anchor(&auth.0)?;
     // Java 6068fe6b S1.2: it mints a service account and binds it.
     checks::require_permission(&auth.0, permissions::admin::SERVICE_ACCOUNT_CREATE)?;
@@ -910,7 +917,7 @@ pub async fn provision_application_service_account(
     service_account_repo: &Arc<ServiceAccountRepository>,
     client_repo: &Arc<ClientRepository>,
     oauth_client_repo: &Arc<OAuthClientRepository>,
-    id: &str,
+    id: &ApplicationId,
     auth: &AuthContext,
 ) -> Result<ServiceAccountCredentialsResponse, PlatformError> {
     use crate::application::operations::{
@@ -1027,7 +1034,7 @@ pub async fn provision_application_service_account(
                 // Go's entity default (auth.NewOAuthClient); PKCE only
                 // applies at /oauth/authorize, which this client never uses.
                 pkce_required: true,
-                application_ids: vec![app_id],
+                application_ids: vec![app_id.clone()],
                 allowed_origins: Vec::new(),
                 service_account_principal_id: Some(sa_id.clone()),
                 created_by: Some(auth.principal_id.clone()),
@@ -1102,6 +1109,7 @@ pub async fn provision_login_client<U: UnitOfWork>(
     Path(id): Path<String>,
     Json(req): Json<ProvisionLoginClientRequest>,
 ) -> Result<(StatusCode, Json<ProvisionLoginClientResponse>), PlatformError> {
+    let id = ApplicationId::from_wire(id);
     checks::require_anchor(&auth.0)?;
     // Java 6068fe6b S1.2: it mints an OAuth client for the application.
     checks::require_permission(&auth.0, permissions::auth::OAUTH_CLIENT_CREATE)?;
@@ -1136,7 +1144,7 @@ pub async fn provision_application_login_client<U: UnitOfWork>(
     create_oauth_client_use_case: &CreateOAuthClientUseCase<U>,
     application_repo: &ApplicationRepository,
     oauth_client_repo: &OAuthClientRepository,
-    id: &str,
+    id: &ApplicationId,
     auth: &AuthContext,
     req: ProvisionLoginClientRequest,
 ) -> Result<LoginClientCredentialsResponse, PlatformError> {
@@ -1228,7 +1236,7 @@ pub async fn provision_application_login_client<U: UnitOfWork>(
 /// list is small per app, so no extra index needed.
 pub async fn app_has_login_client(
     repo: &OAuthClientRepository,
-    app_id: &str,
+    app_id: &ApplicationId,
 ) -> Result<bool, PlatformError> {
     let clients = repo.find_by_application(app_id).await?;
     Ok(clients.iter().any(|c| {
@@ -1274,6 +1282,7 @@ pub async fn get_application_service_account<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ServiceAccountResponse>, PlatformError> {
+    let id = ApplicationId::from_wire(id);
     checks::can_read_applications(&auth.0)?;
 
     // Get the application
@@ -1320,6 +1329,7 @@ pub async fn list_application_roles<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ApplicationRolesResponse>, PlatformError> {
+    let id = ApplicationId::from_wire(id);
     checks::can_read_applications(&auth.0)?;
 
     // Go lists the role names registered against the application id; an
@@ -1409,6 +1419,7 @@ pub async fn list_client_configs<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ClientConfigsResponse>, PlatformError> {
+    let id = ApplicationId::from_wire(id);
     checks::can_read_applications(&auth.0)?;
 
     // Go lists the application's configs as stored; an unknown application
@@ -1448,6 +1459,7 @@ pub async fn update_client_config<U: UnitOfWork>(
     Path((id, client_id)): Path<(String, String)>,
     Json(req): Json<ClientConfigRequest>,
 ) -> Result<Json<ClientConfigResponse>, PlatformError> {
+    let id = ApplicationId::from_wire(id);
     checks::require_anchor(&auth.0)?;
     checks::require_permission(&auth.0, permissions::admin::APPLICATION_UPDATE)?;
 
@@ -1485,8 +1497,8 @@ pub async fn update_client_config<U: UnitOfWork>(
         .ok_or_else(|| PlatformError::not_found("ApplicationClientConfig", "for (app, client)"))?;
 
     Ok(Json(ClientConfigResponse {
-        id: config.id,
-        application_id: config.application_id,
+        id: config.id.into_string(),
+        application_id: config.application_id.into_string(),
         client_id: config.client_id,
         client_name: client.name,
         client_identifier: client.identifier,
@@ -1522,6 +1534,7 @@ pub async fn enable_for_client<U: UnitOfWork>(
     auth: Authenticated,
     Path((id, client_id)): Path<(String, String)>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = ApplicationId::from_wire(id);
     checks::require_anchor(&auth.0)?;
     checks::require_permission(&auth.0, permissions::admin::APPLICATION_ENABLE_CLIENT)?;
 
@@ -1562,6 +1575,7 @@ pub async fn disable_for_client<U: UnitOfWork>(
     auth: Authenticated,
     Path((id, client_id)): Path<(String, String)>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = ApplicationId::from_wire(id);
     checks::require_anchor(&auth.0)?;
     checks::require_permission(&auth.0, permissions::admin::APPLICATION_DISABLE_CLIENT)?;
 
@@ -1656,11 +1670,12 @@ pub async fn attach_application_service_account(
     Path(id): Path<String>,
     Json(req): Json<AttachServiceAccountRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = ApplicationId::from_wire(id);
     checks::require_anchor_scope(&auth.0)?;
     checks::require_permission(&auth.0, permissions::admin::APPLICATION_UPDATE)?;
     let sa_id = req.service_account_id.trim().to_string();
     // Go validates the ids before resolving the principal.
-    let principal_id = if sa_id.is_empty() || id.trim().is_empty() {
+    let principal_id = if sa_id.is_empty() || id.as_str().trim().is_empty() {
         sa_id.clone()
     } else {
         state
@@ -1708,6 +1723,7 @@ pub async fn get_application_client_config(
     auth: Authenticated,
     Path((id, client_id)): Path<(String, String)>,
 ) -> Result<Json<GoClientConfigResponse>, PlatformError> {
+    let id = ApplicationId::from_wire(id);
     checks::require_permission(&auth.0, permissions::admin::APPLICATION_READ)?;
     let c = state
         .client_config_repo
@@ -1722,8 +1738,8 @@ pub async fn get_application_client_config(
 impl From<ApplicationClientConfig> for GoClientConfigResponse {
     fn from(c: ApplicationClientConfig) -> Self {
         Self {
-            id: c.id,
-            application_id: c.application_id,
+            id: c.id.into_string(),
+            application_id: c.application_id.into_string(),
             client_id: c.client_id,
             enabled: c.enabled,
             base_url_override: c.base_url_override,
@@ -1760,7 +1776,7 @@ mod tests {
     fn make_test_application() -> Application {
         let now = Utc::now();
         Application {
-            id: "app_ABCDEFGHIJKLM".to_string(),
+            id: ApplicationId::parse("app_ABCDEFGHIJKLM").unwrap(),
             application_type: ApplicationType::Application,
             code: "my-app".to_string(),
             name: "My Application".to_string(),
@@ -1820,7 +1836,7 @@ mod tests {
     fn test_application_response_null_optionals() {
         let now = Utc::now();
         let app = Application {
-            id: "app_MINIMALAPPTEST".to_string(),
+            id: ApplicationId::parse("app_MINIMALAPPTEST").unwrap(),
             application_type: ApplicationType::Application,
             code: "minimal".to_string(),
             name: "Minimal".to_string(),
@@ -1985,7 +2001,8 @@ mod tests {
 
     #[test]
     fn go_client_config_answers_the_overrides_only_when_set() {
-        let mut config = ApplicationClientConfig::new("app_1", "clt_1");
+        let mut config =
+            ApplicationClientConfig::new(ApplicationId::parse("app_1").unwrap(), "clt_1");
         let bare = serde_json::to_value(GoClientConfigResponse::from(config.clone())).unwrap();
         assert!(bare.get("baseUrlOverride").is_none());
         assert!(bare.get("configJson").is_none());

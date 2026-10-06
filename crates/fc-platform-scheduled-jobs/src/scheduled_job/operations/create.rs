@@ -1,5 +1,6 @@
 //! Create ScheduledJob use case.
 
+use fc_platform_core::shared::id::ApplicationId;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -27,7 +28,7 @@ pub struct CreateScheduledJobCommand {
     pub client_id: Option<String>,
     /// The owning application (Go `applicationId`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub application_id: Option<String>,
+    pub application_id: Option<ApplicationId>,
     pub crons: Vec<String>,
     #[serde(default = "default_timezone")]
     pub timezone: String,

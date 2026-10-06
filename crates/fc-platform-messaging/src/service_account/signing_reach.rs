@@ -29,6 +29,7 @@
 //! signer does, so the check never reads as dangling a reference the signer
 //! signs with.
 
+use fc_platform_core::shared::id::ApplicationId;
 use std::fmt;
 
 use crate::connection::repository::ConnectionRepository;
@@ -90,13 +91,13 @@ impl fmt::Display for ReachRefusal {
 #[derive(Debug, Clone)]
 pub struct SigningReach {
     caller: AuthContext,
-    caller_application_id: Option<String>,
+    caller_application_id: Option<ApplicationId>,
 }
 
 impl SigningReach {
     /// `caller` acting as application `caller_application_id` (`None`: a
     /// user, or an account of no application).
-    pub fn new(caller: AuthContext, caller_application_id: Option<String>) -> SigningReach {
+    pub fn new(caller: AuthContext, caller_application_id: Option<ApplicationId>) -> SigningReach {
         SigningReach {
             caller,
             caller_application_id,
@@ -131,8 +132,8 @@ impl SigningReach {
         if self.is_super_admin() {
             return Ok(());
         }
-        let caller_application = self.caller_application_id.as_deref();
-        if let Some(owner) = account.application_id.as_deref() {
+        let caller_application = self.caller_application_id.as_ref();
+        if let Some(owner) = account.application_id.as_ref() {
             return if Some(owner) == caller_application {
                 Ok(())
             } else {
@@ -167,10 +168,10 @@ impl SigningReach {
     /// `SigningReach.mayUseApplication`).
     pub fn may_use_application(
         &self,
-        application_id: &str,
+        application_id: &ApplicationId,
         application_code: &str,
     ) -> result::Result<(), ReachRefusal> {
-        if self.is_super_admin() || self.caller_application_id.as_deref() == Some(application_id) {
+        if self.is_super_admin() || self.caller_application_id.as_ref() == Some(application_id) {
             Ok(())
         } else {
             Err(ReachRefusal::NotTheApplication {
@@ -293,10 +294,14 @@ pub(crate) mod tests {
         }
     }
 
-    fn account(application_id: Option<&str>, reach: AccountReach) -> SigningAccount {
+    fn app(id: &str) -> ApplicationId {
+        ApplicationId::parse(id).unwrap()
+    }
+
+    fn account(application_id: Option<&ApplicationId>, reach: AccountReach) -> SigningAccount {
         SigningAccount {
             code: "acct".into(),
-            application_id: application_id.map(str::to_string),
+            application_id: application_id.cloned(),
             reach,
         }
     }
@@ -312,27 +317,27 @@ pub(crate) mod tests {
             None,
         );
         assert_eq!(
-            r.may_use(&account(Some("app_x"), AccountReach::Anchor)),
+            r.may_use(&account(Some(&app("app_x")), AccountReach::Anchor)),
             Ok(())
         );
         assert_eq!(r.may_use(&account(None, clients(&["clt_z"]))), Ok(()));
-        assert_eq!(r.may_use_application("app_x", "x"), Ok(()));
+        assert_eq!(r.may_use_application(&app("app_x"), "x"), Ok(()));
     }
 
     #[test]
     fn an_applications_account_is_that_applications_alone() {
-        let own = SigningReach::new(caller(UserScope::Anchor, &["*"], &[]), Some("app_x".into()));
+        let own = SigningReach::new(caller(UserScope::Anchor, &["*"], &[]), Some(app("app_x")));
         assert_eq!(
-            own.may_use(&account(Some("app_x"), AccountReach::Anchor)),
+            own.may_use(&account(Some(&app("app_x")), AccountReach::Anchor)),
             Ok(())
         );
-        assert_eq!(own.may_use_application("app_x", "x"), Ok(()));
+        assert_eq!(own.may_use_application(&app("app_x"), "x"), Ok(()));
         assert!(matches!(
-            own.may_use(&account(Some("app_y"), AccountReach::Anchor)),
+            own.may_use(&account(Some(&app("app_y")), AccountReach::Anchor)),
             Err(ReachRefusal::OtherApplication { .. })
         ));
         assert_eq!(
-            own.may_use_application("app_y", "y"),
+            own.may_use_application(&app("app_y"), "y"),
             Err(ReachRefusal::NotTheApplication {
                 application_code: "y".into()
             })
@@ -347,9 +352,9 @@ pub(crate) mod tests {
         // A plain anchor (no application, not super-admin) may use neither.
         let anchor = SigningReach::new(caller(UserScope::Anchor, &["*"], &[]), None);
         assert!(anchor
-            .may_use(&account(Some("app_x"), AccountReach::Anchor))
+            .may_use(&account(Some(&app("app_x")), AccountReach::Anchor))
             .is_err());
-        assert!(anchor.may_use_application("app_x", "x").is_err());
+        assert!(anchor.may_use_application(&app("app_x"), "x").is_err());
     }
 
     #[test]

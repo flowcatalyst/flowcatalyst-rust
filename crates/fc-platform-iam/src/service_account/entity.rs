@@ -3,6 +3,7 @@
 //! Machine-to-machine authentication for webhooks.
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ApplicationId;
 use serde::{Deserialize, Serialize};
 
 use fc_platform_core::principal_kind::UserScope;
@@ -304,7 +305,7 @@ pub struct ServiceAccount {
 
     /// Application ID (if created for an application)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub application_id: Option<String>,
+    pub application_id: Option<ApplicationId>,
 
     /// Access to every application (`iam_principals.all_applications` on the
     /// linked principal). Off for a new account.
@@ -314,7 +315,7 @@ pub struct ServiceAccount {
     /// Applications the linked principal is granted
     /// (`iam_principal_application_access`).
     #[serde(default)]
-    pub accessible_application_ids: Vec<String>,
+    pub accessible_application_ids: Vec<ApplicationId>,
 
     /// Webhook credentials for outbound calls
     #[serde(default)]
@@ -400,8 +401,8 @@ impl ServiceAccount {
         self.client_ids = client_ids;
     }
 
-    pub fn with_application_id(mut self, application_id: impl Into<String>) -> Self {
-        self.application_id = Some(application_id.into());
+    pub fn with_application_id(mut self, application_id: ApplicationId) -> Self {
+        self.application_id = Some(application_id);
         self
     }
 
@@ -513,12 +514,15 @@ mod tests {
         let sa = ServiceAccount::new("sa", "SA", UserScope::Anchor)
             .with_description("A test service account")
             .with_client_id("client-1")
-            .with_application_id("app-1")
+            .with_application_id(ApplicationId::parse("app_1").unwrap())
             .with_credentials(WebhookCredentials::bearer_token("my-token"));
 
         assert_eq!(sa.description, Some("A test service account".to_string()));
         assert_eq!(sa.client_ids, vec!["client-1".to_string()]);
-        assert_eq!(sa.application_id, Some("app-1".to_string()));
+        assert_eq!(
+            sa.application_id,
+            Some(ApplicationId::parse("app_1").unwrap())
+        );
         assert_eq!(
             sa.webhook_credentials.auth_type,
             WebhookAuthType::BearerToken

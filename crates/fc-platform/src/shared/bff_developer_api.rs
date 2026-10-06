@@ -17,6 +17,8 @@
 //!
 //! Response shapes are Go's. The platform sync needs anchor and `…:sync`.
 
+use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ApplicationOpenApiSpecId;
 use std::sync::Arc;
 
 use axum::{
@@ -57,7 +59,7 @@ pub struct BffDeveloperState {
     pub platform_openapi: Arc<serde_json::Value>,
     /// The application id the platform document is stored against
     /// (`code='platform'`). Resolved at server boot.
-    pub platform_application_id: String,
+    pub platform_application_id: ApplicationId,
 }
 
 // -- DTOs ---------------------------------------------------------------------
@@ -199,7 +201,7 @@ async fn portal_reach(
 
 /// 404 for an application outside the caller's [`portal_reach`] (the owner
 /// ruling: an out-of-scope application answers as a missing one).
-fn in_reach(reach: &ApplicationScope, app_id: &str) -> Result<(), PlatformError> {
+fn in_reach(reach: &ApplicationScope, app_id: &ApplicationId) -> Result<(), PlatformError> {
     if reach.allows(app_id) {
         Ok(())
     } else {
@@ -209,21 +211,21 @@ fn in_reach(reach: &ApplicationScope, app_id: &str) -> Result<(), PlatformError>
 
 fn summary(app: Application, current: Option<CurrentSpecRef>) -> DeveloperApplicationSummary {
     DeveloperApplicationSummary {
-        id: app.id,
+        id: app.id.into_string(),
         code: app.code,
         name: app.name,
         description: app.description,
         icon_url: app.icon_url,
         current_version: current.as_ref().map(|s| s.version.clone()),
-        current_spec_id: current.as_ref().map(|s| s.id.clone()),
+        current_spec_id: current.as_ref().map(|s| s.id.to_string()),
         current_synced_at: current.as_ref().map(|s| s.synced_at),
     }
 }
 
 fn spec_response(spec: OpenApiSpec) -> OpenApiSpecResponse {
     OpenApiSpecResponse {
-        id: spec.id,
-        application_id: spec.application_id,
+        id: spec.id.into_string(),
+        application_id: spec.application_id.into_string(),
         version: spec.version,
         status: spec.status.as_str().to_string(),
         spec: spec.spec,
@@ -247,7 +249,7 @@ pub async fn list_applications(
     let mut apps = state.application_repo.find_active().await?;
     apps.retain(|a| reach.allows(&a.id));
     apps.sort_by(|a, b| a.code.cmp(&b.code));
-    let ids: Vec<String> = apps.iter().map(|a| a.id.clone()).collect();
+    let ids: Vec<ApplicationId> = apps.iter().map(|a| a.id.clone()).collect();
     let mut current = state
         .openapi_spec_repo
         .find_current_refs_by_applications(&ids)
@@ -267,6 +269,7 @@ pub async fn get_application(
     auth: Authenticated,
     Path(app_id): Path<String>,
 ) -> Result<Json<DeveloperApplicationSummary>, PlatformError> {
+    let app_id = ApplicationId::from_wire(app_id);
     in_reach(&portal_reach(&state, &auth.0).await?, &app_id)?;
 
     let app = state
@@ -287,6 +290,7 @@ pub async fn get_current_openapi(
     auth: Authenticated,
     Path(app_id): Path<String>,
 ) -> Result<Json<OpenApiSpecResponse>, PlatformError> {
+    let app_id = ApplicationId::from_wire(app_id);
     in_reach(&portal_reach(&state, &auth.0).await?, &app_id)?;
 
     let spec = state
@@ -302,6 +306,7 @@ pub async fn list_versions(
     auth: Authenticated,
     Path(app_id): Path<String>,
 ) -> Result<Json<OpenApiVersionsResponse>, PlatformError> {
+    let app_id = ApplicationId::from_wire(app_id);
     in_reach(&portal_reach(&state, &auth.0).await?, &app_id)?;
 
     let rows = state
@@ -311,7 +316,7 @@ pub async fn list_versions(
     let items = rows
         .into_iter()
         .map(|s| OpenApiVersionSummary {
-            id: s.id,
+            id: s.id.into_string(),
             version: s.version,
             status: s.status.as_str().to_string(),
             has_breaking: s
@@ -331,6 +336,8 @@ pub async fn get_version(
     auth: Authenticated,
     Path((app_id, spec_id)): Path<(String, String)>,
 ) -> Result<Json<OpenApiSpecResponse>, PlatformError> {
+    let app_id = ApplicationId::from_wire(app_id);
+    let spec_id = ApplicationOpenApiSpecId::from_wire(spec_id);
     in_reach(&portal_reach(&state, &auth.0).await?, &app_id)?;
 
     let spec = state
@@ -347,6 +354,7 @@ pub async fn list_event_types(
     auth: Authenticated,
     Path(app_id): Path<String>,
 ) -> Result<Json<DeveloperEventTypesResponse>, PlatformError> {
+    let app_id = ApplicationId::from_wire(app_id);
     in_reach(&portal_reach(&state, &auth.0).await?, &app_id)?;
 
     let app = state
@@ -414,7 +422,7 @@ pub async fn sync_platform_openapi(
     {
         Ok(event) => Ok(Json(SyncPlatformOpenApiResponse {
             application_code: event.application_code,
-            spec_id: event.spec_id,
+            spec_id: event.spec_id.into_string(),
             version: event.version,
             status: if event.unchanged {
                 "UNCHANGED".to_string()

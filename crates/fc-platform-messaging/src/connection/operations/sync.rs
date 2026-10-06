@@ -7,6 +7,7 @@
 //! account. One transaction, one `platform:admin:connection:synced` event.
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ApplicationId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -61,7 +62,7 @@ pub struct SyncConnectionInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncConnectionsCommand {
-    pub application_id: String,
+    pub application_id: ApplicationId,
     pub application_code: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,

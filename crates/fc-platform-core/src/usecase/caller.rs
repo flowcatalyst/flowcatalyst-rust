@@ -21,6 +21,7 @@
 //! [`caller_reach`](crate::shared::caller_reach), which take any
 //! [`Authority`]: an [`AuthContext`] in a handler, a [`Caller`] in a use case.
 
+use crate::shared::id::ApplicationId;
 use std::sync::OnceLock;
 
 use crate::principal_kind::{PrincipalType, UserScope};
@@ -136,7 +137,7 @@ impl Caller {
     /// Whether the caller reaches application `application_id`: the system
     /// always, a principal as its resolved scope says (an unresolved scope
     /// reaches none).
-    pub fn allows_application(&self, application_id: &str) -> bool {
+    pub fn allows_application(&self, application_id: &ApplicationId) -> bool {
         self.applications
             .as_ref()
             .is_some_and(|scope| scope.allows(application_id))
@@ -227,11 +228,12 @@ mod tests {
     fn an_unresolved_application_scope_reaches_nothing() {
         let caller = Caller::from_auth(&client_user());
         assert!(caller.application_scope().is_none());
-        assert!(!caller.allows_application("app_1"));
-        let scoped = caller
-            .with_application_scope(ApplicationScope::Only(HashSet::from(["app_1".to_string()])));
-        assert!(scoped.allows_application("app_1"));
-        assert!(!scoped.allows_application("app_2"));
+        assert!(!caller.allows_application(&ApplicationId::parse("app_1").unwrap()));
+        let scoped = caller.with_application_scope(ApplicationScope::Only(HashSet::from([
+            ApplicationId::parse("app_1").unwrap(),
+        ])));
+        assert!(scoped.allows_application(&ApplicationId::parse("app_1").unwrap()));
+        assert!(!scoped.allows_application(&ApplicationId::parse("app_2").unwrap()));
     }
 
     #[test]
@@ -248,12 +250,12 @@ mod tests {
             &system,
             "platform:iam:user:create"
         ));
-        assert!(system.allows_application("app_any"));
+        assert!(system.allows_application(&ApplicationId::parse("app_any").unwrap()));
         assert_eq!(system.accessible_clients(), ["*".to_string()]);
         assert!(checks::require_anchor_scope(&system).is_ok());
         assert!(checks::can_update_clients(&system).is_ok());
         // An application scope can't narrow it.
         let still = system.with_application_scope(ApplicationScope::Only(HashSet::new()));
-        assert!(still.allows_application("app_any"));
+        assert!(still.allows_application(&ApplicationId::parse("app_any").unwrap()));
     }
 }

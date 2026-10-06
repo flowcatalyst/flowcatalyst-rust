@@ -1,11 +1,10 @@
 //! OpenAPI spec entity. Pure data — no sqlx.
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ApplicationOpenApiSpecId;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
-
-use fc_platform_core::shared::tsid;
-use fc_platform_core::shared::tsid::EntityType;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -56,8 +55,8 @@ impl ChangeNotes {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenApiSpec {
-    pub id: String,
-    pub application_id: String,
+    pub id: ApplicationOpenApiSpecId,
+    pub application_id: ApplicationId,
     pub version: String,
     pub status: OpenApiSpecStatus,
     pub spec: serde_json::Value,
@@ -75,15 +74,15 @@ pub struct OpenApiSpec {
 
 impl OpenApiSpec {
     pub fn new(
-        application_id: impl Into<String>,
+        application_id: ApplicationId,
         version: impl Into<String>,
         spec: serde_json::Value,
         spec_hash: impl Into<String>,
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: tsid::generate(EntityType::ApplicationOpenApiSpec),
-            application_id: application_id.into(),
+            id: ApplicationOpenApiSpecId::generate(),
+            application_id,
             version: version.into(),
             status: OpenApiSpecStatus::Current,
             spec,
@@ -110,9 +109,14 @@ mod tests {
 
     #[test]
     fn new_spec_has_oas_prefix_and_current_status() {
-        let s = OpenApiSpec::new("app_X", "1.0.0", serde_json::json!({}), "h");
-        assert!(s.id.starts_with("oas_"));
-        assert_eq!(s.id.len(), 17);
+        let s = OpenApiSpec::new(
+            ApplicationId::parse("app_X").unwrap(),
+            "1.0.0",
+            serde_json::json!({}),
+            "h",
+        );
+        assert!(s.id.as_str().starts_with("oas_"));
+        assert_eq!(s.id.as_str().len(), 17);
         assert_eq!(s.status, OpenApiSpecStatus::Current);
         assert_eq!(s.version, "1.0.0");
     }

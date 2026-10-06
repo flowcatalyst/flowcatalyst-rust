@@ -10,6 +10,7 @@
 use anyhow::Result;
 use axum::{response::Json, routing::get, Router};
 use clap::Parser;
+use fc_platform::shared::id::ApplicationId;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -1551,7 +1552,7 @@ async fn auto_sync_developer_portal(
     unit_of_work: Arc<PgUnitOfWork>,
     event_type_repo: Arc<fc_platform::EventTypeRepository>,
     principal_repo: Arc<fc_platform::PrincipalRepository>,
-    platform_application_id: String,
+    platform_application_id: ApplicationId,
     platform_openapi: serde_json::Value,
 ) -> anyhow::Result<()> {
     use fc_platform::application_openapi_spec::operations::{

@@ -6,6 +6,7 @@
 //! group, and the same `data` (compared as JSON values: `msg_events.data`
 //! is JSONB, so key order and number spelling are not part of it).
 
+use fc_platform::shared::id::ApplicationId;
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
@@ -44,7 +45,7 @@ fn function(
 ) -> Function {
     Function {
         id: id.into(),
-        application_id: "app_1".into(),
+        application_id: ApplicationId::parse("app_1").unwrap(),
         address: FunctionAddress::parse("billing.invoices.create").unwrap(),
         owner,
         runtime,

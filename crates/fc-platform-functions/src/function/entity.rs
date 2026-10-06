@@ -4,6 +4,7 @@
 //! `SecretValue.java`, and the per-key settings `FunctionSettingsRepository`
 //! writes). Plain data and domain rules: no SQL, no driver types.
 
+use fc_platform_core::shared::id::ApplicationId;
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -50,7 +51,7 @@ pub struct FunctionAlias {
 pub struct Function {
     /// `fnc_…`
     pub id: String,
-    pub application_id: String,
+    pub application_id: ApplicationId,
     pub address: FunctionAddress,
     pub owner: FunctionOwner,
     pub runtime: Runtime,
@@ -69,7 +70,7 @@ fn normalise_description(description: Option<String>) -> Option<String> {
 impl Function {
     /// A fresh, `ACTIVE` function with no aliases.
     pub fn create(
-        application_id: impl Into<String>,
+        application_id: ApplicationId,
         address: FunctionAddress,
         owner: FunctionOwner,
         runtime: Runtime,
@@ -78,7 +79,7 @@ impl Function {
         let now = Utc::now();
         Function {
             id: tsid::generate(EntityType::Function),
-            application_id: application_id.into(),
+            application_id,
             address,
             owner,
             runtime,
@@ -815,7 +816,7 @@ mod tests {
 
     fn function() -> Function {
         Function::create(
-            "app_1",
+            ApplicationId::parse("app_1").unwrap(),
             FunctionAddress::parse("billing.invoices.create").unwrap(),
             FunctionOwner::Platform,
             Runtime::Wasm,

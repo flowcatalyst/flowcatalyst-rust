@@ -2,6 +2,7 @@
 //!
 //! REST endpoints for role management.
 
+use fc_platform_core::shared::id::ApplicationId;
 use std::sync::Arc;
 
 use axum::{
@@ -115,7 +116,7 @@ impl From<AuthRole> for RoleResponse {
         permissions.sort();
         Self {
             id: r.id,
-            application_id: r.application_id,
+            application_id: r.application_id.map(ApplicationId::into_string),
             name: r.name,
             display_name: r.display_name,
             description: r.description,
@@ -583,7 +584,7 @@ pub async fn get_roles_by_application_id(
 
     let roles = state
         .role_repo
-        .find_by_application_id(&application_id)
+        .find_by_application_id(&ApplicationId::from_wire(application_id))
         .await?;
     let response: Vec<RoleResponse> = roles.into_iter().map(|r| r.into()).collect();
     Ok(Json(response))

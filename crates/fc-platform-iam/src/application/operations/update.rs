@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
+use fc_platform_core::shared::id::ApplicationId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -18,7 +19,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct UpdateApplicationCommand {
     /// Application ID
-    pub id: String,
+    pub id: ApplicationId,
 
     /// Updated name
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -169,7 +170,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = UpdateApplicationCommand {
-            id: "app-123".to_string(),
+            id: ApplicationId::parse("app_123").unwrap(),
             name: Some("Updated Name".to_string()),
             description: None,
             default_base_url: Some("https://new-url.example.com".to_string()),
@@ -180,6 +181,6 @@ mod tests {
         };
 
         let json = serde_json::to_string(&cmd).unwrap();
-        assert!(json.contains("app-123"));
+        assert!(json.contains("app_123"));
     }
 }

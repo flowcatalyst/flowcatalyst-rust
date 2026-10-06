@@ -325,7 +325,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
     // (Go: all_applications false plus one access row).
     let mut sa_principal =
         Principal::new_service(sa.id.to_string(), sa_name.clone(), UserScope::Anchor)
-            .with_application_id(&app_id);
+            .with_application_id(app_id.clone());
     sa_principal.accessible_application_ids = vec![app_id.clone()];
     principal_repo
         .insert(&sa_principal)

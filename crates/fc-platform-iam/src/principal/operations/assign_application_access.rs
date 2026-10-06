@@ -4,6 +4,7 @@
 //! Computes delta (added/removed) and persists via UnitOfWork.
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ApplicationId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -22,7 +23,7 @@ use std::collections::HashSet;
 #[serde(rename_all = "camelCase")]
 pub struct AssignApplicationAccessCommand {
     pub user_id: String,
-    pub application_ids: Vec<String>,
+    pub application_ids: Vec<ApplicationId>,
     /// Sets the all-applications flag; `None` leaves it unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub all_applications: Option<bool>,
@@ -177,7 +178,10 @@ mod tests {
     fn test_command_serialization() {
         let cmd = AssignApplicationAccessCommand {
             user_id: "user-123".to_string(),
-            application_ids: vec!["app-1".to_string(), "app-2".to_string()],
+            application_ids: vec![
+                ApplicationId::parse("app_1").unwrap(),
+                ApplicationId::parse("app_2").unwrap(),
+            ],
             all_applications: Some(false),
         };
         let json = serde_json::to_string(&cmd).unwrap();

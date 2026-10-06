@@ -15,6 +15,7 @@ use crate::function::entity::{Function, FunctionDomain};
 use crate::function::repository::{FunctionRepository, OwnerReach};
 use crate::function::{FunctionAddress, FunctionOwner, Hostname};
 use fc_platform_core::shared::authorization_service::ApplicationScope;
+use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::usecase::UseCaseError;
 
 use fc_platform_core::shared::authorization_service::Authority;
@@ -51,7 +52,7 @@ pub trait FunctionReach {
     /// `Not authorised for application '<code>'`.
     fn check_application_access(
         &self,
-        application_id: &str,
+        application_id: &ApplicationId,
         application_code: &str,
     ) -> Result<(), UseCaseError>;
 
@@ -61,7 +62,7 @@ pub trait FunctionReach {
     /// The application half of the list route's reach: `None` for every
     /// application, else exactly the granted ones (none when empty or
     /// unresolved).
-    fn application_reach(&self) -> Option<Vec<String>>;
+    fn application_reach(&self) -> Option<Vec<ApplicationId>>;
 }
 
 impl FunctionReach for Caller {
@@ -100,7 +101,7 @@ impl FunctionReach for Caller {
 
     fn check_application_access(
         &self,
-        application_id: &str,
+        application_id: &ApplicationId,
         application_code: &str,
     ) -> Result<(), UseCaseError> {
         if self.allows_application(application_id) {
@@ -123,12 +124,12 @@ impl FunctionReach for Caller {
         }
     }
 
-    fn application_reach(&self) -> Option<Vec<String>> {
+    fn application_reach(&self) -> Option<Vec<ApplicationId>> {
         match self.application_scope() {
             Some(ApplicationScope::All) => None,
             None => Some(Vec::new()),
             Some(ApplicationScope::Only(ids)) => {
-                let mut ids: Vec<String> = ids.iter().cloned().collect();
+                let mut ids: Vec<ApplicationId> = ids.iter().cloned().collect();
                 ids.sort();
                 Some(ids)
             }
@@ -196,13 +197,17 @@ pub(crate) mod tests {
         })
         .with_application_scope(match apps {
             None => ApplicationScope::All,
-            Some(ids) => ApplicationScope::Only(ids.iter().map(|a| a.to_string()).collect()),
+            Some(ids) => ApplicationScope::Only(
+                ids.iter()
+                    .map(|a| ApplicationId::parse(*a).unwrap())
+                    .collect(),
+            ),
         })
     }
 
     fn function(owner: FunctionOwner) -> Function {
         Function::create(
-            "app_1",
+            ApplicationId::parse("app_1").unwrap(),
             FunctionAddress::parse("a.b.c").unwrap(),
             owner,
             Runtime::Wasm,
@@ -258,7 +263,7 @@ pub(crate) mod tests {
         let err = client.check_scope_access(None).unwrap_err();
         assert_eq!(err.message(), "anchor scope required for this resource");
         let err = client
-            .check_application_access("app_2", "billing")
+            .check_application_access(&ApplicationId::parse("app_2").unwrap(), "billing")
             .unwrap_err();
         assert_eq!((err.http_status_code(), err.code()), (403, "FORBIDDEN"));
         assert_eq!(err.message(), "Not authorised for application 'billing'");
@@ -275,8 +280,11 @@ pub(crate) mod tests {
             OwnerReach::Clients(vec!["clt_1".into(), "clt_2".into()])
         );
         assert_eq!(
-            caller(UserScope::Client, &["clt_1"], Some(&["b", "a"])).application_reach(),
-            Some(vec!["a".to_string(), "b".to_string()])
+            caller(UserScope::Client, &["clt_1"], Some(&["app_b", "app_a"])).application_reach(),
+            Some(vec![
+                ApplicationId::parse("app_a").unwrap(),
+                ApplicationId::parse("app_b").unwrap()
+            ])
         );
         assert_eq!(
             caller(UserScope::Client, &["clt_1"], None).application_reach(),

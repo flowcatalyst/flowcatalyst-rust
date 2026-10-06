@@ -2,6 +2,7 @@
 //!
 //! REST endpoints for client management.
 
+use fc_platform_core::shared::id::ApplicationId;
 use std::sync::Arc;
 
 use axum::{
@@ -754,7 +755,7 @@ pub async fn get_client_applications(
 
     for app in all_apps {
         applications.push(ClientApplicationResponse {
-            id: app.id.clone(),
+            id: app.id.to_string(),
             code: app.code.clone(),
             name: app.name.clone(),
             description: app.description.clone(),
@@ -799,7 +800,7 @@ pub async fn enable_application(
     let use_case = &state.enable_application_use_case;
 
     let command = EnableApplicationForClientCommand {
-        application_id,
+        application_id: ApplicationId::from_wire(application_id),
         client_id: id,
     };
     let ctx = ExecutionContext::from_auth(&auth.0);
@@ -836,7 +837,7 @@ pub async fn disable_application(
     let use_case = &state.disable_application_use_case;
 
     let command = DisableApplicationForClientCommand {
-        application_id,
+        application_id: ApplicationId::from_wire(application_id),
         client_id: id,
     };
     let ctx = ExecutionContext::from_auth(&auth.0);
@@ -875,7 +876,7 @@ pub async fn update_client_applications(
 
     let command = UpdateClientApplicationsCommand {
         client_id: id,
-        enabled_application_ids: req.enabled_application_ids,
+        enabled_application_ids: ApplicationId::from_wire_all(req.enabled_application_ids),
     };
     let ctx = ExecutionContext::from_auth(&auth.0);
     use_case.run(command, ctx).await.into_result()?;

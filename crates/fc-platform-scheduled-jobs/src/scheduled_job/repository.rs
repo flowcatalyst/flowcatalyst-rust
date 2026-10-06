@@ -10,6 +10,7 @@
 //! Instance + log writes live in `instance_repository.rs` (also infrastructure).
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ApplicationId;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{ScheduledJob, ScheduledJobStatus};
@@ -25,7 +26,7 @@ use fc_platform_core::usecase::Persist;
 struct ScheduledJobRow {
     id: String,
     client_id: Option<String>,
-    application_id: Option<String>,
+    application_id: Option<ApplicationId>,
     code: String,
     name: String,
     description: Option<String>,
@@ -504,7 +505,7 @@ fn push_list_filters(
 #[derive(Debug, Default, Clone)]
 pub struct JobListFilters {
     pub client_ids: Vec<String>,
-    pub application_ids: Vec<String>,
+    pub application_ids: Vec<ApplicationId>,
     pub statuses: Vec<String>,
     pub search: Option<String>,
 }

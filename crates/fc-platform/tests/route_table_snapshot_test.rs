@@ -36,6 +36,7 @@
     reason = "test code: a failed unwrap, expect or panic is a failed test (clippy's test exemption covers #[test] fns and #[cfg(test)] modules, not the helpers of an integration-test crate)"
 )]
 
+use fc_platform::shared::id::ApplicationId;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -151,7 +152,7 @@ fn build_app(static_dir: Option<String>, store: Arc<RecordingStore>) -> (Router,
             well_known_external_base_url: "http://localhost:8080".to_string(),
             password_reset_external_base_url: "http://localhost:8080".to_string(),
         },
-        "app_platform".to_string(),
+        ApplicationId::parse("app_platform").unwrap(),
     );
     let (app, openapi) = router::build(&ctx);
     let app = app.layer(AuthLayer::new(AppState {

@@ -5,6 +5,8 @@
 //! use case through the UnitOfWork.
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ApplicationOpenApiSpecId;
 use sqlx::PgPool;
 
 use super::entity::{ChangeNotes, OpenApiSpec};
@@ -17,8 +19,8 @@ use std::collections::HashMap;
 
 #[derive(sqlx::FromRow)]
 struct OpenApiSpecRow {
-    id: String,
-    application_id: String,
+    id: ApplicationOpenApiSpecId,
+    application_id: ApplicationId,
     version: String,
     status: String,
     spec: serde_json::Value,
@@ -34,7 +36,12 @@ struct OpenApiSpecRow {
 impl TryFrom<OpenApiSpecRow> for OpenApiSpec {
     type Error = PlatformError;
     fn try_from(r: OpenApiSpecRow) -> Result<Self> {
-        let status = decode(&r.status, "app_application_openapi_specs", "status", &r.id)?;
+        let status = decode(
+            &r.status,
+            "app_application_openapi_specs",
+            "status",
+            r.id.as_str(),
+        )?;
         Ok(Self {
             id: r.id,
             application_id: r.application_id,
@@ -61,7 +68,7 @@ const SELECT_COLS: &str = "id, application_id, version, status, spec, spec_hash,
 /// The identifying columns of an application's CURRENT spec.
 #[derive(Debug, Clone)]
 pub struct CurrentSpecRef {
-    pub id: String,
+    pub id: ApplicationOpenApiSpecId,
     pub version: String,
     pub synced_at: DateTime<Utc>,
 }
@@ -81,7 +88,7 @@ impl OpenApiSpecRepository {
 
     pub async fn find_current_by_application(
         &self,
-        application_id: &str,
+        application_id: &ApplicationId,
     ) -> Result<Option<OpenApiSpec>> {
         let row = sqlx::query_as::<_, OpenApiSpecRow>(&format!(
             "SELECT {SELECT_COLS} FROM app_application_openapi_specs \
@@ -98,12 +105,20 @@ impl OpenApiSpecRepository {
     /// without the documents themselves.
     pub async fn find_current_refs_by_applications(
         &self,
-        application_ids: &[String],
-    ) -> Result<HashMap<String, CurrentSpecRef>> {
+        application_ids: &[ApplicationId],
+    ) -> Result<HashMap<ApplicationId, CurrentSpecRef>> {
         if application_ids.is_empty() {
             return Ok(Default::default());
         }
-        let rows = sqlx::query_as::<_, (String, String, String, DateTime<Utc>)>(
+        let rows = sqlx::query_as::<
+            _,
+            (
+                ApplicationId,
+                ApplicationOpenApiSpecId,
+                String,
+                DateTime<Utc>,
+            ),
+        >(
             "SELECT application_id, id, version, synced_at FROM app_application_openapi_specs \
              WHERE application_id = ANY($1) AND status = 'CURRENT'",
         )
@@ -125,7 +140,10 @@ impl OpenApiSpecRepository {
             .collect())
     }
 
-    pub async fn find_all_by_application(&self, application_id: &str) -> Result<Vec<OpenApiSpec>> {
+    pub async fn find_all_by_application(
+        &self,
+        application_id: &ApplicationId,
+    ) -> Result<Vec<OpenApiSpec>> {
         let rows = sqlx::query_as::<_, OpenApiSpecRow>(&format!(
             "SELECT {SELECT_COLS} FROM app_application_openapi_specs \
              WHERE application_id = $1 ORDER BY synced_at DESC"
@@ -142,7 +160,7 @@ impl OpenApiSpecRepository {
     /// version).
     pub async fn exists_by_application_and_version(
         &self,
-        application_id: &str,
+        application_id: &ApplicationId,
         version: &str,
     ) -> Result<bool> {
         let row: (bool,) = sqlx::query_as(
@@ -156,7 +174,7 @@ impl OpenApiSpecRepository {
         Ok(row.0)
     }
 
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<OpenApiSpec>> {
+    pub async fn find_by_id(&self, id: &ApplicationOpenApiSpecId) -> Result<Option<OpenApiSpec>> {
         let row = sqlx::query_as::<_, OpenApiSpecRow>(&format!(
             "SELECT {SELECT_COLS} FROM app_application_openapi_specs WHERE id = $1"
         ))
@@ -169,7 +187,7 @@ impl OpenApiSpecRepository {
 
 impl HasId for OpenApiSpec {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 

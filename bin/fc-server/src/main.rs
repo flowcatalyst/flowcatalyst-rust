@@ -69,6 +69,7 @@
 //! | `FC_ALB_TARGET_PORT` | `8080` | Port for ALB health checks |
 //! | `FC_ALB_DEREGISTRATION_DELAY_SECONDS` | `300` | Longest wait for deregistration to drain |
 
+use fc_platform::shared::id::ApplicationId;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -1041,7 +1042,7 @@ fn build_platform_app(
     repos: &Repositories,
     cors_origins_cache: &Arc<RwLock<HashSet<String>>>,
     _standby_enabled: bool,
-    platform_application_id: String,
+    platform_application_id: ApplicationId,
     rate_limit_store: Arc<dyn RateLimitStore>,
     rate_limit_policies: Arc<RateLimitPolicies>,
     session_ttl_secs: i64,

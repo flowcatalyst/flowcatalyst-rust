@@ -10,6 +10,7 @@
 //! [`PgUnitOfWork::run_as`](fc_platform_core::usecase::PgUnitOfWork::run_as) with this
 //! command.
 
+use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::usecase::AuditMasked;
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +18,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProvisionServiceAccountCommand {
-    pub application_id: String,
+    pub application_id: ApplicationId,
 }
 
 impl AuditMasked for ProvisionServiceAccountCommand {}

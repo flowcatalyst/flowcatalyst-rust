@@ -13,6 +13,7 @@
 //! the other returns an error that the caller can retry.
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ApplicationId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -27,7 +28,7 @@ use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncOpenApiSpecCommand {
-    pub application_id: String,
+    pub application_id: ApplicationId,
     pub application_code: String,
     /// Raw OpenAPI document. The version is read from `info.version`; if the
     /// document doesn't carry one, falls back to the synced-at timestamp so
@@ -75,7 +76,7 @@ impl<U: UnitOfWork> UseCase for SyncOpenApiSpecUseCase<U> {
     type Event = ApplicationOpenApiSpecSynced;
 
     async fn validate(&self, command: &SyncOpenApiSpecCommand) -> Result<(), UseCaseError> {
-        if command.application_id.trim().is_empty() {
+        if command.application_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "APPLICATION_ID_REQUIRED",
                 "Application id is required",
@@ -201,7 +202,7 @@ impl<U: UnitOfWork> SyncOpenApiSpecUseCase<U> {
             version_candidate
         };
         let mut new_spec = OpenApiSpec::new(
-            &command.application_id,
+            command.application_id.clone(),
             &version,
             command.spec.clone(),
             &new_hash,
@@ -244,7 +245,7 @@ mod tests {
     #[test]
     fn command_validates_object_shape() {
         let cmd = SyncOpenApiSpecCommand {
-            application_id: "app_X".into(),
+            application_id: ApplicationId::parse("app_X").unwrap(),
             application_code: "platform".into(),
             spec: serde_json::Value::String("not-an-object".into()),
         };

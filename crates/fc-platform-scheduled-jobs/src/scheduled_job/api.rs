@@ -11,6 +11,7 @@
 //!     and bound to the instance's `client_id`. These bypass the use-case
 //!     layer (see CLAUDE.md infrastructure-processing exemption).
 
+use fc_platform_core::shared::id::ApplicationId;
 use std::sync::Arc;
 
 use axum::{
@@ -326,7 +327,7 @@ impl ScheduledJobResponse {
         Self {
             id: job.id.to_string(),
             client_id: job.client_id.map(ClientId::into_string),
-            application_id: job.application_id,
+            application_id: job.application_id.map(ApplicationId::into_string),
             code: job.code,
             name: job.name,
             description: job.description,
@@ -479,7 +480,7 @@ pub async fn create_scheduled_job(
         name: req.name,
         description: req.description,
         client_id: req.client_id,
-        application_id: req.application_id,
+        application_id: req.application_id.map(ApplicationId::from_wire),
         crons: req.crons,
         timezone: req.timezone,
         payload: req.payload,

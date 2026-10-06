@@ -13,6 +13,7 @@
     reason = "test code: a discarded Result is a deliberate no-op in a test (setup, teardown or a send whose receiver is gone)"
 )]
 
+use fc_platform_core::shared::id::ApplicationId;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -342,7 +343,7 @@ async fn a_secret_value_reaches_neither_the_event_nor_the_audit_row() {
     const MARKER: &str = "sk_live_MARKER_4242";
     let command = secret_command("API_KEY", MARKER);
     let f = Function::create(
-        "app_1",
+        ApplicationId::parse("app_1").unwrap(),
         address(),
         FunctionOwner::Platform,
         Runtime::Wasm,
@@ -620,7 +621,7 @@ fn published_version(f: &Function, signer: Option<SignerIdentity>) -> FunctionVe
 
 fn platform_function() -> Function {
     let mut f = Function::create(
-        "app_1",
+        ApplicationId::parse("app_1").unwrap(),
         address(),
         FunctionOwner::Platform,
         Runtime::Wasm,
@@ -734,7 +735,7 @@ async fn promote_checks_the_alias_name_before_loading_anything() {
 fn alias_events_and_commands() {
     use super::events::{AliasChanged, AliasRemoved};
     let mut f = Function::create(
-        "app_1",
+        ApplicationId::parse("app_1").unwrap(),
         address(),
         FunctionOwner::Platform,
         Runtime::Wasm,

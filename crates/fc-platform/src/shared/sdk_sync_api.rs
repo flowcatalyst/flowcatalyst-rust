@@ -974,7 +974,7 @@ pub(super) async fn sync_openapi(
     {
         Ok(event) => Ok(Json(SyncOpenApiSpecResponse {
             application_code: event.application_code,
-            spec_id: event.spec_id,
+            spec_id: event.spec_id.into_string(),
             version: event.version,
             status: if event.unchanged {
                 "UNCHANGED".to_string()

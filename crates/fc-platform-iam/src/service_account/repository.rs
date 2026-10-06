@@ -6,6 +6,7 @@
 //! This matches the TypeScript implementation.
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ApplicationId;
 use sqlx::PgPool;
 
 use crate::service_account::entity::{AccountRow, ServiceAccount};
@@ -35,7 +36,7 @@ struct PrincipalRow {
     principal_type: String,
     scope: Option<String>,
     client_id: Option<String>,
-    application_id: Option<String>,
+    application_id: Option<ApplicationId>,
     name: String,
     active: bool,
     service_account_id: Option<String>,
@@ -86,7 +87,7 @@ struct ClientGrantRow {
 #[derive(sqlx::FromRow)]
 struct ApplicationGrantRow {
     principal_id: String,
-    application_id: String,
+    application_id: ApplicationId,
 }
 
 /// What hydration loads per principal besides the row itself.
@@ -94,7 +95,7 @@ struct ApplicationGrantRow {
 struct Grants {
     roles: Vec<RoleAssignment>,
     clients: Vec<String>,
-    applications: Vec<String>,
+    applications: Vec<ApplicationId>,
 }
 
 /// Row mapping for iam_principal_roles junction table
@@ -300,7 +301,10 @@ impl ServiceAccountRepository {
     }
 
     /// Find service accounts by application ID.
-    pub async fn find_by_application(&self, application_id: &str) -> Result<Vec<ServiceAccount>> {
+    pub async fn find_by_application(
+        &self,
+        application_id: &ApplicationId,
+    ) -> Result<Vec<ServiceAccount>> {
         let principals = sqlx::query_as::<_, PrincipalRow>(
             "SELECT id, type, scope, client_id, application_id, name, active, \
              service_account_id, all_applications, created_at, updated_at \
@@ -316,7 +320,10 @@ impl ServiceAccountRepository {
     /// webhook signing secret (Java `OutboundCredentials.resolve`'s
     /// `signingSecret`, read shallow): the account every delivery to one of
     /// its functions is signed with.
-    pub async fn oldest_active_has_signing_secret(&self, application_id: &str) -> Result<bool> {
+    pub async fn oldest_active_has_signing_secret(
+        &self,
+        application_id: &ApplicationId,
+    ) -> Result<bool> {
         let row: Option<(Option<String>,)> = sqlx::query_as(
             "SELECT wh_signing_secret_ref FROM iam_service_accounts \
              WHERE application_id = $1 AND active = true ORDER BY created_at ASC LIMIT 1",
@@ -333,7 +340,7 @@ impl ServiceAccountRepository {
     /// with. The values are the stored refs, still sealed.
     pub async fn oldest_active_webhook_credentials(
         &self,
-        application_id: &str,
+        application_id: &ApplicationId,
     ) -> Result<Option<StoredWebhookCredentials>> {
         let row = sqlx::query_as::<_, StoredWebhookCredentials>(
             "SELECT code, active, wh_auth_token_ref AS token_ref, \
@@ -351,13 +358,13 @@ impl ServiceAccountRepository {
     /// account).
     pub async fn oldest_active_webhook_credentials_for(
         &self,
-        application_ids: &[String],
-    ) -> Result<HashMap<String, StoredWebhookCredentials>> {
+        application_ids: &[ApplicationId],
+    ) -> Result<HashMap<ApplicationId, StoredWebhookCredentials>> {
         if application_ids.is_empty() {
             return Ok(HashMap::new());
         }
-        let rows: Vec<(String, StoredWebhookCredentials)> =
-            sqlx::query_as::<_, (String, String, bool, Option<String>, Option<String>)>(
+        let rows: Vec<(ApplicationId, StoredWebhookCredentials)> =
+            sqlx::query_as::<_, (ApplicationId, String, bool, Option<String>, Option<String>)>(
                 "SELECT DISTINCT ON (application_id) application_id, code, active, \
              wh_auth_token_ref, wh_signing_secret_ref FROM iam_service_accounts \
              WHERE application_id = ANY($1) AND active = true \
@@ -445,7 +452,12 @@ impl ServiceAccountRepository {
                     r.reference,
                     SigningAccount {
                         code: r.code,
-                        application_id: r.application_id.filter(|a| !a.trim().is_empty()),
+                        // A blank column reads as no application (other implementations
+                        // may write one); anything else is the application it names.
+                        application_id: r
+                            .application_id
+                            .filter(|a| !a.trim().is_empty())
+                            .map(ApplicationId::from_wire),
                         reach,
                     },
                 )
@@ -456,7 +468,7 @@ impl ServiceAccountRepository {
     /// The application the principal acts as: its linked service account's
     /// `application_id` (Java `SigningReach.callerApplicationId`). `None`
     /// for a user, an unknown principal, or an account of no application.
-    pub async fn caller_application_id(&self, principal_id: &str) -> Result<Option<String>> {
+    pub async fn caller_application_id(&self, principal_id: &str) -> Result<Option<ApplicationId>> {
         let row = sqlx::query_as::<_, (Option<String>,)>(
             "SELECT sa.application_id FROM iam_principals p \
              JOIN iam_service_accounts sa ON sa.id = p.service_account_id WHERE p.id = $1",
@@ -466,7 +478,8 @@ impl ServiceAccountRepository {
         .await?;
         Ok(row
             .and_then(|(application_id,)| application_id)
-            .filter(|a| !a.trim().is_empty()))
+            .filter(|a| !a.trim().is_empty())
+            .map(ApplicationId::from_wire))
     }
 
     /// Find service accounts by client ID.
@@ -1017,7 +1030,7 @@ impl ServiceAccountDirectory for ServiceAccountRepository {
             }))
     }
 
-    async fn caller_application_id(&self, principal_id: &str) -> Result<Option<String>> {
+    async fn caller_application_id(&self, principal_id: &str) -> Result<Option<ApplicationId>> {
         ServiceAccountRepository::caller_application_id(self, principal_id).await
     }
 
@@ -1028,7 +1041,10 @@ impl ServiceAccountDirectory for ServiceAccountRepository {
         ServiceAccountRepository::find_signing_accounts(self, references).await
     }
 
-    async fn oldest_active_has_signing_secret(&self, application_id: &str) -> Result<bool> {
+    async fn oldest_active_has_signing_secret(
+        &self,
+        application_id: &ApplicationId,
+    ) -> Result<bool> {
         ServiceAccountRepository::oldest_active_has_signing_secret(self, application_id).await
     }
 }

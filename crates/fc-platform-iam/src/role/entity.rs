@@ -3,6 +3,7 @@
 //! Authorization model for role-based access control.
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::shared::tsid;
 use fc_platform_core::shared::tsid::EntityType;
 use serde::{Deserialize, Serialize};
@@ -77,7 +78,7 @@ pub struct AuthRole {
 
     /// Application ID reference (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub application_id: Option<String>,
+    pub application_id: Option<ApplicationId>,
 
     /// Full role name with application prefix (e.g., "platform:admin")
     /// Maps to `name` column in iam_roles table

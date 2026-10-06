@@ -8,6 +8,7 @@
 use crate::permissions;
 use crate::principal_kind::{PrincipalType, UserScope};
 use crate::shared::error::{PlatformError, Result};
+use crate::shared::id::ApplicationId;
 use std::collections::HashSet;
 use std::result;
 
@@ -185,13 +186,13 @@ pub const IDENTITY_TOKEN_NOT_API_CREDENTIAL: &str = "this access token was issue
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct PrincipalApplicationBinding {
     pub all_applications: bool,
-    pub granted_application_ids: Vec<String>,
+    pub granted_application_ids: Vec<ApplicationId>,
 }
 
 /// What an application-scope check needs of an application: its id. The
 /// `Application` aggregate (fc-platform-iam) implements it.
 pub trait ScopedApplication {
-    fn application_id(&self) -> &str;
+    fn application_id(&self) -> &ApplicationId;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -199,7 +200,7 @@ pub enum ApplicationScope {
     /// Every application, present and future.
     All,
     /// Only these application ids.
-    Only(HashSet<String>),
+    Only(HashSet<ApplicationId>),
 }
 
 impl ApplicationScope {
@@ -219,7 +220,7 @@ impl ApplicationScope {
         }
     }
 
-    pub fn allows(&self, application_id: &str) -> bool {
+    pub fn allows(&self, application_id: &ApplicationId) -> bool {
         match self {
             Self::All => true,
             Self::Only(ids) => ids.contains(application_id),

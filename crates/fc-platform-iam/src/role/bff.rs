@@ -240,7 +240,7 @@ pub async fn get_filter_applications(
     let options = apps
         .into_iter()
         .map(|a| BffApplicationOption {
-            id: a.id,
+            id: a.id.into_string(),
             code: a.code,
             name: a.name,
         })

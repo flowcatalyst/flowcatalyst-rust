@@ -4,6 +4,7 @@
 //! Assigned clients are loaded from iam_client_access_grants.
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ApplicationId;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{ExternalIdentity, Principal, PrincipalType, UserIdentity, UserScope};
@@ -33,7 +34,7 @@ struct PrincipalRow {
     principal_type: String,
     scope: Option<String>,
     client_id: Option<String>,
-    application_id: Option<String>,
+    application_id: Option<ApplicationId>,
     name: String,
     active: bool,
     email: Option<String>,
@@ -159,7 +160,7 @@ struct ClientIdentifierRow {
 #[derive(sqlx::FromRow)]
 struct PrincipalApplicationAccessRow {
     principal_id: String,
-    application_id: String,
+    application_id: ApplicationId,
     /// The application's code; NULL when the application row is gone (the
     /// junction has no FK), as Go's LEFT JOIN reads it.
     application_code: Option<String>,
@@ -486,7 +487,10 @@ impl PrincipalRepository {
         self.hydrate_principals(rows).await
     }
 
-    pub async fn find_by_application(&self, application_id: &str) -> Result<Vec<Principal>> {
+    pub async fn find_by_application(
+        &self,
+        application_id: &ApplicationId,
+    ) -> Result<Vec<Principal>> {
         let rows = sqlx::query_as::<_, PrincipalRow>(
             "SELECT * FROM iam_principals WHERE application_id = $1",
         )
@@ -584,7 +588,7 @@ impl PrincipalRepository {
             let count = principal.accessible_application_ids.len();
             let principal_ids: Vec<String> =
                 iter::repeat_n(principal.id.to_string(), count).collect();
-            let app_ids: Vec<String> = principal.accessible_application_ids.clone();
+            let app_ids: Vec<ApplicationId> = principal.accessible_application_ids.clone();
             let granted_ats: Vec<DateTime<Utc>> = iter::repeat_n(now, count).collect();
 
             sqlx::query(
@@ -874,8 +878,8 @@ impl PrincipalRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        let mut app_access_map: HashMap<String, Vec<String>> = HashMap::new();
-        let mut app_code_map: HashMap<String, String> = HashMap::new();
+        let mut app_access_map: HashMap<String, Vec<ApplicationId>> = HashMap::new();
+        let mut app_code_map: HashMap<ApplicationId, String> = HashMap::new();
         for a in all_app_access {
             if let Some(code) = a.application_code.filter(|c| !c.is_empty()) {
                 app_code_map.insert(a.application_id.clone(), code);

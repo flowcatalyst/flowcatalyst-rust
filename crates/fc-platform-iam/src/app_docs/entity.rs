@@ -1,6 +1,7 @@
 //! Application documentation pages.
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ApplicationId;
 
 use fc_platform_core::usecase::unit_of_work::HasId;
 
@@ -8,7 +9,7 @@ use fc_platform_core::usecase::unit_of_work::HasId;
 #[derive(Debug, Clone, PartialEq)]
 pub struct AppDoc {
     pub id: String,
-    pub application_id: String,
+    pub application_id: ApplicationId,
     pub slug: String,
     pub title: String,
     pub content: String,
@@ -21,14 +22,14 @@ pub struct AppDoc {
 /// order) is written, every other page of the application is removed.
 #[derive(Debug, Clone)]
 pub struct AppDocsReplacement {
-    pub application_id: String,
+    pub application_id: ApplicationId,
     pub docs: Vec<AppDoc>,
     pub removed_slugs: Vec<String>,
 }
 
 impl HasId for AppDocsReplacement {
     fn id(&self) -> &str {
-        &self.application_id
+        self.application_id.as_str()
     }
 }
 

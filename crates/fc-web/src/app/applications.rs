@@ -26,6 +26,7 @@ use fc_platform::application::operations::{
     CreateApplicationUseCase, UpdateApplicationCommand, UpdateApplicationUseCase,
 };
 use fc_platform::auth::operations::CreateOAuthClientUseCase;
+use fc_platform::shared::id::ApplicationId;
 use fc_platform::usecase::UseCase;
 use fc_platform::{
     Application, ApplicationType, AuthContext, ExecutionContext, PlatformError, checks, permissions,
@@ -276,11 +277,11 @@ async fn application_list(cx: &Cx, open_id: String, overlay: Overlay) -> Result<
                         <tr><td colspan="7">"No applications found"</td></tr>
                     }
                     for app in &rows {
-                        let id = app.id.clone();
-                        let edit_id = app.id.clone();
+                        let id = app.id.to_string();
+                        let edit_id = app.id.to_string();
                         <tr class="fc-row-link" @click=$(|_e: Event| { selected.set(id.clone()); editing.set(false) })>
                             <td>
-                                <a href=(detail_href(&app.id)) onclick="event.preventDefault()" class="no-underline">
+                                <a href=(detail_href(app.id.as_str())) onclick="event.preventDefault()" class="no-underline">
                                     <code class="rounded bg-[#f1f5f9] px-2 py-0.5 text-[13px] text-[#1e293b]">(&app.code)</code>
                                 </a>
                             </td>
@@ -291,7 +292,7 @@ async fn application_list(cx: &Cx, open_id: String, overlay: Overlay) -> Result<
                             <td>local_date(at: app.created_at)</td>
                             <td>
                                 <a
-                                    href=(format!("{}?edit=true", detail_href(&app.id)))
+                                    href=(format!("{}?edit=true", detail_href(app.id.as_str())))
                                     class="fc-icon-btn text-[#059669]"
                                     title="Edit"
                                     onclick="event.preventDefault(); event.stopPropagation()"
@@ -335,7 +336,7 @@ async fn application_drawer(cx: &Cx, id: String, editing: Signal<bool>) -> Resul
         let deps = crate::deps(cx);
         let app = deps
             .application_repo
-            .find_by_id(&id)
+            .find_by_id(&ApplicationId::from_wire(id.as_str()))
             .await
             .map_err(platform_error)?
             .ok_or_not_found()?;
@@ -367,7 +368,7 @@ async fn drawer_body(
         anchor && can_update && auth.has_permission(permissions::admin::SERVICE_ACCOUNT_CREATE);
     let can_provision_login =
         anchor && can_update && auth.has_permission(permissions::auth::OAUTH_CLIENT_CREATE);
-    let base = detail_href(&app.id);
+    let base = detail_href(app.id.as_str());
     let form_id = "app-edit-form";
     let (start, discard) = (editing.clone(), editing.clone());
     let logo = app.logo.as_ref().map(|_| {
@@ -408,7 +409,7 @@ async fn drawer_body(
                         // Website and logo are not in the platform's update
                         // command (`UpdateApplicationCommand`), so they are
                         // not offered here.
-                        <form id=(form_id) method="post" action=(format!("{base}/update")) class="fc-form-grid" data-dirty-form="" data-dirty-key=(&app.id) :hidden=$(!editing.get())>
+                        <form id=(form_id) method="post" action=(format!("{base}/update")) class="fc-form-grid" data-dirty-form="" data-dirty-key=(app.id.as_str()) :hidden=$(!editing.get())>
                             form_field(label: "Name", for_id: "app-name", span: true,
                                 <input id="app-name" name="name" class="fc-input" value=(&app.name) required="" maxlength="100">
                             )
@@ -733,7 +734,7 @@ async fn create_application(cx: &Cx, form: Option<Form<CreateForm>>) -> Result<i
         match outcome {
             Ok(id) => {
                 set_flash(cx, FlashKind::Success, "Application created");
-                return Err(see_other(detail_href(&id)).into());
+                return Err(see_other(detail_href(id.as_str())).into());
             }
             Err(e) if e.status_code().is_client_error() => state.error = Some(e.to_string()),
             Err(e) => {
@@ -872,7 +873,7 @@ async fn update(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
         UpdateApplicationUseCase::new(deps.application_repo.clone(), deps.unit_of_work.clone())
             .run(
                 UpdateApplicationCommand {
-                    id: id.clone(),
+                    id: ApplicationId::from_wire(id.clone()),
                     name: Some(form.name),
                     description: non_empty(&form.description),
                     default_base_url: non_empty(&form.default_base_url),
@@ -903,7 +904,9 @@ async fn activate(cx: &Cx) -> Result<SeeOther> {
     let outcome =
         ActivateApplicationUseCase::new(deps.application_repo.clone(), deps.unit_of_work.clone())
             .run(
-                ActivateApplicationCommand { id: id.clone() },
+                ActivateApplicationCommand {
+                    id: ApplicationId::from_wire(id.clone()),
+                },
                 ExecutionContext::from_auth(auth),
             )
             .await
@@ -928,7 +931,7 @@ async fn deactivate(cx: &Cx) -> Result<SeeOther> {
         &deps.service_account_repo,
         &deps.oauth_client_repo,
         &deps.application_repo,
-        &id,
+        &ApplicationId::from_wire(id.clone()),
         auth,
     )
     .await;
@@ -949,7 +952,7 @@ async fn delete(cx: &Cx) -> Result<SeeOther> {
         &deps.unit_of_work,
         &deps.service_account_repo,
         &deps.application_repo,
-        &id,
+        &ApplicationId::from_wire(id.clone()),
         auth,
     )
     .await;
@@ -998,7 +1001,7 @@ async fn provision_service_account(cx: &Cx) -> Result<impl View> {
         &deps.service_account_repo,
         &deps.client_repo,
         &deps.oauth_client_repo,
-        &id,
+        &ApplicationId::from_wire(id.clone()),
         auth,
     )
     .await
@@ -1044,7 +1047,7 @@ async fn provision_login_client(cx: &Cx, Form(form): Form<LoginClientForm>) -> R
         &CreateOAuthClientUseCase::new(deps.oauth_client_repo.clone(), deps.unit_of_work.clone()),
         &deps.application_repo,
         &deps.oauth_client_repo,
-        &id,
+        &ApplicationId::from_wire(id.clone()),
         auth,
         ProvisionLoginClientRequest {
             client_type: non_empty(&form.client_type),

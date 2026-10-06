@@ -429,7 +429,7 @@ pub fn applications_claim(principal: &Principal) -> Vec<String> {
         .iter()
         .map(|id| match principal.application_code_map.get(id) {
             Some(code) if !code.is_empty() => format!("{id}:{code}"),
-            _ => id.clone(),
+            _ => id.to_string(),
         })
         .collect()
 }
@@ -1393,6 +1393,7 @@ mod tests {
     use crate::portal::entity::IdentitySource;
     use crate::principal::entity::Principal;
     use fc_platform_core::principal_kind::{PrincipalType, UserScope};
+    use fc_platform_core::shared::id::ApplicationId;
     use fc_platform_core::shared::id::{ClientId, PrincipalId};
 
     use base64::engine::general_purpose;
@@ -1424,9 +1425,12 @@ mod tests {
         p.assign_role("hr:manager");
         p.assign_role("platform:viewer");
         p.all_applications = false;
-        p.accessible_application_ids = vec!["app_1".to_string(), "app_2".to_string()];
+        p.accessible_application_ids = vec![
+            ApplicationId::parse("app_1").unwrap(),
+            ApplicationId::parse("app_2").unwrap(),
+        ];
         p.application_code_map
-            .insert("app_1".to_string(), "hr".to_string());
+            .insert(ApplicationId::parse("app_1").unwrap(), "hr".to_string());
         p.updated_at = chrono::DateTime::from_timestamp(1_750_000_000, 0).unwrap();
         p
     }

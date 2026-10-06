@@ -7,6 +7,7 @@
 //! `client_secret_ref`.
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ApplicationId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -34,7 +35,7 @@ pub struct CreateOAuthClientCommand {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub default_scopes: Vec<String>,
     pub pkce_required: bool,
-    pub application_ids: Vec<String>,
+    pub application_ids: Vec<ApplicationId>,
     pub allowed_origins: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_account_principal_id: Option<String>,

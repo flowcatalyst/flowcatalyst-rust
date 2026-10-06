@@ -14,6 +14,9 @@
 //! written by Go, so these must not drift from it.
 
 use chrono::{DateTime, TimeZone, Utc};
+use fc_platform_core::shared::id::AppClientConfigId;
+use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ApplicationOpenApiSpecId;
 use serde::Serialize;
 
 use fc_platform_core::shared::id::{EventTypeId, PrincipalId, ServiceAccountId};
@@ -150,7 +153,12 @@ fn s(v: &[&str]) -> Vec<String> {
 
 #[test]
 fn application_created() {
-    let e = fixed!(ApplicationCreated::new(&ctx(), "app_1", "orders", "Orders"));
+    let e = fixed!(ApplicationCreated::new(
+        &ctx(),
+        &ApplicationId::parse("app_1").unwrap(),
+        "orders",
+        "Orders"
+    ));
     check(&e, EXPECTED_APPLICATION_CREATED);
 }
 
@@ -158,15 +166,15 @@ fn application_created() {
 #[test]
 fn application_client_config_updated() {
     let command = UpdateApplicationClientConfigCommand {
-        application_id: "app_1".to_string(),
+        application_id: ApplicationId::parse("app_1").unwrap(),
         client_id: "clt_1".to_string(),
         enabled: Some(true),
         base_url_override: None,
         config: None,
     };
     let config = ApplicationClientConfig {
-        id: "acc_1".to_string(),
-        application_id: "app_1".to_string(),
+        id: AppClientConfigId::from_wire("acc_1"),
+        application_id: ApplicationId::parse("app_1").unwrap(),
         client_id: "clt_1".to_string(),
         enabled: true,
         base_url_override: None,
@@ -186,16 +194,21 @@ fn application_client_config_updated() {
 #[test]
 fn application_openapi_spec_synced() {
     let mut spec = OpenApiSpec::new(
-        "app_1",
+        ApplicationId::parse("app_1").unwrap(),
         "1.2.0",
         serde_json::json!({"openapi": "3.1.0"}),
         "sha256:abc",
     );
-    spec.id = "spec_1".to_string();
+    spec.id = ApplicationOpenApiSpecId::from_wire("spec_1");
     let e = fixed!(ApplicationOpenApiSpecSynced {
         archived_prior_version: Some("1.1.0".to_string()),
         has_breaking: true,
-        ..ApplicationOpenApiSpecSynced::new(&ctx(), "app_1", "orders", &spec)
+        ..ApplicationOpenApiSpecSynced::new(
+            &ctx(),
+            &ApplicationId::parse("app_1").unwrap(),
+            "orders",
+            &spec
+        )
     });
     check(&e, EXPECTED_APPLICATION_OPENAPI_SPEC_SYNCED);
 }
@@ -773,7 +786,7 @@ fn service_account_commands_persist_no_generated_credentials() {
         description: None,
         scope: Some(UserScope::Client),
         client_ids: s(&["clt_1"]),
-        application_id: Some("app_1".to_string()),
+        application_id: Some(ApplicationId::parse("app_1").unwrap()),
         all_applications: false,
     };
     let result = CreateServiceAccountResult {

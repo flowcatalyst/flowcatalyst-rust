@@ -75,6 +75,31 @@ impl<K: IdKind> Id<K> {
     }
 }
 
+impl<K> Id<K> {
+    /// `value` as an id of this kind, **without** checking its prefix.
+    ///
+    /// For the edge only: a handler turning an id a client sent (a path
+    /// parameter, a body field) into the typed id its use case takes. Such a
+    /// value used to flow on as a `String` and, if malformed, simply matched no
+    /// row (a 404, or the use case's own validation error); this keeps that
+    /// behaviour exactly, where `parse` would have to invent a new error. A value
+    /// that did not come from a client takes `parse` or `generate`, and ids read
+    /// from the database are checked by `Decode`.
+    pub fn from_wire(value: impl Into<String>) -> Self {
+        Self(value.into(), PhantomData)
+    }
+
+    /// [`Id::from_wire`] for each of `values`, in order.
+    pub fn from_wire_all<S: Into<String>>(values: impl IntoIterator<Item = S>) -> Vec<Self> {
+        values.into_iter().map(Self::from_wire).collect()
+    }
+
+    /// `ids` as the plain strings a wire response carries, in order.
+    pub fn into_strings(ids: impl IntoIterator<Item = Self>) -> Vec<String> {
+        ids.into_iter().map(Self::into_string).collect()
+    }
+}
+
 /// `Option<Id<K>>` as `Option<&str>`, where `Option<String>` has `as_deref`.
 pub trait OptionIdExt {
     fn as_id_str(&self) -> Option<&str>;

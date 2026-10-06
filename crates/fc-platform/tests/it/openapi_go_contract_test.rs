@@ -14,6 +14,7 @@
 //! `OPENAPI_DUMP=<file>` writes the document for tooling (`just regen-sdks`
 //! diffs, `docs/sdks.md` measurements).
 
+use fc_platform::shared::id::ApplicationId;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -77,7 +78,7 @@ fn rust_document() -> Value {
             well_known_external_base_url: "http://localhost".to_string(),
             password_reset_external_base_url: "http://localhost".to_string(),
         },
-        "app_platform".to_string(),
+        ApplicationId::parse("app_platform").unwrap(),
     );
     let (_router, openapi) = router::build(&ctx);
     serde_json::to_value(&openapi).expect("serialise document")

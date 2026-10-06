@@ -12,6 +12,7 @@
 //! AggregateRoutes`, builds its own `*State` from the context, and returns
 //! its routes at their full paths; `router::build` merges them.
 
+use fc_platform_core::shared::id::ApplicationId;
 use std::sync::Arc;
 
 use axum::Router;
@@ -85,7 +86,7 @@ pub struct PlatformContext {
     pub unit_of_work: Arc<PgUnitOfWork>,
     pub config: PlatformRoutesConfig,
     /// The seeded `code='platform'` application row.
-    pub platform_application_id: String,
+    pub platform_application_id: ApplicationId,
 
     /// `FLOWCATALYST_APP_KEY`'s encryption service (`None` when unset).
     pub encryption: Option<Arc<EncryptionService>>,
@@ -133,7 +134,7 @@ impl PlatformContext {
         auth: &AuthServices,
         unit_of_work: &Arc<PgUnitOfWork>,
         config: PlatformRoutesConfig,
-        platform_application_id: String,
+        platform_application_id: ApplicationId,
     ) -> Self {
         let email_service: Arc<dyn EmailService> = Arc::from(email_service::create_email_service());
         let password_reset_emailer = Arc::new(PasswordResetEmailer {

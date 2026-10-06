@@ -7,6 +7,7 @@
 //! both surfaces enforce the same rules and write through the same use
 //! cases.
 
+use fc_platform_core::shared::id::ApplicationId;
 use std::collections::HashSet;
 
 use crate::application::entity::Application;
@@ -913,13 +914,13 @@ pub async fn application_access(
 /// (one batch read); an id with no application is skipped (Go
 /// `resolveApplications`).
 fn access_rows(
-    ids: &[String],
-    apps: &HashMap<String, Application>,
+    ids: &[ApplicationId],
+    apps: &HashMap<ApplicationId, Application>,
 ) -> Vec<ApplicationAccessResponse> {
     ids.iter()
         .filter_map(|id| apps.get(id))
         .map(|app| ApplicationAccessResponse {
-            application_id: app.id.clone(),
+            application_id: app.id.to_string(),
             application_code: app.code.clone(),
             application_name: app.name.clone(),
         })
@@ -956,10 +957,17 @@ pub async fn set_application_access(
     // A client administrator grants only applications the target's client is
     // entitled to, and its SET keeps the grants outside that reach (Go
     // `assignApplicationAccess`, principal/api/api.go:1183-1249).
-    let mut req = req;
+    // The grant set as typed ids: a malformed one fails the existence check
+    // below (APPLICATION not found), as before.
+    let mut application_ids: Vec<ApplicationId> = req
+        .application_ids
+        .iter()
+        .cloned()
+        .map(ApplicationId::from_wire)
+        .collect();
     if !ctx.is_anchor() {
         let allowed = client_application_ids(state, principal.client_id.as_id_str()).await?;
-        if let Some(app_id) = req.application_ids.iter().find(|a| !allowed.contains(*a)) {
+        if let Some(app_id) = application_ids.iter().find(|a| !allowed.contains(*a)) {
             return Err(PlatformError::forbidden_code(
                 "APP_FORBIDDEN",
                 format!("application the client cannot access: {app_id}"),
@@ -970,19 +978,16 @@ pub async fn set_application_access(
             .iter()
             .filter(|a| !allowed.contains(*a))
         {
-            if !req.application_ids.contains(kept) {
-                req.application_ids.push(kept.clone());
+            if !application_ids.contains(kept) {
+                application_ids.push(kept.clone());
             }
         }
     }
 
     // Validate applications exist and are active (kept in handler for 400
     // mapping), all of them in one query; the rows also answer below.
-    let apps = state
-        .application_repo
-        .find_by_ids(&req.application_ids)
-        .await?;
-    for app_id in &req.application_ids {
+    let apps = state.application_repo.find_by_ids(&application_ids).await?;
+    for app_id in &application_ids {
         match apps.get(app_id) {
             Some(app) if !app.active => {
                 return Err(PlatformError::validation(format!(
@@ -1000,18 +1005,14 @@ pub async fn set_application_access(
         }
     }
 
-    let old_set: HashSet<&str> = principal
-        .accessible_application_ids
-        .iter()
-        .map(|s| s.as_str())
-        .collect();
-    let new_set: HashSet<&str> = req.application_ids.iter().map(|s| s.as_str()).collect();
+    let old_set: HashSet<&ApplicationId> = principal.accessible_application_ids.iter().collect();
+    let new_set: HashSet<&ApplicationId> = application_ids.iter().collect();
     let added_count = new_set.difference(&old_set).count();
     let removed_count = old_set.difference(&new_set).count();
 
     let cmd = AssignApplicationAccessCommand {
         user_id: id.to_string(),
-        application_ids: req.application_ids.clone(),
+        application_ids: application_ids.clone(),
         all_applications: req.all_applications,
     };
     let mut exec = ExecutionContext::from_auth(ctx);
@@ -1025,7 +1026,7 @@ pub async fn set_application_access(
         .into_result()?;
     state.app_access.forget(id);
 
-    let applications = access_rows(&req.application_ids, &apps);
+    let applications = access_rows(&application_ids, &apps);
 
     Ok(SetApplicationAccessResponse {
         applications,
@@ -1063,7 +1064,7 @@ pub async fn available_applications(
     // is bounded to the applications the target's client has enabled.
     let mut apps = state.application_repo.find_active().await?;
     if !ctx.is_anchor() {
-        let allowed: HashSet<String> = match principal.client_id.as_id_str() {
+        let allowed: HashSet<ApplicationId> = match principal.client_id.as_id_str() {
             Some(cid) => state
                 .app_client_config_repo
                 .find_by_client(cid)

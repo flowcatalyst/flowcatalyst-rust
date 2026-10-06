@@ -145,7 +145,10 @@ impl DomainEvent for RecordedEvent {
 /// to a nil slice (never `make`) is `null` when nothing was appended. Use as
 /// `#[serde(serialize_with = "crate::usecase::domain_event::null_if_empty")]`
 /// on exactly those fields, so the persisted `data` matches Go's.
-pub fn null_if_empty<S: serde::Serializer>(v: &[String], s: S) -> Result<S::Ok, S::Error> {
+pub fn null_if_empty<T: serde::Serialize, S: serde::Serializer>(
+    v: &[T],
+    s: S,
+) -> Result<S::Ok, S::Error> {
     if v.is_empty() {
         s.serialize_none()
     } else {

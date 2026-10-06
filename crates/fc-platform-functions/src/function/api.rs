@@ -245,7 +245,7 @@ impl FunctionResponse {
             application_code: f.address.application().to_string(),
             service_name: f.address.service().to_string(),
             name: f.address.name().to_string(),
-            application_id: f.application_id.clone(),
+            application_id: f.application_id.to_string(),
             client_id: f.owner.client_id_or_none().map(str::to_string),
             runtime: f.runtime.wire_value().to_string(),
             description: f.description.clone(),

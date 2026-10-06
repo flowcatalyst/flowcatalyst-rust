@@ -1,6 +1,7 @@
 //! `app_docs` repository (Go `appdocs/appdocs.go`).
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ApplicationId;
 use sqlx::PgPool;
 
 use super::entity::{AppDoc, AppDocsReplacement};
@@ -12,7 +13,7 @@ use fc_platform_core::usecase::Persist;
 #[derive(sqlx::FromRow)]
 struct AppDocRow {
     id: String,
-    application_id: String,
+    application_id: ApplicationId,
     slug: String,
     title: String,
     content: String,
@@ -39,7 +40,7 @@ impl From<AppDocRow> for AppDoc {
 /// A page's listing entry.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct AppDocSummary {
-    pub application_id: String,
+    pub application_id: ApplicationId,
     pub slug: String,
     pub title: String,
 }
@@ -54,7 +55,10 @@ impl AppDocsRepository {
     }
 
     /// An application's page slugs.
-    pub async fn slugs_for_application(&self, application_id: &str) -> Result<Vec<String>> {
+    pub async fn slugs_for_application(
+        &self,
+        application_id: &ApplicationId,
+    ) -> Result<Vec<String>> {
         let rows: Vec<(String,)> =
             sqlx::query_as("SELECT slug FROM app_docs WHERE application_id = $1")
                 .bind(application_id)
@@ -75,7 +79,7 @@ impl AppDocsRepository {
     }
 
     /// One page (Go `Get`).
-    pub async fn find(&self, application_id: &str, slug: &str) -> Result<Option<AppDoc>> {
+    pub async fn find(&self, application_id: &ApplicationId, slug: &str) -> Result<Option<AppDoc>> {
         let row = sqlx::query_as::<_, AppDocRow>(
             "SELECT id, application_id, slug, title, content, position, created_at, updated_at \
              FROM app_docs WHERE application_id = $1 AND slug = $2",

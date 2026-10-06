@@ -7,6 +7,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use fc_platform_core::shared::id::ApplicationId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
@@ -224,7 +225,7 @@ impl From<OAuthClient> for OAuthClientResponse {
                 .collect(),
             default_scopes: c.default_scopes,
             pkce_required: c.pkce_required,
-            application_ids: c.application_ids,
+            application_ids: ApplicationId::into_strings(c.application_ids),
             applications: Vec::new(),
             allowed_origins: c.allowed_origins,
             service_account_principal_id: c.service_account_principal_id,
@@ -251,13 +252,14 @@ async fn fill_application_refs(
     apps: &ApplicationRepository,
     responses: &mut [OAuthClientResponse],
 ) -> Result<(), PlatformError> {
-    let mut ids: Vec<String> = responses
+    let mut ids: Vec<ApplicationId> = responses
         .iter()
         .flat_map(|r| {
             r.application_ids
                 .iter()
                 .filter(|id| !id.is_empty())
                 .cloned()
+                .map(ApplicationId::from_wire)
         })
         .collect();
     ids.sort();
@@ -269,7 +271,10 @@ async fn fill_application_refs(
             .iter()
             .map(|id| OAuthClientApplicationRef {
                 id: id.clone(),
-                name: names.get(id).cloned().unwrap_or_else(|| id.clone()),
+                name: names
+                    .get(&ApplicationId::from_wire(id.as_str()))
+                    .cloned()
+                    .unwrap_or_else(|| id.clone()),
             })
             .collect();
     }
@@ -462,7 +467,7 @@ pub async fn create_oauth_client(
         default_scopes: req.default_scopes,
         // Go's entity default is `true` for both types.
         pkce_required: req.pkce_required.unwrap_or(true),
-        application_ids: req.application_ids,
+        application_ids: ApplicationId::from_wire_all(req.application_ids),
         allowed_origins: req.allowed_origins,
         service_account_principal_id,
         created_by: Some(auth.0.principal_id.clone()),
@@ -606,7 +611,7 @@ pub async fn update_oauth_client(
             .map(parse_grant_types)
             .transpose()?,
         pkce_required: req.pkce_required,
-        application_ids: req.application_ids,
+        application_ids: req.application_ids.map(ApplicationId::from_wire_all),
         allowed_origins: req.allowed_origins,
         active: req.active,
         portal_client_id,

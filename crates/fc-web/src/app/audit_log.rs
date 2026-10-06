@@ -109,7 +109,7 @@ async fn names(
     )
     .map_err(platform_error)?;
     Ok((
-        apps.into_iter().map(|a| (a.id, a.name)).collect(),
+        apps.into_iter().map(|a| (a.id.into_string(), a.name)).collect(),
         clients
             .into_iter()
             .map(|c| (c.id.into_string(), c.name))

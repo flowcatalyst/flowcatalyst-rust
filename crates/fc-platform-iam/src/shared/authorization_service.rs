@@ -361,6 +361,7 @@ impl ApplicationAccess for ApplicationAccessService {
 mod tests {
     use super::*;
     use fc_platform_core::permissions;
+    use fc_platform_core::shared::id::ApplicationId;
 
     fn create_test_context(permissions: Vec<&str>, scope: &str, clients: Vec<&str>) -> AuthContext {
         AuthContext {
@@ -734,7 +735,7 @@ mod tests {
     fn binding(all_applications: bool, granted: &[&str]) -> Option<PrincipalApplicationBinding> {
         Some(PrincipalApplicationBinding {
             all_applications,
-            granted_application_ids: granted.iter().map(|s| s.to_string()).collect(),
+            granted_application_ids: ApplicationId::from_wire_all(granted.iter().copied()),
         })
     }
 
@@ -744,26 +745,29 @@ mod tests {
         // holds for an application's own service account too, as in Go.
         let all = ApplicationScope::from_binding(binding(true, &[]));
         assert_eq!(all, ApplicationScope::All);
-        assert!(all.allows("app_any"));
-        assert!(ApplicationScope::from_binding(binding(true, &["app_1"])).allows("app_2"));
+        assert!(all.allows(&ApplicationId::parse("app_any").unwrap()));
+        assert!(ApplicationScope::from_binding(binding(true, &["app_1"]))
+            .allows(&ApplicationId::parse("app_2").unwrap()));
 
         // Without it (a new or provisioned service account): nothing until
         // granted, then only the grants.
         let none = ApplicationScope::from_binding(binding(false, &[]));
         assert_eq!(none, ApplicationScope::Only(HashSet::new()));
-        assert!(!none.allows("app_any"));
+        assert!(!none.allows(&ApplicationId::parse("app_any").unwrap()));
         let granted = ApplicationScope::from_binding(binding(false, &["app_1", "app_2"]));
-        assert!(granted.allows("app_1"));
-        assert!(granted.allows("app_2"));
-        assert!(!granted.allows("app_3"));
+        assert!(granted.allows(&ApplicationId::parse("app_1").unwrap()));
+        assert!(granted.allows(&ApplicationId::parse("app_2").unwrap()));
+        assert!(!granted.allows(&ApplicationId::parse("app_3").unwrap()));
 
         // No such principal: nothing.
-        assert!(!ApplicationScope::from_binding(None).allows("app_own"));
+        assert!(
+            !ApplicationScope::from_binding(None).allows(&ApplicationId::parse("app_own").unwrap())
+        );
     }
 
     fn app(id: &str, code: &str, service_account_id: Option<&str>) -> Application {
         let mut app = Application::new(code, code);
-        app.id = id.to_string();
+        app.id = ApplicationId::parse(id).unwrap();
         app.service_account_id = service_account_id.map(String::from);
         app
     }
@@ -773,7 +777,7 @@ mod tests {
         let own = ApplicationScope::from_binding(binding(false, &["app_a"]));
 
         let ok = checks::require_application_access(&own, "a", Some(app("app_a", "a", None)));
-        assert_eq!(ok.expect("granted application").id, "app_a");
+        assert_eq!(ok.expect("granted application").id.as_str(), "app_a");
 
         let out_of_scope =
             checks::require_application_access(&own, "b", Some(app("app_b", "b", None)))

@@ -12,6 +12,7 @@ use axum::{
     extract::{Path, State},
     Json,
 };
+use fc_platform_core::shared::id::ApplicationId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -98,15 +99,16 @@ pub async fn list_docs(
     checks::require_permission(&auth.0, permissions::admin::DOCS_READ)?;
     let (summaries, apps) =
         tokio::try_join!(state.repo.summaries(), state.application_repo.find_all())?;
-    let apps: HashMap<String, Application> = apps.into_iter().map(|a| (a.id.clone(), a)).collect();
+    let apps: HashMap<ApplicationId, Application> =
+        apps.into_iter().map(|a| (a.id.clone(), a)).collect();
     let mut groups: Vec<ApplicationDocs> = Vec::new();
-    let mut current: Option<String> = None;
+    let mut current: Option<ApplicationId> = None;
     for s in summaries {
         // An application that no longer exists is left out, as in Go.
         let Some(app) = apps.get(&s.application_id) else {
             continue;
         };
-        if current.as_deref() != Some(s.application_id.as_str()) {
+        if current.as_ref() != Some(&s.application_id) {
             current = Some(s.application_id.clone());
             groups.push(ApplicationDocs {
                 application_code: app.code.clone(),

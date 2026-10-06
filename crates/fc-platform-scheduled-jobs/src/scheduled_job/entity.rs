@@ -6,6 +6,7 @@
 //! aggregate; see `repository.rs` for direct-write infrastructure methods.
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::ScheduledJobId;
 use serde::{Deserialize, Serialize};
@@ -38,7 +39,7 @@ pub struct ScheduledJob {
     /// its oldest active service account signs the job's firings. `None` for
     /// a job no application owns.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub application_id: Option<String>,
+    pub application_id: Option<ApplicationId>,
     /// Routing key the SDK uses to find the registered handler. Unique per
     /// (client_id, code) — or globally when client_id is None.
     pub code: String,
@@ -124,8 +125,8 @@ impl ScheduledJob {
         self.client_id = Some(id);
         self
     }
-    pub fn with_application_id(mut self, id: impl Into<String>) -> Self {
-        self.application_id = Some(id.into());
+    pub fn with_application_id(mut self, id: ApplicationId) -> Self {
+        self.application_id = Some(id);
         self
     }
     pub fn with_description(mut self, d: impl Into<String>) -> Self {
@@ -203,11 +204,11 @@ impl ScheduledJob {
     pub fn reconcile(
         &self,
         d: &JobDefinition,
-        application_id: Option<&str>,
+        application_id: Option<&ApplicationId>,
         by: Option<&str>,
     ) -> Option<(ScheduledJob, Vec<String>)> {
         let application_id = application_id
-            .map(str::to_string)
+            .cloned()
             .or_else(|| self.application_id.clone());
         let mut changed = Vec::new();
         let mut differs = |yes: bool, field: &str| {

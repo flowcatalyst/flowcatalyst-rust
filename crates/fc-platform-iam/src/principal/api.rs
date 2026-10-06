@@ -2,6 +2,7 @@
 //!
 //! REST endpoints for principal (user/service account) management.
 
+use fc_platform_core::shared::id::ApplicationId;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -296,7 +297,7 @@ pub struct AvailableApplicationResponse {
 impl From<Application> for AvailableApplicationResponse {
     fn from(a: Application) -> Self {
         Self {
-            id: a.id,
+            id: a.id.into_string(),
             code: a.code,
             name: a.name,
         }
@@ -789,7 +790,7 @@ pub(super) async fn load_user_to_shape(
 pub(super) async fn client_application_ids(
     state: &PrincipalsState,
     client_id: Option<&str>,
-) -> Result<HashSet<String>, PlatformError> {
+) -> Result<HashSet<ApplicationId>, PlatformError> {
     let Some(client_id) = client_id.filter(|c| !c.is_empty()) else {
         return Ok(Default::default());
     };
@@ -825,7 +826,7 @@ async fn role_definitions(
 pub(super) async fn assert_assignable_roles(
     state: &PrincipalsState,
     names: &[String],
-    allowed: &HashSet<String>,
+    allowed: &HashSet<ApplicationId>,
 ) -> Result<(), PlatformError> {
     let definitions = role_definitions(state, names).await?;
     for name in names {
@@ -837,7 +838,7 @@ pub(super) async fn assert_assignable_roles(
                 details: Default::default(),
             });
         };
-        match role.application_id.as_deref() {
+        match role.application_id.as_ref() {
             None => {
                 return Err(PlatformError::forbidden_code(
                     "PLATFORM_ROLE_FORBIDDEN",
@@ -862,7 +863,7 @@ pub(super) async fn assert_assignable_roles(
 async fn protected_role_names(
     state: &PrincipalsState,
     names: &[String],
-    allowed: &HashSet<String>,
+    allowed: &HashSet<ApplicationId>,
 ) -> Result<Vec<String>, PlatformError> {
     let definitions = role_definitions(state, names).await?;
     Ok(names
@@ -870,7 +871,7 @@ async fn protected_role_names(
         .filter(|name| {
             definitions
                 .get(name.as_str())
-                .and_then(|r| r.application_id.as_deref())
+                .and_then(|r| r.application_id.as_ref())
                 .is_none_or(|app| !allowed.contains(app))
         })
         .cloned()
@@ -2128,7 +2129,7 @@ pub async fn bulk_import_principals(
         .collect();
     let idp_types: HashMap<String, IdentityProviderType> =
         idps.into_iter().map(|i| (i.id, i.r#type)).collect();
-    let entitled: HashSet<String> = configs
+    let entitled: HashSet<ApplicationId> = configs
         .into_iter()
         .filter(|c| c.enabled)
         .map(|c| c.application_id)
@@ -2162,7 +2163,7 @@ pub async fn bulk_import_principals(
             if !anchor {
                 let refused = r.roles.iter().find_map(|name| match definitions.get(name) {
                     None => Some(format!("role not found: {name}")),
-                    Some(role) => match role.application_id.as_deref() {
+                    Some(role) => match role.application_id.as_ref() {
                         None => Some("client administrators cannot assign platform roles".into()),
                         Some(app) if !entitled.contains(app) => {
                             Some("role belongs to an application the client cannot access".into())

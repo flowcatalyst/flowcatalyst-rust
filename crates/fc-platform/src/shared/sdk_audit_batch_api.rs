@@ -15,6 +15,7 @@
 //! Infrastructure Processing"): rows are written directly, not through a use
 //! case. The whole batch costs one lookup query per code kind and one insert.
 
+use fc_platform_core::shared::id::ApplicationId;
 use std::collections::{BTreeSet, HashMap};
 
 use axum::{
@@ -164,7 +165,7 @@ fn distinct_codes<'a>(codes: impl Iterator<Item = Option<&'a String>>) -> Vec<St
 /// order (`audit_batch.go:85-178`).
 fn plan_batch(
     items: Vec<BatchAuditLogItem>,
-    app_ids: &HashMap<String, String>,
+    app_ids: &HashMap<String, ApplicationId>,
     client_ids: &HashMap<String, String>,
     auth: &AuthContext,
     now: DateTime<Utc>,
@@ -176,7 +177,7 @@ fn plan_batch(
         // An empty code is no code, as in Go.
         let application_id = match item.application_code.as_deref() {
             Some(code) if !code.is_empty() => match app_ids.get(code) {
-                Some(id) => Some(id.clone()),
+                Some(id) => Some(id.to_string()),
                 None => {
                     warn!(application_code = %code, "Batch audit log: unknown application code, skipping");
                     results.push(BatchAuditLogResult::skipped());
@@ -370,7 +371,10 @@ mod tests {
         ]}));
         let (logs, results) = plan_batch(
             batch,
-            &map(&[("orders", "app_orders")]),
+            &HashMap::from([(
+                "orders".to_string(),
+                ApplicationId::parse("app_orders").unwrap(),
+            )]),
             &HashMap::new(),
             &ctx(UserScope::Anchor, &["*"]),
             Utc::now(),

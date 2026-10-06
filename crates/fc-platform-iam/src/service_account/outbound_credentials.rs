@@ -15,6 +15,7 @@
 //! account and never the value: the delivery then goes out without that
 //! credential, as Java's degraded cases do.
 
+use fc_platform_core::shared::id::ApplicationId;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -40,7 +41,7 @@ pub use fc_platform_core::directory::{ById, OutboundCredentials};
 pub struct OutboundCredentialsResolver {
     service_accounts: Arc<ServiceAccountRepository>,
     secrets: Arc<SecretResolver>,
-    by_application: DashMap<String, (Option<OutboundCredentials>, Instant)>,
+    by_application: DashMap<ApplicationId, (Option<OutboundCredentials>, Instant)>,
     by_id: DashMap<String, (ById, Instant)>,
 }
 
@@ -70,7 +71,7 @@ impl OutboundCredentialsResolver {
     /// account at all.
     pub async fn for_application(
         &self,
-        application_id: &str,
+        application_id: &ApplicationId,
     ) -> Result<Option<OutboundCredentials>> {
         if let Some(hit) = self.by_application.get(application_id) {
             if hit.1.elapsed() < TTL {
@@ -85,10 +86,8 @@ impl OutboundCredentialsResolver {
             Some(s) => Some(self.open(&s).await),
             None => None,
         };
-        self.by_application.insert(
-            application_id.to_string(),
-            (resolved.clone(), Instant::now()),
-        );
+        self.by_application
+            .insert(application_id.clone(), (resolved.clone(), Instant::now()));
         Ok(resolved)
     }
 
@@ -99,8 +98,8 @@ impl OutboundCredentialsResolver {
     /// with no active account.
     pub async fn for_applications_fresh(
         &self,
-        application_ids: &[String],
-    ) -> Result<HashMap<String, OutboundCredentials>> {
+        application_ids: &[ApplicationId],
+    ) -> Result<HashMap<ApplicationId, OutboundCredentials>> {
         let stored = self
             .service_accounts
             .oldest_active_webhook_credentials_for(application_ids)
@@ -167,7 +166,10 @@ impl OutboundCredentialsResolver {
 
 #[async_trait::async_trait]
 impl OutboundCredentialSource for OutboundCredentialsResolver {
-    async fn for_application(&self, application_id: &str) -> Result<Option<OutboundCredentials>> {
+    async fn for_application(
+        &self,
+        application_id: &ApplicationId,
+    ) -> Result<Option<OutboundCredentials>> {
         OutboundCredentialsResolver::for_application(self, application_id).await
     }
 
@@ -177,8 +179,8 @@ impl OutboundCredentialSource for OutboundCredentialsResolver {
 
     async fn for_applications_fresh(
         &self,
-        application_ids: &[String],
-    ) -> Result<HashMap<String, OutboundCredentials>> {
+        application_ids: &[ApplicationId],
+    ) -> Result<HashMap<ApplicationId, OutboundCredentials>> {
         OutboundCredentialsResolver::for_applications_fresh(self, application_ids).await
     }
 }

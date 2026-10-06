@@ -300,7 +300,7 @@ impl ScheduledJobDispatcher {
     /// no application, has no active account, or the lookup fails.
     async fn credentials_for(&self, job: &ScheduledJob) -> Option<OutboundCredentials> {
         let resolver = self.credentials.as_ref()?;
-        let Some(application_id) = job.application_id.as_deref() else {
+        let Some(application_id) = job.application_id.as_ref() else {
             debug!(job_id = %job.id, "Scheduled job has no application; delivering unsigned");
             return None;
         };

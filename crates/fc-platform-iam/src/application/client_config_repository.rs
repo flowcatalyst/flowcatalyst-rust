@@ -1,6 +1,8 @@
 //! ApplicationClientConfig Repository — PostgreSQL via SQLx
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::AppClientConfigId;
+use fc_platform_core::shared::id::ApplicationId;
 use sqlx::PgPool;
 
 use super::client_config::ApplicationClientConfig;
@@ -13,8 +15,8 @@ use fc_platform_core::usecase::Persist;
 /// Row mapping for app_client_configs table
 #[derive(sqlx::FromRow)]
 struct AppClientConfigRow {
-    id: String,
-    application_id: String,
+    id: AppClientConfigId,
+    application_id: ApplicationId,
     client_id: String,
     enabled: bool,
     base_url_override: Option<String>,
@@ -67,7 +69,10 @@ impl ApplicationClientConfigRepository {
         Ok(())
     }
 
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<ApplicationClientConfig>> {
+    pub async fn find_by_id(
+        &self,
+        id: &AppClientConfigId,
+    ) -> Result<Option<ApplicationClientConfig>> {
         let row = sqlx::query_as::<_, AppClientConfigRow>(
             "SELECT * FROM app_client_configs WHERE id = $1",
         )
@@ -79,7 +84,7 @@ impl ApplicationClientConfigRepository {
 
     pub async fn find_by_application(
         &self,
-        application_id: &str,
+        application_id: &ApplicationId,
     ) -> Result<Vec<ApplicationClientConfig>> {
         let rows = sqlx::query_as::<_, AppClientConfigRow>(
             "SELECT * FROM app_client_configs WHERE application_id = $1",
@@ -108,7 +113,7 @@ impl ApplicationClientConfigRepository {
 
     pub async fn find_by_application_and_client(
         &self,
-        application_id: &str,
+        application_id: &ApplicationId,
         client_id: &str,
     ) -> Result<Option<ApplicationClientConfig>> {
         let row = sqlx::query_as::<_, AppClientConfigRow>(
@@ -139,7 +144,7 @@ impl ApplicationClientConfigRepository {
 
     pub async fn enable_for_client(
         &self,
-        application_id: &str,
+        application_id: &ApplicationId,
         client_id: &str,
     ) -> Result<ApplicationClientConfig> {
         // Check if exists
@@ -160,17 +165,21 @@ impl ApplicationClientConfigRepository {
                 .await?
                 .ok_or_else(|| PlatformError::NotFound {
                     entity_type: "ApplicationClientConfig".to_string(),
-                    id: config.id.clone(),
+                    id: config.id.to_string(),
                 })?)
         } else {
             // Insert new
-            let config = ApplicationClientConfig::new(application_id, client_id);
+            let config = ApplicationClientConfig::new(application_id.clone(), client_id);
             self.insert(&config).await?;
             Ok(config)
         }
     }
 
-    pub async fn disable_for_client(&self, application_id: &str, client_id: &str) -> Result<bool> {
+    pub async fn disable_for_client(
+        &self,
+        application_id: &ApplicationId,
+        client_id: &str,
+    ) -> Result<bool> {
         let existing = self
             .find_by_application_and_client(application_id, client_id)
             .await?;
@@ -211,7 +220,7 @@ impl ApplicationClientConfigRepository {
         Ok(())
     }
 
-    pub async fn delete(&self, id: &str) -> Result<bool> {
+    pub async fn delete(&self, id: &AppClientConfigId) -> Result<bool> {
         let result = sqlx::query("DELETE FROM app_client_configs WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
@@ -221,7 +230,7 @@ impl ApplicationClientConfigRepository {
 
     pub async fn delete_by_application_and_client(
         &self,
-        application_id: &str,
+        application_id: &ApplicationId,
         client_id: &str,
     ) -> Result<bool> {
         let result = sqlx::query(
@@ -239,7 +248,7 @@ impl ApplicationClientConfigRepository {
 
 impl HasId for ApplicationClientConfig {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 

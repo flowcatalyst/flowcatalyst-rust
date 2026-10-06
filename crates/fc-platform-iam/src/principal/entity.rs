@@ -5,6 +5,7 @@
 
 use crate::service_account::entity::{AssignmentSource, RoleAssignment};
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ApplicationId;
 use serde::{Deserialize, Serialize};
 
 pub use fc_platform_core::principal_kind::{PrincipalType, UserScope};
@@ -114,7 +115,7 @@ pub struct Principal {
 
     /// Application ID (for service accounts created by an app)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub application_id: Option<String>,
+    pub application_id: Option<ApplicationId>,
 
     /// Display name
     pub name: String,
@@ -145,12 +146,12 @@ pub struct Principal {
 
     /// Accessible application IDs (loaded from iam_principal_application_access)
     #[serde(default)]
-    pub accessible_application_ids: Vec<String>,
+    pub accessible_application_ids: Vec<ApplicationId>,
 
     /// Accessible application ID → application code (for the JWT
     /// `applications` claim's "id:code" pairs; Go `ApplicationCodeMap`)
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
-    pub application_code_map: HashMap<String, String>,
+    pub application_code_map: HashMap<ApplicationId, String>,
 
     /// Access to every application, present and future
     /// (`iam_principals.all_applications`): the application-axis analogue of
@@ -270,8 +271,8 @@ impl Principal {
         self
     }
 
-    pub fn with_application_id(mut self, application_id: impl Into<String>) -> Self {
-        self.application_id = Some(application_id.into());
+    pub fn with_application_id(mut self, application_id: ApplicationId) -> Self {
+        self.application_id = Some(application_id);
         self
     }
 

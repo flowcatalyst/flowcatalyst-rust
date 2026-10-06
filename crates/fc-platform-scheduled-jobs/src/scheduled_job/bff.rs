@@ -9,6 +9,7 @@
 //! absent when unset; the list pages are `{data, page, size, total,
 //! totalPages}`.
 
+use fc_platform_core::shared::id::ApplicationId;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -259,7 +260,7 @@ fn can_view(auth: &AuthContext, client_id: Option<&str>) -> bool {
 
 async fn names(
     state: &BffScheduledJobsState,
-) -> Result<(HashMap<String, String>, HashMap<String, String>), PlatformError> {
+) -> Result<(HashMap<String, String>, HashMap<ApplicationId, String>), PlatformError> {
     let (clients, applications) = tokio::try_join!(
         state.client_repo.find_all(),
         state.application_repo.find_all()
@@ -273,7 +274,7 @@ async fn names(
 fn to_bff_job(
     j: ScheduledJob,
     clients: &HashMap<String, String>,
-    applications: &HashMap<String, String>,
+    applications: &HashMap<ApplicationId, String>,
     active: bool,
 ) -> BffScheduledJobResponse {
     BffScheduledJobResponse {
@@ -287,7 +288,7 @@ fn to_bff_job(
             .and_then(|a| applications.get(a).cloned()),
         id: j.id.to_string(),
         client_id: j.client_id.map(ClientId::into_string),
-        application_id: j.application_id,
+        application_id: j.application_id.map(ApplicationId::into_string),
         code: j.code,
         name: j.name,
         description: j.description,
@@ -349,7 +350,7 @@ pub async fn list_jobs(
 
     let mut filters = JobListFilters {
         client_ids: split_csv(&q, "clientIds"),
-        application_ids: split_csv(&q, "applicationIds"),
+        application_ids: ApplicationId::from_wire_all(split_csv(&q, "applicationIds")),
         statuses: split_csv(&q, "statuses"),
         search: q
             .get("search")
@@ -539,7 +540,7 @@ pub async fn filter_options(
         .into_iter()
         .filter(|a| a.active)
         .map(|a| FilterOption {
-            value: a.id,
+            value: a.id.into_string(),
             label: a.name,
         })
         .collect();

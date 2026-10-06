@@ -9,6 +9,7 @@
 //! insert those rows directly to exercise the reads.
 
 use crate::support;
+use fc_platform::shared::id::ApplicationId;
 use fc_platform_core::shared::id::ClientId;
 
 use std::collections::HashMap;
@@ -118,7 +119,7 @@ async fn token(app: &TestApp, who: As<'_>) -> String {
         .await
         .expect("principal");
     if let Some(ids) = who.applications {
-        principal.accessible_application_ids = ids.iter().map(|a| a.to_string()).collect();
+        principal.accessible_application_ids = ApplicationId::from_wire_all(ids.iter().copied());
         app.repos
             .principal_repo
             .update(&principal)
@@ -343,7 +344,7 @@ async fn functions_crud_reach_and_pagination() {
     assert_eq!(platform_fn["applicationCode"], "billing");
     assert_eq!(platform_fn["serviceName"], "invoices");
     assert_eq!(platform_fn["name"], "create");
-    assert_eq!(platform_fn["applicationId"], billing.id);
+    assert_eq!(platform_fn["applicationId"], billing.id.as_str());
     assert_eq!(platform_fn["runtime"], "wasm");
     assert_eq!(platform_fn["status"], "ACTIVE");
     assert!(platform_fn["id"].as_str().unwrap().starts_with("fnc_"));
@@ -614,7 +615,7 @@ async fn functions_crud_reach_and_pagination() {
     let a_billing = token(
         &app,
         As {
-            applications: Some(&[&billing.id]),
+            applications: Some(&[billing.id.as_str()]),
             ..As::client(&[a.id.as_str()], &[FUNCTION_VIEW])
         },
     )
@@ -641,7 +642,7 @@ async fn functions_crud_reach_and_pagination() {
     let a_billing_manager = token(
         &app,
         As {
-            applications: Some(&[&billing.id]),
+            applications: Some(&[billing.id.as_str()]),
             ..As::client(&[a.id.as_str()], &[FUNCTION_MANAGE])
         },
     )

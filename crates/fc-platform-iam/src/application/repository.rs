@@ -1,6 +1,7 @@
 //! Application Repository — PostgreSQL via SQLx
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ApplicationId;
 use sqlx::PgPool;
 
 use super::entity::{Application, ApplicationType};
@@ -15,7 +16,7 @@ use std::collections::HashMap;
 /// Row mapping for app_applications table
 #[derive(sqlx::FromRow)]
 struct ApplicationRow {
-    id: String,
+    id: ApplicationId,
     #[sqlx(rename = "type")]
     application_type: String,
     code: String,
@@ -39,7 +40,7 @@ impl TryFrom<ApplicationRow> for Application {
             &r.application_type,
             "app_applications",
             "application_type",
-            &r.id,
+            r.id.as_str(),
         )?;
         Ok(Self {
             id: r.id,
@@ -94,7 +95,7 @@ impl ApplicationRepository {
         Ok(())
     }
 
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<Application>> {
+    pub async fn find_by_id(&self, id: &ApplicationId) -> Result<Option<Application>> {
         let row =
             sqlx::query_as::<_, ApplicationRow>("SELECT * FROM app_applications WHERE id = $1")
                 .bind(id)
@@ -114,11 +115,14 @@ impl ApplicationRepository {
 
     /// `code -> id` for every application whose code is in `codes`: one
     /// shallow query for a whole batch. Codes with no row are absent.
-    pub async fn find_ids_by_codes(&self, codes: &[String]) -> Result<HashMap<String, String>> {
+    pub async fn find_ids_by_codes(
+        &self,
+        codes: &[String],
+    ) -> Result<HashMap<String, ApplicationId>> {
         if codes.is_empty() {
             return Ok(HashMap::new());
         }
-        let rows = sqlx::query_as::<_, (String, String)>(
+        let rows = sqlx::query_as::<_, (String, ApplicationId)>(
             "SELECT code, id FROM app_applications WHERE code = ANY($1)",
         )
         .bind(codes)
@@ -129,7 +133,10 @@ impl ApplicationRepository {
 
     /// The applications with the given ids, in one query, keyed by id. An
     /// id with no row is absent.
-    pub async fn find_by_ids(&self, ids: &[String]) -> Result<HashMap<String, Application>> {
+    pub async fn find_by_ids(
+        &self,
+        ids: &[ApplicationId],
+    ) -> Result<HashMap<ApplicationId, Application>> {
         if ids.is_empty() {
             return Ok(Default::default());
         }
@@ -146,11 +153,14 @@ impl ApplicationRepository {
 
     /// `id → name` for the given application ids, in one query (the
     /// OAuth-client `applications` refs).
-    pub async fn find_names_by_ids(&self, ids: &[String]) -> Result<HashMap<String, String>> {
+    pub async fn find_names_by_ids(
+        &self,
+        ids: &[ApplicationId],
+    ) -> Result<HashMap<ApplicationId, String>> {
         if ids.is_empty() {
             return Ok(Default::default());
         }
-        let rows: Vec<(String, String)> =
+        let rows: Vec<(ApplicationId, String)> =
             sqlx::query_as("SELECT id, name FROM app_applications WHERE id = ANY($1)")
                 .bind(ids)
                 .fetch_all(&self.pool)
@@ -218,7 +228,7 @@ impl ApplicationRepository {
         row.map(Application::try_from).transpose()
     }
 
-    pub async fn exists(&self, id: &str) -> Result<bool> {
+    pub async fn exists(&self, id: &ApplicationId) -> Result<bool> {
         let row: (bool,) =
             sqlx::query_as("SELECT EXISTS(SELECT 1 FROM app_applications WHERE id = $1)")
                 .bind(id)
@@ -274,7 +284,7 @@ impl ApplicationRepository {
             .await?
             .ok_or_else(|| PlatformError::NotFound {
                 entity_type: "Application".to_string(),
-                id: app.id.clone(),
+                id: app.id.to_string(),
             })
     }
 
@@ -282,7 +292,7 @@ impl ApplicationRepository {
     /// `iam_principal_application_access` references applications by id
     /// with no DB-level FK. Integrity is code-managed; this path must
     /// cascade atomically or we leak orphaned access grants.
-    pub async fn delete(&self, id: &str) -> Result<bool> {
+    pub async fn delete(&self, id: &ApplicationId) -> Result<bool> {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query("DELETE FROM iam_principal_application_access WHERE application_id = $1")
@@ -302,7 +312,7 @@ impl ApplicationRepository {
     /// Count principals currently granted access to this application.
     /// Used by the delete use case to refuse deletion when user-level
     /// grants still exist — integrity is enforced in code, not the DB.
-    pub async fn count_access_grants(&self, application_id: &str) -> Result<i64> {
+    pub async fn count_access_grants(&self, application_id: &ApplicationId) -> Result<i64> {
         let (count,): (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM iam_principal_application_access WHERE application_id = $1",
         )
@@ -315,7 +325,10 @@ impl ApplicationRepository {
     /// Count the clients this application is enabled for. Only an enabled
     /// config blocks a delete (owner decision #55); a disabled one is
     /// removed with the application ([`Persist::delete`]).
-    pub async fn count_enabled_client_configs(&self, application_id: &str) -> Result<i64> {
+    pub async fn count_enabled_client_configs(
+        &self,
+        application_id: &ApplicationId,
+    ) -> Result<i64> {
         let (count,): (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM app_client_configs WHERE application_id = $1 AND enabled",
         )
@@ -326,7 +339,7 @@ impl ApplicationRepository {
     }
 
     /// Count service accounts attached to this application.
-    pub async fn count_service_accounts(&self, application_id: &str) -> Result<i64> {
+    pub async fn count_service_accounts(&self, application_id: &ApplicationId) -> Result<i64> {
         let (count,): (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM iam_service_accounts WHERE application_id = $1")
                 .bind(application_id)
@@ -336,7 +349,7 @@ impl ApplicationRepository {
     }
 
     /// Count roles scoped to this application.
-    pub async fn count_roles(&self, application_id: &str) -> Result<i64> {
+    pub async fn count_roles(&self, application_id: &ApplicationId) -> Result<i64> {
         let (count,): (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM iam_roles WHERE application_id = $1")
                 .bind(application_id)
@@ -347,7 +360,7 @@ impl ApplicationRepository {
 
     /// Count principals whose application ref points at this application
     /// (service-account principals, typically).
-    pub async fn count_principal_refs(&self, application_id: &str) -> Result<i64> {
+    pub async fn count_principal_refs(&self, application_id: &ApplicationId) -> Result<i64> {
         let (count,): (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM iam_principals WHERE application_id = $1")
                 .bind(application_id)
@@ -361,7 +374,7 @@ impl ApplicationRepository {
 
 impl HasId for Application {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 
@@ -443,7 +456,7 @@ pub fn application_ref(a: Application) -> ApplicationRef {
 
 #[async_trait::async_trait]
 impl ApplicationDirectory for ApplicationRepository {
-    async fn find_by_id(&self, id: &str) -> Result<Option<ApplicationRef>> {
+    async fn find_by_id(&self, id: &ApplicationId) -> Result<Option<ApplicationRef>> {
         Ok(ApplicationRepository::find_by_id(self, id)
             .await?
             .map(application_ref))
@@ -455,7 +468,7 @@ impl ApplicationDirectory for ApplicationRepository {
             .map(application_ref))
     }
 
-    async fn find_ids_by_codes(&self, codes: &[String]) -> Result<HashMap<String, String>> {
+    async fn find_ids_by_codes(&self, codes: &[String]) -> Result<HashMap<String, ApplicationId>> {
         ApplicationRepository::find_ids_by_codes(self, codes).await
     }
 

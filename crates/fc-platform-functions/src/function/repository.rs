@@ -2,6 +2,7 @@
 //! Aliases are hydrated with one `ANY` query per read and replaced
 //! wholesale on write. Writes happen only on the unit of work's transaction.
 
+use fc_platform_core::shared::id::ApplicationId;
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
@@ -16,7 +17,7 @@ use fc_platform_core::usecase::{DbTx, Persist};
 #[derive(sqlx::FromRow)]
 struct FunctionRow {
     id: String,
-    application_id: String,
+    application_id: ApplicationId,
     application_code: String,
     service_name: String,
     name: String,
@@ -65,7 +66,7 @@ pub struct FunctionListFilter {
     pub status: Option<FunctionStatus>,
     pub owners: OwnerReach,
     /// `None`: every application. `Some`: only these (none when empty).
-    pub applications: Option<Vec<String>>,
+    pub applications: Option<Vec<ApplicationId>>,
 }
 
 pub struct FunctionRepository {

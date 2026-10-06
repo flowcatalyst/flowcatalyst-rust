@@ -8,6 +8,7 @@
 //! event (a Rust addition); the audit row names the slugs, not the content.
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ApplicationId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -52,7 +53,7 @@ pub struct SyncDocInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncAppDocsCommand {
-    pub application_id: String,
+    pub application_id: ApplicationId,
     pub application_code: String,
     /// The pages, in order. Not in the audit row (up to 4 MiB); `slugs` is.
     #[serde(skip)]

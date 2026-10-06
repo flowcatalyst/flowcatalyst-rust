@@ -1,15 +1,15 @@
 //! ApplicationClientConfig Entity — matches TypeScript ApplicationClientConfig
 
 use chrono::{DateTime, Utc};
-use fc_platform_core::shared::tsid;
-use fc_platform_core::shared::tsid::EntityType;
+use fc_platform_core::shared::id::AppClientConfigId;
+use fc_platform_core::shared::id::ApplicationId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplicationClientConfig {
-    pub id: String,
-    pub application_id: String,
+    pub id: AppClientConfigId,
+    pub application_id: ApplicationId,
     pub client_id: String,
     pub enabled: bool,
     /// The base URL this client reaches the application at, when it is not
@@ -25,11 +25,11 @@ pub struct ApplicationClientConfig {
 }
 
 impl ApplicationClientConfig {
-    pub fn new(application_id: impl Into<String>, client_id: impl Into<String>) -> Self {
+    pub fn new(application_id: ApplicationId, client_id: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
-            id: tsid::generate(EntityType::AppClientConfig),
-            application_id: application_id.into(),
+            id: AppClientConfigId::generate(),
+            application_id,
             client_id: client_id.into(),
             enabled: true,
             base_url_override: None,

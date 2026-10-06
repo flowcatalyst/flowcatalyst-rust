@@ -8,6 +8,7 @@
 //! and each payload carries exactly Go's `ToDataJSON` fields.
 
 use fc_platform_core::impl_domain_event;
+use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::usecase::domain_event::EventMetadata;
 use fc_platform_core::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
@@ -359,7 +360,7 @@ pub struct ApplicationAccessAssigned {
     #[serde(skip)]
     pub metadata: EventMetadata,
     pub user_id: String,
-    pub application_ids: Vec<String>,
+    pub application_ids: Vec<ApplicationId>,
     pub added: Vec<String>,
     pub removed: Vec<String>,
 }
@@ -372,7 +373,7 @@ impl ApplicationAccessAssigned {
     pub fn new(
         ctx: &ExecutionContext,
         user_id: &str,
-        application_ids: Vec<String>,
+        application_ids: Vec<ApplicationId>,
         added: Vec<String>,
         removed: Vec<String>,
     ) -> Self {

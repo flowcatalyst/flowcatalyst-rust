@@ -9,6 +9,8 @@
 use super::update_client_config::UpdateApplicationClientConfigCommand;
 use crate::application::client_config::ApplicationClientConfig;
 use fc_platform_core::impl_domain_event;
+use fc_platform_core::shared::id::AppClientConfigId;
+use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::usecase::domain_event::{null_if_empty, EventMetadata};
 use fc_platform_core::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
@@ -16,7 +18,11 @@ use serde::{Deserialize, Serialize};
 const SPEC_VERSION: &str = "1.0";
 const SOURCE: &str = "platform:iam";
 
-fn metadata(ctx: &ExecutionContext, event_type: &str, application_id: &str) -> EventMetadata {
+fn metadata(
+    ctx: &ExecutionContext,
+    event_type: &str,
+    application_id: &ApplicationId,
+) -> EventMetadata {
     EventMetadata::from_ctx(
         ctx,
         event_type,
@@ -33,7 +39,7 @@ fn metadata(ctx: &ExecutionContext, event_type: &str, application_id: &str) -> E
 pub struct ApplicationCreated {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub application_id: String,
+    pub application_id: ApplicationId,
     pub code: String,
     pub name: String,
 }
@@ -43,10 +49,15 @@ impl_domain_event!(ApplicationCreated);
 impl ApplicationCreated {
     pub const EVENT_TYPE: &'static str = "platform:iam:application:created";
 
-    pub fn new(ctx: &ExecutionContext, application_id: &str, code: &str, name: &str) -> Self {
+    pub fn new(
+        ctx: &ExecutionContext,
+        application_id: &ApplicationId,
+        code: &str,
+        name: &str,
+    ) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, application_id),
-            application_id: application_id.to_string(),
+            application_id: application_id.clone(),
             code: code.to_string(),
             name: name.to_string(),
         }
@@ -59,7 +70,7 @@ impl ApplicationCreated {
 pub struct ApplicationUpdated {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub application_id: String,
+    pub application_id: ApplicationId,
     pub name: String,
 }
 
@@ -68,10 +79,10 @@ impl_domain_event!(ApplicationUpdated);
 impl ApplicationUpdated {
     pub const EVENT_TYPE: &'static str = "platform:iam:application:updated";
 
-    pub fn new(ctx: &ExecutionContext, application_id: &str, name: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, application_id: &ApplicationId, name: &str) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, application_id),
-            application_id: application_id.to_string(),
+            application_id: application_id.clone(),
             name: name.to_string(),
         }
     }
@@ -83,7 +94,7 @@ impl ApplicationUpdated {
 pub struct ApplicationActivated {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub application_id: String,
+    pub application_id: ApplicationId,
 }
 
 impl_domain_event!(ApplicationActivated);
@@ -91,10 +102,10 @@ impl_domain_event!(ApplicationActivated);
 impl ApplicationActivated {
     pub const EVENT_TYPE: &'static str = "platform:iam:application:activated";
 
-    pub fn new(ctx: &ExecutionContext, application_id: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, application_id: &ApplicationId) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, application_id),
-            application_id: application_id.to_string(),
+            application_id: application_id.clone(),
         }
     }
 }
@@ -105,7 +116,7 @@ impl ApplicationActivated {
 pub struct ApplicationDeactivated {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub application_id: String,
+    pub application_id: ApplicationId,
 }
 
 impl_domain_event!(ApplicationDeactivated);
@@ -113,10 +124,10 @@ impl_domain_event!(ApplicationDeactivated);
 impl ApplicationDeactivated {
     pub const EVENT_TYPE: &'static str = "platform:iam:application:deactivated";
 
-    pub fn new(ctx: &ExecutionContext, application_id: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, application_id: &ApplicationId) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, application_id),
-            application_id: application_id.to_string(),
+            application_id: application_id.clone(),
         }
     }
 }
@@ -127,7 +138,7 @@ impl ApplicationDeactivated {
 pub struct ApplicationServiceAccountProvisioned {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub application_id: String,
+    pub application_id: ApplicationId,
     pub application_code: String,
     pub service_account_id: String,
     pub service_account_code: String,
@@ -140,14 +151,14 @@ impl ApplicationServiceAccountProvisioned {
 
     pub fn new(
         ctx: &ExecutionContext,
-        application_id: &str,
+        application_id: &ApplicationId,
         application_code: &str,
         service_account_id: &str,
         service_account_code: &str,
     ) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, application_id),
-            application_id: application_id.to_string(),
+            application_id: application_id.clone(),
             application_code: application_code.to_string(),
             service_account_id: service_account_id.to_string(),
             service_account_code: service_account_code.to_string(),
@@ -161,7 +172,7 @@ impl ApplicationServiceAccountProvisioned {
 pub struct ApplicationDeleted {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub application_id: String,
+    pub application_id: ApplicationId,
     pub code: String,
 }
 
@@ -170,10 +181,10 @@ impl_domain_event!(ApplicationDeleted);
 impl ApplicationDeleted {
     pub const EVENT_TYPE: &'static str = "platform:iam:application:deleted";
 
-    pub fn new(ctx: &ExecutionContext, application_id: &str, code: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, application_id: &ApplicationId, code: &str) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, application_id),
-            application_id: application_id.to_string(),
+            application_id: application_id.clone(),
             code: code.to_string(),
         }
     }
@@ -185,9 +196,9 @@ impl ApplicationDeleted {
 pub struct ApplicationEnabledForClient {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub application_id: String,
+    pub application_id: ApplicationId,
     pub client_id: String,
-    pub config_id: String,
+    pub config_id: AppClientConfigId,
 }
 
 impl_domain_event!(ApplicationEnabledForClient);
@@ -197,15 +208,15 @@ impl ApplicationEnabledForClient {
 
     pub fn new(
         ctx: &ExecutionContext,
-        application_id: &str,
+        application_id: &ApplicationId,
         client_id: &str,
-        config_id: &str,
+        config_id: &AppClientConfigId,
     ) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, application_id),
-            application_id: application_id.to_string(),
+            application_id: application_id.clone(),
             client_id: client_id.to_string(),
-            config_id: config_id.to_string(),
+            config_id: config_id.clone(),
         }
     }
 }
@@ -216,9 +227,9 @@ impl ApplicationEnabledForClient {
 pub struct ApplicationDisabledForClient {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub application_id: String,
+    pub application_id: ApplicationId,
     pub client_id: String,
-    pub config_id: String,
+    pub config_id: AppClientConfigId,
 }
 
 impl_domain_event!(ApplicationDisabledForClient);
@@ -228,15 +239,15 @@ impl ApplicationDisabledForClient {
 
     pub fn new(
         ctx: &ExecutionContext,
-        application_id: &str,
+        application_id: &ApplicationId,
         client_id: &str,
-        config_id: &str,
+        config_id: &AppClientConfigId,
     ) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, application_id),
-            application_id: application_id.to_string(),
+            application_id: application_id.clone(),
             client_id: client_id.to_string(),
-            config_id: config_id.to_string(),
+            config_id: config_id.clone(),
         }
     }
 }
@@ -249,9 +260,9 @@ impl ApplicationDisabledForClient {
 pub struct ApplicationClientConfigUpdated {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub application_id: String,
+    pub application_id: ApplicationId,
     pub client_id: String,
-    pub config_id: String,
+    pub config_id: AppClientConfigId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -283,7 +294,7 @@ impl ApplicationClientConfigUpdated {
     }
 
     /// Metadata for this event, raised inside `ctx`.
-    pub fn metadata_for(ctx: &ExecutionContext, application_id: &str) -> EventMetadata {
+    pub fn metadata_for(ctx: &ExecutionContext, application_id: &ApplicationId) -> EventMetadata {
         metadata(ctx, Self::EVENT_TYPE, application_id)
     }
 }
@@ -299,13 +310,13 @@ pub struct ClientApplicationsUpdated {
     pub client_id: String,
     /// Final, authoritative set of enabled applications after the update.
     #[serde(serialize_with = "null_if_empty")]
-    pub enabled_application_ids: Vec<String>,
+    pub enabled_application_ids: Vec<ApplicationId>,
     /// Applications that became enabled in this operation.
     #[serde(serialize_with = "null_if_empty")]
-    pub enabled_added: Vec<String>,
+    pub enabled_added: Vec<ApplicationId>,
     /// Applications that became disabled in this operation.
     #[serde(serialize_with = "null_if_empty")]
-    pub disabled_removed: Vec<String>,
+    pub disabled_removed: Vec<ApplicationId>,
 }
 
 impl_domain_event!(ClientApplicationsUpdated);
@@ -316,9 +327,9 @@ impl ClientApplicationsUpdated {
     pub fn new(
         ctx: &ExecutionContext,
         client_id: &str,
-        enabled_application_ids: Vec<String>,
-        enabled_added: Vec<String>,
-        disabled_removed: Vec<String>,
+        enabled_application_ids: Vec<ApplicationId>,
+        enabled_added: Vec<ApplicationId>,
+        disabled_removed: Vec<ApplicationId>,
     ) -> Self {
         Self {
             metadata: EventMetadata::from_ctx(
@@ -344,14 +355,19 @@ mod tests {
     #[test]
     fn test_application_created_event() {
         let ctx = ExecutionContext::system("admin-123");
-        let event = ApplicationCreated::new(&ctx, "app-1", "orders", "Orders Application");
+        let event = ApplicationCreated::new(
+            &ctx,
+            &ApplicationId::parse("app_1").unwrap(),
+            "orders",
+            "Orders Application",
+        );
 
         assert_eq!(
             event.metadata.event_type,
             "platform:iam:application:created"
         );
         assert_eq!(event.metadata.source, "platform:iam");
-        assert_eq!(event.application_id, "app-1");
+        assert_eq!(event.application_id.as_str(), "app_1");
         assert_eq!(event.code, "orders");
     }
 
@@ -360,7 +376,7 @@ mod tests {
         let ctx = ExecutionContext::system("admin-123");
         let event = ApplicationServiceAccountProvisioned::new(
             &ctx,
-            "app-1",
+            &ApplicationId::parse("app_1").unwrap(),
             "orders",
             "sa-1",
             "app:orders",

@@ -1,6 +1,7 @@
 //! Deactivate Application Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ApplicationId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -17,7 +18,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct DeactivateApplicationCommand {
     /// Application ID
-    pub id: String,
+    pub id: ApplicationId,
 }
 
 impl AuditMasked for DeactivateApplicationCommand {}
@@ -101,10 +102,10 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = DeactivateApplicationCommand {
-            id: "app-123".to_string(),
+            id: ApplicationId::parse("app_123").unwrap(),
         };
 
         let json = serde_json::to_string(&cmd).unwrap();
-        assert!(json.contains("app-123"));
+        assert!(json.contains("app_123"));
     }
 }

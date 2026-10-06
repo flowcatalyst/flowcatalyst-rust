@@ -5,6 +5,7 @@
 //! adapter caching pattern.
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ApplicationId;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -146,8 +147,8 @@ impl OAuthClientRepository {
             .collect()
     }
 
-    async fn load_application_ids(&self, oauth_client_id: &str) -> Result<Vec<String>> {
-        let rows = sqlx::query_scalar::<_, String>(
+    async fn load_application_ids(&self, oauth_client_id: &str) -> Result<Vec<ApplicationId>> {
+        let rows = sqlx::query_scalar::<_, ApplicationId>(
             "SELECT application_id FROM oauth_client_application_ids WHERE oauth_client_id = $1",
         )
         .bind(oauth_client_id)
@@ -209,7 +210,7 @@ impl OAuthClientRepository {
         #[derive(sqlx::FromRow)]
         struct AppRow {
             oauth_client_id: String,
-            application_id: String,
+            application_id: ApplicationId,
         }
         #[derive(sqlx::FromRow)]
         struct OriginRow {
@@ -263,7 +264,7 @@ impl OAuthClientRepository {
             grant_map.entry(r.oauth_client_id).or_default().push(gt);
         }
 
-        let mut app_map: HashMap<String, Vec<String>> = HashMap::new();
+        let mut app_map: HashMap<String, Vec<ApplicationId>> = HashMap::new();
         for r in app_rows {
             app_map
                 .entry(r.oauth_client_id)
@@ -379,7 +380,11 @@ impl OAuthClientRepository {
         Ok(())
     }
 
-    async fn save_application_ids(&self, oauth_client_id: &str, app_ids: &[String]) -> Result<()> {
+    async fn save_application_ids(
+        &self,
+        oauth_client_id: &str,
+        app_ids: &[ApplicationId],
+    ) -> Result<()> {
         sqlx::query("DELETE FROM oauth_client_application_ids WHERE oauth_client_id = $1")
             .bind(oauth_client_id)
             .execute(&self.pool)
@@ -530,7 +535,10 @@ impl OAuthClientRepository {
         self.hydrate_all(clients).await
     }
 
-    pub async fn find_by_application(&self, application_id: &str) -> Result<Vec<OAuthClient>> {
+    pub async fn find_by_application(
+        &self,
+        application_id: &ApplicationId,
+    ) -> Result<Vec<OAuthClient>> {
         let client_ids = sqlx::query_scalar::<_, String>(
             "SELECT oauth_client_id FROM oauth_client_application_ids WHERE application_id = $1",
         )

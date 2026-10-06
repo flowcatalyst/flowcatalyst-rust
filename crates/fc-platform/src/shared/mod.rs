@@ -6,7 +6,7 @@
 //! seeding and the platform's code migrations to core's.
 
 pub use fc_platform_core::shared::{
-    api_common, caller_reach, capped_body, email_service, encryption_service, enum_str, error,
+    api_common, caller_reach, capped_body, email_service, encryption_service, enum_str, error, id,
     jsonb_text, log_throttle, rate_limit_middleware, rate_limit_store, rejection, secret_backfill,
     secret_ref, tsid, webhook_signer,
 };

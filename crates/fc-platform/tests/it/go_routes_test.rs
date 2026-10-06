@@ -1297,7 +1297,7 @@ async fn application_service_accounts_attach_and_client_configs_read() {
 
     // Client configs.
     let client = insert_client(&app, "cfgclient").await;
-    let config = ApplicationClientConfig::new(&application.id, &client);
+    let config = ApplicationClientConfig::new(application.id.clone(), &client);
     app.repos
         .application_client_config_repo
         .insert(&config)
@@ -1516,7 +1516,7 @@ async fn app_with_service_account(app: &TestApp, admin: &str, code: &str) -> Str
         .insert(&application)
         .await
         .unwrap();
-    application.id
+    application.id.into_string()
 }
 
 #[tokio::test]

@@ -15,6 +15,7 @@
 //! No event carries a secret value, a config value or a signer list: keys
 //! and counts only.
 
+use fc_platform_core::shared::id::ApplicationId;
 use serde::Serialize;
 
 use crate::function::entity::{
@@ -65,7 +66,7 @@ pub struct FunctionCreated {
     pub metadata: EventMetadata,
     pub function_id: String,
     pub address: String,
-    pub application_id: String,
+    pub application_id: ApplicationId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
     pub runtime: String,
@@ -440,7 +441,7 @@ mod tests {
 
     fn function(owner: FunctionOwner) -> Function {
         let mut f = Function::create(
-            "app_1",
+            ApplicationId::parse("app_1").unwrap(),
             FunctionAddress::parse("billing.invoices.create").unwrap(),
             owner,
             Runtime::Wasm,
