@@ -54,6 +54,8 @@ pub mod config;
 pub mod diagnostics;
 #[cfg(feature = "dispatch-lifecycle")]
 pub mod dispatch_lifecycle;
+#[cfg(feature = "dispatch-lifecycle")]
+mod dispatch_sql;
 pub mod error_chain;
 pub mod logging;
 pub mod netguard;
