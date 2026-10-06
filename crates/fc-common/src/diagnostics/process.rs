@@ -61,6 +61,10 @@ pub fn snapshot() -> ProcessSnapshot {
 }
 
 #[cfg(unix)]
+#[expect(
+    unsafe_code,
+    reason = "getrusage/getrlimit FFI writing into zeroed structs (SAFETY comment on the block)"
+)]
 fn posix(s: &mut ProcessSnapshot) {
     // SAFETY: getrusage/getrlimit only write into the zeroed structs we
     // hand them.

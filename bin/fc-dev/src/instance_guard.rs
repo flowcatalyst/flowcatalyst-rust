@@ -62,6 +62,10 @@ pub fn remove_pid_file_if_owned(path: &Path, pid: u32) {
 /// Go `processAlive`: signal 0 checks existence; EPERM means it exists but
 /// belongs to another user.
 #[cfg(unix)]
+#[expect(
+    unsafe_code,
+    reason = "kill(2) with signal 0, an existence check that delivers nothing (SAFETY comment on the block)"
+)]
 pub fn process_alive(pid: u32) -> bool {
     if pid == 0 || pid > i32::MAX as u32 {
         return false;
@@ -240,6 +244,10 @@ pub struct ClusterLock {
 
 /// Take the `epg-lock` lock, or say who holds it.
 #[cfg(unix)]
+#[expect(
+    unsafe_code,
+    reason = "fcntl advisory locking over a zeroed libc::flock: std has no cluster-lock API (SAFETY comments on each block)"
+)]
 pub fn lock_cluster(cluster_dir: &Path) -> Result<ClusterLock> {
     use std::os::unix::io::AsRawFd;
 
@@ -263,6 +271,7 @@ pub fn lock_cluster(cluster_dir: &Path) -> Result<ClusterLock> {
     }
     let err = io::Error::last_os_error();
     // F_GETLK reports the holder's PID.
+    // SAFETY: as for `fl`: a zeroed flock is a valid whole-file request.
     let mut probe: libc::flock = unsafe { mem::zeroed() };
     probe.l_type = libc::F_WRLCK as _;
     probe.l_whence = libc::SEEK_SET as _;

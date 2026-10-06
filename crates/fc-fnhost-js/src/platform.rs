@@ -50,6 +50,10 @@ fn entries() -> MutexGuard<'static, HashMap<usize, Entry>> {
 }
 
 /// The registry's key for an isolate.
+#[expect(
+    unsafe_code,
+    reason = "transmute of a repr(transparent) isolate pointer to usize, size-checked at compile time (SAFETY comment on the block)"
+)]
 pub fn key(isolate: v8::UnsafeRawIsolatePtr) -> usize {
     // SAFETY: `UnsafeRawIsolatePtr` is `#[repr(transparent)]` over the
     // C++ isolate pointer, the pointer V8 passes to the platform's hooks.

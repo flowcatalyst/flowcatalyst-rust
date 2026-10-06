@@ -106,16 +106,25 @@ impl Terminator {
 struct Entered(v8::Isolate);
 
 impl Entered {
+    #[expect(
+        unsafe_code,
+        reason = "V8 isolate enter/exit/drop through rusty_v8 raw-pointer APIs, bound to the owning Isolate's lifetime (SAFETY comments on each block)"
+    )]
     fn new(raw: v8::UnsafeRawIsolatePtr) -> Self {
         // SAFETY: `raw` is the isolate an `Isolate` owns and keeps alive
         // for as long as this guard (a borrow of it) lives.
         let isolate = unsafe { v8::Isolate::from_raw_isolate_ptr(raw) };
+        // SAFETY: entering the isolate just taken from `raw`; `Drop` exits it.
         unsafe { isolate.enter() };
         Self(isolate)
     }
 }
 
 impl Drop for Entered {
+    #[expect(
+        unsafe_code,
+        reason = "V8 isolate enter/exit/drop through rusty_v8 raw-pointer APIs, bound to the owning Isolate's lifetime (SAFETY comments on each block)"
+    )]
     fn drop(&mut self) {
         // SAFETY: entered in `new`, on this thread.
         unsafe { self.0.exit() };
@@ -153,6 +162,10 @@ impl Isolate {
     /// An isolate from the process's base snapshot (or, without one,
     /// deno_core's own start-up and the bootstrap script), loading modules
     /// through `modules`, with `host` in its op state. Returns exited.
+    #[expect(
+        unsafe_code,
+        reason = "V8 isolate enter/exit/drop through rusty_v8 raw-pointer APIs, bound to the owning Isolate's lifetime (SAFETY comments on each block)"
+    )]
     pub fn from_base(
         base: Option<&'static [u8]>,
         limits: Limits,
@@ -371,6 +384,10 @@ impl Isolate {
 }
 
 impl Drop for Isolate {
+    #[expect(
+        unsafe_code,
+        reason = "V8 isolate enter/exit/drop through rusty_v8 raw-pointer APIs, bound to the owning Isolate's lifetime (SAFETY comments on each block)"
+    )]
     fn drop(&mut self) {
         // Entered once more: dropping a rusty_v8 isolate exits it.
         // SAFETY: the isolate is alive (dropped just below) and on this

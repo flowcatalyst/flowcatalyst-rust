@@ -97,6 +97,10 @@ pub fn use_snapshot() -> bool {
 /// so the bootstrap's `Request`, `Response`, `Headers`, `URL` and friends
 /// are compiled and their bytecode is in the snapshot (deno_core keeps
 /// function code): a request's isolate does not parse them again.
+#[expect(
+    unsafe_code,
+    reason = "reads the isolate pointer only as a registry key (SAFETY comment on the block)"
+)]
 pub fn base_snapshot() -> Result<&'static [u8], String> {
     static BASE: OnceLock<Result<Box<[u8]>, String>> = OnceLock::new();
     BASE.get_or_init(|| {

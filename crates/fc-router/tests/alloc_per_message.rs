@@ -37,6 +37,10 @@ static ALLOCS: AtomicU64 = AtomicU64::new(0);
 static BYTES: AtomicU64 = AtomicU64::new(0);
 
 // SAFETY: forwards every call unchanged to `System`; only counts.
+#[expect(
+    unsafe_code,
+    reason = "a counting GlobalAlloc must be an unsafe impl; every method forwards unchanged to System"
+)]
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, l: Layout) -> *mut u8 {
         ALLOCS.fetch_add(1, Ordering::Relaxed);

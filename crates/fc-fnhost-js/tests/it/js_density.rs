@@ -36,8 +36,16 @@ const A: &str = "app.orders.a";
 /// `(resident, footprint)` in bytes: macOS `proc_pid_rusage` (`ri_resident_size`,
 /// `ri_phys_footprint`, the spike's metrics), Linux `/proc/self/status`
 /// (`VmRSS`, `RssAnon`).
+#[cfg_attr(
+    target_os = "macos",
+    expect(
+        unsafe_code,
+        reason = "proc_pid_rusage FFI writing into a zeroed struct (macOS only)"
+    )
+)]
 fn memory() -> (u64, u64) {
     #[cfg(target_os = "macos")]
+    // SAFETY: proc_pid_rusage only writes the zeroed struct it is handed, for our own pid.
     unsafe {
         let mut info: libc::rusage_info_v2 = mem::zeroed();
         libc::proc_pid_rusage(

@@ -107,6 +107,10 @@ fn message(i: u64) -> QueuedMessage {
 }
 
 /// Process CPU time (user + system) so far, in seconds.
+#[expect(
+    unsafe_code,
+    reason = "getrusage FFI writing into a zeroed struct (SAFETY comment on the block)"
+)]
 fn cpu_seconds() -> f64 {
     // SAFETY: getrusage only writes the zeroed struct it is handed.
     unsafe {

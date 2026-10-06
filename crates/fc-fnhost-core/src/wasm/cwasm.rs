@@ -76,6 +76,10 @@ impl CwasmCache {
     /// The component for the verified artifact `bytes` whose sha256 is
     /// `digest_hex`: from the cache when a good `.cwasm` is there, compiled
     /// (and cached) otherwise. `Err` is a compile failure.
+    #[expect(
+        unsafe_code,
+        reason = "wasmtime Component::deserialize* trusts its input: only bytes this engine produced and checksummed are passed (SAFETY comments on each block)"
+    )]
     pub fn load(
         &self,
         engine: &Engine,
@@ -123,6 +127,10 @@ impl CwasmCache {
         Ok((component, source))
     }
 
+    #[expect(
+        unsafe_code,
+        reason = "wasmtime Component::deserialize* trusts its input: only bytes this engine produced and checksummed are passed (SAFETY comments on each block)"
+    )]
     fn load_cached(
         &self,
         engine: &Engine,

@@ -56,6 +56,9 @@ license = "AGPL-3.0-or-later"
 [workspace.lints.rust]
 # `tokio_unstable` is set by RUSTFLAGS for the task-dump build.
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tokio_unstable)'] }
+# `unsafe` needs a visible, reasoned exemption: `#[expect(unsafe_code, reason = "...")]`
+# on the item or module that uses it, and a `// SAFETY:` comment on each block.
+unsafe_code = "deny"
 
 [workspace.lints.clippy]
 # Imports, not inline paths (CLAUDE.md "Imports"): `use std::sync::Arc;`

@@ -72,6 +72,10 @@ struct CatchUnwind<F>(F);
 impl<F: Future> Future for CatchUnwind<F> {
     type Output = Result<F::Output, Box<dyn Any + Send>>;
 
+    #[expect(
+        unsafe_code,
+        reason = "structural pin projection of the future's only field, which is never moved (SAFETY comment on the block)"
+    )]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // SAFETY: structural pinning of the only field; it is never moved.
         let inner = unsafe { self.map_unchecked_mut(|s| &mut s.0) };

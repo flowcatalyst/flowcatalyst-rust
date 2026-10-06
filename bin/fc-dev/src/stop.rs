@@ -94,6 +94,10 @@ enum Signal {
 }
 
 #[cfg(unix)]
+#[expect(
+    unsafe_code,
+    reason = "kill(2) on a PID read from the PID file: std has no signal API (SAFETY comment on the block)"
+)]
 fn signal(pid: u32, sig: Signal) -> Result<()> {
     let signo = match sig {
         Signal::Term => libc::SIGTERM,

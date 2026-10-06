@@ -5,6 +5,14 @@
 //! memory limit; an allocation past it fails, which V8 reports to the
 //! function as a `RangeError` ("Array buffer allocation failed") it may
 //! catch, and otherwise the call answers 500.
+//!
+//! The vtable V8 calls is a set of `unsafe extern "C"` functions over
+//! `libc` allocation and an `Arc` handle; the module-wide SAFETY note below
+//! says what they rely on.
+#![expect(
+    unsafe_code,
+    reason = "V8's RustAllocatorVtable is unsafe extern \"C\" functions over libc malloc/free and an Arc handle (SAFETY note on the vtable)"
+)]
 
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicUsize, Ordering};
