@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM iam_rate_limit_events WHERE occurred_at < $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d3027e564336e465f7aa94c6384211af6a1432e0e965f49e3e5ed6c418cb7b69"
+}

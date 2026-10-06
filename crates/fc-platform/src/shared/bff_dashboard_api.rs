@@ -54,16 +54,17 @@ pub struct BffDashboardState {
 /// Returns 0 for tables that haven't been analyzed yet.
 async fn fetch_reltuples(pool: &PgPool, names: &[&str]) -> Result<Vec<(String, u64)>, sqlx::Error> {
     let owned: Vec<String> = names.iter().map(|s| s.to_string()).collect();
-    let rows: Vec<(String, f32)> = sqlx::query_as(
-        "SELECT relname, reltuples::float4 FROM pg_class \
+    // `!`: pg_class.relname and reltuples are NOT NULL (the cast of reltuples loses that).
+    let rows = sqlx::query!(
+        "SELECT relname AS \"relname!\", reltuples::float4 AS \"reltuples!\" FROM pg_class \
          WHERE relname = ANY($1) AND relkind = 'r'",
+        &owned
     )
-    .bind(&owned)
     .fetch_all(pool)
     .await?;
     Ok(rows
         .into_iter()
-        .map(|(name, n)| (name, n.max(0.0) as u64))
+        .map(|r| (r.relname, r.reltuples.max(0.0) as u64))
         .collect())
 }
 
@@ -87,17 +88,18 @@ pub async fn get_dashboard_stats(
     // Control plane: exact counts. These tables are bounded (thousands at
     // most) so COUNT(*) is sub-millisecond — keeping these in one place
     // here rather than scattering helpers across each repository.
-    let (total_clients,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tnt_clients")
+    let total_clients = sqlx::query_scalar!("SELECT COUNT(*) AS \"count!\" FROM tnt_clients")
         .fetch_one(&state.pool)
         .await
         .map_err(|e| PlatformError::internal(format!("count clients: {}", e)))?;
-    let (active_users,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM iam_principals WHERE type = $1 AND active = TRUE")
-            .bind(PrincipalType::User)
-            .fetch_one(&state.pool)
-            .await
-            .map_err(|e| PlatformError::internal(format!("count users: {}", e)))?;
-    let (roles_defined,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM iam_roles")
+    let active_users = sqlx::query_scalar!(
+        "SELECT COUNT(*) AS \"count!\" FROM iam_principals WHERE type = $1 AND active = TRUE",
+        PrincipalType::User as PrincipalType
+    )
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|e| PlatformError::internal(format!("count users: {}", e)))?;
+    let roles_defined = sqlx::query_scalar!("SELECT COUNT(*) AS \"count!\" FROM iam_roles")
         .fetch_one(&state.pool)
         .await
         .map_err(|e| PlatformError::internal(format!("count roles: {}", e)))?;

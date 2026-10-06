@@ -414,28 +414,28 @@ impl PgUnitOfWork {
         let row = EventRow::from_event(event)?;
         let now = Utc::now();
 
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"INSERT INTO msg_events
                 (id, spec_version, type, source, subject,
                  time, data, correlation_id, causation_id,
                  deduplication_id, message_group, client_id,
                  context_data, created_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"#,
+            row.id,
+            row.spec_version,
+            row.event_type,
+            row.source,
+            row.subject,
+            row.time,
+            &row.data,
+            row.correlation_id,
+            row.causation_id,
+            &row.deduplication_id,
+            row.message_group,
+            None::<String>, /* client_id */
+            &row.context_data,
+            now
         )
-        .bind(row.id)
-        .bind(row.spec_version)
-        .bind(row.event_type)
-        .bind(row.source)
-        .bind(row.subject)
-        .bind(row.time)
-        .bind(&row.data)
-        .bind(row.correlation_id)
-        .bind(row.causation_id)
-        .bind(&row.deduplication_id)
-        .bind(row.message_group)
-        .bind(None::<String>) // client_id
-        .bind(&row.context_data)
-        .bind(now)
         .execute(&mut **txn)
         .await;
 
@@ -462,22 +462,22 @@ impl PgUnitOfWork {
             row.operation_json = recorded.operation_json.clone();
         }
 
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"INSERT INTO aud_logs
                 (id, entity_type, entity_id, operation,
                  operation_json, principal_id, application_id,
                  client_id, performed_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
+            tsid::generate(EntityType::AuditLog),
+            &row.entity_type,
+            &row.entity_id,
+            &row.operation,
+            row.operation_json.as_ref(),
+            row.principal_id,
+            None::<String>, /* application_id */
+            None::<String>, /* client_id */
+            row.performed_at
         )
-        .bind(tsid::generate(EntityType::AuditLog))
-        .bind(&row.entity_type)
-        .bind(&row.entity_id)
-        .bind(&row.operation)
-        .bind(&row.operation_json)
-        .bind(row.principal_id)
-        .bind(None::<String>) // application_id
-        .bind(None::<String>) // client_id
-        .bind(row.performed_at)
         .execute(&mut **txn)
         .await;
 

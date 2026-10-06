@@ -298,10 +298,11 @@ pub async fn get_dashboard(
 
     // Approximate row counts via pg_class.reltuples. One round-trip for
     // both message tables; sub-millisecond regardless of row count.
-    let row: Option<(f32, f32)> = sqlx::query_as(
+    // `!`: both are COALESCEd.
+    let row = sqlx::query!(
         "SELECT \
-            COALESCE(MAX(CASE WHEN relname = 'msg_dispatch_jobs' THEN reltuples END), 0)::float4, \
-            COALESCE(MAX(CASE WHEN relname = 'msg_events' THEN reltuples END), 0)::float4 \
+            COALESCE(MAX(CASE WHEN relname = 'msg_dispatch_jobs' THEN reltuples END), 0)::float4 AS \"jobs!\", \
+            COALESCE(MAX(CASE WHEN relname = 'msg_events' THEN reltuples END), 0)::float4 AS \"events!\" \
          FROM pg_class \
          WHERE relname IN ('msg_dispatch_jobs', 'msg_events') AND relkind = 'r'",
     )
@@ -310,7 +311,7 @@ pub async fn get_dashboard(
     .ok()
     .flatten();
     let (total_jobs, total_events) = row
-        .map(|(j, e)| (j.max(0.0) as u64, e.max(0.0) as u64))
+        .map(|r| (r.jobs.max(0.0) as u64, r.events.max(0.0) as u64))
         .unwrap_or((0, 0));
 
     Ok(Json(DashboardMetrics {

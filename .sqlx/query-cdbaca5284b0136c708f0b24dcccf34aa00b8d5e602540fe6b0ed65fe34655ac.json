@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT MIN(occurred_at) FROM iam_rate_limit_events WHERE bucket = $1 AND key = $2 AND occurred_at > $3",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "min",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "cdbaca5284b0136c708f0b24dcccf34aa00b8d5e602540fe6b0ed65fe34655ac"
+}

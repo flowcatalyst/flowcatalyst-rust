@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT child.relname\n        FROM pg_inherits i\n        JOIN pg_class parent ON i.inhparent = parent.oid\n        JOIN pg_class child ON i.inhrelid = child.oid\n        WHERE parent.relname = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "relname",
+        "type_info": "Name"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Name"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "86c66a4f3a9ab51336cc564a77e9fa557a53f9372c201da5e4485ff0da0e5c16"
+}

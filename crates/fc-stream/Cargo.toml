@@ -9,7 +9,7 @@ license.workspace = true
 fc-common = { path = "../fc-common", features = ["dispatch-lifecycle"] }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
-sqlx = { workspace = true, features = ["postgres"] }
+sqlx = { workspace = true, features = ["postgres", "macros", "json"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }

@@ -40,14 +40,15 @@ const ROLE_SOURCE: AssignmentSource = AssignmentSource::Bootstrap;
 pub async fn bootstrap_admin_user(pool: &PgPool) -> Result<()> {
     // Cheap existence check: any anchor USER already present means we're
     // not on a freshly-deployed environment.
-    let existing: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM iam_principals WHERE type = $1 AND scope = $2")
-            .bind(PrincipalType::User)
-            .bind(UserScope::Anchor)
-            .fetch_one(pool)
-            .await?;
+    let existing = sqlx::query_scalar!(
+        "SELECT COUNT(*) AS \"count!\" FROM iam_principals WHERE type = $1 AND scope = $2",
+        PrincipalType::User as PrincipalType,
+        UserScope::Anchor as UserScope
+    )
+    .fetch_one(pool)
+    .await?;
 
-    if existing.0 > 0 {
+    if existing > 0 {
         return Ok(());
     }
 

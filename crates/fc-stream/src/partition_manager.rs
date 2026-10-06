@@ -213,7 +213,7 @@ async fn drop_old_partitions(
 ) -> anyhow::Result<u32> {
     let cutoff = now - chrono::Duration::days(retention_days as i64);
 
-    let rows: Vec<(String,)> = sqlx::query_as(
+    let rows: Vec<(String,)> = sqlx::query!(
         r#"
         SELECT child.relname
         FROM pg_inherits i
@@ -221,10 +221,13 @@ async fn drop_old_partitions(
         JOIN pg_class child ON i.inhrelid = child.oid
         WHERE parent.relname = $1
         "#,
+        parent
     )
-    .bind(parent)
     .fetch_all(pool)
-    .await?;
+    .await?
+    .into_iter()
+    .map(|r| (r.relname,))
+    .collect();
 
     let mut dropped = 0u32;
     for (name,) in rows {
@@ -249,29 +252,31 @@ async fn drop_old_partitions(
 }
 
 async fn partition_exists(pool: &PgPool, name: &str) -> anyhow::Result<bool> {
-    let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM pg_class WHERE relname = $1")
-        .bind(name)
-        .fetch_one(pool)
-        .await?;
-    Ok(row.0 > 0)
+    let row = sqlx::query_scalar!(
+        "SELECT COUNT(*) AS \"count!\" FROM pg_class WHERE relname = $1",
+        name
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(row > 0)
 }
 
 /// True if `table` is a declarative-partitioned table.
 async fn is_partitioned(pool: &PgPool, table: &str) -> anyhow::Result<bool> {
-    let row: (bool,) = sqlx::query_as(
+    let row = sqlx::query_scalar!(
         r#"
         SELECT EXISTS (
             SELECT 1
             FROM pg_partitioned_table pt
             JOIN pg_class c ON c.oid = pt.partrelid
             WHERE c.relname = $1
-        )
+        ) AS "exists!"
         "#,
+        table
     )
-    .bind(table)
     .fetch_one(pool)
     .await?;
-    Ok(row.0)
+    Ok(row)
 }
 
 /// First instant of the month at `offset` months from `now`.

@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            WITH ins AS (\n                INSERT INTO iam_rate_limit_events (bucket, key, occurred_at)\n                VALUES ($1, $2, NOW())\n                RETURNING 1\n            )\n            SELECT (SELECT COUNT(*) FROM ins) + COUNT(*) AS \"count!\"\n            FROM iam_rate_limit_events\n            WHERE bucket = $1\n              AND key = $2\n              AND occurred_at > $3\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "8f36a8cfbe9ff163c12bf364b9d9f01c8c81e19a762d21209e96b5dfa7ca1ab7"
+}

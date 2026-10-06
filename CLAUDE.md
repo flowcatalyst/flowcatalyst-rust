@@ -139,12 +139,24 @@ note that deferred checked queries). **Conversion is in progress**, one
 repository at a time; a crate is done when it has no runtime `sqlx::query*`
 call left except the exceptions below.
 
-Done (every static query checked; only `QueryBuilder` queries stay runtime):
-`fc-platform-scheduled-jobs`, `fc-platform-auth`, `fc-platform-functions`, `fc-platform-iam` (435 queries), `fc-platform-messaging` (its dispatch-job, event and projection writes are macros only where the SQL text is byte-identical to the tuned runtime text; the claim/mark lifecycle lives in `fc-common`, still runtime). Not done: `fc-platform`, `fc-stream`, `fc-common`, `fc-dev` and `fc-server`
-bootstraps.
-Everything else is still runtime SQL (`sqlx::query_as::<_, FooRow>("SELECT ...")`)
-and is converted the next time the work resumes; convert a repository you are
-editing if it is not done (one repository per commit, with its `.sqlx/` files).
+Done (every static query is checked; what stays runtime is listed):
+`fc-platform-scheduled-jobs`, `fc-platform-auth`, `fc-platform-functions`,
+`fc-platform-iam`, `fc-platform-messaging`, `fc-platform-core`, `fc-platform`,
+and the partition manager's catalog reads in `fc-stream`.
+Runtime on purpose, besides the general exceptions below:
+- the dispatch hot path: `fc-common`'s `dispatch_lifecycle.rs` (SQL held in
+  `const`s, which a macro cannot take; tuned text), `fc-stream`'s
+  `event_fan_out.rs` (claim, no-subscription stamp, subscription cache: a macro
+  would need aliases, which change the tuned text), and in
+  `fc-platform-messaging` the scheduler claim/mark path (the writes there are
+  macros only where the SQL text is byte-identical to the tuned runtime text);
+- queries whose text is built from a table or column name or other variable
+  parts (`QueryBuilder`, `format!` with a runtime value, DDL);
+- `fc-migrations` (the runner that builds the schema `.sqlx/` is prepared
+  against), `fc-dev` (bootstrap SQL and its end-to-end tests), `fc-outbox`,
+  `fc-queue`, `fc-sdk` (multi-database / published), the `harness/` tools.
+Convert a runtime query you are editing if it is none of these, in its own
+commit with its `.sqlx/` files.
 
 ### The rule
 - A static query is `sqlx::query!` / `query_as!` / `query_scalar!` (a `const`

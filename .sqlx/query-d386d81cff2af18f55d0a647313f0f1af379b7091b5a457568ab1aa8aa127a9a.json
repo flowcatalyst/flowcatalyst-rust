@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT relname AS \"relname!\", reltuples::float4 AS \"reltuples!\" FROM pg_class WHERE relname = ANY($1) AND relkind = 'r'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "relname!",
+        "type_info": "Name"
+      },
+      {
+        "ordinal": 1,
+        "name": "reltuples!",
+        "type_info": "Float4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "NameArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "d386d81cff2af18f55d0a647313f0f1af379b7091b5a457568ab1aa8aa127a9a"
+}

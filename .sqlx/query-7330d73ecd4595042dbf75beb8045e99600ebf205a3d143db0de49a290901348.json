@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COALESCE(MAX(CASE WHEN relname = 'msg_dispatch_jobs' THEN reltuples END), 0)::float4 AS \"jobs!\", COALESCE(MAX(CASE WHEN relname = 'msg_events' THEN reltuples END), 0)::float4 AS \"events!\" FROM pg_class WHERE relname IN ('msg_dispatch_jobs', 'msg_events') AND relkind = 'r'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "jobs!",
+        "type_info": "Float4"
+      },
+      {
+        "ordinal": 1,
+        "name": "events!",
+        "type_info": "Float4"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "7330d73ecd4595042dbf75beb8045e99600ebf205a3d143db0de49a290901348"
+}

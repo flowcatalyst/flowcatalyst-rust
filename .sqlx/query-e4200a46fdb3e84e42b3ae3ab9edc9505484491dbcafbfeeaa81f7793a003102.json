@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO aud_logs\n                (id, entity_type, entity_id, operation,\n                 operation_json, principal_id, application_id,\n                 client_id, performed_at)\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Jsonb",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e4200a46fdb3e84e42b3ae3ab9edc9505484491dbcafbfeeaa81f7793a003102"
+}
