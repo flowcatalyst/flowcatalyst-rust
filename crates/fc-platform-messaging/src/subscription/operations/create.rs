@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::SubscriptionCreated;
+use crate::scheduler::destination::Priority;
 use crate::service_account::signing_reach::require_usable_signers;
 use crate::subscription::entity::{ConfigEntry, DispatchMode};
 use crate::subscription::entity::{EventTypeBinding, Subscription};
@@ -44,9 +45,9 @@ pub(crate) fn parse_queue(raw: &str) -> Result<Option<String>, UseCaseError> {
     if trimmed.is_empty() {
         return Ok(None);
     }
-    match trimmed.to_ascii_uppercase().as_str() {
-        p @ ("DEFAULT" | "HIGH_PRIORITY") => Ok(Some(p.to_string())),
-        _ => Err(UseCaseError::validation(
+    match Priority::recognise(trimmed) {
+        Some(priority) => Ok(Some(priority.as_str().to_string())),
+        None => Err(UseCaseError::validation(
             "INVALID_QUEUE",
             "queue must be DEFAULT or HIGH_PRIORITY",
         )),

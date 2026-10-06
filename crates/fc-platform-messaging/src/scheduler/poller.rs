@@ -44,6 +44,7 @@
 //! A NULL group never holds; an ungrouped job is held only by a row whose
 //! group is literally `default`: Go's quirk, kept.
 
+use crate::connection::entity::ConnectionStatus;
 use crate::dispatch_job::lifecycle;
 use std::collections::{HashMap, HashSet};
 use std::pin::pin;
@@ -96,8 +97,9 @@ impl PausedConnectionCache {
         let ids: Vec<String> = sqlx::query_scalar(
             "SELECT s.id FROM msg_subscriptions s \
              JOIN msg_connections c ON c.id = s.connection_id \
-             WHERE c.status = 'PAUSED'",
+             WHERE c.status = $1",
         )
+        .bind(ConnectionStatus::Paused)
         .fetch_all(&self.pool)
         .await?;
         debug!(

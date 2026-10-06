@@ -1,5 +1,7 @@
 //! Subscription Repository — PostgreSQL via SQLx
 
+use crate::subscription::entity::SubscriptionSource;
+use crate::subscription::entity::SubscriptionStatus;
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::ConnectionId;
@@ -9,7 +11,7 @@ use sqlx::PgPool;
 
 use super::entity::{ConfigEntry, EventTypeBinding, Subscription};
 use crate::dispatch_job::entity::parse_dispatch_mode;
-use fc_platform_core::shared::enum_str::decode;
+use fc_platform_core::shared::enum_str::Stored;
 use fc_platform_core::shared::error;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::shared::id::decode_id;
@@ -34,8 +36,8 @@ struct SubscriptionRow {
     connection_id: Option<String>,
     target: String,
     queue: Option<String>,
-    source: String,
-    status: String,
+    source: Stored<SubscriptionSource>,
+    status: Stored<SubscriptionStatus>,
     max_age_seconds: i32,
     dispatch_pool_id: Option<String>,
     dispatch_pool_code: Option<String>,
@@ -67,8 +69,8 @@ impl TryFrom<SubscriptionRow> for Subscription {
             "dispatch_pool_id",
             &r.id,
         )?;
-        let source = decode(&r.source, "msg_subscriptions", "source", &r.id)?;
-        let status = decode(&r.status, "msg_subscriptions", "status", &r.id)?;
+        let source = r.source.decode("msg_subscriptions", "source", &r.id)?;
+        let status = r.status.decode("msg_subscriptions", "status", &r.id)?;
         let mode = parse_dispatch_mode(Some(&r.mode));
         Ok(Self {
             id,
@@ -263,14 +265,14 @@ impl SubscriptionRepository {
         .bind(&sub.connection_id)
         .bind(&sub.endpoint)
         .bind(&sub.queue)
-        .bind(sub.source.as_str())
-        .bind(sub.status.as_str())
+        .bind(sub.source)
+        .bind(sub.status)
         .bind(sub.max_age_seconds)
         .bind(&sub.dispatch_pool_id)
         .bind(&sub.dispatch_pool_code)
         .bind(sub.delay_seconds)
         .bind(sub.sequence)
-        .bind(sub.mode.as_str())
+        .bind(sub.mode)
         .bind(sub.timeout_seconds)
         .bind(sub.max_retries)
         .bind(&sub.service_account_id)
@@ -429,19 +431,21 @@ impl SubscriptionRepository {
         let rows = if let Some(cid) = client_id {
             sqlx::query_as::<_, SubscriptionRow>(
                 "SELECT * FROM msg_subscriptions
-                 WHERE id = ANY($1) AND status = 'ACTIVE'
+                 WHERE id = ANY($1) AND status = $3
                    AND (client_id = $2 OR client_scoped = false)",
             )
             .bind(&sub_ids)
             .bind(cid)
+            .bind(SubscriptionStatus::Active)
             .fetch_all(&self.pool)
             .await?
         } else {
             sqlx::query_as::<_, SubscriptionRow>(
                 "SELECT * FROM msg_subscriptions
-                 WHERE id = ANY($1) AND status = 'ACTIVE'",
+                 WHERE id = ANY($1) AND status = $2",
             )
             .bind(&sub_ids)
+            .bind(SubscriptionStatus::Active)
             .fetch_all(&self.pool)
             .await?
         };
@@ -471,14 +475,14 @@ impl SubscriptionRepository {
         .bind(&sub.connection_id)
         .bind(&sub.endpoint)
         .bind(&sub.queue)
-        .bind(sub.source.as_str())
-        .bind(sub.status.as_str())
+        .bind(sub.source)
+        .bind(sub.status)
         .bind(sub.max_age_seconds)
         .bind(&sub.dispatch_pool_id)
         .bind(&sub.dispatch_pool_code)
         .bind(sub.delay_seconds)
         .bind(sub.sequence)
-        .bind(sub.mode.as_str())
+        .bind(sub.mode)
         .bind(sub.timeout_seconds)
         .bind(sub.max_retries)
         .bind(&sub.service_account_id)
@@ -644,8 +648,9 @@ impl SubscriptionRepository {
 
     pub async fn find_active(&self) -> Result<Vec<Subscription>> {
         let rows = sqlx::query_as::<_, SubscriptionRow>(
-            "SELECT * FROM msg_subscriptions WHERE status = 'ACTIVE' ORDER BY code ASC",
+            "SELECT * FROM msg_subscriptions WHERE status = $1 ORDER BY code ASC",
         )
+        .bind(SubscriptionStatus::Active)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_all(rows).await
@@ -721,14 +726,14 @@ impl Persist<Subscription> for SubscriptionRepository {
         .bind(&s.connection_id)
         .bind(&s.endpoint)
         .bind(&s.queue)
-        .bind(s.source.as_str())
-        .bind(s.status.as_str())
+        .bind(s.source)
+        .bind(s.status)
         .bind(s.max_age_seconds)
         .bind(&s.dispatch_pool_id)
         .bind(&s.dispatch_pool_code)
         .bind(s.delay_seconds)
         .bind(s.sequence)
-        .bind(s.mode.as_str())
+        .bind(s.mode)
         .bind(s.timeout_seconds)
         .bind(s.max_retries)
         .bind(&s.service_account_id)

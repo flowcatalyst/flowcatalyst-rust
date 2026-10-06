@@ -7,7 +7,7 @@ use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{Connection, ConnectionStatus};
 use crate::connection::sync_plan::ConnectionSyncPlan;
-use fc_platform_core::shared::enum_str::decode;
+use fc_platform_core::shared::enum_str::Stored;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::shared::id::decode_id;
 use fc_platform_core::shared::id::decode_id_opt;
@@ -23,7 +23,7 @@ struct ConnectionRow {
     name: String,
     description: Option<String>,
     external_id: Option<String>,
-    status: String,
+    status: Stored<ConnectionStatus>,
     service_account_id: String,
     client_id: Option<String>,
     client_identifier: Option<String>,
@@ -43,7 +43,7 @@ impl TryFrom<ConnectionRow> for Connection {
             "client_id",
             &r.id,
         )?;
-        let status = decode(&r.status, "msg_connections", "status", &r.id)?;
+        let status = r.status.decode("msg_connections", "status", &r.id)?;
         // X-06: a source outside the known set is a loud read error (the
         // column's CHECK allows only these).
         if !matches!(r.source.as_str(), "CODE" | "API" | "UI") {
@@ -90,7 +90,7 @@ impl ConnectionRepository {
         .bind(&conn.name)
         .bind(&conn.description)
         .bind(&conn.external_id)
-        .bind(conn.status.as_str())
+        .bind(conn.status)
         .bind(&conn.service_account_id)
         .bind(&conn.client_id)
         .bind(&conn.client_identifier)
@@ -239,7 +239,7 @@ impl ConnectionRepository {
         .bind(&conn.name)
         .bind(&conn.description)
         .bind(&conn.external_id)
-        .bind(conn.status.as_str())
+        .bind(conn.status)
         .bind(&conn.service_account_id)
         .bind(&conn.client_id)
         .bind(&conn.client_identifier)
@@ -288,7 +288,7 @@ impl Persist<Connection> for ConnectionRepository {
         .bind(&c.name)
         .bind(&c.description)
         .bind(&c.external_id)
-        .bind(c.status.as_str())
+        .bind(c.status)
         .bind(&c.service_account_id)
         .bind(&c.client_id)
         .bind(&c.client_identifier)

@@ -1,5 +1,8 @@
 //! DispatchJob Repository — PostgreSQL via SQLx
 
+use crate::dispatch_job::entity::DispatchKind;
+use crate::dispatch_job::entity::DispatchProtocol;
+use crate::dispatch_job::entity::RetryStrategy;
 use crate::dispatch_job::entity::{
     default_content_type, DispatchAttempt, DispatchAttemptStatus, DispatchMetadata, ErrorType,
 };
@@ -8,7 +11,7 @@ use crate::dispatch_job::entity::{DispatchJob, DispatchJobRead, DispatchStatus};
 use crate::dispatch_job::lifecycle;
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::api_common::DecodedCursor;
-use fc_platform_core::shared::enum_str::{corrupt_value, decode};
+use fc_platform_core::shared::enum_str::{corrupt_value, Stored};
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::shared::tsid;
 use sqlx::{PgPool, Postgres, QueryBuilder};
@@ -20,14 +23,14 @@ struct DispatchJobRow {
     id: String,
     external_id: Option<String>,
     source: Option<String>,
-    kind: String,
+    kind: Stored<DispatchKind>,
     code: String,
     subject: Option<String>,
     event_id: Option<String>,
     correlation_id: Option<String>,
     metadata: serde_json::Value,
     target_url: String,
-    protocol: String,
+    protocol: Stored<DispatchProtocol>,
     payload: Option<String>,
     payload_content_type: Option<String>,
     data_only: bool,
@@ -42,7 +45,7 @@ struct DispatchJobRow {
     schema_id: Option<String>,
     status: String,
     max_retries: i32,
-    retry_strategy: String,
+    retry_strategy: Stored<RetryStrategy>,
     scheduled_for: Option<DateTime<Utc>>,
     expires_at: Option<DateTime<Utc>>,
     attempt_count: i32,
@@ -60,15 +63,12 @@ struct DispatchJobRow {
 impl TryFrom<DispatchJobRow> for DispatchJob {
     type Error = PlatformError;
     fn try_from(r: DispatchJobRow) -> Result<Self> {
-        let kind = decode(&r.kind, "msg_dispatch_jobs", "kind", &r.id)?;
-        let protocol = decode(&r.protocol, "msg_dispatch_jobs", "protocol", &r.id)?;
+        let kind = r.kind.decode("msg_dispatch_jobs", "kind", &r.id)?;
+        let protocol = r.protocol.decode("msg_dispatch_jobs", "protocol", &r.id)?;
         let mode = parse_dispatch_mode(Some(&r.mode));
-        let retry_strategy = decode(
-            &r.retry_strategy,
-            "msg_dispatch_jobs",
-            "retry_strategy",
-            &r.id,
-        )?;
+        let retry_strategy =
+            r.retry_strategy
+                .decode("msg_dispatch_jobs", "retry_strategy", &r.id)?;
         let status = parse_dispatch_status(&r.status)
             .map_err(|_| corrupt_value("msg_dispatch_jobs", "status", &r.status, &r.id))?;
         let metadata: Vec<DispatchMetadata> =
@@ -122,13 +122,13 @@ struct DispatchJobReadRow {
     id: String,
     external_id: Option<String>,
     source: Option<String>,
-    kind: String,
+    kind: Stored<DispatchKind>,
     code: String,
     subject: Option<String>,
     event_id: Option<String>,
     correlation_id: Option<String>,
     target_url: String,
-    protocol: String,
+    protocol: Stored<DispatchProtocol>,
     client_id: Option<String>,
     subscription_id: Option<String>,
     service_account_id: Option<String>,
@@ -141,7 +141,7 @@ struct DispatchJobReadRow {
     max_retries: i32,
     last_error: Option<String>,
     timeout_seconds: i32,
-    retry_strategy: String,
+    retry_strategy: Stored<RetryStrategy>,
     application: Option<String>,
     subdomain: Option<String>,
     aggregate: Option<String>,
@@ -164,17 +164,16 @@ struct DispatchJobReadRow {
 impl TryFrom<DispatchJobReadRow> for DispatchJobRead {
     type Error = PlatformError;
     fn try_from(r: DispatchJobReadRow) -> Result<Self> {
-        let kind = decode(&r.kind, "msg_dispatch_jobs_read", "kind", &r.id)?;
-        let protocol = decode(&r.protocol, "msg_dispatch_jobs_read", "protocol", &r.id)?;
+        let kind = r.kind.decode("msg_dispatch_jobs_read", "kind", &r.id)?;
+        let protocol = r
+            .protocol
+            .decode("msg_dispatch_jobs_read", "protocol", &r.id)?;
         let mode = parse_dispatch_mode(Some(&r.mode));
         let status = parse_dispatch_status(&r.status)
             .map_err(|_| corrupt_value("msg_dispatch_jobs_read", "status", &r.status, &r.id))?;
-        let retry_strategy = decode(
-            &r.retry_strategy,
-            "msg_dispatch_jobs_read",
-            "retry_strategy",
-            &r.id,
-        )?;
+        let retry_strategy =
+            r.retry_strategy
+                .decode("msg_dispatch_jobs_read", "retry_strategy", &r.id)?;
         Ok(Self {
             id: r.id,
             external_id: r.external_id,
@@ -236,11 +235,11 @@ pub struct RecordedAttempt {
 #[derive(sqlx::FromRow)]
 struct AttemptRow {
     attempt_number: Option<i32>,
-    status: Option<String>,
+    status: Option<Stored<DispatchAttemptStatus>>,
     response_code: Option<i32>,
     response_body: Option<String>,
     error_message: Option<String>,
-    error_type: Option<String>,
+    error_type: Option<Stored<ErrorType>>,
     duration_millis: Option<i64>,
     attempted_at: Option<DateTime<Utc>>,
     completed_at: Option<DateTime<Utc>>,
@@ -250,11 +249,7 @@ struct AttemptRow {
 
 impl From<AttemptRow> for RecordedAttempt {
     fn from(r: AttemptRow) -> Self {
-        let success = r
-            .status
-            .as_deref()
-            .and_then(|s| s.parse::<DispatchAttemptStatus>().ok())
-            == Some(DispatchAttemptStatus::Success);
+        let success = r.status.and_then(Stored::known) == Some(DispatchAttemptStatus::Success);
         Self {
             attempt: DispatchAttempt {
                 attempt_number: r.attempt_number.unwrap_or(0).max(0) as u32,
@@ -265,7 +260,7 @@ impl From<AttemptRow> for RecordedAttempt {
                 response_body: r.response_body,
                 success,
                 error_message: r.error_message,
-                error_type: r.error_type.as_deref().and_then(|t| t.parse().ok()),
+                error_type: r.error_type.and_then(Stored::known),
             },
             request_info: r.request_info,
         }
@@ -411,7 +406,7 @@ impl DispatchJobRepository {
             let rows = sqlx::query_as::<_, DispatchJobRow>(
                 "SELECT * FROM msg_dispatch_jobs WHERE status = $1 LIMIT $2",
             )
-            .bind(status.as_str())
+            .bind(status)
             .bind(limit)
             .fetch_all(&self.pool)
             .await?;
@@ -420,7 +415,7 @@ impl DispatchJobRepository {
             let rows = sqlx::query_as::<_, DispatchJobRow>(
                 "SELECT * FROM msg_dispatch_jobs WHERE status = $1",
             )
-            .bind(status.as_str())
+            .bind(status)
             .fetch_all(&self.pool)
             .await?;
             rows.into_iter().map(DispatchJob::try_from).collect()
@@ -848,26 +843,26 @@ impl DispatchJobRepository {
         .bind(&p.id)
         .bind(&p.external_id)
         .bind(&p.source)
-        .bind(p.kind.as_str())
+        .bind(p.kind)
         .bind(&p.code)
         .bind(&p.subject)
         .bind(&p.event_id)
         .bind(&p.correlation_id)
         .bind(&p.target_url)
-        .bind(p.protocol.as_str())
+        .bind(p.protocol)
         .bind(&p.client_id)
         .bind(&p.subscription_id)
         .bind(&p.service_account_id)
         .bind(&p.dispatch_pool_id)
         .bind(&p.message_group)
-        .bind(p.mode.as_str())
+        .bind(p.mode)
         .bind(p.sequence)
-        .bind(p.status.as_str())
+        .bind(p.status)
         .bind(p.attempt_count as i32)
         .bind(p.max_retries as i32)
         .bind(&p.last_error)
         .bind(p.timeout_seconds as i32)
-        .bind(p.retry_strategy.as_str())
+        .bind(p.retry_strategy)
         .bind(&p.application)
         .bind(&p.subdomain)
         .bind(&p.aggregate)
@@ -919,26 +914,26 @@ impl DispatchJobRepository {
         .bind(&p.id)
         .bind(&p.external_id)
         .bind(&p.source)
-        .bind(p.kind.as_str())
+        .bind(p.kind)
         .bind(&p.code)
         .bind(&p.subject)
         .bind(&p.event_id)
         .bind(&p.correlation_id)
         .bind(&p.target_url)
-        .bind(p.protocol.as_str())
+        .bind(p.protocol)
         .bind(&p.client_id)
         .bind(&p.subscription_id)
         .bind(&p.service_account_id)
         .bind(&p.dispatch_pool_id)
         .bind(&p.message_group)
-        .bind(p.mode.as_str())
+        .bind(p.mode)
         .bind(p.sequence)
-        .bind(p.status.as_str())
+        .bind(p.status)
         .bind(p.attempt_count as i32)
         .bind(p.max_retries as i32)
         .bind(&p.last_error)
         .bind(p.timeout_seconds as i32)
-        .bind(p.retry_strategy.as_str())
+        .bind(p.retry_strategy)
         .bind(&p.application)
         .bind(&p.subdomain)
         .bind(&p.aggregate)
@@ -967,7 +962,7 @@ impl DispatchJobRepository {
     pub async fn count_by_status(&self, status: DispatchStatus) -> Result<u64> {
         let (count,): (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM msg_dispatch_jobs WHERE status = $1")
-                .bind(status.as_str())
+                .bind(status)
                 .fetch_one(&self.pool)
                 .await?;
 
@@ -1151,11 +1146,11 @@ impl DispatchJobRepository {
         .bind(&id)
         .bind(dispatch_job_id)
         .bind(attempt_number as i32)
-        .bind(status.as_str())
+        .bind(status)
         .bind(response_code.map(|c| c as i32))
         .bind(response_body)
         .bind(error_message)
-        .bind(error_type.map(|t| t.as_str()))
+        .bind(error_type)
         .bind(error_stack_trace)
         .bind(duration_millis)
         .bind(attempted_at)

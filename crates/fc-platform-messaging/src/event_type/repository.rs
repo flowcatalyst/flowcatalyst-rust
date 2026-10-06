@@ -1,5 +1,8 @@
 //! EventType Repository — PostgreSQL via SQLx
 
+use crate::event_type::entity::EventTypeSource;
+use crate::event_type::entity::SchemaType;
+use crate::event_type::entity::SpecVersionStatus;
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::EventTypeId;
@@ -9,7 +12,7 @@ use sqlx::{PgPool, Postgres, QueryBuilder};
 use super::entity::{EventType, EventTypeStatus, SpecVersion};
 use crate::event_type::entity::EventTypeCode;
 use crate::event_type::operations::SyncEventTypeInput;
-use fc_platform_core::shared::enum_str::decode;
+use fc_platform_core::shared::enum_str::Stored;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::shared::id::decode_id;
 use fc_platform_core::usecase::unit_of_work::HasId;
@@ -25,8 +28,8 @@ struct EventTypeRow {
     code: String,
     name: String,
     description: Option<String>,
-    status: String,
-    source: String,
+    status: Stored<EventTypeStatus>,
+    source: Stored<EventTypeSource>,
     client_scoped: bool,
     application: String,
     subdomain: String,
@@ -40,8 +43,8 @@ impl TryFrom<EventTypeRow> for EventType {
     type Error = PlatformError;
     fn try_from(r: EventTypeRow) -> Result<Self> {
         let id = decode_id(&r.id, "msg_event_types", "id", &r.id)?;
-        let status = decode(&r.status, "msg_event_types", "status", &r.id)?;
-        let source = decode(&r.source, "msg_event_types", "source", &r.id)?;
+        let status = r.status.decode("msg_event_types", "status", &r.id)?;
+        let source = r.source.decode("msg_event_types", "source", &r.id)?;
         let event_name = r.code.split(':').nth(3).unwrap_or("").to_string();
         Ok(Self {
             id,
@@ -72,8 +75,8 @@ struct SpecVersionRow {
     version: String,
     mime_type: String,
     schema_content: Option<serde_json::Value>,
-    schema_type: String,
-    status: String,
+    schema_type: Stored<SchemaType>,
+    status: Stored<SpecVersionStatus>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -81,13 +84,12 @@ struct SpecVersionRow {
 impl TryFrom<SpecVersionRow> for SpecVersion {
     type Error = PlatformError;
     fn try_from(r: SpecVersionRow) -> Result<Self> {
-        let schema_type = decode(
-            &r.schema_type,
-            "msg_event_type_spec_versions",
-            "schema_type",
-            &r.id,
-        )?;
-        let status = decode(&r.status, "msg_event_type_spec_versions", "status", &r.id)?;
+        let schema_type =
+            r.schema_type
+                .decode("msg_event_type_spec_versions", "schema_type", &r.id)?;
+        let status = r
+            .status
+            .decode("msg_event_type_spec_versions", "status", &r.id)?;
         Ok(Self {
             id: SpecVersionId::from_wire(r.id),
             event_type_id: r.event_type_id,
@@ -173,7 +175,7 @@ impl EventTypeRepository {
                 "INSERT INTO msg_event_types \
                      (id, code, name, description, status, source, client_scoped, \
                       application, subdomain, aggregate, created_at, updated_at) \
-                 SELECT id, code, name, NULL, 'CURRENT', 'UI', false, application, subdomain, \
+                 SELECT id, code, name, NULL, $8, $9, false, application, subdomain, \
                         aggregate, $7, $7 \
                  FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[]) \
                       AS t(id, code, name, application, subdomain, aggregate) \
@@ -186,6 +188,8 @@ impl EventTypeRepository {
             .bind(&subdomains)
             .bind(&aggregates)
             .bind(now)
+            .bind(EventTypeStatus::Current)
+            .bind(EventTypeSource::Ui)
             .execute(&self.pool)
             .await?;
             // A concurrent seeder may have won a code: re-read the real ids.
@@ -229,7 +233,7 @@ impl EventTypeRepository {
                      (id, event_type_id, version, mime_type, schema_content, schema_type, \
                       status, created_at, updated_at) \
                  SELECT id, event_type_id, '1.0', 'application/schema+json', schema_content, \
-                        'JSON_SCHEMA', 'CURRENT', $4, $4 \
+                        $5, $6, $4, $4 \
                  FROM UNNEST($1::text[], $2::text[], $3::jsonb[]) \
                       AS v(id, event_type_id, schema_content) \
                  ON CONFLICT (event_type_id, version) DO NOTHING",
@@ -238,6 +242,8 @@ impl EventTypeRepository {
             .bind(&sv_types)
             .bind(&sv_schemas)
             .bind(now)
+            .bind(SchemaType::JsonSchema)
+            .bind(SpecVersionStatus::Current)
             .execute(&self.pool)
             .await?;
         }
@@ -309,8 +315,8 @@ impl EventTypeRepository {
         .bind(&et.code)
         .bind(&et.name)
         .bind(&et.description)
-        .bind(et.status.as_str())
-        .bind(et.source.as_str())
+        .bind(et.status)
+        .bind(et.source)
         .bind(et.client_scoped)
         .bind(&et.application)
         .bind(&et.subdomain)
@@ -338,8 +344,8 @@ impl EventTypeRepository {
         .bind(&sv.version)
         .bind(&sv.mime_type)
         .bind(&sv.schema_content)
-        .bind(sv.schema_type.as_str())
-        .bind(sv.status.as_str())
+        .bind(sv.schema_type)
+        .bind(sv.status)
         .bind(now)
         .bind(now)
         .execute(&self.pool)
@@ -392,7 +398,7 @@ impl EventTypeRepository {
         let rows = sqlx::query_as::<_, EventTypeRow>(
             "SELECT * FROM msg_event_types WHERE status = $1 ORDER BY code ASC",
         )
-        .bind(status.as_str())
+        .bind(status)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_all(rows).await
@@ -456,8 +462,9 @@ impl EventTypeRepository {
 
     pub async fn find_active(&self) -> Result<Vec<EventType>> {
         let rows = sqlx::query_as::<_, EventTypeRow>(
-            "SELECT * FROM msg_event_types WHERE status = 'CURRENT' ORDER BY code ASC",
+            "SELECT * FROM msg_event_types WHERE status = $1 ORDER BY code ASC",
         )
+        .bind(EventTypeStatus::Current)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_all(rows).await
@@ -466,8 +473,9 @@ impl EventTypeRepository {
     /// Find active event types without loading spec versions (for filter endpoints)
     pub async fn find_active_shallow(&self) -> Result<Vec<EventType>> {
         let rows = sqlx::query_as::<_, EventTypeRow>(
-            "SELECT * FROM msg_event_types WHERE status = 'CURRENT' ORDER BY code ASC",
+            "SELECT * FROM msg_event_types WHERE status = $1 ORDER BY code ASC",
         )
+        .bind(EventTypeStatus::Current)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(EventType::try_from).collect()
@@ -482,14 +490,14 @@ impl EventTypeRepository {
         if codes.is_empty() {
             return Ok(HashMap::new());
         }
-        let rows: Vec<(String, String, String)> =
+        let rows: Vec<(String, String, Stored<EventTypeStatus>)> =
             sqlx::query_as("SELECT id, code, status FROM msg_event_types WHERE code = ANY($1)")
                 .bind(codes)
                 .fetch_all(&self.pool)
                 .await?;
         rows.into_iter()
             .map(|(id, code, status)| {
-                let status = decode(&status, "msg_event_types", "status", &id)?;
+                let status = status.decode("msg_event_types", "status", &id)?;
                 Ok((code, status))
             })
             .collect()
@@ -505,7 +513,7 @@ impl EventTypeRepository {
         if codes.is_empty() {
             return Ok(HashMap::new());
         }
-        let rows: Vec<(String, String, String, String)> = sqlx::query_as(
+        let rows: Vec<(String, String, String, Stored<EventTypeStatus>)> = sqlx::query_as(
             "SELECT id, code, application, status FROM msg_event_types WHERE code = ANY($1)",
         )
         .bind(codes)
@@ -513,7 +521,7 @@ impl EventTypeRepository {
         .await?;
         rows.into_iter()
             .map(|(id, code, application, status)| {
-                let status = decode(&status, "msg_event_types", "status", &id)?;
+                let status = status.decode("msg_event_types", "status", &id)?;
                 Ok((code, (application, status)))
             })
             .collect()
@@ -540,8 +548,8 @@ impl EventTypeRepository {
         .bind(&et.code)
         .bind(&et.name)
         .bind(&et.description)
-        .bind(et.status.as_str())
-        .bind(et.source.as_str())
+        .bind(et.status)
+        .bind(et.source)
         .bind(et.client_scoped)
         .bind(&et.application)
         .bind(&et.subdomain)
@@ -563,8 +571,8 @@ impl EventTypeRepository {
         .bind(&sv.id)
         .bind(&sv.mime_type)
         .bind(&sv.schema_content)
-        .bind(sv.schema_type.as_str())
-        .bind(sv.status.as_str())
+        .bind(sv.schema_type)
+        .bind(sv.status)
         .bind(now)
         .execute(&self.pool)
         .await?;
@@ -612,8 +620,8 @@ impl Persist<EventType> for EventTypeRepository {
         .bind(&et.code)
         .bind(&et.name)
         .bind(&et.description)
-        .bind(et.status.as_str())
-        .bind(et.source.as_str())
+        .bind(et.status)
+        .bind(et.source)
         .bind(et.client_scoped)
         .bind(&et.application)
         .bind(&et.subdomain)
@@ -638,8 +646,8 @@ impl Persist<EventType> for EventTypeRepository {
             .bind(&sv.version)
             .bind(&sv.mime_type)
             .bind(&sv.schema_content)
-            .bind(sv.schema_type.as_str())
-            .bind(sv.status.as_str())
+            .bind(sv.schema_type)
+            .bind(sv.status)
             .bind(sv.created_at)
             .bind(sv.updated_at)
             .execute(&mut **tx.inner).await?;

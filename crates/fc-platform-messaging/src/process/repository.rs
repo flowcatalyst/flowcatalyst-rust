@@ -1,11 +1,12 @@
 //! Process Repository — PostgreSQL via SQLx
 
+use crate::process::entity::ProcessSource;
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::ProcessId;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{Process, ProcessStatus};
-use fc_platform_core::shared::enum_str::decode;
+use fc_platform_core::shared::enum_str::Stored;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::shared::id::decode_id;
 use fc_platform_core::usecase::unit_of_work::HasId;
@@ -18,8 +19,8 @@ struct ProcessRow {
     code: String,
     name: String,
     description: Option<String>,
-    status: String,
-    source: String,
+    status: Stored<ProcessStatus>,
+    source: Stored<ProcessSource>,
     application: String,
     subdomain: String,
     process_name: String,
@@ -34,8 +35,8 @@ impl TryFrom<ProcessRow> for Process {
     type Error = PlatformError;
     fn try_from(r: ProcessRow) -> Result<Self> {
         let id = decode_id(&r.id, "msg_processes", "id", &r.id)?;
-        let status = decode(&r.status, "msg_processes", "status", &r.id)?;
-        let source = decode(&r.source, "msg_processes", "source", &r.id)?;
+        let status = r.status.decode("msg_processes", "status", &r.id)?;
+        let source = r.source.decode("msg_processes", "source", &r.id)?;
         Ok(Self {
             id,
             code: r.code,
@@ -75,8 +76,8 @@ impl ProcessRepository {
         .bind(&p.code)
         .bind(&p.name)
         .bind(&p.description)
-        .bind(p.status.as_str())
-        .bind(p.source.as_str())
+        .bind(p.status)
+        .bind(p.source)
         .bind(&p.application)
         .bind(&p.subdomain)
         .bind(&p.process_name)
@@ -103,8 +104,8 @@ impl ProcessRepository {
         .bind(&p.code)
         .bind(&p.name)
         .bind(&p.description)
-        .bind(p.status.as_str())
-        .bind(p.source.as_str())
+        .bind(p.status)
+        .bind(p.source)
         .bind(&p.application)
         .bind(&p.subdomain)
         .bind(&p.process_name)
@@ -238,8 +239,8 @@ impl Persist<Process> for ProcessRepository {
         .bind(&p.code)
         .bind(&p.name)
         .bind(&p.description)
-        .bind(p.status.as_str())
-        .bind(p.source.as_str())
+        .bind(p.status)
+        .bind(p.source)
         .bind(&p.application)
         .bind(&p.subdomain)
         .bind(&p.process_name)

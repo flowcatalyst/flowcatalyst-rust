@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::repository::{DispatchJobActionsRepository, JobStatusFlip, JobsRequeue};
+use crate::dispatch_job::entity::DispatchStatus;
 use fc_platform_core::impl_domain_event;
 use fc_platform_core::permissions;
 use fc_platform_core::shared::authorization_service::Authority;
@@ -142,8 +143,12 @@ impl<U: UnitOfWork> UseCase for RequeueDispatchJobsUseCase<U> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusFlipCommand {
     pub id: String,
+    /// [`DispatchStatus::Cancelled`] or [`DispatchStatus::Completed`].
     #[serde(skip)]
-    pub target: &'static str,
+    pub target: DispatchStatus,
+    /// The stored spelling, as read: a legacy `ERROR` row is not `FAILED`
+    /// here (it is refused), so it is not parsed into the enum, which reads
+    /// `ERROR` as `Failed`.
     #[serde(skip)]
     pub current_status: String,
     #[serde(skip)]
@@ -203,7 +208,7 @@ impl<U: UnitOfWork> UseCase for SettleDispatchJobUseCase<U> {
         command: StatusFlipCommand,
         ctx: ExecutionContext,
     ) -> Result<Committed<DispatchJobSettled>, UseCaseError> {
-        if command.current_status != "FAILED" {
+        if command.current_status != DispatchStatus::Failed.as_str() {
             return Err(UseCaseError::business_rule(
                 "NOT_FAILED",
                 format!(
@@ -212,7 +217,7 @@ impl<U: UnitOfWork> UseCase for SettleDispatchJobUseCase<U> {
                 ),
             ));
         }
-        let event_type = if command.target == "CANCELLED" {
+        let event_type = if command.target == DispatchStatus::Cancelled {
             CANCELLED_EVENT
         } else {
             COMPLETED_EVENT

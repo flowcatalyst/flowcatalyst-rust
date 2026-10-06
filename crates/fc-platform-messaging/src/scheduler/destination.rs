@@ -42,7 +42,7 @@ impl Priority {
         }
     }
 
-    fn recognise(stored: &str) -> Option<Priority> {
+    pub(crate) fn recognise(stored: &str) -> Option<Priority> {
         match stored.trim().to_ascii_uppercase().as_str() {
             "DEFAULT" => Some(Priority::Default),
             "HIGH_PRIORITY" => Some(Priority::HighPriority),

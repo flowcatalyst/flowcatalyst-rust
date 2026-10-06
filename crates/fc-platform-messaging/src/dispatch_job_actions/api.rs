@@ -25,7 +25,7 @@ use super::operations::{
 use super::repository::DispatchJobActionsRepository;
 use crate::dispatch_job::api::DispatchJobResponse;
 use crate::dispatch_job::delivery_credentials::DeliveryCredentials;
-use crate::dispatch_job::entity::DispatchJob;
+use crate::dispatch_job::entity::{DispatchJob, DispatchStatus};
 use crate::dispatch_job::repository::DispatchJobRepository;
 use fc_platform_core::directory::ClientDirectory;
 use fc_platform_core::shared::authorization_service::checks;
@@ -121,7 +121,7 @@ async fn settle(
     state: &DispatchJobActionsState,
     auth: &Authenticated,
     id: String,
-    target: &'static str,
+    target: DispatchStatus,
 ) -> Result<Json<DispatchJobResponse>, PlatformError> {
     let head = state
         .repo
@@ -285,7 +285,7 @@ pub async fn api_cancel_dispatch_job(
     Path(id): Path<String>,
 ) -> Result<Json<DispatchJobResponse>, PlatformError> {
     checks::can_read_dispatch_jobs(&auth.0)?;
-    settle(&state, &auth, id, "CANCELLED").await
+    settle(&state, &auth, id, DispatchStatus::Cancelled).await
 }
 
 /// Mark a FAILED dispatch job completed (Go `completeDispatchJob`).
@@ -301,7 +301,7 @@ pub async fn api_complete_dispatch_job(
     Path(id): Path<String>,
 ) -> Result<Json<DispatchJobResponse>, PlatformError> {
     checks::can_read_dispatch_jobs(&auth.0)?;
-    settle(&state, &auth, id, "COMPLETED").await
+    settle(&state, &auth, id, DispatchStatus::Completed).await
 }
 
 /// The delivery a send would make now, signed as it would be; nothing is
@@ -346,7 +346,7 @@ pub async fn bff_cancel_dispatch_job(
     Path(id): Path<String>,
 ) -> Result<Json<DispatchJobResponse>, PlatformError> {
     checks::can_read_dispatch_jobs(&auth.0)?;
-    settle(&state, &auth, id, "CANCELLED").await
+    settle(&state, &auth, id, DispatchStatus::Cancelled).await
 }
 
 /// BFF twin of [`api_complete_dispatch_job`].
@@ -360,7 +360,7 @@ pub async fn bff_complete_dispatch_job(
     Path(id): Path<String>,
 ) -> Result<Json<DispatchJobResponse>, PlatformError> {
     checks::can_read_dispatch_jobs(&auth.0)?;
-    settle(&state, &auth, id, "COMPLETED").await
+    settle(&state, &auth, id, DispatchStatus::Completed).await
 }
 
 /// BFF twin of [`api_sign_dispatch_job`].

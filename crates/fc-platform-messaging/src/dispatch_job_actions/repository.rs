@@ -6,6 +6,7 @@
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
+use crate::dispatch_job::entity::DispatchStatus;
 use crate::dispatch_job::lifecycle;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase::unit_of_work::HasId;
@@ -38,7 +39,9 @@ impl HasId for JobsRequeue {
 pub struct JobStatusFlip {
     pub id: String,
     pub created_at: DateTime<Utc>,
-    pub status: &'static str,
+    /// [`DispatchStatus::Cancelled`] or [`DispatchStatus::Completed`]: the two
+    /// ways an operator settles a FAILED job.
+    pub status: DispatchStatus,
 }
 
 impl HasId for JobStatusFlip {
@@ -90,13 +93,20 @@ impl Persist<JobStatusFlip> for DispatchJobActionsRepository {
         // left alone, and the unit of work rolls back rather than record an
         // event for a change that did not happen.
         let moved = match f.status {
-            "CANCELLED" => lifecycle::operator_cancel(&mut **tx.inner, &f.id, f.created_at).await?,
-            "COMPLETED" => {
+            DispatchStatus::Cancelled => {
+                lifecycle::operator_cancel(&mut **tx.inner, &f.id, f.created_at).await?
+            }
+            DispatchStatus::Completed => {
                 lifecycle::operator_complete(&mut **tx.inner, &f.id, f.created_at).await?
             }
-            other => {
+            other @ (DispatchStatus::Pending
+            | DispatchStatus::Queued
+            | DispatchStatus::Processing
+            | DispatchStatus::Failed
+            | DispatchStatus::Expired) => {
                 return Err(PlatformError::internal(format!(
-                    "a dispatch job is not settled by hand as {other}"
+                    "a dispatch job is not settled by hand as {}",
+                    other.as_str()
                 )))
             }
         };

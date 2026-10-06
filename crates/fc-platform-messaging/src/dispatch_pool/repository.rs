@@ -6,7 +6,7 @@ use fc_platform_core::shared::id::DispatchPoolId;
 use sqlx::PgPool;
 
 use super::entity::{DispatchPool, DispatchPoolStatus};
-use fc_platform_core::shared::enum_str::decode;
+use fc_platform_core::shared::enum_str::Stored;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::shared::id::decode_id;
 use fc_platform_core::shared::id::decode_id_opt;
@@ -25,7 +25,7 @@ struct DispatchPoolRow {
     concurrency: i32,
     client_id: Option<String>,
     client_identifier: Option<String>,
-    status: String,
+    status: Stored<DispatchPoolStatus>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -40,7 +40,7 @@ impl TryFrom<DispatchPoolRow> for DispatchPool {
             "client_id",
             &r.id,
         )?;
-        let status = decode(&r.status, "msg_dispatch_pools", "status", &r.id)?;
+        let status = r.status.decode("msg_dispatch_pools", "status", &r.id)?;
         Ok(Self {
             id,
             code: r.code,
@@ -80,7 +80,7 @@ impl DispatchPoolRepository {
         .bind(pool.concurrency)
         .bind(&pool.client_id)
         .bind(&pool.client_identifier)
-        .bind(pool.status.as_str())
+        .bind(pool.status)
         .bind(now)
         .bind(now)
         .execute(&self.pool)
@@ -164,7 +164,7 @@ impl DispatchPoolRepository {
         let rows = sqlx::query_as::<_, DispatchPoolRow>(
             "SELECT * FROM msg_dispatch_pools WHERE status = $1 ORDER BY code ASC",
         )
-        .bind(status.as_str())
+        .bind(status)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(DispatchPool::try_from).collect()
@@ -183,7 +183,7 @@ impl DispatchPoolRepository {
                AND ($2::text IS NULL OR client_id = $2) \
              ORDER BY code",
         )
-        .bind(status.map(|s| s.as_str()))
+        .bind(status)
         .bind(client_id)
         .fetch_all(&self.pool)
         .await?;
@@ -204,8 +204,9 @@ impl DispatchPoolRepository {
 
     pub async fn find_active(&self) -> Result<Vec<DispatchPool>> {
         let rows = sqlx::query_as::<_, DispatchPoolRow>(
-            "SELECT * FROM msg_dispatch_pools WHERE status = 'ACTIVE'",
+            "SELECT * FROM msg_dispatch_pools WHERE status = $1",
         )
+        .bind(DispatchPoolStatus::Active)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(DispatchPool::try_from).collect()
@@ -251,7 +252,7 @@ impl DispatchPoolRepository {
         .bind(pool.concurrency)
         .bind(&pool.client_id)
         .bind(&pool.client_identifier)
-        .bind(pool.status.as_str())
+        .bind(pool.status)
         .bind(Utc::now())
         .execute(&self.pool)
         .await?;
@@ -300,7 +301,7 @@ impl Persist<DispatchPool> for DispatchPoolRepository {
         .bind(p.concurrency)
         .bind(&p.client_id)
         .bind(&p.client_identifier)
-        .bind(p.status.as_str())
+        .bind(p.status)
         .bind(now)
         .bind(now)
         .execute(&mut **tx.inner)

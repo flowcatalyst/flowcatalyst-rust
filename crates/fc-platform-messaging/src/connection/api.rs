@@ -300,17 +300,15 @@ pub async fn update_connection(
         ),
         _ => None,
     };
-    let status = match req.status.as_deref().map(str::trim) {
-        None => None,
-        Some("ACTIVE") => Some(ConnectionStatus::Active),
-        Some("PAUSED") => Some(ConnectionStatus::Paused),
-        Some(_) => {
-            return Err(PlatformError::bad_request_code(
-                "INVALID_STATUS",
-                "status must be ACTIVE or PAUSED",
-            ))
-        }
-    };
+    let status = req
+        .status
+        .as_deref()
+        .map(|s| {
+            s.trim().parse::<ConnectionStatus>().map_err(|_| {
+                PlatformError::bad_request_code("INVALID_STATUS", "status must be ACTIVE or PAUSED")
+            })
+        })
+        .transpose()?;
     // The use case validates, loads (404) and checks the caller's scope on
     // the row (403 SCOPE_FORBIDDEN).
     let cmd = UpdateConnectionCommand {

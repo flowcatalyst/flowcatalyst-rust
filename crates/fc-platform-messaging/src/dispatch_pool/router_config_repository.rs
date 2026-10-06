@@ -1,6 +1,7 @@
 //! The two reads behind the router-config document (Go
 //! `internal/platform/dispatch/document.go` loadPools/loadTenants).
 
+use crate::subscription::entity::SubscriptionStatus;
 use sqlx::PgPool;
 
 use fc_platform_core::shared::error::Result;
@@ -42,8 +43,9 @@ impl RouterConfigRepository {
     pub async fn active_subscriptions(&self) -> Result<Vec<RouterSubscriptionRow>> {
         Ok(sqlx::query_as::<_, RouterSubscriptionRow>(
             "SELECT client_identifier, queue FROM msg_subscriptions \
-             WHERE status = 'ACTIVE' ORDER BY id",
+             WHERE status = $1 ORDER BY id",
         )
+        .bind(SubscriptionStatus::Active)
         .fetch_all(&self.pool)
         .await?)
     }
