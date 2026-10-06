@@ -1,0 +1,88 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id AS \"id: ApplicationOpenApiSpecId\", application_id AS \"application_id: ApplicationId\", version, status AS \"status: Stored<OpenApiSpecStatus>\", spec AS \"spec: serde_json::Value\", spec_hash, change_notes AS \"change_notes: serde_json::Value\", change_notes_text, synced_at, synced_by, created_at, updated_at FROM app_application_openapi_specs WHERE application_id = $1 AND status = 'CURRENT'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: ApplicationOpenApiSpecId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "application_id: ApplicationId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "version",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "status: Stored<OpenApiSpecStatus>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "spec: serde_json::Value",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 5,
+        "name": "spec_hash",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "change_notes: serde_json::Value",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 7,
+        "name": "change_notes_text",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "synced_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "synced_by",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "a1ef7d68b3234b6255414bced396d166e89f2b1b97057699838090db6aac7a12"
+}

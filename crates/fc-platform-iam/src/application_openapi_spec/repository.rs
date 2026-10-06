@@ -18,7 +18,6 @@ use fc_platform_core::usecase::DbTx;
 use fc_platform_core::usecase::Persist;
 use std::collections::HashMap;
 
-#[derive(sqlx::FromRow)]
 struct OpenApiSpecRow {
     id: ApplicationOpenApiSpecId,
     application_id: ApplicationId,
@@ -59,10 +58,6 @@ impl TryFrom<OpenApiSpecRow> for OpenApiSpec {
     }
 }
 
-const SELECT_COLS: &str = "id, application_id, version, status, spec, spec_hash, \
-                            change_notes, change_notes_text, synced_at, synced_by, \
-                            created_at, updated_at";
-
 /// The identifying columns of an application's CURRENT spec.
 #[derive(Debug, Clone)]
 pub struct CurrentSpecRef {
@@ -88,11 +83,20 @@ impl OpenApiSpecRepository {
         &self,
         application_id: &ApplicationId,
     ) -> Result<Option<OpenApiSpec>> {
-        let row = sqlx::query_as::<_, OpenApiSpecRow>(&format!(
-            "SELECT {SELECT_COLS} FROM app_application_openapi_specs \
-             WHERE application_id = $1 AND status = 'CURRENT'"
-        ))
-        .bind(application_id)
+        let row = sqlx::query_as!(
+            OpenApiSpecRow,
+            "SELECT id AS \"id: ApplicationOpenApiSpecId\", \
+                    application_id AS \"application_id: ApplicationId\", \
+                    version, \
+                    status AS \"status: Stored<OpenApiSpecStatus>\", \
+                    spec AS \"spec: serde_json::Value\", \
+                    spec_hash, \
+                    change_notes AS \"change_notes: serde_json::Value\", \
+                    change_notes_text, synced_at, synced_by, created_at, updated_at \
+             FROM app_application_openapi_specs \
+             WHERE application_id = $1 AND status = 'CURRENT'",
+            application_id as &ApplicationId
+        )
         .fetch_optional(&self.pool)
         .await?;
         row.map(OpenApiSpec::try_from).transpose()
@@ -108,30 +112,25 @@ impl OpenApiSpecRepository {
         if application_ids.is_empty() {
             return Ok(Default::default());
         }
-        let rows = sqlx::query_as::<
-            _,
-            (
-                ApplicationId,
-                ApplicationOpenApiSpecId,
-                String,
-                DateTime<Utc>,
-            ),
-        >(
-            "SELECT application_id, id, version, synced_at FROM app_application_openapi_specs \
+        let rows = sqlx::query!(
+            "SELECT application_id AS \"application_id: ApplicationId\", \
+                    id AS \"id: ApplicationOpenApiSpecId\", \
+                    version, synced_at \
+             FROM app_application_openapi_specs \
              WHERE application_id = ANY($1) AND status = 'CURRENT'",
+            application_ids as &[ApplicationId]
         )
-        .bind(application_ids)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
             .into_iter()
-            .map(|(application_id, id, version, synced_at)| {
+            .map(|r| {
                 (
-                    application_id,
+                    r.application_id,
                     CurrentSpecRef {
-                        id,
-                        version,
-                        synced_at,
+                        id: r.id,
+                        version: r.version,
+                        synced_at: r.synced_at,
                     },
                 )
             })
@@ -142,11 +141,20 @@ impl OpenApiSpecRepository {
         &self,
         application_id: &ApplicationId,
     ) -> Result<Vec<OpenApiSpec>> {
-        let rows = sqlx::query_as::<_, OpenApiSpecRow>(&format!(
-            "SELECT {SELECT_COLS} FROM app_application_openapi_specs \
-             WHERE application_id = $1 ORDER BY synced_at DESC"
-        ))
-        .bind(application_id)
+        let rows = sqlx::query_as!(
+            OpenApiSpecRow,
+            "SELECT id AS \"id: ApplicationOpenApiSpecId\", \
+                    application_id AS \"application_id: ApplicationId\", \
+                    version, \
+                    status AS \"status: Stored<OpenApiSpecStatus>\", \
+                    spec AS \"spec: serde_json::Value\", \
+                    spec_hash, \
+                    change_notes AS \"change_notes: serde_json::Value\", \
+                    change_notes_text, synced_at, synced_by, created_at, updated_at \
+             FROM app_application_openapi_specs \
+             WHERE application_id = $1 ORDER BY synced_at DESC",
+            application_id as &ApplicationId
+        )
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(OpenApiSpec::try_from).collect()
@@ -161,22 +169,33 @@ impl OpenApiSpecRepository {
         application_id: &ApplicationId,
         version: &str,
     ) -> Result<bool> {
-        let row: (bool,) = sqlx::query_as(
+        // EXISTS is never NULL, so `!`.
+        let exists = sqlx::query_scalar!(
             "SELECT EXISTS(SELECT 1 FROM app_application_openapi_specs \
-             WHERE application_id = $1 AND version = $2)",
+             WHERE application_id = $1 AND version = $2) AS \"exists!\"",
+            application_id as &ApplicationId,
+            version
         )
-        .bind(application_id)
-        .bind(version)
         .fetch_one(&self.pool)
         .await?;
-        Ok(row.0)
+        Ok(exists)
     }
 
     pub async fn find_by_id(&self, id: &ApplicationOpenApiSpecId) -> Result<Option<OpenApiSpec>> {
-        let row = sqlx::query_as::<_, OpenApiSpecRow>(&format!(
-            "SELECT {SELECT_COLS} FROM app_application_openapi_specs WHERE id = $1"
-        ))
-        .bind(id)
+        let row = sqlx::query_as!(
+            OpenApiSpecRow,
+            "SELECT id AS \"id: ApplicationOpenApiSpecId\", \
+                    application_id AS \"application_id: ApplicationId\", \
+                    version, \
+                    status AS \"status: Stored<OpenApiSpecStatus>\", \
+                    spec AS \"spec: serde_json::Value\", \
+                    spec_hash, \
+                    change_notes AS \"change_notes: serde_json::Value\", \
+                    change_notes_text, synced_at, synced_by, created_at, updated_at \
+             FROM app_application_openapi_specs \
+             WHERE id = $1",
+            id as &ApplicationOpenApiSpecId
+        )
         .fetch_optional(&self.pool)
         .await?;
         row.map(OpenApiSpec::try_from).transpose()
@@ -191,7 +210,7 @@ impl HasId for OpenApiSpec {
 
 impl Persist<OpenApiSpec> for OpenApiSpecRepository {
     async fn persist(&self, spec: &OpenApiSpec, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO app_application_openapi_specs \
                 (id, application_id, version, status, spec, spec_hash, \
                  change_notes, change_notes_text, synced_at, synced_by, \
@@ -202,33 +221,33 @@ impl Persist<OpenApiSpec> for OpenApiSpecRepository {
                 change_notes = EXCLUDED.change_notes, \
                 change_notes_text = EXCLUDED.change_notes_text, \
                 updated_at = EXCLUDED.updated_at",
-        )
-        .bind(&spec.id)
-        .bind(&spec.application_id)
-        .bind(&spec.version)
-        .bind(spec.status)
-        .bind(&spec.spec)
-        .bind(&spec.spec_hash)
-        .bind(
+            &spec.id as &ApplicationOpenApiSpecId,
+            &spec.application_id as &ApplicationId,
+            spec.version,
+            spec.status as OpenApiSpecStatus,
+            spec.spec,
+            spec.spec_hash,
             spec.change_notes
                 .as_ref()
                 .map(|cn| serde_json::to_value(cn).unwrap_or(serde_json::Value::Null)),
+            spec.change_notes_text,
+            spec.synced_at,
+            spec.synced_by,
+            spec.created_at,
+            spec.updated_at
         )
-        .bind(&spec.change_notes_text)
-        .bind(spec.synced_at)
-        .bind(&spec.synced_by)
-        .bind(spec.created_at)
-        .bind(spec.updated_at)
         .execute(&mut **tx.inner)
         .await?;
         Ok(())
     }
 
     async fn delete(&self, spec: &OpenApiSpec, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query("DELETE FROM app_application_openapi_specs WHERE id = $1")
-            .bind(&spec.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM app_application_openapi_specs WHERE id = $1",
+            &spec.id as &ApplicationOpenApiSpecId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         Ok(())
     }
 }

@@ -16,6 +16,8 @@ fc-common = { path = "../fc-common" }
 # `ValidationError`, which converts into `UseCaseError` / `PlatformError`
 # here (the function crate can implement neither: orphan rule).
 fc-function-model = { path = "../fc-function-model" }
+# The SQL migration runner, re-exported from `shared::database`.
+fc-migrations = { path = "../fc-migrations" }
 # `PeerAddr`, the connection's peer address (the client-IP fallback).
 fc-http-listener = { path = "../fc-http-listener" }
 

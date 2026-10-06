@@ -132,23 +132,86 @@ The **only** acceptable use of `fetch_one` is on aggregate queries that always r
 If a handler only needs a few fields (e.g., id + name for a dropdown), don't load junction tables or child entities. Add a `find_*_shallow()` method that skips hydration.
 
 ## SQLx
-The platform uses raw SQLx only (the SeaORM migration finished in April 2026;
-SQLx was re-confirmed 2026-09-28: it serves Postgres, MySQL and SQLite for the
-outbox, and its per-query overhead is immaterial next to RDS round trips).
-Every repository follows one pattern:
-- Row structs: `#[derive(sqlx::FromRow)]` in the repository file
-- Queries: `sqlx::query_as::<_, FooRow>("SELECT ...")` — visible SQL, no ORM magic
-- Dynamic filters (list endpoints): `sqlx::QueryBuilder` with `push_bind`, never
-  `format!`-built WHERE clauses
-- Domain entities stay in `*/entity.rs`, row mapping stays in `*/repository.rs`
+The platform uses raw SQLx only (the SeaORM migration finished in April 2026).
+Since 2026-10-06 static SQL is **compile-time checked** (owner decision; it
+replaces the earlier "visible runtime SQL, no macros" rule and the 2026-09-28
+note that deferred checked queries). **Conversion is in progress**, one
+repository at a time; a crate is done when it has no runtime `sqlx::query*`
+call left except the exceptions below.
+
+Done: `fc-platform-iam`: `application_openapi_spec` only. Everything else is
+still runtime SQL (`sqlx::query_as::<_, FooRow>("SELECT ...")`) and is converted
+the next time the work resumes; convert a repository you are editing if it is
+not done (one repository per commit, with its `.sqlx/` files).
+
+### The rule
+- A static query is `sqlx::query!` / `query_as!` / `query_scalar!` (a `const`
+  column list does not count as static: write the columns in the literal; a
+  `format!`-built query is runtime). No `SELECT *` or `t.*` in a checked query:
+  list the columns the row struct reads.
+- The metadata for every checked query is committed in `.sqlx/` at the
+  repository root. **A build never needs a database**: `.cargo/config.toml`
+  sets `SQLX_OFFLINE=true` (the Dockerfile too), so even a `DATABASE_URL` in
+  your shell is ignored. A query whose text changed without `.sqlx/` being
+  regenerated fails the build ("no cached data for this query"); a column that a
+  migration renamed or retyped fails `scripts/sqlx-prepare.sh` (CI runs
+  `--check` in the `database-tests` job).
+- After adding or changing a checked query, or a migration: run
+  `scripts/sqlx-prepare.sh` (it migrates a throwaway PostgreSQL with the
+  application's own runner, `fc-migrate`, then runs
+  `cargo sqlx prepare --workspace -- --all-targets`) and commit `.sqlx/` with
+  the change. `FC_TEST_PG_BIN=<postgres bin dir>` makes it use local binaries
+  instead of Docker; `FC_SQLX_DATABASE_URL` points it at an empty database.
+  Needs `cargo install sqlx-cli --version =0.8.6 --locked --no-default-features --features rustls,postgres`.
+- A crate that holds checked queries enables sqlx's `macros` feature (and
+  `json` when a JSON column is typed) in its own manifest, like `postgres`.
+- Stay runtime, on purpose: `QueryBuilder` queries (dynamic filters, variable
+  `IN` lists), the multi-database crates (`fc-outbox`, `fc-queue`: one text
+  serves Postgres, MySQL and SQLite), `fc-sdk` (published, driver-generic),
+  migrations and DDL, `fc-dev`'s bootstrap SQL, and test code. The dispatch hot
+  path (`fc-common/src/dispatch_lifecycle.rs`, the scheduler claim and mark
+  queries, stream fan-out and projections) keeps the exact SQL text it was
+  tuned with: it is a macro only when the text is byte-identical.
+- Keep the row struct plus `TryFrom` mapping pattern. `query_as!` maps by
+  field name and does not use `FromRow`: derive it only where a runtime query
+  still reads the struct. Domain entities stay in `*/entity.rs`, row mapping
+  in `*/repository.rs`; connection: `shared::database::create_pool()`.
+- Dynamic filters (list endpoints): `sqlx::QueryBuilder` with `push_bind`,
+  never `format!`-built WHERE clauses.
+
+### How our types appear in a checked query
+The macro gets the Rust type of an output column from an override in the
+column alias: `col AS "col: Type"`. `!` forces non-null (`"col!: Type"`),
+`?` forces nullable. Inference reads NOT NULL from the schema, so most columns
+need no `!`/`?`; use `!` only where the query itself guarantees it (EXISTS,
+COUNT, COALESCE, a join condition, RETURNING of a NOT NULL column) and say why.
+A nullable column read into a non-`Option` field is a latent runtime error: the
+macro reports it, make the field `Option`.
+A bind parameter whose type is ours needs a cast, which tells the macro to take
+it as is (and fails to compile if the argument is of another kind): `id as &ClientId`.
+- **Typed ids**: `id AS "id: ApplicationOpenApiSpecId"`; nullable column:
+  `"owner?: ClientId"` or leave inference (`Option<ClientId>`). Bind:
+  `&spec.id as &ApplicationOpenApiSpecId`; an array parameter
+  (`= ANY($1)`): `application_ids as &[ApplicationId]`.
+- **Enums** (`str_enum!`): `status AS "status: Stored<OpenApiSpecStatus>"`, never
+  the bare enum, so the corrupt-value diagnostic stays (`Stored::decode(table,
+  column, row_id)?` in the row's `TryFrom`). Bind: `spec.status as OpenApiSpecStatus`.
+- **Timestamps**: `timestamptz` is `DateTime<Utc>` with no override.
+- **JSON/JSONB**: `spec AS "spec: serde_json::Value"` (nullable column: inference
+  gives `Option<Value>`); bind `&spec.spec`. A typed document: read `Value`, then
+  `serde_json::from_value` in the `TryFrom`, as before.
+- **Booleans/aggregates**: `SELECT EXISTS(...) AS "exists!"`, `COUNT(*) AS "n!"`
+  (`query_scalar!`).
+- Worked example, all of the above: `fc-platform-iam/src/application_openapi_spec/repository.rs`.
+
+### Other repository rules
 - String enums (`str_enum!`, `fc-platform-core/src/shared/enum_str.rs`) are SQL text
-  types: bind the enum (`.bind(status)`, `status = $1`), never its spelling or a
-  literal. A row struct holds `Stored<T>` for a status-like column and calls
-  `.decode(table, column, row_id)?` in its `TryFrom`, so a corrupt value is the
+  types: bind the enum (`.bind(status)` / `status as T`, `status = $1`), never its
+  spelling or a literal. A row struct holds `Stored<T>` for a status-like column and
+  calls `.decode(table, column, row_id)?` in its `TryFrom`, so a corrupt value is the
   loud error naming the row (a plain `Decode` cannot name it). A literal stays in
   SQL only where a partial-index predicate or the dispatch hot path needs it; each
   is tied to its enum by `fc-platform`'s `split_tests/sql_literals.rs`.
-- Connection: use `shared::database::create_pool()`
 
 ## Imports
 Import with `use` at the top of the file and write the short name

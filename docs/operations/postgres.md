@@ -268,7 +268,7 @@ See [observability.md](observability.md).
 
 - Pool creation: `crates/fc-platform/src/shared/database.rs::create_pool`.
 - Secret refresh: `crates/fc-platform/src/shared/database.rs::start_secret_refresh`.
-- Migration runner: `crates/fc-platform/src/shared/database.rs::run_migrations`.
+- Migration runner: `crates/fc-migrations/src/lib.rs::run_migrations_with` (re-exported by `crates/fc-platform/src/shared/database.rs::run_migrations`, which adds the code migrations).
 - Migration files: `migrations/*.sql`.
 - Partition manager: `crates/fc-stream/src/partition_manager.rs`.
 - Built-in role seeding: `crates/fc-platform/src/shared/database.rs::seed_builtin_roles`, `crates/fc-platform-iam/src/role/entity.rs::roles`.

@@ -3338,6 +3338,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "fc-migrations"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "hex",
+ "regex",
+ "sha2 0.10.9",
+ "sqlx",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "fc-outbox"
 version = "0.1.0"
 dependencies = [
@@ -3520,6 +3533,7 @@ dependencies = [
  "fc-common",
  "fc-function-model",
  "fc-http-listener",
+ "fc-migrations",
  "futures",
  "governor",
  "hex",

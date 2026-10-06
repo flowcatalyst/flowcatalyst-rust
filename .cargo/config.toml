@@ -24,6 +24,11 @@ rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 # jobs = 8
 
 [env]
+# The `sqlx::query!` family reads the committed `.sqlx/` instead of asking a
+# database (a build never needs one, even when DATABASE_URL is set in the
+# shell). scripts/sqlx-prepare.sh overrides it to regenerate `.sqlx/`.
+SQLX_OFFLINE = "true"
+
 # fc-dev's embedded Postgres is the cluster Go's and Java's fcdev share
 # (`<userDataDir>/flowcatalyst/embedded-pg/data`), which is PostgreSQL 18.
 # `postgresql_embedded`'s build script bundles the newest release matching

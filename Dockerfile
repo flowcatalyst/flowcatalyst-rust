@@ -83,6 +83,11 @@ COPY crates ./crates
 COPY bin ./bin
 COPY harness ./harness
 COPY migrations ./migrations
+# The checked queries' metadata (`sqlx::query!` family): the build reads it
+# instead of a database. The image copies no `.cargo/`, so offline mode is
+# set here (scripts/sqlx-prepare.sh regenerates .sqlx/).
+COPY .sqlx ./.sqlx
+ENV SQLX_OFFLINE=true
 # Read at compile time: the function host's WIT package (wasmtime's
 # bindgen!) and the platform's published docs (include_str!).
 COPY wit ./wit

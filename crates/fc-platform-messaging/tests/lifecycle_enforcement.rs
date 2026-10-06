@@ -164,7 +164,7 @@ fn no_production_code_names_the_retired_queue_table() {
     for file in production_sources(&root) {
         // The migration runner's probes name the table (to recognise a
         // database another platform migrated).
-        if relative(&root, &file) == "crates/fc-platform-core/src/shared/database.rs" {
+        if relative(&root, &file) == "crates/fc-migrations/src/lib.rs" {
             continue;
         }
         let src = fs::read_to_string(&file).unwrap();

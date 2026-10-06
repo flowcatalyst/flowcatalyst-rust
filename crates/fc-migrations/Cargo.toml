@@ -1,0 +1,26 @@
+[package]
+name = "fc-migrations"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "FlowCatalyst - the SQL migration runner, apart from the crates with checked queries so a throwaway database can be migrated before they compile (scripts/sqlx-prepare.sh)"
+
+[[bin]]
+name = "fc-migrate"
+path = "src/bin/fc-migrate.rs"
+
+[dependencies]
+async-trait = { workspace = true }
+hex = { workspace = true }
+sha2 = "0.10"
+sqlx = { workspace = true, features = ["postgres"] }
+tracing = { workspace = true }
+# The `fc-migrate` binary.
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[dev-dependencies]
+regex = { workspace = true }
+
+[lints]
+workspace = true

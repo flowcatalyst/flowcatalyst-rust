@@ -108,6 +108,7 @@ exceptions = [
     { crate = "fc-function-signing", allow = ["AGPL-3.0-or-later"] },
     { crate = "fc-http-listener", allow = ["AGPL-3.0-or-later"] },
     { crate = "fc-mcp", allow = ["AGPL-3.0-or-later"] },
+    { crate = "fc-migrations", allow = ["AGPL-3.0-or-later"] },
     { crate = "fc-outbox", allow = ["AGPL-3.0-or-later"] },
     { crate = "fc-outbox-processor", allow = ["AGPL-3.0-or-later"] },
     { crate = "fc-parity", allow = ["AGPL-3.0-or-later"] },

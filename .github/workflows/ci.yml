@@ -114,6 +114,19 @@ jobs:
           mkdir -p frontend/dist
           echo "<!doctype html><title>stub</title>" > frontend/dist/index.html
 
+      # The checked queries' metadata (`.sqlx/`) must match the code and the
+      # migrated schema: a stale or missing entry fails here. The script
+      # migrates the (empty) service database with the application's own
+      # runner, then runs `cargo sqlx prepare --workspace --check`. sqlx-cli
+      # is a build tool, not a dependency (pinned, locked).
+      - name: Install sqlx-cli
+        run: cargo install --locked sqlx-cli --version =0.8.6 --no-default-features --features rustls,postgres
+
+      - name: Checked-query metadata is up to date
+        env:
+          FC_SQLX_DATABASE_URL: ${{ env.FC_TEST_DATABASE_URL }}
+        run: ./scripts/sqlx-prepare.sh --check
+
       - name: Database tests
         run: ./scripts/db-tests.sh
 
