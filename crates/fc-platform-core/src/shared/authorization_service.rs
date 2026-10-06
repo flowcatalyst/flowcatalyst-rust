@@ -924,6 +924,61 @@ pub mod checks {
         }
     }
 
+    /// The coarse guard on the `/api/event-types` read endpoints (list, get,
+    /// by code): the admin view permission, or the application-service view
+    /// an SDK service account holds (Go `CanReadEventTypes`). A caller
+    /// admitted only by the second is confined by the handler to the event
+    /// types of the applications it is bound to. The BFF and the
+    /// server-rendered UI keep [`can_read_event_types`].
+    pub fn can_read_event_types_or_own(context: &impl Authority) -> Result<()> {
+        if context.has_any_permission(&[
+            permissions::admin::EVENT_TYPE_READ,
+            permissions::application_service::EVENT_TYPE_READ,
+        ]) {
+            Ok(())
+        } else {
+            Err(PlatformError::forbidden("Cannot read event types"))
+        }
+    }
+
+    /// Whether the caller reads event types without the per-application
+    /// confinement: it holds the admin view permission (Go
+    /// `CanReadAllEventTypes`).
+    pub fn can_read_all_event_types(context: &impl Authority) -> bool {
+        context.has_permission(permissions::admin::EVENT_TYPE_READ)
+    }
+
+    /// Guards adding a schema version to an event type (Go
+    /// `CanAddEventTypeSchema`): the messaging write permissions, and the
+    /// application-service create/update an SDK service account holds (the
+    /// SDK pushes its event schemas this way). A caller admitted only by the
+    /// latter is confined by the handler to the event types of the
+    /// applications it is bound to. Create, update and delete through the
+    /// plain endpoints stay messaging-only ([`can_write_event_types`]).
+    pub fn can_add_event_type_schema(context: &impl Authority) -> Result<()> {
+        require_any_permission(
+            context,
+            &[
+                permissions::admin::EVENT_TYPE_CREATE,
+                permissions::admin::EVENT_TYPE_UPDATE,
+                permissions::admin::EVENT_TYPE_DELETE,
+                permissions::application_service::EVENT_TYPE_CREATE,
+                permissions::application_service::EVENT_TYPE_UPDATE,
+            ],
+        )
+    }
+
+    /// Whether the caller writes event types without the per-application
+    /// confinement: it holds a messaging write permission (Go
+    /// `CanWriteAllEventTypes`).
+    pub fn can_write_all_event_types(context: &impl Authority) -> bool {
+        context.has_any_permission(&[
+            permissions::admin::EVENT_TYPE_CREATE,
+            permissions::admin::EVENT_TYPE_UPDATE,
+            permissions::admin::EVENT_TYPE_DELETE,
+        ])
+    }
+
     /// Check create access to event types
     pub fn can_create_event_types(context: &impl Authority) -> Result<()> {
         if context.has_permission(permissions::admin::EVENT_TYPE_CREATE) {

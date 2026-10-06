@@ -21,7 +21,7 @@ use fc_platform::role::entity::roles;
 use fc_platform::service_account::entity::{AssignmentSource, RoleAssignment};
 use support::{read_json, TestApp};
 
-async fn create_app(app: &TestApp, code: &str) -> Application {
+pub(crate) async fn create_app(app: &TestApp, code: &str) -> Application {
     let application = Application::new(code, code.to_uppercase());
     app.repos
         .application_repo

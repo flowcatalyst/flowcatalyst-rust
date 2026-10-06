@@ -1004,4 +1004,49 @@ mod tests {
         let view_only = create_test_context(vec![APP_SVC_APP_VIEW], "CLIENT", vec![]);
         assert!(checks::can_sync_application_openapi(&view_only).is_err());
     }
+
+    /// The event-type guards admit the application-service permissions an SDK
+    /// service account holds, and only the guards the SDK needs: reads, and
+    /// adding a schema version. Create, update and delete stay messaging-only.
+    #[test]
+    fn event_type_guards_admit_application_service() {
+        let view = create_test_context(
+            vec!["platform:application-service:event-type:view"],
+            "CLIENT",
+            vec![],
+        );
+        assert!(checks::can_read_event_types_or_own(&view).is_ok());
+        assert!(!checks::can_read_all_event_types(&view));
+        assert!(checks::can_add_event_type_schema(&view).is_err());
+        assert!(checks::can_read_event_types(&view).is_err());
+
+        for perm in [
+            "platform:application-service:event-type:create",
+            "platform:application-service:event-type:update",
+        ] {
+            let ctx = create_test_context(vec![perm], "CLIENT", vec![]);
+            assert!(checks::can_add_event_type_schema(&ctx).is_ok(), "{perm}");
+            assert!(!checks::can_write_all_event_types(&ctx), "{perm}");
+            assert!(checks::can_write_event_types(&ctx).is_err(), "{perm}");
+            assert!(checks::can_read_event_types_or_own(&ctx).is_err(), "{perm}");
+        }
+        let delete = create_test_context(
+            vec!["platform:application-service:event-type:delete"],
+            "CLIENT",
+            vec![],
+        );
+        assert!(checks::can_add_event_type_schema(&delete).is_err());
+
+        let messaging = create_test_context(
+            vec![
+                "platform:messaging:event-type:view",
+                "platform:messaging:event-type:update",
+            ],
+            "CLIENT",
+            vec![],
+        );
+        assert!(checks::can_read_all_event_types(&messaging));
+        assert!(checks::can_write_all_event_types(&messaging));
+        assert!(checks::can_add_event_type_schema(&messaging).is_ok());
+    }
 }

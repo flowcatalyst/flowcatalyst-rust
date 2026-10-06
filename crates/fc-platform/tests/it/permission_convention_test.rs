@@ -50,6 +50,9 @@ const AUTH_CHECK_PATTERNS: &[&str] = &[
     "can_administer_",
     // SDK sync endpoints (`/api/applications/{appCode}/*/sync`).
     "can_sync_",
+    // Adding a schema version to an event type (Go's CanAddEventTypeSchema):
+    // messaging write permissions or the application-service create/update.
+    "can_add_",
     // AuthorizationService method calls
     ".authorize(",
     // AuthContext inline checks (used in conditionals that return 403)

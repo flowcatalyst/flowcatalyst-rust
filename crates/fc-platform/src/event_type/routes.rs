@@ -17,6 +17,7 @@ use super::operations::{
     AddSchemaUseCase, CreateEventTypeUseCase, DeleteEventTypeUseCase, SyncEventTypesUseCase,
     UpdateEventTypeUseCase,
 };
+use crate::event_type::access::ApplicationConfinement;
 use crate::event_type::bff::BffEventTypesState;
 use crate::shared::platform_context::{AggregateRoutes, PlatformContext};
 
@@ -32,6 +33,7 @@ pub fn routes(ctx: &PlatformContext) -> AggregateRoutes {
             .merge(event_type_go_router(EventTypeGoState {
                 event_type_repo: repo.clone(),
                 add_schema_use_case: Arc::new(AddSchemaUseCase::new(repo.clone(), uow.clone())),
+                confinement: application_confinement(ctx),
                 bff: bff_event_types_state(ctx),
             })),
         plain: Router::new().nest(
@@ -50,7 +52,14 @@ pub fn event_types_state(ctx: &PlatformContext) -> EventTypesState {
         update_use_case: Arc::new(UpdateEventTypeUseCase::new(repo.clone(), uow.clone())),
         delete_use_case: Arc::new(DeleteEventTypeUseCase::new(repo.clone(), uow.clone())),
         add_schema_use_case: Arc::new(AddSchemaUseCase::new(repo.clone(), uow.clone())),
+        confinement: application_confinement(ctx),
     }
+}
+
+/// The application lookup and scope the read and add-schema endpoints
+/// confine an application service account with.
+fn application_confinement(ctx: &PlatformContext) -> ApplicationConfinement {
+    ApplicationConfinement::new(ctx.repos.application_repo.clone(), ctx.app_access.clone())
 }
 
 pub fn bff_event_types_state(ctx: &PlatformContext) -> BffEventTypesState {

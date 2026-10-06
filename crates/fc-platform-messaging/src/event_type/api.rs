@@ -4,6 +4,7 @@
 
 use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::EventTypeId;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
@@ -14,6 +15,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
+use crate::event_type::access::ApplicationConfinement;
 use crate::event_type::bff::BffEventTypesState;
 use crate::event_type::entity::EventTypeStatus;
 use crate::event_type::entity::{EventType, SpecVersion};
@@ -191,6 +193,9 @@ pub struct EventTypesState {
     pub update_use_case: Arc<UpdateEventTypeUseCase<PgUnitOfWork>>,
     pub delete_use_case: Arc<DeleteEventTypeUseCase<PgUnitOfWork>>,
     pub add_schema_use_case: Arc<AddSchemaUseCase<PgUnitOfWork>>,
+    /// Confines an application service account to its own applications'
+    /// event types on the read and add-schema endpoints.
+    pub confinement: ApplicationConfinement,
 }
 
 /// Create a new event type
@@ -257,7 +262,7 @@ pub async fn get_event_type(
     Path(id): Path<String>,
 ) -> Result<Json<EventTypeResponse>, PlatformError> {
     let id = EventTypeId::from_wire(id);
-    checks::can_read_event_types(&auth.0)?;
+    checks::can_read_event_types_or_own(&auth.0)?;
 
     let event_type = state
         .event_type_repo
@@ -270,6 +275,10 @@ pub async fn get_event_type(
         if !auth.0.can_access_client(cid) {
             return Err(PlatformError::forbidden("No access to this event type"));
         }
+    }
+    // An application service account sees only its own applications' event types.
+    if !checks::can_read_all_event_types(&auth.0) {
+        state.confinement.require(&auth.0, &event_type).await?;
     }
 
     Ok(Json(event_type.into()))
@@ -295,7 +304,7 @@ pub async fn get_event_type_by_code(
     auth: Authenticated,
     Path(code): Path<String>,
 ) -> Result<Json<EventTypeResponse>, PlatformError> {
-    checks::can_read_event_types(&auth.0)?;
+    checks::can_read_event_types_or_own(&auth.0)?;
 
     let event_type = state
         .event_type_repo
@@ -308,6 +317,10 @@ pub async fn get_event_type_by_code(
         if !auth.0.can_access_client(cid) {
             return Err(PlatformError::forbidden("No access to this event type"));
         }
+    }
+    // An application service account sees only its own applications' event types.
+    if !checks::can_read_all_event_types(&auth.0) {
+        state.confinement.require(&auth.0, &event_type).await?;
     }
 
     Ok(Json(event_type.into()))
@@ -330,7 +343,7 @@ pub async fn list_event_types(
     auth: Authenticated,
     Query(query): Query<EventTypesQuery>,
 ) -> Result<Json<EventTypeListResponse>, PlatformError> {
-    checks::can_read_event_types(&auth.0)?;
+    checks::can_read_event_types_or_own(&auth.0)?;
 
     // Default to CURRENT status when no filters are provided (matches find_active behavior)
     let status: Option<EventTypeStatus> = enum_str::parse_opt(query.status.as_deref())?;
@@ -359,7 +372,7 @@ pub async fn list_event_types(
         .await?;
 
     // Filter by client access
-    let items: Vec<EventTypeResponse> = event_types
+    let mut visible: Vec<EventType> = event_types
         .into_iter()
         .filter(|et| {
             match &et.client_id {
@@ -367,8 +380,25 @@ pub async fn list_event_types(
                 None => true, // Anchor-level event types visible to all
             }
         })
-        .map(|et| et.into())
         .collect();
+    if !checks::can_read_all_event_types(&auth.0) {
+        // An application service account sees only its own applications'
+        // event types; each application is resolved once.
+        let scope = state.confinement.scope(&auth.0).await?;
+        let mut seen = HashMap::new();
+        let mut kept = Vec::with_capacity(visible.len());
+        for et in visible {
+            if state
+                .confinement
+                .reaches(&scope, &et.application, &mut seen)
+                .await?
+            {
+                kept.push(et);
+            }
+        }
+        visible = kept;
+    }
+    let items: Vec<EventTypeResponse> = visible.into_iter().map(|et| et.into()).collect();
 
     Ok(Json(EventTypeListResponse { items }))
 }
@@ -447,12 +477,13 @@ pub async fn add_schema_version(
     Json(req): Json<AddEventTypeSchemaRequest>,
 ) -> Result<Json<EventTypeResponse>, PlatformError> {
     let id = EventTypeId::from_wire(id);
-    checks::can_write_event_types(&auth.0)?;
+    checks::can_add_event_type_schema(&auth.0)?;
     // Go registers one handler for `/versions` and `/schemas`: the version
     // is the caller's, and a repeat is 409 `VERSION_EXISTS`.
     add_schema(
         &state.event_type_repo,
         &state.add_schema_use_case,
+        &state.confinement,
         &auth,
         id.into_string(),
         req,
@@ -508,6 +539,8 @@ pub async fn delete_event_type(
 pub struct EventTypeGoState {
     pub event_type_repo: Arc<EventTypeRepository>,
     pub add_schema_use_case: Arc<AddSchemaUseCase<PgUnitOfWork>>,
+    /// As [`EventTypesState::confinement`].
+    pub confinement: ApplicationConfinement,
     pub bff: BffEventTypesState,
 }
 
@@ -546,10 +579,11 @@ pub async fn add_event_type_schema(
     Json(req): Json<AddEventTypeSchemaRequest>,
 ) -> Result<Json<EventTypeResponse>, PlatformError> {
     let id = EventTypeId::from_wire(id);
-    checks::can_write_event_types(&auth.0)?;
+    checks::can_add_event_type_schema(&auth.0)?;
     add_schema(
         &state.event_type_repo,
         &state.add_schema_use_case,
+        &state.confinement,
         &auth,
         id.into_string(),
         req,
@@ -564,11 +598,20 @@ pub async fn add_event_type_schema(
 pub(crate) async fn add_schema(
     repo: &EventTypeRepository,
     use_case: &AddSchemaUseCase<PgUnitOfWork>,
+    confinement: &ApplicationConfinement,
     auth: &Authenticated,
     id: String,
     req: AddEventTypeSchemaRequest,
 ) -> Result<Json<EventTypeResponse>, PlatformError> {
     let id = EventTypeId::from_wire(id);
+    if !checks::can_write_all_event_types(&auth.0) {
+        // An application service account may version only its own
+        // applications' event types. An unknown id falls through to the use
+        // case's 404.
+        if let Some(target) = repo.find_by_id(&id).await? {
+            confinement.require(&auth.0, &target).await?;
+        }
+    }
     if req.version.trim().is_empty() {
         return Err(PlatformError::bad_request_code(
             "VERSION_REQUIRED",
