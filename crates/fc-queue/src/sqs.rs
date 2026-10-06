@@ -104,6 +104,10 @@ struct DeleteItem {
 }
 
 impl DeleteItem {
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "the receiver may already be gone (shutdown, or an abandoned caller): nobody is left to notify"
+    )]
     fn finish(mut self, outcome: EntryOutcome) {
         if let Some(done) = self.done.take() {
             let _ = done.send(outcome);
@@ -1007,13 +1011,16 @@ impl QueueConsumer for SqsQueueConsumer {
                     if let Some(handle) = sqs_msg.receipt_handle() {
                         // Delete directly; don't call self.ack() to avoid re-inserting
                         // into pending_delete_ids or racing with the tracking map.
-                        let _ = self
+                        if let Err(e) = self
                             .client
                             .delete_message()
                             .queue_url(&self.queue_url)
                             .receipt_handle(handle)
                             .send()
-                            .await;
+                            .await
+                        {
+                            warn!(queue = %self.queue_name, error = %e, "could not delete the redelivered, already-acked SQS message");
+                        }
                     }
                     continue;
                 }
@@ -1046,7 +1053,9 @@ impl QueueConsumer for SqsQueueConsumer {
                         .record(sqs_msg.message_id().map(str::to_string), e.to_string());
                     // ACK the malformed message to prevent infinite retries
                     if let Some(handle) = sqs_msg.receipt_handle() {
-                        let _ = self.ack(handle).await;
+                        if let Err(e) = self.ack(handle).await {
+                            warn!(queue = %self.queue_name, error = %e, "could not ack the malformed SQS message");
+                        }
                     }
                 }
             }
@@ -1207,6 +1216,10 @@ mod visibility_clamp_tests {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "test code: a discarded Result is a deliberate no-op in a test (setup, teardown or a send whose receiver is gone)"
+)]
 mod delete_batcher_tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;

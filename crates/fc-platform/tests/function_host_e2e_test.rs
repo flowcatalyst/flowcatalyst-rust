@@ -35,6 +35,10 @@
 //!
 //! Requires Docker. Its own test binary: it sets process environment.
 #![expect(
+    clippy::let_underscore_must_use,
+    reason = "test code: a discarded Result is a deliberate no-op in a test (setup, teardown or a send whose receiver is gone)"
+)]
+#![expect(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,

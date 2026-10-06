@@ -51,6 +51,10 @@ pub fn write_pid_file(path: &Path, pid: u32) -> Result<()> {
 }
 
 /// Go `removePIDFileIfOwned`.
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "best-effort cleanup: a file already gone, or one that cannot be removed, changes nothing the caller relies on"
+)]
 pub fn remove_pid_file_if_owned(path: &Path, pid: u32) {
     if let Ok(Some(cur)) = read_pid_file(path) {
         if cur == pid {
@@ -311,6 +315,10 @@ pub fn lock_cluster(cluster_dir: &Path) -> Result<ClusterLock> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "test code: a discarded Result is a deliberate no-op in a test (setup, teardown or a send whose receiver is gone)"
+)]
 mod tests {
     use super::*;
     use std::fs;

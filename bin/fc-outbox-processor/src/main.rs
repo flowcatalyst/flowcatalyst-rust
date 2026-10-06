@@ -55,7 +55,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal;
 use tokio::sync::broadcast;
-use tracing::info;
+use tracing::{error, info, warn};
 
 use fc_outbox::setup;
 use fc_outbox::{EnhancedOutboxProcessor, EnhancedProcessorConfig};
@@ -68,6 +68,10 @@ use tokio::net::TcpListener;
 use tokio::time;
 
 #[tokio::main]
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "any outcome (a value, lag or a closed channel) is the signal being waited for; the receiver may already be gone (shutdown, or an abandoned caller): nobody is left to notify"
+)]
 async fn main() -> Result<()> {
     logging::init_logging("fc-outbox-processor");
 
@@ -136,7 +140,6 @@ async fn main() -> Result<()> {
                     let _ = shutdown_rx.recv().await;
                 })
                 .await
-                .ok();
         })
     };
 
@@ -160,19 +163,45 @@ async fn main() -> Result<()> {
     shutdown_signal().await;
     info!("Shutdown signal received...");
 
+    // No receiver left means every task already ended: nothing to tell.
     let _ = shutdown_tx.send(());
 
-    let _ = time::timeout(Duration::from_secs(30), async {
-        let _ = processor_handle.await;
-        let _ = metrics_handle.await;
+    // A task that panicked or returned an error is logged, and the process
+    // exits non-zero so a supervisor sees the failure.
+    let mut failed = false;
+    let drained = time::timeout(Duration::from_secs(30), async {
+        if let Err(e) = processor_handle.await {
+            error!(task = "outbox processor", error = %e, "task panicked or was cancelled");
+            failed = true;
+        }
+        match metrics_handle.await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                error!(task = "metrics server", error = %e, "task returned an error");
+                failed = true;
+            }
+            Err(e) => {
+                error!(task = "metrics server", error = %e, "task panicked or was cancelled");
+                failed = true;
+            }
+        }
         if let Some(handle) = admin_handle {
-            let _ = handle.await;
+            if let Err(e) = handle.await {
+                error!(task = "admin API", error = %e, "task panicked or was cancelled");
+                failed = true;
+            }
         }
     })
     .await;
+    if drained.is_err() {
+        warn!("Tasks did not stop within 30s of the shutdown signal");
+    }
 
     info!("FlowCatalyst Outbox Processor shutdown complete");
     logging::shutdown();
+    if failed {
+        anyhow::bail!("a task failed during the run; see the errors logged above");
+    }
     Ok(())
 }
 

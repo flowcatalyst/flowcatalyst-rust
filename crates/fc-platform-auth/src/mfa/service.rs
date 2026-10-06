@@ -15,6 +15,7 @@ use fc_platform_core::shared::email_service::{EmailMessage, EmailService};
 use fc_platform_core::shared::encryption_service::EncryptionService;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use std::result;
+use tracing::warn;
 
 /// Digits in an email PIN.
 const EMAIL_PIN_LENGTH: u32 = 6;
@@ -385,7 +386,9 @@ impl MfaService {
             return Ok(false);
         };
         if pin.is_expired() || pin.attempts >= EMAIL_PIN_MAX_ATTEMPTS {
-            let _ = self.repo.delete_email_pin(&pin.id).await;
+            if let Err(e) = self.repo.delete_email_pin(&pin.id).await {
+                warn!(error = %e, "could not delete the spent email PIN");
+            }
             return Ok(false);
         }
         if crypto::constant_time_eq(&pin.pin_hash, &crypto::sha256_hex(code.trim())) {
@@ -393,7 +396,9 @@ impl MfaService {
         }
         if let Some(n) = self.repo.increment_email_pin_attempts(&pin.id).await? {
             if n >= EMAIL_PIN_MAX_ATTEMPTS {
-                let _ = self.repo.delete_email_pin(&pin.id).await;
+                if let Err(e) = self.repo.delete_email_pin(&pin.id).await {
+                    warn!(error = %e, "could not delete the email PIN after its last attempt");
+                }
             }
         }
         Ok(false)

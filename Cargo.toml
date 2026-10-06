@@ -69,6 +69,9 @@ absolute_paths = "warn"
 # `#[expect(clippy::wildcard_enum_match_arm, reason = "...")]` is for foreign
 # or `#[non_exhaustive]` enums only.
 wildcard_enum_match_arm = "warn"
+# A discarded `Result` hides a failure. Handle it, log it, or say in an
+# `#[expect(clippy::let_underscore_must_use, reason = "...")]` why it cannot matter.
+let_underscore_must_use = "warn"
 # A panic is a decision to crash the process. Propagate the error; keep an
 # `expect("why this cannot fail")` only for start-up invariants and
 # statically valid constants, with `#[expect(clippy::expect_used, reason = "...")]`.

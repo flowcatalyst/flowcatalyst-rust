@@ -584,34 +584,45 @@ fn op_fc_url_set(
     #[string] part: String,
     #[string] value: String,
 ) -> Option<[String; 11]> {
-    use url::quirks;
     let mut url = url::Url::parse(&href).ok()?;
-    match part.as_str() {
-        "href" => quirks::set_href(&mut url, &value).ok()?,
+    apply_url_setter(&mut url, &part, &value)?;
+    Some(parts(&url))
+}
+
+/// Applies the setter named `part` to `url`; `None` for an unknown part or an
+/// `href` that does not parse.
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "the WHATWG URL setters ignore invalid input and leave the URL unchanged, so a refused value is not an error"
+)]
+fn apply_url_setter(url: &mut url::Url, part: &str, value: &str) -> Option<()> {
+    use url::quirks;
+    match part {
+        "href" => quirks::set_href(url, value).ok()?,
         "protocol" => {
-            let _ = quirks::set_protocol(&mut url, &value);
+            let _ = quirks::set_protocol(url, value);
         }
         "username" => {
-            let _ = quirks::set_username(&mut url, &value);
+            let _ = quirks::set_username(url, value);
         }
         "password" => {
-            let _ = quirks::set_password(&mut url, &value);
+            let _ = quirks::set_password(url, value);
         }
         "host" => {
-            let _ = quirks::set_host(&mut url, &value);
+            let _ = quirks::set_host(url, value);
         }
         "hostname" => {
-            let _ = quirks::set_hostname(&mut url, &value);
+            let _ = quirks::set_hostname(url, value);
         }
         "port" => {
-            let _ = quirks::set_port(&mut url, &value);
+            let _ = quirks::set_port(url, value);
         }
-        "pathname" => quirks::set_pathname(&mut url, &value),
-        "search" => quirks::set_search(&mut url, &value),
-        "hash" => quirks::set_hash(&mut url, &value),
+        "pathname" => quirks::set_pathname(url, value),
+        "search" => quirks::set_search(url, value),
+        "hash" => quirks::set_hash(url, value),
         _ => return None,
     }
-    Some(parts(&url))
+    Some(())
 }
 
 #[op2(fast)]

@@ -127,6 +127,10 @@ impl ListenerTimeouts {
 /// completes. Then stop accepting, let every connection finish its
 /// in-flight requests (keep-alive connections close at once), and return
 /// when they have. Used by the platform binaries in place of `axum::serve`.
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "TCP_NODELAY is an optimisation: the connection works without it; any outcome (a value, lag or a closed channel) is the signal being waited for; the receiver may already be gone (shutdown, or an abandoned caller): nobody is left to notify"
+)]
 pub async fn serve<S, B>(
     listener: TcpListener,
     service: S,

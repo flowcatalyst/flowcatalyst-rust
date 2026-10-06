@@ -101,6 +101,10 @@ impl ScheduledJobSchedulerService {
         )
     }
 
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "the receiver may already be gone (shutdown, or an abandoned caller): nobody is left to notify"
+    )]
     pub fn shutdown(&self) {
         let _ = self.shutdown.send(());
     }

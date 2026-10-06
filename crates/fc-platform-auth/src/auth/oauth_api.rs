@@ -2589,7 +2589,9 @@ pub async fn revoke(
         // since the caller might not know the token type. JWT access tokens
         // are stateless and can't be revoked server-side without a blocklist.
         let token_hash = RefreshToken::hash_token(&req.token);
-        let _ = state.refresh_token_repo.revoke_by_hash(&token_hash).await;
+        if let Err(e) = state.refresh_token_repo.revoke_by_hash(&token_hash).await {
+            warn!(error = %e, "Failed to revoke refresh token");
+        }
     }
 
     // RFC 7009: Always return 200, even if token was invalid

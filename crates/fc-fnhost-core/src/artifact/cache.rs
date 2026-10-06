@@ -65,6 +65,10 @@ impl ArtifactCache {
     /// A cached copy is re-hashed, never trusted, and replaced when it no
     /// longer matches; otherwise the source is streamed through a running
     /// sha256 into a temp file that is moved into place only on a match.
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "best-effort cleanup: a file already gone, or one that cannot be removed, changes nothing the caller relies on"
+    )]
     pub async fn fetch(
         &self,
         source: &dyn Source,
@@ -92,6 +96,10 @@ impl ArtifactCache {
             .await
     }
 
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "best-effort cleanup: a file already gone, or one that cannot be removed, changes nothing the caller relies on"
+    )]
     async fn download(
         &self,
         source: &dyn Source,

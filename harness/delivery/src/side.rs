@@ -657,6 +657,10 @@ impl Side {
         Ok(())
     }
 
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "the restart report notes the elapsed time; an unhealthy restart shows in the next step"
+    )]
     pub async fn proc_action(&self, process: &str, action: &str, down_ms: u64) -> String {
         let mut procs = self.procs.lock().await;
         let Some(p) = procs.get_mut(process) else {

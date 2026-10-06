@@ -71,6 +71,10 @@ fn append_capped(bytes: &mut Vec<u8>, chunk: &[u8], cap: usize) -> bool {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "test code: a discarded Result is a deliberate no-op in a test (setup, teardown or a send whose receiver is gone)"
+)]
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};

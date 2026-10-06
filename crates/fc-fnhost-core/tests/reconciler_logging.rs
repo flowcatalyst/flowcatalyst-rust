@@ -4,6 +4,10 @@
 //! every call within a cycle. Its own test binary: a thread-local
 //! subscriber shares callsite interest with any test running beside it.
 #![expect(
+    clippy::let_underscore_must_use,
+    reason = "test code: a discarded Result is a deliberate no-op in a test (setup, teardown or a send whose receiver is gone)"
+)]
+#![expect(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,

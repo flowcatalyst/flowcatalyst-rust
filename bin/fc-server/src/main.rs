@@ -248,6 +248,10 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
     clippy::expect_used,
     reason = "start-up wiring: the dependency is built whenever a subsystem that needs it is enabled (needs_db above)"
 )]
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "install_default fails only when a provider is already installed, which is the state wanted; the receiver may already be gone (shutdown, or an abandoned caller): nobody is left to notify"
+)]
 async fn main() -> Result<()> {
     // Both rustls crypto backends are compiled into this binary (the AWS SDK
     // brings aws-lc-rs, others ring), so a client that asks rustls for "the
@@ -1008,7 +1012,9 @@ async fn drain_http(
     stop.cancel();
     let all = async {
         for s in servers.iter_mut() {
-            let _ = s.await;
+            if let Err(e) = s.await {
+                warn!(error = %e, "An HTTP server task panicked or was cancelled");
+            }
         }
     };
     if time::timeout(timeout, all).await.is_ok() {

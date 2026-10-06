@@ -190,6 +190,10 @@ struct Job {
 /// lane and then queues (FIFO, with the WASM guests) for a permit. Stopped
 /// (the deadline, the listener's interrupt) while it queues, it answers a
 /// timeout at once rather than when a permit frees.
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "the caller may have timed out and dropped its receiver: nobody is left to notify; the receiver may already be gone (shutdown, or an abandoned caller): nobody is left to notify"
+)]
 async fn run(job: Job, answer: oneshot::Sender<Outcome>, budget: ExecBudget, lane: Lane) {
     let stop = job.stop.clone();
     let unfinished = match budget.run_on(&lane, run_isolate(job)).until(stop).await {

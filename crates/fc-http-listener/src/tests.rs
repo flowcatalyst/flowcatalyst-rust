@@ -2,6 +2,10 @@
 //! keep-alive connections close, in-flight work and streaming responses are
 //! never cut, slow headers close the connection and a slow body is a 408
 //! (a streamed upload only when it stalls).
+#![expect(
+    clippy::let_underscore_must_use,
+    reason = "test code: a discarded Result is a deliberate no-op in a test (setup, teardown or a send whose receiver is gone)"
+)]
 
 use super::*;
 use std::convert::Infallible;
@@ -37,6 +41,10 @@ type TestBody = BoxBody<Bytes, Infallible>;
 /// `/slow` answers after 1 s; `/stream` streams three chunks 300 ms apart;
 /// `/echo` and `/upload` read the whole body and answer its length; anything
 /// else answers `ok` at once.
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "the receiver may already be gone (shutdown, or an abandoned caller): nobody is left to notify"
+)]
 async fn handle(request: Request<RequestBody>) -> Result<Response<TestBody>, Infallible> {
     let path = request.uri().path().to_string();
     let body: TestBody = match path.as_str() {
@@ -260,6 +268,10 @@ async fn a_streamed_upload_is_cut_only_when_it_stalls() {
 }
 
 #[tokio::test]
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "any outcome (a value, lag or a closed channel) is the signal being waited for"
+)]
 async fn shutdown_lets_the_in_flight_request_finish() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

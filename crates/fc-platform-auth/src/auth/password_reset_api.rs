@@ -312,10 +312,13 @@ pub async fn confirm_reset(
         .ok_or_else(invalid_token)?;
 
     if reset_token.is_expired() {
-        let _ = state
+        if let Err(e) = state
             .password_reset_repo
             .delete_by_principal_id(&reset_token.principal_id)
-            .await;
+            .await
+        {
+            warn!(principal_id = %reset_token.principal_id, error = %e, "could not delete the expired password-reset tokens");
+        }
         return Err(PlatformError::bad_request_code(
             "EXPIRED_TOKEN",
             "Reset token has expired.",
@@ -334,10 +337,13 @@ pub async fn confirm_reset(
             ));
         };
         if reset_token.factor_attempts >= MAX_FACTOR_ATTEMPTS {
-            let _ = state
+            if let Err(e) = state
                 .password_reset_repo
                 .delete_by_principal_id(&reset_token.principal_id)
-                .await;
+                .await
+            {
+                warn!(principal_id = %reset_token.principal_id, error = %e, "could not delete the password-reset tokens after too many factor attempts");
+            }
             return Err(invalid_token());
         }
         let ok = tf
@@ -355,10 +361,13 @@ pub async fn confirm_reset(
                 });
             if n.is_some_and(|n| n >= MAX_FACTOR_ATTEMPTS) {
                 warn!(principal_id = %reset_token.principal_id, "password-reset factor attempts exhausted; burning token set");
-                let _ = state
+                if let Err(e) = state
                     .password_reset_repo
                     .delete_by_principal_id(&reset_token.principal_id)
-                    .await;
+                    .await
+                {
+                    warn!(principal_id = %reset_token.principal_id, error = %e, "could not burn the password-reset token set");
+                }
                 return Err(invalid_token());
             }
             return Err(PlatformError::bad_request_code(

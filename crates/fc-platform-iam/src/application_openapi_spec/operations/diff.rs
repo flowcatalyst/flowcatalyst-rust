@@ -22,6 +22,10 @@ const VERBS: &[&str] = &[
 
 /// Stable, canonical-JSON hash of a spec. Used for the no-op short-circuit so
 /// re-sending the same document doesn't create a new row.
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "writing to a String cannot fail"
+)]
 pub fn spec_hash(spec: &Value) -> String {
     let canonical = canonicalize(spec);
     let bytes = serde_json::to_vec(&canonical).unwrap_or_default();

@@ -59,6 +59,10 @@ impl DockerPg {
         Ok(pg)
     }
 
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "closing the connection at the end of a run: a failure leaves nothing to recover"
+    )]
     async fn wait_ready(&self) -> Result<()> {
         let deadline = Instant::now() + READY_BUDGET;
         loop {
@@ -137,6 +141,10 @@ fn safe(name: &str) -> Result<&str> {
 }
 
 impl Drop for DockerPg {
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "best-effort teardown of a child process or container that may already be gone"
+    )]
     fn drop(&mut self) {
         let _ = Command::new("docker")
             .args(["rm", "-f", &self.container])

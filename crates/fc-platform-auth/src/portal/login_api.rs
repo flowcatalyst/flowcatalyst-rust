@@ -434,12 +434,18 @@ pub async fn password_login(State(s): State<PortalLoginState>, raw: Bytes) -> Re
             )
         }
     };
-    let _ = portal.identities.touch_last_login(&ident.id).await;
+    if let Err(e) = portal.identities.touch_last_login(&ident.id).await {
+        warn!(error = %e, "could not stamp the portal identity's last login");
+    }
     Json(json!({ "redirectUrl": redirect_url })).into_response()
 }
 
 /// Verify against a fixed hash so a refused unknown account costs what a
 /// wrong password costs (Go `passwordhash.EqualizeTiming`).
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "a dummy verification to equalise timing: its result is irrelevant by design"
+)]
 fn equalize_timing(portal: &PortalState, password: &str) {
     static DUMMY: OnceLock<Option<String>> = OnceLock::new();
     let dummy = DUMMY.get_or_init(|| {

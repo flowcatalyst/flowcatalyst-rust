@@ -289,7 +289,12 @@ impl FnHost {
         self.closed = true;
         self.reconciler.drain();
         // Tell the platform right away rather than at the next 15 s cycle.
-        let _ = time::timeout(Duration::from_secs(10), self.reconciler.heartbeat_now()).await;
+        if time::timeout(Duration::from_secs(10), self.reconciler.heartbeat_now())
+            .await
+            .is_err()
+        {
+            tracing::warn!("the final heartbeat did not finish within 10s");
+        }
         if let Some(listener) = &self.listener {
             listener.drain().await;
             listener
@@ -309,6 +314,10 @@ impl FnHost {
 /// after start with `FC_EXIT_AFTER_START`. Returns the exit code.
 /// `loaders` builds the runtimes and `listener` the function listener, both
 /// from the loaded environment; a runtime that cannot start exits 1.
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "the error stream is the last place to report to: a failure to write there cannot itself be reported"
+)]
 pub async fn run(
     env_reader: EnvReader,
     err: &mut (dyn Write + Send),

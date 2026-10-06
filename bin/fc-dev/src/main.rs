@@ -72,7 +72,7 @@ use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process;
-use tokio::task::JoinHandle;
+use tokio::task::{JoinError, JoinHandle};
 use tokio::time;
 use tokio_util::sync::CancellationToken;
 
@@ -351,6 +351,10 @@ mod version_check;
 #[expect(
     clippy::expect_used,
     reason = "start-up: fc-dev cannot run without its auth keys"
+)]
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "a missing .env file is normal; the process environment is the source of truth; any outcome (a value, lag or a closed channel) is the signal being waited for; best-effort cleanup: a file already gone, or one that cannot be removed, changes nothing the caller relies on; the receiver may already be gone (shutdown, or an abandoned caller): nobody is left to notify"
 )]
 async fn main() -> Result<()> {
     // Load .env BEFORE Cli::parse() so clap's `#[arg(env = "…")]` fallbacks
@@ -953,8 +957,8 @@ async fn main() -> Result<()> {
             let _ = shutdown_rx.recv().await;
             info!("Scheduled-job scheduler received shutdown signal");
             svc_clone.shutdown();
-            let _ = poller_h.await;
-            let _ = dispatcher_h.await;
+            log_join("scheduled-job poller", poller_h.await);
+            log_join("scheduled-job dispatcher", dispatcher_h.await);
         });
         info!("Scheduled-job scheduler started (cron poller + dispatcher)");
         Some(handle)
@@ -1300,7 +1304,13 @@ async fn main() -> Result<()> {
     // The function host stops first, so its DRAINING heartbeat still
     // reaches the platform.
     if fn_host.is_running() {
-        let _ = time::timeout(Duration::from_secs(30), fn_host.close()).await;
+        if time::timeout(Duration::from_secs(30), fn_host.close())
+            .await
+            .is_err()
+        {
+            warn!("The function host did not close within 30s");
+        }
+        // Best effort: a leftover file only makes `fc-dev fn` try a dead host.
         let _ = fs::remove_file(&fn_cli_file);
     }
 
@@ -1313,18 +1323,21 @@ async fn main() -> Result<()> {
 
     // Wait for all handles with timeout
     let shutdown_timeout = Duration::from_secs(30);
-    let _ = time::timeout(shutdown_timeout, async {
-        let _ = api_handle.await;
-        let _ = metrics_handle.await;
-        let _ = manager_handle.await;
+    let drained = time::timeout(shutdown_timeout, async {
+        log_join("API server", api_handle.await);
+        log_join("metrics server", metrics_handle.await);
+        log_join("queue manager", manager_handle.await);
         if let Some(h) = outbox_handle {
-            let _ = h.await;
+            log_join("outbox processor", h.await);
         }
         if let Some(h) = mcp_handle {
-            let _ = h.await;
+            log_join("MCP server", h.await);
         }
     })
     .await;
+    if drained.is_err() {
+        warn!("Tasks did not stop within {shutdown_timeout:?} of the shutdown signal");
+    }
 
     // Stop embedded Postgres last — repositories / pools will have been
     // shut down by the timeout above, so closing the server is safe.
@@ -1340,6 +1353,10 @@ async fn main() -> Result<()> {
 
 /// `fc-dev start --mcp`: the MCP server on `FC_MCP_BIND`:`FC_MCP_PORT`
 /// against this fc-dev's API, until shutdown.
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "any outcome (a value, lag or a closed channel) is the signal being waited for"
+)]
 async fn start_mcp(
     api_port: u16,
     mut shutdown_rx: broadcast::Receiver<()>,
@@ -1458,6 +1475,13 @@ async fn embedded_asset_handler(uri: Uri) -> impl IntoResponse {
 
     // SPA fallback: serve index.html for all other paths
     embedded_spa_handler().await.into_response()
+}
+
+/// Logs a task that panicked or was cancelled while the process shut down.
+fn log_join<T>(task: &str, joined: Result<T, JoinError>) {
+    if let Err(e) = joined {
+        warn!(task, error = %e, "task ended abnormally during shutdown");
+    }
 }
 
 /// An embedded file other than the shell: hashed `/assets/*` are

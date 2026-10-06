@@ -426,6 +426,10 @@ mod admin {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "test code: a discarded Result is a deliberate no-op in a test (setup, teardown or a send whose receiver is gone)"
+)]
 mod tests {
     use super::*;
     use std::env;

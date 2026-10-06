@@ -349,6 +349,15 @@ pub struct PgUnitOfWork {
     pool: PgPool,
 }
 
+/// Roll back after the failure that is about to be returned. The caller needs
+/// that original error; a rollback that also fails is only logged (dropping
+/// the connection's transaction rolls it back anyway).
+async fn rollback_after_failure(txn: Transaction<'static, Postgres>) {
+    if let Err(e) = txn.rollback().await {
+        debug!(error = %e, "rollback after a failed unit of work also failed");
+    }
+}
+
 /// Commit a unit of work's transaction.
 async fn finish(txn: Transaction<'static, Postgres>) -> Result<(), UseCaseError> {
     txn.commit().await.map_err(|e| {
@@ -715,13 +724,13 @@ impl UnitOfWork for PgUnitOfWork {
             repository.persist(aggregate, &mut tx).await
         };
         if let Err(e) = persist_result {
-            let _ = txn.rollback().await;
+            rollback_after_failure(txn).await;
             error!("Failed to persist aggregate: {}", e);
             return Err(write_failure("persist", aggregate, e));
         }
 
         if let Err(e) = Self::persist_event_and_audit(&mut txn, &event, command).await {
-            let _ = txn.rollback().await;
+            rollback_after_failure(txn).await;
             return Err(e);
         }
 
@@ -756,13 +765,13 @@ impl UnitOfWork for PgUnitOfWork {
             repository.delete(aggregate, &mut tx).await
         };
         if let Err(e) = delete_result {
-            let _ = txn.rollback().await;
+            rollback_after_failure(txn).await;
             error!("Failed to delete aggregate: {}", e);
             return Err(write_failure("delete", aggregate, e));
         }
 
         if let Err(e) = Self::persist_event_and_audit(&mut txn, &event, command).await {
-            let _ = txn.rollback().await;
+            rollback_after_failure(txn).await;
             return Err(e);
         }
 
@@ -798,14 +807,14 @@ impl UnitOfWork for PgUnitOfWork {
                 repository.persist(aggregate, &mut tx).await
             };
             if let Err(e) = persist_result {
-                let _ = txn.rollback().await;
+                rollback_after_failure(txn).await;
                 error!("Failed to persist aggregate in batch: {}", e);
                 return Err(write_failure("persist", aggregate, e));
             }
         }
 
         if let Err(e) = Self::persist_event_and_audit(&mut txn, &event, command).await {
-            let _ = txn.rollback().await;
+            rollback_after_failure(txn).await;
             return Err(e);
         }
 
@@ -834,7 +843,7 @@ impl UnitOfWork for PgUnitOfWork {
         let mut txn = self.begin().await?;
 
         if let Err(e) = Self::persist_events_and_audits(&mut txn, &rows, &rollup, command).await {
-            let _ = txn.rollback().await;
+            rollback_after_failure(txn).await;
             return Err(e);
         }
 
@@ -865,14 +874,14 @@ impl UnitOfWork for PgUnitOfWork {
                 repository.persist(aggregate, &mut tx).await
             };
             if let Err(e) = persist_result {
-                let _ = txn.rollback().await;
+                rollback_after_failure(txn).await;
                 error!("Failed to persist aggregate in sync: {}", e);
                 return Err(write_failure("persist", aggregate, e));
             }
         }
 
         if let Err(e) = Self::persist_events_and_audits(&mut txn, &rows, &event, command).await {
-            let _ = txn.rollback().await;
+            rollback_after_failure(txn).await;
             return Err(e);
         }
 
@@ -903,7 +912,7 @@ impl UnitOfWork for PgUnitOfWork {
             Err(e) => Err(e),
         };
         if let Err(e) = written {
-            let _ = txn.rollback().await;
+            rollback_after_failure(txn).await;
             return Err(e);
         }
 
@@ -940,7 +949,7 @@ impl UnitOfWork for PgUnitOfWork {
         let mut txn = self.begin().await?;
 
         if let Err(e) = Self::persist_event_and_audit(&mut txn, &event, command).await {
-            let _ = txn.rollback().await;
+            rollback_after_failure(txn).await;
             return Err(e);
         }
 
@@ -1307,7 +1316,7 @@ impl PgUnitOfWork {
                     debug!("Orchestration tx committed");
                 }
                 Err(err) => {
-                    let _ = tx.rollback().await;
+                    rollback_after_failure(tx).await;
                     debug!(error = %err.code(), "Orchestration tx rolled back");
                 }
             }
@@ -1499,6 +1508,10 @@ impl UnitOfWork for InMemoryUnitOfWork {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "test code: a discarded Result is a deliberate no-op in a test (setup, teardown or a send whose receiver is gone)"
+)]
 mod tests {
     use super::*;
     use crate::shared::error;

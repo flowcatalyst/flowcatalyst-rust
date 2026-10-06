@@ -209,6 +209,10 @@ struct PollArgs {
     skip_bootstrap: bool,
 }
 
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "a missing .env file is normal; the process environment is the source of truth"
+)]
 pub async fn run(args: OutboxArgs) -> Result<()> {
     // Go's `loadDotEnv`: a missing file is fine, a set variable wins.
     let _ = dotenvy::from_path(&args.env_file);
@@ -320,6 +324,10 @@ async fn run_poll(args: PollArgs) -> Result<()> {
     .await
 }
 
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "the receiver may already be gone (shutdown, or an abandoned caller): nobody is left to notify"
+)]
 async fn run_poller(p: Poller) -> Result<()> {
     let auth = match (&p.token_source, &p.auth_token) {
         (Some(_), _) => "client_credentials",
@@ -398,7 +406,11 @@ async fn run_poller(p: Poller) -> Result<()> {
     info!("Shutdown signal received, stopping outbox poller…");
 
     let _ = shutdown_tx.send(());
-    let _ = time::timeout(Duration::from_secs(30), handle).await;
+    match time::timeout(Duration::from_secs(30), handle).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => warn!(error = %e, "The outbox poller task ended abnormally"),
+        Err(_) => warn!("The outbox poller did not stop within 30s"),
+    }
 
     info!("Outbox poller stopped");
     Ok(())

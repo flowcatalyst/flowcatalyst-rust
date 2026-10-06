@@ -60,6 +60,10 @@ impl Observability {
         clippy::expect_used,
         reason = "building a current-thread runtime fails only on OS resource exhaustion, at start-up"
     )]
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "any outcome (a value, lag or a closed channel) is the signal being waited for"
+    )]
     pub fn start(port: u16, probes: Probes) -> io::Result<Self> {
         let state = ObsState {
             probes,
@@ -107,6 +111,10 @@ impl Observability {
     }
 
     /// Stops the listener and joins its thread (bounded).
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "the receiver may already be gone (shutdown, or an abandoned caller): nobody is left to notify"
+    )]
     pub async fn close(mut self) {
         if let Some(tx) = self.shutdown.take() {
             let _ = tx.send(());

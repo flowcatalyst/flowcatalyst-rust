@@ -80,6 +80,10 @@ impl CwasmCache {
         unsafe_code,
         reason = "wasmtime Component::deserialize* trusts its input: only bytes this engine produced and checksummed are passed (SAFETY comments on each block)"
     )]
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "best-effort cleanup: a file already gone, or one that cannot be removed, changes nothing the caller relies on"
+    )]
     pub fn load(
         &self,
         engine: &Engine,
@@ -151,6 +155,10 @@ impl CwasmCache {
             .map_err(|e| format!("does not deserialize: {e:#}"))
     }
 
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "best-effort cleanup: a file already gone, or one that cannot be removed, changes nothing the caller relies on"
+    )]
     fn store(&self, digest_hex: &str, compiled: &[u8]) -> io::Result<()> {
         create_private_dir(&self.dir)?;
         let sum = hex::encode(Sha256::digest(compiled));

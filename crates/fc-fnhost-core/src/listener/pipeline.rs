@@ -827,6 +827,10 @@ async fn read_body(headers: &HeaderMap, body: Incoming, cap: u64) -> Result<Byte
 const DISCARD_LIMIT_BYTES: usize = 64 * 1024 * 1024;
 const DISCARD_LIMIT: Duration = Duration::from_secs(10);
 
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "bounded best-effort discard of a request body nobody reads: timing out or failing to read it changes nothing"
+)]
 fn discard(mut body: Incoming) {
     tokio::spawn(async move {
         let _ = time::timeout(DISCARD_LIMIT, async {

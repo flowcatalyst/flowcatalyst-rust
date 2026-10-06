@@ -75,6 +75,10 @@ impl Config {
     }
 }
 
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "best-effort cleanup: a file already gone, or one that cannot be removed, changes nothing the caller relies on"
+)]
 pub async fn run(config: &Config) -> Result<Report> {
     fs::create_dir_all(&config.report_dir)
         .with_context(|| format!("create {}", config.report_dir.display()))?;

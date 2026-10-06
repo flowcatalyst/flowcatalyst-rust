@@ -954,7 +954,9 @@ impl OutboxUnitOfWork {
                     debug!("Orchestration tx committed");
                 }
                 Err(err) => {
-                    let _ = tx.rollback().await;
+                    if let Err(e) = tx.rollback().await {
+                        debug!(error = %e, "rollback after a failed orchestration also failed");
+                    }
                     debug!(error = %err.code(), "Orchestration tx rolled back");
                 }
             }

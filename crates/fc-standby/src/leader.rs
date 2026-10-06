@@ -320,6 +320,10 @@ impl LeaderElection {
     }
 
     /// Update leadership status
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "the receiver may already be gone (shutdown, or an abandoned caller): nobody is left to notify"
+    )]
     fn set_status(&self, status: LeadershipStatus) {
         let was_leader = self.is_leader.load(Ordering::SeqCst);
         let is_now_leader = status == LeadershipStatus::Leader;
@@ -337,6 +341,10 @@ impl LeaderElection {
     }
 
     /// Stop the leader election
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "the receiver may already be gone (shutdown, or an abandoned caller): nobody is left to notify"
+    )]
     pub async fn shutdown(&self) {
         info!(instance_id = %self.config.instance_id, "Stopping leader election");
         self.running.store(false, Ordering::SeqCst);

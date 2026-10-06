@@ -185,6 +185,10 @@ impl Infra {
 }
 
 impl Drop for Infra {
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "best-effort teardown of a child process or container that may already be gone"
+    )]
     fn drop(&mut self) {
         if self.keep {
             eprintln!(

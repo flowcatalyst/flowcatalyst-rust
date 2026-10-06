@@ -51,6 +51,10 @@ pub fn parse_duration(s: &str) -> Result<Duration, String> {
     Ok(Duration::from_secs_f64(secs))
 }
 
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "best-effort cleanup: a file already gone, or one that cannot be removed, changes nothing the caller relies on"
+)]
 pub fn run(args: StopArgs) -> Result<()> {
     let pid_file = args.pid_file.unwrap_or_else(dev_paths::default_pid_file);
 
@@ -128,6 +132,10 @@ fn wait_for_exit(pid: u32, timeout: Duration) -> bool {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "test code: a discarded Result is a deliberate no-op in a test (setup, teardown or a send whose receiver is gone)"
+)]
 mod tests {
     use super::*;
     use crate::instance_guard;

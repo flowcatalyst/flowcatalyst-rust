@@ -36,6 +36,10 @@ pub fn free_port() -> Result<u16> {
 }
 
 impl SubprocessSide {
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "best-effort teardown of a child process or container that may already be gone"
+    )]
     pub async fn start(
         label: &str,
         binary: &Path,
@@ -101,6 +105,10 @@ impl SubprocessSide {
     }
 
     /// SIGTERM, then kill after [`STOP_GRACE`]. Idempotent.
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "best-effort teardown of a child process or container that may already be gone"
+    )]
     pub async fn stop(&mut self) {
         if matches!(self.child.try_wait(), Ok(Some(_))) {
             return;

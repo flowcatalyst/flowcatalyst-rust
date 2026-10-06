@@ -116,6 +116,10 @@ impl Families {
             .push(sample(&format!("{name}_count"), labels, count as f64));
     }
 
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "writing to a String cannot fail"
+    )]
     fn render(self, out: &mut String) {
         for (name, family) in self.0 {
             let _ = writeln!(out, "# HELP {name} {}", family.help);

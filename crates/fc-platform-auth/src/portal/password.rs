@@ -241,10 +241,13 @@ pub async fn confirm_portal_reset(
     password: &str,
 ) -> Response {
     if token.is_expired() {
-        let _ = passwords
+        if let Err(e) = passwords
             .tokens
             .delete_for_subject(&token.principal_id)
-            .await;
+            .await
+        {
+            warn!(error = %e, "could not delete the expired portal reset tokens");
+        }
         return coded(
             StatusCode::BAD_REQUEST,
             "EXPIRED_TOKEN",

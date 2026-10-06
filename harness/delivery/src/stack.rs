@@ -115,6 +115,10 @@ impl Proc {
     }
 
     /// SIGTERM, wait up to `grace`, then SIGKILL.
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "best-effort teardown of a child process or container that may already be gone"
+    )]
     pub async fn stop(&mut self, grace: Duration) {
         let Some(mut child) = self.child.take() else {
             return;
@@ -129,6 +133,10 @@ impl Proc {
         }
     }
 
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "best-effort teardown of a child process or container that may already be gone"
+    )]
     pub async fn kill(&mut self) {
         if let Some(mut child) = self.child.take() {
             let _ = child.kill().await;

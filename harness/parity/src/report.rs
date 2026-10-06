@@ -2,6 +2,10 @@
 //! `report.md`. Exit status is non-zero on any `DIFF`, any `ERROR`, any
 //! stale allow-list entry, any false `covers` claim, or coverage under
 //! [`REQUIRED_COVERAGE`]: a gate, not a dashboard.
+#![expect(
+    clippy::let_underscore_must_use,
+    reason = "every discarded Result here is a writeln! into a String (fmt::Write), which cannot fail"
+)]
 
 use anyhow::{Context, Result};
 use serde::Serialize;

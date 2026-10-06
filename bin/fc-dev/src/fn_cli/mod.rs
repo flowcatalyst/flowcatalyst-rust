@@ -214,6 +214,10 @@ pub async fn run(args: FnArgs) -> i32 {
 }
 
 /// [`run`] with the environment and stdio given: the seam tests use.
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "the error stream is the last place to report to: a failure to write there cannot itself be reported"
+)]
 pub async fn run_with(args: &FnArgs, env: &dyn Fn(&str) -> Option<String>, io: &mut Io<'_>) -> i32 {
     let ctx = Ctx { args, env };
     let result = match &args.command {

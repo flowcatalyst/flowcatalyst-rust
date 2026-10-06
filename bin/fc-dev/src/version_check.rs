@@ -75,6 +75,10 @@ async fn run() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "set at most once: a later set loses to the first by design"
+)]
 fn apply(current: &Version, latest: &Version, source: &str) {
     if latest > current {
         warn!(
@@ -169,6 +173,10 @@ fn read_cache() -> Option<CacheEntry> {
     }
 }
 
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "best-effort cache: a failed write means the check runs again next time"
+)]
 fn write_cache(entry: &CacheEntry) {
     let Some(path) = cache_path() else { return };
     if let Some(dir) = path.parent() {

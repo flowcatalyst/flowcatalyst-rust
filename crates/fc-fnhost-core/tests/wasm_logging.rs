@@ -3,6 +3,10 @@
 //! test binary: guests run on the guest runtime's threads, so the capture is
 //! the process-wide subscriber, at TRACE.
 #![expect(
+    clippy::let_underscore_must_use,
+    reason = "test code: a discarded Result is a deliberate no-op in a test (setup, teardown or a send whose receiver is gone)"
+)]
+#![expect(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,

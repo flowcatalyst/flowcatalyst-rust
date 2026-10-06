@@ -173,6 +173,10 @@ impl Writer<'_> {
         self.sample(&format!("{name}_total"), "", value);
     }
 
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "writing to a String cannot fail"
+    )]
     pub fn header(&mut self, name: &str, kind: &str, help: &str) {
         use std::fmt::Write;
         let _ = writeln!(self.out, "# HELP {name} {help}");
@@ -187,6 +191,10 @@ impl Writer<'_> {
         self.header(&family, "counter", help);
     }
 
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "writing to a String cannot fail"
+    )]
     pub fn sample(&mut self, name: &str, labels: &str, value: f64) {
         use std::fmt::Write;
         if labels.is_empty() {

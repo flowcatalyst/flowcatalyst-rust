@@ -1,6 +1,10 @@
 //! Report: `report.md` (readable) and `report.json` (everything, including
 //! every recorded delivery) in the run directory, next to each side's
 //! process logs.
+#![expect(
+    clippy::let_underscore_must_use,
+    reason = "every discarded Result here is a writeln! into a String (fmt::Write), which cannot fail"
+)]
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;

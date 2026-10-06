@@ -82,6 +82,10 @@ pub struct Receiver {
 
 impl Receiver {
     /// Bind on 127.0.0.1 at a random port and serve until the process ends.
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "the test receiver ends when the harness drops it; a serve error then is expected"
+    )]
     pub async fn start() -> anyhow::Result<(Receiver, SocketAddr)> {
         let receiver = Receiver::default();
         let app = Router::new()

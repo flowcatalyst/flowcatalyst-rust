@@ -91,6 +91,10 @@ pub fn filter_directive(env: &EnvReader) -> String {
 
 /// Installs the global subscriber. Safe to call more than once: later calls
 /// are no-ops (tests start several hosts in one process).
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "try_init fails only when a global subscriber is already installed, which is the state wanted"
+)]
 pub fn init(env: &EnvReader) {
     let format = format_of(
         env.first_set(&["FC_LOG_FORMAT", "LOG_FORMAT"])
@@ -227,6 +231,10 @@ where
         }
     }
 
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "a log line that cannot be written has nowhere to be reported"
+    )]
     fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
         let mut collector = FieldCollector::default();
         event.record(&mut collector);
@@ -353,6 +361,10 @@ fn append(out: &mut String, first: bool, key: &str, value: &JsonValue) {
 }
 
 /// RFC 8259 escaping exactly as `GoJsonEncoder.escape`.
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "writing to a String cannot fail"
+)]
 fn escape(out: &mut String, s: &str) {
     for c in s.chars() {
         match c {

@@ -90,6 +90,10 @@ pub async fn run_stdio(config: Config) -> Result<()> {
 
 /// Run the MCP server as a streamable HTTP service on `addr` at `/mcp`,
 /// after checking the platform is reachable, until Ctrl-C.
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "any outcome (a value, lag or a closed channel) is the signal being waited for"
+)]
 pub async fn run_http(config: Config, addr: SocketAddr) -> Result<()> {
     assert_platform_reachable(&config.base_url).await?;
     let listener = TcpListener::bind(addr).await?;

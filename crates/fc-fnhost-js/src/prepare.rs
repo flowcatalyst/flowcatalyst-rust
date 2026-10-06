@@ -69,6 +69,10 @@ pub struct Prepared {
 /// request's is (from `base` when there is one). Blocking: call it on a thread
 /// of its own (it creates and drops an isolate, on a current-thread
 /// runtime).
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "the receiver may already be gone (shutdown, or an abandoned caller): nobody is left to notify; the watchdog thread only waits on a channel and stops the isolate; its panic has no recovery here"
+)]
 pub fn prepare(
     base: Option<&'static [u8]>,
     bundle: &[u8],

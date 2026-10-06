@@ -3,6 +3,10 @@
 //! secret never on any line. Its own test binary: functions run on the
 //! JS workers' threads, so the capture is the process-wide subscriber.
 #![expect(
+    clippy::let_underscore_must_use,
+    reason = "test code: a discarded Result is a deliberate no-op in a test (setup, teardown or a send whose receiver is gone)"
+)]
+#![expect(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,

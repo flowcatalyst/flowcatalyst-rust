@@ -407,18 +407,22 @@ async fn forward(mut f: Forwarder) {
             }
         };
 
-        let receipt_handle =
-            match NatsQueueConsumer::receipt_handle_from_message(&js_msg, &f.stream_name) {
-                Some(h) => h,
-                None => {
-                    warn!(
-                        consumer = %f.consumer_name,
-                        "Could not extract stream sequence from NATS message, skipping"
-                    );
-                    let _ = js_msg.ack_with(AckKind::Term).await;
-                    continue;
+        let receipt_handle = match NatsQueueConsumer::receipt_handle_from_message(
+            &js_msg,
+            &f.stream_name,
+        ) {
+            Some(h) => h,
+            None => {
+                warn!(
+                    consumer = %f.consumer_name,
+                    "Could not extract stream sequence from NATS message, skipping"
+                );
+                if let Err(e) = js_msg.ack_with(AckKind::Term).await {
+                    warn!(consumer = %f.consumer_name, error = %e, "could not terminate the NATS message with no stream sequence");
                 }
-            };
+                continue;
+            }
+        };
 
         let message: fc_common::Message = match serde_json::from_slice(&js_msg.payload) {
             Ok(m) => m,
@@ -430,7 +434,9 @@ async fn forward(mut f: Forwarder) {
                 );
                 let seq = js_msg.info().ok().map(|i| i.stream_sequence.to_string());
                 f.rejected.record(seq, e.to_string());
-                let _ = js_msg.ack_with(AckKind::Term).await;
+                if let Err(e) = js_msg.ack_with(AckKind::Term).await {
+                    warn!(consumer = %f.consumer_name, error = %e, "could not terminate the unparseable NATS message");
+                }
                 continue;
             }
         };

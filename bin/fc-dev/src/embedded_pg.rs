@@ -173,6 +173,10 @@ pub fn assert_version_compatible(path: &Path) -> Result<()> {
 
 /// `Settings::default()` makes two temp directories it never removes;
 /// clear them (they are empty).
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "best-effort cleanup: a file already gone, or one that cannot be removed, changes nothing the caller relies on"
+)]
 fn default_settings() -> Settings {
     let s = Settings::default();
     let _ = fs::remove_dir(&s.data_dir);
@@ -183,6 +187,10 @@ fn default_settings() -> Settings {
 }
 
 /// Start (or attach to) the shared cluster.
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "best-effort cleanup: a file already gone, or one that cannot be removed, changes nothing the caller relies on"
+)]
 pub async fn start(
     args: &EmbeddedDbArgs,
     reset: Reset,
@@ -322,7 +330,9 @@ pub async fn stop(db: &mut EmbeddedDb) {
     info!("Stopping embedded Postgres");
     let bin = db.bin_dir.clone();
     let cluster = db.cluster_dir.clone();
-    let _ = task::spawn_blocking(move || pg_ctl_stop(&bin, &cluster)).await;
+    if let Err(e) = task::spawn_blocking(move || pg_ctl_stop(&bin, &cluster)).await {
+        warn!(error = %e, "stopping embedded Postgres panicked or was cancelled");
+    }
 }
 
 /// Go's `--embedded-db-reset`: delete the whole `<path>` (DEV-3). The shared

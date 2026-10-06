@@ -8,6 +8,10 @@
 //! and waits for a row written in the SDK's table shape to be delivered
 //! (`cargo test -p fc-outbox-processor -- --ignored` with Docker running).
 #![expect(
+    clippy::let_underscore_must_use,
+    reason = "test code: a discarded Result is a deliberate no-op in a test (setup, teardown or a send whose receiver is gone)"
+)]
+#![expect(
     clippy::unwrap_used,
     reason = "test code: a failed unwrap, expect or panic is a failed test (clippy's test exemption covers #[test] fns and #[cfg(test)] modules, not the helpers of an integration-test crate)"
 )]

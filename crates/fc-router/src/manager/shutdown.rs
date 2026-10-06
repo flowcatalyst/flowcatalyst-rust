@@ -62,7 +62,9 @@ impl QueueManager {
         handles.push(self.clone().spawn_in_pipeline_reaper());
 
         for handle in handles {
-            let _ = handle.await;
+            if let Err(e) = handle.await {
+                warn!(error = %e, "A queue-manager task panicked or was cancelled");
+            }
         }
 
         Ok(())
@@ -368,6 +370,10 @@ impl QueueManager {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "test code: a discarded Result is a deliberate no-op in a test (setup, teardown or a send whose receiver is gone)"
+)]
 mod start_double_spawn_tests {
     use super::*;
     use crate::mediator::HttpMediatorConfig;

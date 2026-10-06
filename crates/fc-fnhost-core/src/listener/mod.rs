@@ -198,6 +198,10 @@ impl FnListener {
 
 #[async_trait]
 impl Listener for FnListener {
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "set at most once: a later set loses to the first by design"
+    )]
     async fn start(&self, reconciler: Arc<Reconciler>, metrics: Arc<FnMetrics>) -> io::Result<()> {
         let config = &self.config;
         let max_concurrency = usize::try_from(config.max_concurrency)
@@ -286,6 +290,10 @@ impl Listener for FnListener {
 
     /// Stops accepting, waits up to `timeout` for in-flight requests, then
     /// drops whatever is left and closes the pinned versions.
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "the receiver may already be gone (shutdown, or an abandoned caller): nobody is left to notify"
+    )]
     async fn close(&self, timeout: Duration) {
         self.draining.store(true, Ordering::SeqCst);
         let Some(running) = self.running.lock().take() else {
@@ -314,6 +322,10 @@ fn bind(ip: IpAddr, port: u16) -> io::Result<net::TcpListener> {
 
 /// The accept loop for one entry. On stop: stop accepting, let open
 /// connections finish in-flight requests (bounded), then drop them.
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "TCP_NODELAY is an optimisation: the connection works without it; any outcome (a value, lag or a closed channel) is the signal being waited for"
+)]
 fn serve(
     listener: net::TcpListener,
     shared: Arc<Shared>,

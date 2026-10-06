@@ -173,7 +173,7 @@ impl ScheduledJobDispatcher {
         for inst in instances {
             let Some(Some(job)) = job_cache.get(&inst.scheduled_job_id) else {
                 // Job was deleted between insert and dispatch. Mark terminal.
-                let _ = self
+                if let Err(e) = self
                     .instance_repo
                     .mark_delivery_failed(
                         &inst.id,
@@ -181,7 +181,10 @@ impl ScheduledJobDispatcher {
                         "ScheduledJob no longer exists",
                         true,
                     )
-                    .await;
+                    .await
+                {
+                    warn!(instance_id = %inst.id, error = %e, "could not mark the instance of a deleted job as failed");
+                }
                 failed += 1;
                 continue;
             };
@@ -208,10 +211,13 @@ impl ScheduledJobDispatcher {
     ) -> DispatchOutcome {
         let Some(target_url) = &job.target_url else {
             warn!(job_id = %job.id, instance_id = %inst.id, "ScheduledJob has no target_url; marking instance DELIVERY_FAILED");
-            let _ = self
+            if let Err(e) = self
                 .instance_repo
                 .mark_delivery_failed(&inst.id, inst.created_at, "No target_url configured", true)
-                .await;
+                .await
+            {
+                warn!(instance_id = %inst.id, error = %e, "could not mark the instance with no target_url as failed");
+            }
             return DispatchOutcome::Failed;
         };
 

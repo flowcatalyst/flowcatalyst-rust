@@ -1328,6 +1328,10 @@ mod consumer_liveness_tests {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "test code: a discarded Result is a deliberate no-op in a test (setup, teardown or a send whose receiver is gone)"
+)]
 mod g12_capacity_gate_tests {
     use super::*;
     use crate::mediator::Mediator;

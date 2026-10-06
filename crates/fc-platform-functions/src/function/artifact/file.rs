@@ -59,6 +59,10 @@ impl ArtifactBlobStore for FileArtifactBlobStore {
         clippy::expect_used,
         reason = "a blob path is always built under the store root"
     )]
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "best-effort cleanup: a file already gone, or one that cannot be removed, changes nothing the caller relies on"
+    )]
     async fn put(
         &self,
         function_id: &str,
@@ -121,6 +125,10 @@ impl ArtifactBlobStore for FileArtifactBlobStore {
 
 /// Java `FileArtifactBlobStoreTest`.
 #[cfg(test)]
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "test code: a discarded Result is a deliberate no-op in a test (setup, teardown or a send whose receiver is gone)"
+)]
 mod tests {
     use super::*;
     use fc_platform_core::shared::tsid;

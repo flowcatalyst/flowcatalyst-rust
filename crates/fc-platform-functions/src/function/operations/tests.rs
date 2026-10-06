@@ -8,6 +8,10 @@
 //! must fail (or be inspected) before the use case touches the database,
 //! and one that did would fail with a connection error instead.
 //! Everything after the load is covered by `tests/it/function_api_test.rs`.
+#![expect(
+    clippy::let_underscore_must_use,
+    reason = "test code: a discarded Result is a deliberate no-op in a test (setup, teardown or a send whose receiver is gone)"
+)]
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

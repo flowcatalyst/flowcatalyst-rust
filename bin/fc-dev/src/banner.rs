@@ -16,6 +16,10 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const INNER: usize = 60;
 
 /// `fn_ports`: the function host's private and public ports, when it runs.
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "the banner goes to stderr: a failure to print it cannot be reported anywhere else"
+)]
 pub fn print(api_port: u16, metrics_port: u16, fn_ports: Option<(u16, u16)>) {
     let upgrade = version_check::cached_upgrade_available();
     let color = io::stderr().is_terminal();

@@ -29,6 +29,7 @@ use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::usecase::{ExecutionContext, UseCase};
 use fc_platform_iam::identity_provider::entity::IdentityProvider;
 use fc_platform_iam::identity_provider::entity::IdentityProviderType;
+use tracing::warn;
 
 /// How long a parked OIDC login state lives (the OIDC bridge's TTL).
 const STATE_TTL_SECONDS: i64 = 600;
@@ -318,6 +319,8 @@ pub async fn complete(
             )
         }
     };
-    let _ = portal.identities.touch_last_login(&ident.id).await;
+    if let Err(e) = portal.identities.touch_last_login(&ident.id).await {
+        warn!(error = %e, "could not stamp the portal identity's last login");
+    }
     redirect(StatusCode::FOUND, redirect_url)
 }

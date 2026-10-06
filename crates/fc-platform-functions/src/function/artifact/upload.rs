@@ -32,6 +32,10 @@ pub struct Received {
 struct TempUpload(PathBuf);
 
 impl Drop for TempUpload {
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "best-effort cleanup: a file already gone, or one that cannot be removed, changes nothing the caller relies on"
+    )]
     fn drop(&mut self) {
         // Best effort: a leftover temp file is harmless and never served.
         let _ = fs::remove_file(&self.0);
@@ -128,6 +132,10 @@ where
 /// Java `FunctionArtifactUploadApiTest`'s body-side cases (U2, U3, the
 /// empty body and idempotence); the route-side ones need a database.
 #[cfg(test)]
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "test code: a discarded Result is a deliberate no-op in a test (setup, teardown or a send whose receiver is gone)"
+)]
 mod tests {
     use super::*;
     use crate::function::artifact::FileArtifactBlobStore;

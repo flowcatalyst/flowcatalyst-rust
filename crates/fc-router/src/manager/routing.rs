@@ -843,9 +843,12 @@ impl QueueManager {
                                 Self::CAPACITY_DEFER_SECONDS
                             )),
                         );
-                        let _ = consumer
+                        if let Err(e) = consumer
                             .defer(&msg.receipt_handle, Some(Self::CAPACITY_DEFER_SECONDS))
-                            .await;
+                            .await
+                        {
+                            warn!(queue = %msg.queue_identifier, error = %e, "could not defer the message for a full pool");
+                        }
                         outcome.deferred += 1;
                         continue;
                     }
