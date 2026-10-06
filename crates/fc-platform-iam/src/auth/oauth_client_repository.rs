@@ -4,6 +4,7 @@
 //! during OAuth authorize/token flows), matching the TS oidc-provider
 //! adapter caching pattern.
 
+use crate::auth::oauth_entity::OAuthClientType;
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::shared::id::ClientId;
@@ -16,7 +17,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
 use crate::auth::oauth_entity::{GrantType, OAuthClient};
-use fc_platform_core::shared::enum_str::decode;
+use fc_platform_core::shared::enum_str::Stored;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase::DbTx;
 use fc_platform_core::usecase::HasId;
@@ -29,7 +30,7 @@ struct OAuthClientRow {
     id: OAuthClientId,
     client_id: String,
     client_name: String,
-    client_type: String,
+    client_type: Stored<OAuthClientType>,
     client_secret_ref: Option<String>,
     previous_secret_ref: Option<String>,
     previous_secret_expires_at: Option<DateTime<Utc>>,
@@ -48,12 +49,9 @@ struct OAuthClientRow {
 impl TryFrom<OAuthClientRow> for OAuthClient {
     type Error = PlatformError;
     fn try_from(r: OAuthClientRow) -> Result<Self> {
-        let client_type = decode(
-            &r.client_type,
-            "oauth_clients",
-            "client_type",
-            r.id.as_str(),
-        )?;
+        let client_type = r
+            .client_type
+            .decode("oauth_clients", "client_type", r.id.as_str())?;
         let default_scopes: Vec<String> = r
             .default_scopes
             .map(|s| {
@@ -150,16 +148,15 @@ impl OAuthClientRepository {
     }
 
     async fn load_grant_types(&self, oauth_client_id: &OAuthClientId) -> Result<Vec<GrantType>> {
-        let rows = sqlx::query_scalar::<_, String>(
+        let rows = sqlx::query_scalar::<_, Stored<GrantType>>(
             "SELECT grant_type FROM oauth_client_grant_types WHERE oauth_client_id = $1",
         )
         .bind(oauth_client_id)
         .fetch_all(&self.pool)
         .await?;
-        rows.iter()
+        rows.into_iter()
             .map(|g| {
-                decode(
-                    g,
+                g.decode(
                     "oauth_client_grant_types",
                     "grant_type",
                     oauth_client_id.as_str(),
@@ -229,7 +226,7 @@ impl OAuthClientRepository {
         #[derive(sqlx::FromRow)]
         struct GrantRow {
             oauth_client_id: OAuthClientId,
-            grant_type: String,
+            grant_type: Stored<GrantType>,
         }
         #[derive(sqlx::FromRow)]
         struct AppRow {
@@ -279,8 +276,7 @@ impl OAuthClientRepository {
 
         let mut grant_map: HashMap<OAuthClientId, Vec<GrantType>> = HashMap::new();
         for r in grant_rows {
-            let gt = decode(
-                &r.grant_type,
+            let gt = r.grant_type.decode(
                 "oauth_client_grant_types",
                 "grant_type",
                 r.oauth_client_id.as_str(),
@@ -384,7 +380,7 @@ impl OAuthClientRepository {
                 "INSERT INTO oauth_client_grant_types (oauth_client_id, grant_type) VALUES ($1, $2)"
             )
             .bind(oauth_client_id)
-            .bind(gt.as_str())
+            .bind(gt)
             .execute(&self.pool)
             .await?;
         }
@@ -453,7 +449,7 @@ impl OAuthClientRepository {
         .bind(&client.id)
         .bind(&client.client_id)
         .bind(&client.client_name)
-        .bind(client.client_type.as_str())
+        .bind(client.client_type)
         .bind(&client.client_secret_ref)
         .bind(&scopes)
         .bind(client.pkce_required)
@@ -623,7 +619,7 @@ impl OAuthClientRepository {
         .bind(&client.id)
         .bind(&client.client_id)
         .bind(&client.client_name)
-        .bind(client.client_type.as_str())
+        .bind(client.client_type)
         .bind(&client.client_secret_ref)
         .bind(&scopes)
         .bind(client.pkce_required)
@@ -842,7 +838,7 @@ impl Persist<OAuthClient> for OAuthClientRepository {
         .bind(&c.id)
         .bind(&c.client_id)
         .bind(&c.client_name)
-        .bind(c.client_type.as_str())
+        .bind(c.client_type)
         .bind(&c.client_secret_ref)
         .bind(&scopes)
         .bind(c.pkce_required)
@@ -895,7 +891,7 @@ impl Persist<OAuthClient> for OAuthClientRepository {
             sqlx::query(
                 "INSERT INTO oauth_client_grant_types (oauth_client_id, grant_type) VALUES ($1, $2)"
             )
-            .bind(&c.id).bind(gt.as_str()).execute(&mut **tx.inner).await?;
+            .bind(&c.id).bind(gt).execute(&mut **tx.inner).await?;
         }
 
         sqlx::query("DELETE FROM oauth_client_application_ids WHERE oauth_client_id = $1")

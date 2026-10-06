@@ -7,14 +7,14 @@ use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{AttemptType, LoginAttempt, LoginOutcome};
 use fc_platform_core::shared::api_common::DecodedCursor;
-use fc_platform_core::shared::enum_str::decode;
+use fc_platform_core::shared::enum_str::Stored;
 use fc_platform_core::shared::error::{PlatformError, Result};
 
 #[derive(sqlx::FromRow)]
 struct LoginAttemptRow {
     id: String,
-    attempt_type: String,
-    outcome: String,
+    attempt_type: Stored<AttemptType>,
+    outcome: Stored<LoginOutcome>,
     failure_reason: Option<String>,
     identifier: Option<String>,
     principal_id: Option<PrincipalId>,
@@ -26,8 +26,10 @@ struct LoginAttemptRow {
 impl TryFrom<LoginAttemptRow> for LoginAttempt {
     type Error = PlatformError;
     fn try_from(r: LoginAttemptRow) -> Result<Self> {
-        let attempt_type = decode(&r.attempt_type, "iam_login_attempts", "attempt_type", &r.id)?;
-        let outcome = decode(&r.outcome, "iam_login_attempts", "outcome", &r.id)?;
+        let attempt_type = r
+            .attempt_type
+            .decode("iam_login_attempts", "attempt_type", &r.id)?;
+        let outcome = r.outcome.decode("iam_login_attempts", "outcome", &r.id)?;
         Ok(Self {
             id: LoginAttemptId::from_wire(r.id),
             attempt_type,
@@ -71,8 +73,8 @@ impl LoginAttemptRepository {
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
         )
         .bind(&attempt.id)
-        .bind(attempt.attempt_type.as_str())
-        .bind(attempt.outcome.as_str())
+        .bind(attempt.attempt_type)
+        .bind(attempt.outcome)
         .bind(&attempt.failure_reason)
         .bind(&attempt.identifier)
         .bind(&attempt.principal_id)
@@ -173,9 +175,10 @@ impl LoginAttemptRepository {
         // aggregated row, then we treat the NULL as None.
         let (ts,): (Option<DateTime<Utc>>,) = sqlx::query_as(
             "SELECT MAX(attempted_at) FROM iam_login_attempts
-             WHERE identifier = $1 AND outcome = 'SUCCESS'",
+             WHERE identifier = $1 AND outcome = $2",
         )
         .bind(identifier)
+        .bind(LoginOutcome::Success)
         .fetch_one(&self.pool)
         .await?;
         Ok(ts)
@@ -191,12 +194,13 @@ impl LoginAttemptRepository {
     ) -> Result<(i64, Option<DateTime<Utc>>)> {
         let row: (i64, Option<DateTime<Utc>>) = sqlx::query_as(
             "SELECT COUNT(*), MAX(attempted_at) FROM iam_login_attempts
-             WHERE identifier = $1 AND ip_address = $2 AND outcome = 'FAILURE'
+             WHERE identifier = $1 AND ip_address = $2 AND outcome = $4
                AND attempted_at > $3",
         )
         .bind(identifier)
         .bind(ip)
         .bind(since)
+        .bind(LoginOutcome::Failure)
         .fetch_one(&self.pool)
         .await?;
         Ok(row)
@@ -211,10 +215,11 @@ impl LoginAttemptRepository {
     ) -> Result<i64> {
         let count: (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM iam_login_attempts
-             WHERE identifier = $1 AND outcome = 'FAILURE' AND attempted_at > $2",
+             WHERE identifier = $1 AND outcome = $3 AND attempted_at > $2",
         )
         .bind(identifier)
         .bind(since)
+        .bind(LoginOutcome::Failure)
         .fetch_one(&self.pool)
         .await?;
         Ok(count.0)

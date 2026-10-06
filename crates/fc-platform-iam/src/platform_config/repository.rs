@@ -1,12 +1,14 @@
 //! PlatformConfig Repository — PostgreSQL via SQLx
 
+use crate::platform_config::entity::ConfigScope;
+use crate::platform_config::entity::ConfigValueType;
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::PlatformConfigId;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::PlatformConfig;
-use fc_platform_core::shared::enum_str::decode;
+use fc_platform_core::shared::enum_str::Stored;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase::DbTx;
 use fc_platform_core::usecase::HasId;
@@ -18,9 +20,9 @@ struct PlatformConfigRow {
     application_code: String,
     section: String,
     property: String,
-    scope: String,
+    scope: Stored<ConfigScope>,
     client_id: Option<ClientId>,
-    value_type: String,
+    value_type: Stored<ConfigValueType>,
     value: String,
     description: Option<String>,
     created_at: DateTime<Utc>,
@@ -30,13 +32,12 @@ struct PlatformConfigRow {
 impl TryFrom<PlatformConfigRow> for PlatformConfig {
     type Error = PlatformError;
     fn try_from(r: PlatformConfigRow) -> Result<Self> {
-        let scope = decode(&r.scope, "app_platform_configs", "scope", r.id.as_str())?;
-        let value_type = decode(
-            &r.value_type,
-            "app_platform_configs",
-            "value_type",
-            r.id.as_str(),
-        )?;
+        let scope = r
+            .scope
+            .decode("app_platform_configs", "scope", r.id.as_str())?;
+        let value_type =
+            r.value_type
+                .decode("app_platform_configs", "value_type", r.id.as_str())?;
         Ok(Self {
             id: r.id,
             application_code: r.application_code,
@@ -189,9 +190,9 @@ impl PlatformConfigRepository {
         .bind(&config.application_code)
         .bind(&config.section)
         .bind(&config.property)
-        .bind(config.scope.as_str())
+        .bind(config.scope)
         .bind(&config.client_id)
-        .bind(config.value_type.as_str())
+        .bind(config.value_type)
         .bind(&config.value)
         .bind(&config.description)
         .execute(&self.pool)
@@ -211,9 +212,9 @@ impl PlatformConfigRepository {
         .bind(&config.application_code)
         .bind(&config.section)
         .bind(&config.property)
-        .bind(config.scope.as_str())
+        .bind(config.scope)
         .bind(&config.client_id)
-        .bind(config.value_type.as_str())
+        .bind(config.value_type)
         .bind(&config.value)
         .bind(&config.description)
         .execute(&self.pool)
@@ -290,9 +291,9 @@ impl Persist<PlatformConfig> for PlatformConfigRepository {
         .bind(&c.application_code)
         .bind(&c.section)
         .bind(&c.property)
-        .bind(c.scope.as_str())
+        .bind(c.scope)
         .bind(&c.client_id)
-        .bind(c.value_type.as_str())
+        .bind(c.value_type)
         .bind(&c.value)
         .bind(&c.description)
         .execute(&mut **tx.inner)

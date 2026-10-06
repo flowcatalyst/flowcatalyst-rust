@@ -5,6 +5,8 @@
 //! hydrating webhook credentials from iam_service_accounts.
 //! This matches the TypeScript implementation.
 
+use crate::principal::entity::PrincipalType;
+use crate::service_account::entity::{AssignmentSource, SigningAlgorithm};
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::shared::id::ClientId;
@@ -18,7 +20,7 @@ use fc_platform_core::directory::{
     AccountReach, ServiceAccountDirectory, ServiceAccountRef, SigningAccount,
 };
 use fc_platform_core::principal_kind::UserScope;
-use fc_platform_core::shared::enum_str::decode_opt;
+use fc_platform_core::shared::enum_str::{decode_stored_opt, Stored};
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::shared::id::decode_id;
 use fc_platform_core::shared::tsid;
@@ -37,8 +39,8 @@ struct PrincipalRow {
     id: PrincipalId,
     #[sqlx(rename = "type")]
     #[allow(dead_code)]
-    principal_type: String,
-    scope: Option<String>,
+    principal_type: Stored<PrincipalType>,
+    scope: Option<Stored<UserScope>>,
     client_id: Option<ClientId>,
     application_id: Option<ApplicationId>,
     name: String,
@@ -65,10 +67,10 @@ struct ServiceAccountRow {
     client_ids: Option<Vec<ClientId>>,
     #[allow(dead_code)]
     active: bool,
-    wh_auth_type: Option<String>,
+    wh_auth_type: Option<Stored<WebhookAuthType>>,
     wh_auth_token_ref: Option<String>,
     wh_signing_secret_ref: Option<String>,
-    wh_signing_algorithm: Option<String>,
+    wh_signing_algorithm: Option<Stored<SigningAlgorithm>>,
     wh_username: Option<String>,
     wh_password_ref: Option<String>,
     wh_header_name: Option<String>,
@@ -107,7 +109,7 @@ struct Grants {
 struct PrincipalRoleRow {
     principal_id: PrincipalId,
     role_name: String,
-    assignment_source: Option<String>,
+    assignment_source: Option<Stored<AssignmentSource>>,
     assigned_at: DateTime<Utc>,
     assigned_by: Option<String>,
 }
@@ -115,8 +117,8 @@ struct PrincipalRoleRow {
 impl TryFrom<PrincipalRoleRow> for RoleAssignment {
     type Error = PlatformError;
     fn try_from(r: PrincipalRoleRow) -> Result<Self> {
-        let assignment_source = decode_opt(
-            r.assignment_source.as_deref(),
+        let assignment_source = decode_stored_opt(
+            r.assignment_source,
             "iam_principal_roles",
             "assignment_source",
             &format!("{}/{}", r.principal_id, r.role_name),
@@ -160,7 +162,7 @@ struct SigningAccountRow {
     application_id: Option<String>,
     client_ids: Option<Vec<ClientId>>,
     principal_id: Option<PrincipalId>,
-    scope: Option<String>,
+    scope: Option<Stored<UserScope>>,
     client_id: Option<ClientId>,
     granted: Vec<ClientId>,
 }
@@ -195,10 +197,10 @@ impl ServiceAccountRepository {
         .bind(&account.description)
         .bind(&account.application_id)
         .bind(account.active)
-        .bind(Some(wh.auth_type.as_str()))
+        .bind(Some(wh.auth_type))
         .bind(&wh.token)
         .bind(&wh.signing_secret)
-        .bind(wh.signing_algorithm.map(|a| a.as_str()))
+        .bind(wh.signing_algorithm)
         .bind(Some(now)) // wh_credentials_created_at
         .bind(account.last_used_at)
         .bind(now)
@@ -224,10 +226,11 @@ impl ServiceAccountRepository {
             "SELECT id, type, scope, client_id, application_id, name, active, \
              service_account_id, all_applications, created_at, updated_at \
              FROM iam_principals WHERE id = $1 \
-             OR (type = 'SERVICE' AND service_account_id = $1) \
+             OR (type = $2 AND service_account_id = $1) \
              ORDER BY (id = $1) DESC, created_at LIMIT 1",
         )
         .bind(id)
+        .bind(PrincipalType::Service)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -276,8 +279,9 @@ impl ServiceAccountRepository {
         let principals = sqlx::query_as::<_, PrincipalRow>(
             "SELECT id, type, scope, client_id, application_id, name, active, \
              service_account_id, all_applications, created_at, updated_at \
-             FROM iam_principals WHERE type = 'SERVICE'",
+             FROM iam_principals WHERE type = $1",
         )
+        .bind(PrincipalType::Service)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_many(principals).await
@@ -299,8 +303,9 @@ impl ServiceAccountRepository {
         let principals = sqlx::query_as::<_, PrincipalRow>(
             "SELECT id, type, scope, client_id, application_id, name, active, \
              service_account_id, all_applications, created_at, updated_at \
-             FROM iam_principals WHERE type = 'SERVICE' AND active = true",
+             FROM iam_principals WHERE type = $1 AND active = true",
         )
+        .bind(PrincipalType::Service)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_many(principals).await
@@ -314,9 +319,10 @@ impl ServiceAccountRepository {
         let principals = sqlx::query_as::<_, PrincipalRow>(
             "SELECT id, type, scope, client_id, application_id, name, active, \
              service_account_id, all_applications, created_at, updated_at \
-             FROM iam_principals WHERE type = 'SERVICE' AND application_id = $1",
+             FROM iam_principals WHERE type = $2 AND application_id = $1",
         )
         .bind(application_id)
+        .bind(PrincipalType::Service)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_many(principals).await
@@ -447,9 +453,9 @@ impl ServiceAccountRepository {
         Ok(rows
             .into_iter()
             .map(|r| {
-                let reach = match (&r.principal_id, r.scope.as_deref()) {
-                    (Some(_), Some("ANCHOR")) => AccountReach::Anchor,
-                    (Some(_), Some("PARTNER")) => AccountReach::of_clients(r.granted),
+                let reach = match (&r.principal_id, r.scope.and_then(Stored::known)) {
+                    (Some(_), Some(UserScope::Anchor)) => AccountReach::Anchor,
+                    (Some(_), Some(UserScope::Partner)) => AccountReach::of_clients(r.granted),
                     // CLIENT, or unscoped (read as CLIENT, the narrowest).
                     (Some(_), _) => AccountReach::of_clients(r.client_id.into_iter().collect()),
                     (None, _) => AccountReach::of_clients(r.client_ids.unwrap_or_default()),
@@ -496,9 +502,10 @@ impl ServiceAccountRepository {
         let principals = sqlx::query_as::<_, PrincipalRow>(
             "SELECT id, type, scope, client_id, application_id, name, active, \
              service_account_id, all_applications, created_at, updated_at \
-             FROM iam_principals WHERE type = 'SERVICE' AND client_id = $1 AND active = true",
+             FROM iam_principals WHERE type = $2 AND client_id = $1 AND active = true",
         )
         .bind(client_id)
+        .bind(PrincipalType::Service)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_many(principals).await
@@ -511,9 +518,10 @@ impl ServiceAccountRepository {
              p.service_account_id, p.all_applications, p.created_at, p.updated_at \
              FROM iam_principals p
              INNER JOIN iam_principal_roles pr ON pr.principal_id = p.id
-             WHERE p.type = 'SERVICE' AND p.active = true AND pr.role_name = $1",
+             WHERE p.type = $2 AND p.active = true AND pr.role_name = $1",
         )
         .bind(role)
+        .bind(PrincipalType::Service)
         .fetch_all(&self.pool)
         .await?;
 
@@ -540,10 +548,10 @@ impl ServiceAccountRepository {
             .bind(&account.description)
             .bind(&account.application_id)
             .bind(account.active)
-            .bind(Some(wh.auth_type.as_str()))
+            .bind(Some(wh.auth_type))
             .bind(&wh.token)
             .bind(&wh.signing_secret)
-            .bind(wh.signing_algorithm.map(|a| a.as_str()))
+            .bind(wh.signing_algorithm)
             .bind(account.last_used_at)
             .bind(now)
             .bind(&account.requested_scope)
@@ -657,8 +665,8 @@ impl ServiceAccountRepository {
         // Read exactly as the principal repository (and Go) read the column:
         // NULL is an unscoped row, read as CLIENT, the narrowest; anything
         // unrecognised is a loud error (X-06).
-        let scope = decode_opt(
-            principal.scope.as_deref(),
+        let scope = decode_stored_opt(
+            principal.scope,
             "iam_principals",
             "scope",
             principal.id.as_str(),
@@ -674,16 +682,16 @@ impl ServiceAccountRepository {
 
         let webhook_credentials = match sa_row {
             Some(sa) => {
-                let signing_algorithm = decode_opt(
-                    sa.wh_signing_algorithm.as_deref(),
+                let signing_algorithm = decode_stored_opt(
+                    sa.wh_signing_algorithm.clone(),
                     "iam_service_accounts",
                     "wh_signing_algorithm",
                     &sa.id,
                 )?;
                 // An unknown auth type must never read as NONE: that would
                 // deliver webhooks unauthenticated (X-06).
-                let auth_type: Option<WebhookAuthType> = decode_opt(
-                    sa.wh_auth_type.as_deref(),
+                let auth_type: Option<WebhookAuthType> = decode_stored_opt(
+                    sa.wh_auth_type.clone(),
                     "iam_service_accounts",
                     "wh_auth_type",
                     &sa.id,
@@ -838,7 +846,7 @@ impl Persist<ServiceAccount> for ServiceAccountRepository {
         // 1. Upsert iam_principals (SERVICE type principal)
         sqlx::query(
             "INSERT INTO iam_principals (id, type, scope, client_id, application_id, name, active, email, email_domain, idp_type, external_idp_id, password_hash, last_login_at, service_account_id, created_at, updated_at, all_applications)
-             VALUES ($1, 'SERVICE', $2, $3, $4, $5, $6, NULL, NULL, NULL, NULL, NULL, NULL, $7, $8, $9, $10)
+             VALUES ($1, $11, $2, $3, $4, $5, $6, NULL, NULL, NULL, NULL, NULL, NULL, $7, $8, $9, $10)
              ON CONFLICT (id) DO UPDATE SET
                 scope = EXCLUDED.scope,
                 all_applications = EXCLUDED.all_applications,
@@ -849,7 +857,7 @@ impl Persist<ServiceAccount> for ServiceAccountRepository {
                 updated_at = EXCLUDED.updated_at"
         )
         .bind(&sa.id)
-        .bind(sa.scope.as_str())
+        .bind(sa.scope)
         .bind(home_client_id)
         .bind(&sa.application_id)
         .bind(&sa.name)
@@ -859,6 +867,7 @@ impl Persist<ServiceAccount> for ServiceAccountRepository {
         .bind(sa.created_at)
         .bind(now)
         .bind(sa.all_applications)
+        .bind(PrincipalType::Service)
         .execute(&mut **tx.inner).await?;
 
         // 2. Upsert iam_service_accounts (webhook credentials)
@@ -890,10 +899,10 @@ impl Persist<ServiceAccount> for ServiceAccountRepository {
         .bind(&sa.description)
         .bind(&sa.application_id)
         .bind(sa.active)
-        .bind(Some(wh.auth_type.as_str()))
+        .bind(Some(wh.auth_type))
         .bind(&wh.token)
         .bind(&wh.signing_secret)
-        .bind(wh.signing_algorithm.map(|a| a.as_str()))
+        .bind(wh.signing_algorithm)
         .bind(Some(now))
         .bind(sa.last_used_at)
         .bind(now)
@@ -1122,7 +1131,7 @@ mod tests {
     fn principal_row() -> PrincipalRow {
         PrincipalRow {
             id: PrincipalId::parse("prn_1").unwrap(),
-            principal_type: "SERVICE".to_string(),
+            principal_type: Stored::from(PrincipalType::Service),
             scope: None,
             client_id: None,
             application_id: None,
@@ -1145,10 +1154,10 @@ mod tests {
             scope: None,
             client_ids: None,
             active: true,
-            wh_auth_type: auth_type.map(str::to_string),
+            wh_auth_type: auth_type.map(Stored::of_text),
             wh_auth_token_ref: None,
             wh_signing_secret_ref: None,
-            wh_signing_algorithm: algorithm.map(str::to_string),
+            wh_signing_algorithm: algorithm.map(Stored::of_text),
             wh_username: None,
             wh_password_ref: None,
             wh_header_name: None,
@@ -1208,7 +1217,7 @@ mod tests {
 
     fn scoped(scope: Option<&str>, client_id: Option<&str>) -> PrincipalRow {
         PrincipalRow {
-            scope: scope.map(str::to_string),
+            scope: scope.map(Stored::of_text),
             client_id: client_id.map(ClientId::from_wire),
             ..principal_row()
         }

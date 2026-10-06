@@ -402,16 +402,12 @@ pub async fn create_oauth_client(
             "clientName is required",
         ));
     }
-    let client_type = match req.client_type.as_str() {
-        "PUBLIC" => OAuthClientType::Public,
-        "CONFIDENTIAL" => OAuthClientType::Confidential,
-        _ => {
-            return Err(PlatformError::bad_request_code(
-                "INVALID_CLIENT_TYPE",
-                "clientType must be PUBLIC or CONFIDENTIAL",
-            ))
-        }
-    };
+    let client_type: OAuthClientType = req.client_type.parse().map_err(|_| {
+        PlatformError::bad_request_code(
+            "INVALID_CLIENT_TYPE",
+            "clientType must be PUBLIC or CONFIDENTIAL",
+        )
+    })?;
 
     // For CONFIDENTIAL clients, generate a secret at the edge. The plaintext
     // is returned once; only its keyed hash (`hashed:v1:`) is passed into the

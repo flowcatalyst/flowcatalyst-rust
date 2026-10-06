@@ -17,14 +17,14 @@ use fc_platform_core::shared::id::PrincipalId;
 use sqlx::PgPool;
 
 use super::entity::{EmailPin, EmailPinPurpose, Method, MethodType, TrustedDevice};
-use fc_platform_core::shared::enum_str::decode;
+use fc_platform_core::shared::enum_str::Stored;
 use fc_platform_core::shared::error::{PlatformError, Result};
 
 #[derive(sqlx::FromRow)]
 struct MethodRow {
     id: MfaMethodId,
     principal_id: PrincipalId,
-    method: String,
+    method: Stored<MethodType>,
     secret_encrypted: Option<String>,
     confirmed_at: Option<DateTime<Utc>>,
     last_used_at: Option<DateTime<Utc>>,
@@ -35,7 +35,9 @@ impl TryFrom<MethodRow> for Method {
     type Error = PlatformError;
     fn try_from(r: MethodRow) -> Result<Self> {
         Ok(Self {
-            method: decode(&r.method, "iam_user_mfa_methods", "method", r.id.as_str())?,
+            method: r
+                .method
+                .decode("iam_user_mfa_methods", "method", r.id.as_str())?,
             id: r.id,
             principal_id: r.principal_id,
             secret_encrypted: r.secret_encrypted,
@@ -50,7 +52,7 @@ impl TryFrom<MethodRow> for Method {
 struct EmailPinRow {
     id: MfaEmailPinId,
     principal_id: PrincipalId,
-    purpose: String,
+    purpose: Stored<EmailPinPurpose>,
     pin_hash: String,
     attempts: i32,
     expires_at: DateTime<Utc>,
@@ -61,7 +63,9 @@ impl TryFrom<EmailPinRow> for EmailPin {
     type Error = PlatformError;
     fn try_from(r: EmailPinRow) -> Result<Self> {
         Ok(Self {
-            purpose: decode(&r.purpose, "iam_mfa_email_pins", "purpose", r.id.as_str())?,
+            purpose: r
+                .purpose
+                .decode("iam_mfa_email_pins", "purpose", r.id.as_str())?,
             id: r.id,
             principal_id: r.principal_id,
             pin_hash: r.pin_hash,
@@ -124,7 +128,7 @@ impl MfaRepository {
              WHERE principal_id = $1 AND method = $2 AND confirmed_at IS NULL",
         )
         .bind(&m.principal_id)
-        .bind(m.method.as_str())
+        .bind(m.method)
         .execute(&mut *tx)
         .await?;
         sqlx::query(
@@ -134,7 +138,7 @@ impl MfaRepository {
         )
         .bind(&m.id)
         .bind(&m.principal_id)
-        .bind(m.method.as_str())
+        .bind(m.method)
         .bind(&m.secret_encrypted)
         .bind(m.confirmed_at)
         .bind(m.last_used_at)
@@ -155,7 +159,7 @@ impl MfaRepository {
         )
         .bind(&m.id)
         .bind(&m.principal_id)
-        .bind(m.method.as_str())
+        .bind(m.method)
         .bind(&m.secret_encrypted)
         .bind(m.confirmed_at)
         .bind(m.last_used_at)
@@ -205,7 +209,7 @@ impl MfaRepository {
              WHERE principal_id = $1 AND method = $2"
         ))
         .bind(principal_id)
-        .bind(method.as_str())
+        .bind(method)
         .fetch_optional(&self.pool)
         .await?;
         row.map(Method::try_from).transpose()
@@ -231,7 +235,7 @@ impl MfaRepository {
         let r =
             sqlx::query("DELETE FROM iam_user_mfa_methods WHERE principal_id = $1 AND method = $2")
                 .bind(principal_id)
-                .bind(method.as_str())
+                .bind(method)
                 .execute(&self.pool)
                 .await?;
         Ok(r.rows_affected())
@@ -313,7 +317,7 @@ impl MfaRepository {
         let mut tx = self.pool.begin().await?;
         sqlx::query("DELETE FROM iam_mfa_email_pins WHERE principal_id = $1 AND purpose = $2")
             .bind(principal_id)
-            .bind(purpose.as_str())
+            .bind(purpose)
             .execute(&mut *tx)
             .await?;
         sqlx::query(
@@ -323,7 +327,7 @@ impl MfaRepository {
         )
         .bind(MfaEmailPinId::generate())
         .bind(principal_id)
-        .bind(purpose.as_str())
+        .bind(purpose)
         .bind(pin_hash)
         .bind(expires_at)
         .execute(&mut *tx)
@@ -344,7 +348,7 @@ impl MfaRepository {
              ORDER BY created_at DESC LIMIT 1"
         ))
         .bind(principal_id)
-        .bind(purpose.as_str())
+        .bind(purpose)
         .fetch_optional(&self.pool)
         .await?;
         row.map(EmailPin::try_from).transpose()

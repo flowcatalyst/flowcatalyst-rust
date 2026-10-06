@@ -1,5 +1,7 @@
 //! EmailDomainMapping Repository — PostgreSQL via SQLx
 
+use crate::email_domain_mapping::entity::ScopeType;
+use crate::identity_provider::entity::IdentityProviderType;
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::EmailDomainMappingId;
@@ -9,7 +11,7 @@ use sqlx::PgPool;
 use std::collections::HashMap;
 
 use super::entity::EmailDomainMapping;
-use fc_platform_core::shared::enum_str::decode;
+use fc_platform_core::shared::enum_str::Stored;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase::unit_of_work::HasId;
 use fc_platform_core::usecase::DbTx;
@@ -22,7 +24,7 @@ struct EmailDomainMappingRow {
     id: EmailDomainMappingId,
     email_domain: String,
     identity_provider_id: IdentityProviderId,
-    scope_type: String,
+    scope_type: Stored<ScopeType>,
     primary_client_id: Option<ClientId>,
     required_oidc_tenant_id: Option<String>,
     sync_roles_from_idp: bool,
@@ -36,12 +38,9 @@ struct EmailDomainMappingRow {
 impl TryFrom<EmailDomainMappingRow> for EmailDomainMapping {
     type Error = PlatformError;
     fn try_from(r: EmailDomainMappingRow) -> Result<Self> {
-        let scope_type = decode(
-            &r.scope_type,
-            "tnt_email_domain_mappings",
-            "scope_type",
-            r.id.as_str(),
-        )?;
+        let scope_type =
+            r.scope_type
+                .decode("tnt_email_domain_mappings", "scope_type", r.id.as_str())?;
         Ok(Self {
             id: r.id,
             email_domain: r.email_domain,
@@ -222,9 +221,10 @@ impl EmailDomainMappingRepository {
         let (federated,): (bool,) = sqlx::query_as(
             "SELECT EXISTS (SELECT 1 FROM tnt_email_domain_mappings m \
              JOIN oauth_identity_providers p ON p.id = m.identity_provider_id \
-             WHERE m.email_domain = $1 AND p.type = 'OIDC')",
+             WHERE m.email_domain = $1 AND p.type = $2)",
         )
         .bind(domain)
+        .bind(IdentityProviderType::Oidc)
         .fetch_one(&self.pool)
         .await?;
         Ok(federated)
@@ -331,7 +331,7 @@ async fn write_mapping(edm: &EmailDomainMapping, tx: &mut DbTx<'_>) -> Result<()
     .bind(&edm.id)
     .bind(&edm.email_domain)
     .bind(&edm.identity_provider_id)
-    .bind(edm.scope_type.as_str())
+    .bind(edm.scope_type)
     .bind(&edm.primary_client_id)
     .bind(&edm.required_oidc_tenant_id)
     .bind(edm.sync_roles_from_idp)

@@ -10,7 +10,7 @@ use sqlx::{PgPool, Postgres, QueryBuilder};
 use std::collections::HashSet;
 
 use super::entity::{AuthRole, RoleSource};
-use fc_platform_core::shared::enum_str::decode;
+use fc_platform_core::shared::enum_str::Stored;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase::unit_of_work::HasId;
 use fc_platform_core::usecase::DbTx;
@@ -27,7 +27,7 @@ struct RoleRow {
     name: String,
     display_name: String,
     description: Option<String>,
-    source: String,
+    source: Stored<RoleSource>,
     client_managed: bool,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -36,7 +36,7 @@ struct RoleRow {
 impl TryFrom<RoleRow> for AuthRole {
     type Error = PlatformError;
     fn try_from(r: RoleRow) -> Result<Self> {
-        let source = decode(&r.source, "iam_roles", "source", r.id.as_str())?;
+        let source = r.source.decode("iam_roles", "source", r.id.as_str())?;
         // Extract application_code from the role name (part before first colon) if not set
         let application_code = r
             .application_code
@@ -86,7 +86,7 @@ impl RoleRepository {
         .bind(&role.name)
         .bind(&role.display_name)
         .bind(&role.description)
-        .bind(role.source.as_str())
+        .bind(role.source)
         .bind(role.client_managed)
         .bind(now)
         .bind(now)
@@ -173,7 +173,7 @@ impl RoleRepository {
     pub async fn find_by_source(&self, source: RoleSource) -> Result<Vec<AuthRole>> {
         let rows =
             sqlx::query_as::<_, RoleRow>("SELECT * FROM iam_roles WHERE source = $1 ORDER BY name")
-                .bind(source.as_str())
+                .bind(source)
                 .fetch_all(&self.pool)
                 .await?;
 
@@ -385,7 +385,7 @@ impl RoleRepository {
         .bind(&role.name)
         .bind(&role.display_name)
         .bind(&role.description)
-        .bind(role.source.as_str())
+        .bind(role.source)
         .bind(role.client_managed)
         .bind(now)
         .execute(&self.pool)
@@ -565,7 +565,7 @@ impl Persist<AuthRole> for RoleRepository {
         .bind(&r.name)
         .bind(&r.display_name)
         .bind(&r.description)
-        .bind(r.source.as_str())
+        .bind(r.source)
         .bind(r.client_managed)
         .bind(now)
         .bind(now)

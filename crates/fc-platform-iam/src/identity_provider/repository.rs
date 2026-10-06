@@ -1,12 +1,13 @@
 //! IdentityProvider Repository — PostgreSQL via SQLx
 
+use crate::identity_provider::entity::IdentityProviderType;
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::IdentityProviderId;
 use sqlx::PgPool;
 use std::collections::HashMap;
 
 use super::entity::IdentityProvider;
-use fc_platform_core::shared::enum_str::decode;
+use fc_platform_core::shared::enum_str::Stored;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase::unit_of_work::HasId;
 use fc_platform_core::usecase::DbTx;
@@ -19,7 +20,7 @@ struct IdentityProviderRow {
     id: IdentityProviderId,
     code: String,
     name: String,
-    r#type: String,
+    r#type: Stored<IdentityProviderType>,
     oidc_issuer_url: Option<String>,
     oidc_client_id: Option<String>,
     oidc_client_secret_ref: Option<String>,
@@ -35,7 +36,9 @@ struct IdentityProviderRow {
 impl TryFrom<IdentityProviderRow> for IdentityProvider {
     type Error = PlatformError;
     fn try_from(r: IdentityProviderRow) -> Result<Self> {
-        let r#type = decode(&r.r#type, "oauth_identity_providers", "type", r.id.as_str())?;
+        let r#type = r
+            .r#type
+            .decode("oauth_identity_providers", "type", r.id.as_str())?;
         Ok(Self {
             id: r.id,
             code: r.code,
@@ -242,7 +245,7 @@ async fn write_provider(idp: &IdentityProvider, tx: &mut DbTx<'_>) -> Result<()>
     .bind(&idp.id)
     .bind(&idp.code)
     .bind(&idp.name)
-    .bind(idp.r#type.as_str())
+    .bind(idp.r#type)
     .bind(&idp.oidc_issuer_url)
     .bind(&idp.oidc_client_id)
     .bind(&idp.oidc_client_secret_ref)

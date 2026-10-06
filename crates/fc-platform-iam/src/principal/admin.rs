@@ -813,7 +813,7 @@ pub async fn check_email_domain(
         .await?;
 
     // The IdP type; an unmapped domain or a missing IdP is INTERNAL.
-    let mut idp_type = "INTERNAL".to_string();
+    let mut idp_type = IdentityProviderType::Internal;
     let mut idp_issuer = None;
     if let Some(ref m) = mapping {
         if let Some(idp) = state
@@ -821,21 +821,21 @@ pub async fn check_email_domain(
             .find_by_id(&m.identity_provider_id)
             .await?
         {
-            idp_type = idp.r#type.as_str().to_string();
+            idp_type = idp.r#type;
             idp_issuer = idp.oidc_issuer_url.clone();
         }
     }
-    let external = idp_type == "OIDC";
+    let external = idp_type == IdentityProviderType::Oidc;
 
     use crate::email_domain_mapping::entity::ScopeType;
     let derived_scope = if is_anchor_domain {
-        "ANCHOR"
+        UserScope::Anchor
     } else {
         match mapping.as_ref().map(|m| m.scope_type) {
-            None => "CLIENT",
-            Some(ScopeType::Anchor) => "ANCHOR",
-            Some(ScopeType::Partner) => "PARTNER",
-            Some(ScopeType::Client) => "CLIENT",
+            None => UserScope::Client,
+            Some(ScopeType::Anchor) => UserScope::Anchor,
+            Some(ScopeType::Partner) => UserScope::Partner,
+            Some(ScopeType::Client) => UserScope::Client,
         }
     };
     // Go allowedClientIDsForDomain: PARTNER allows the primary and the
@@ -873,14 +873,14 @@ pub async fn check_email_domain(
             .then(|| format!("/auth/oidc/login?domain={}", urlencoding::encode(&domain))),
         idp_issuer: if external { idp_issuer } else { None },
         domain,
-        auth_provider: idp_type,
+        auth_provider: idp_type.as_str().to_string(),
         is_anchor_domain,
         has_idp_config: external,
         email_exists,
         info: None,
         warning: email_exists.then(|| "A user with this email address already exists.".to_string()),
-        derived_scope: derived_scope.to_string(),
-        requires_client_id: derived_scope != "ANCHOR",
+        derived_scope: derived_scope.as_str().to_string(),
+        requires_client_id: derived_scope != UserScope::Anchor,
         allowed_client_ids,
     })
 }

@@ -4,13 +4,14 @@
 //! `impl Persist<OpenApiSpec> for OpenApiSpecRepository` is used by the sync
 //! use case through the UnitOfWork.
 
+use crate::application_openapi_spec::entity::OpenApiSpecStatus;
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::shared::id::ApplicationOpenApiSpecId;
 use sqlx::PgPool;
 
 use super::entity::{ChangeNotes, OpenApiSpec};
-use fc_platform_core::shared::enum_str::decode;
+use fc_platform_core::shared::enum_str::Stored;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase::unit_of_work::HasId;
 use fc_platform_core::usecase::DbTx;
@@ -22,7 +23,7 @@ struct OpenApiSpecRow {
     id: ApplicationOpenApiSpecId,
     application_id: ApplicationId,
     version: String,
-    status: String,
+    status: Stored<OpenApiSpecStatus>,
     spec: serde_json::Value,
     spec_hash: String,
     change_notes: Option<serde_json::Value>,
@@ -36,12 +37,9 @@ struct OpenApiSpecRow {
 impl TryFrom<OpenApiSpecRow> for OpenApiSpec {
     type Error = PlatformError;
     fn try_from(r: OpenApiSpecRow) -> Result<Self> {
-        let status = decode(
-            &r.status,
-            "app_application_openapi_specs",
-            "status",
-            r.id.as_str(),
-        )?;
+        let status = r
+            .status
+            .decode("app_application_openapi_specs", "status", r.id.as_str())?;
         Ok(Self {
             id: r.id,
             application_id: r.application_id,
@@ -208,7 +206,7 @@ impl Persist<OpenApiSpec> for OpenApiSpecRepository {
         .bind(&spec.id)
         .bind(&spec.application_id)
         .bind(&spec.version)
-        .bind(spec.status.as_str())
+        .bind(spec.status)
         .bind(&spec.spec)
         .bind(&spec.spec_hash)
         .bind(

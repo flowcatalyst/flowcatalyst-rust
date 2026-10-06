@@ -11,10 +11,11 @@ use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{ExternalIdentity, Principal, PrincipalType, UserIdentity, UserScope};
 use crate::developer_credential::DeveloperCredential;
+use crate::identity_provider::entity::IdentityProviderType;
 use crate::principal::entity::PrincipalSyncBatch;
-use crate::service_account::entity::RoleAssignment;
+use crate::service_account::entity::{AssignmentSource, RoleAssignment};
 use fc_platform_core::directory::PrincipalDirectory;
-use fc_platform_core::shared::enum_str::{decode, decode_opt};
+use fc_platform_core::shared::enum_str::{decode_stored_opt, Stored};
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::shared::id::decode_id;
 use fc_platform_core::shared::id::OptionIdExt;
@@ -33,8 +34,8 @@ use std::iter;
 struct PrincipalRow {
     id: String,
     #[sqlx(rename = "type")]
-    principal_type: String,
-    scope: Option<String>,
+    principal_type: Stored<PrincipalType>,
+    scope: Option<Stored<UserScope>>,
     client_id: Option<String>,
     application_id: Option<ApplicationId>,
     name: String,
@@ -60,9 +61,9 @@ struct PrincipalRow {
 impl TryFrom<PrincipalRow> for Principal {
     type Error = PlatformError;
     fn try_from(r: PrincipalRow) -> Result<Self> {
-        let principal_type = decode(&r.principal_type, "iam_principals", "type", &r.id)?;
+        let principal_type = r.principal_type.decode("iam_principals", "type", &r.id)?;
         // A NULL scope is an unscoped row, read as CLIENT (the narrowest).
-        let scope = decode_opt(r.scope.as_deref(), "iam_principals", "scope", &r.id)?
+        let scope = decode_stored_opt(r.scope, "iam_principals", "scope", &r.id)?
             .unwrap_or(UserScope::Client);
 
         let user_identity = if principal_type == PrincipalType::User {
@@ -123,7 +124,7 @@ impl TryFrom<PrincipalRow> for Principal {
 struct PrincipalRoleRow {
     principal_id: PrincipalId,
     role_name: String,
-    assignment_source: Option<String>,
+    assignment_source: Option<Stored<AssignmentSource>>,
     assigned_at: DateTime<Utc>,
     assigned_by: Option<String>,
 }
@@ -131,8 +132,8 @@ struct PrincipalRoleRow {
 impl TryFrom<PrincipalRoleRow> for RoleAssignment {
     type Error = PlatformError;
     fn try_from(r: PrincipalRoleRow) -> Result<Self> {
-        let assignment_source = decode_opt(
-            r.assignment_source.as_deref(),
+        let assignment_source = decode_stored_opt(
+            r.assignment_source,
             "iam_principal_roles",
             "assignment_source",
             &format!("{}/{}", r.principal_id, r.role_name),
@@ -222,8 +223,8 @@ impl PrincipalRepository {
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
         )
         .bind(&principal.id)
-        .bind(principal.principal_type.as_str())
-        .bind(Some(principal.scope.as_str()))
+        .bind(principal.principal_type)
+        .bind(Some(principal.scope))
         .bind(&principal.client_id)
         .bind(&principal.application_id)
         .bind(&principal.name)
@@ -274,9 +275,10 @@ impl PrincipalRepository {
 
     pub async fn find_by_email(&self, email: &str) -> Result<Option<Principal>> {
         let row = sqlx::query_as::<_, PrincipalRow>(
-            "SELECT * FROM iam_principals WHERE type = 'USER' AND email = $1",
+            "SELECT * FROM iam_principals WHERE type = $2 AND email = $1",
         )
         .bind(email)
+        .bind(PrincipalType::User)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -310,9 +312,10 @@ impl PrincipalRepository {
         }
         let lowered: Vec<String> = emails.iter().map(|e| e.to_lowercase()).collect();
         let rows = sqlx::query_as::<_, PrincipalRow>(
-            "SELECT * FROM iam_principals WHERE type = 'USER' AND lower(email) = ANY($1)",
+            "SELECT * FROM iam_principals WHERE type = $2 AND lower(email) = ANY($1)",
         )
         .bind(&lowered)
+        .bind(PrincipalType::User)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_principals(rows).await
@@ -342,9 +345,10 @@ impl PrincipalRepository {
         service_account_id: &str,
     ) -> Result<Option<Principal>> {
         let row = sqlx::query_as::<_, PrincipalRow>(
-            "SELECT * FROM iam_principals WHERE type = 'SERVICE' AND service_account_id = $1",
+            "SELECT * FROM iam_principals WHERE type = $2 AND service_account_id = $1",
         )
         .bind(service_account_id)
+        .bind(PrincipalType::Service)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -371,8 +375,9 @@ impl PrincipalRepository {
 
     pub async fn find_users(&self) -> Result<Vec<Principal>> {
         let rows = sqlx::query_as::<_, PrincipalRow>(
-            "SELECT * FROM iam_principals WHERE type = 'USER' AND active = true",
+            "SELECT * FROM iam_principals WHERE type = $1 AND active = true",
         )
+        .bind(PrincipalType::User)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_principals(rows).await
@@ -380,8 +385,9 @@ impl PrincipalRepository {
 
     pub async fn find_services(&self) -> Result<Vec<Principal>> {
         let rows = sqlx::query_as::<_, PrincipalRow>(
-            "SELECT * FROM iam_principals WHERE type = 'SERVICE' AND active = true",
+            "SELECT * FROM iam_principals WHERE type = $1 AND active = true",
         )
+        .bind(PrincipalType::Service)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_principals(rows).await
@@ -404,7 +410,7 @@ impl PrincipalRepository {
         let rows = sqlx::query_as::<_, PrincipalRow>(
             "SELECT * FROM iam_principals WHERE scope = $1 AND active = true",
         )
-        .bind(scope.as_str())
+        .bind(scope)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_principals(rows).await
@@ -481,8 +487,9 @@ impl PrincipalRepository {
 
     pub async fn find_anchors(&self) -> Result<Vec<Principal>> {
         let rows = sqlx::query_as::<_, PrincipalRow>(
-            "SELECT * FROM iam_principals WHERE scope = 'ANCHOR' AND active = true",
+            "SELECT * FROM iam_principals WHERE scope = $1 AND active = true",
         )
+        .bind(UserScope::Anchor)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_principals(rows).await
@@ -553,8 +560,8 @@ impl PrincipalRepository {
              WHERE id = $1",
         )
         .bind(&principal.id)
-        .bind(principal.principal_type.as_str())
-        .bind(Some(principal.scope.as_str()))
+        .bind(principal.principal_type)
+        .bind(Some(principal.scope))
         .bind(&principal.client_id)
         .bind(&principal.application_id)
         .bind(&principal.name)
@@ -689,9 +696,10 @@ impl PrincipalRepository {
     /// Count principals with email ending in the given domain
     pub async fn count_by_email_domain(&self, domain: &str) -> Result<i64> {
         let row: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM iam_principals WHERE type = 'USER' AND email_domain = $1",
+            "SELECT COUNT(*) FROM iam_principals WHERE type = $2 AND email_domain = $1",
         )
         .bind(domain.to_lowercase())
+        .bind(PrincipalType::User)
         .fetch_one(&self.pool)
         .await?;
         Ok(row.0)
@@ -1126,8 +1134,8 @@ impl Persist<Principal> for PrincipalRepository {
                 all_applications = EXCLUDED.all_applications"
         )
         .bind(&p.id)
-        .bind(p.principal_type.as_str())
-        .bind(Some(p.scope.as_str()))
+        .bind(p.principal_type)
+        .bind(Some(p.scope))
         .bind(&p.client_id)
         .bind(&p.application_id)
         .bind(&p.name)
@@ -1376,10 +1384,12 @@ impl PrincipalRepository {
     ) -> Result<Vec<PrincipalId>> {
         let rows: Vec<(PrincipalId,)> = sqlx::query_as(
             "SELECT id FROM iam_principals \
-             WHERE type = 'USER' AND email_domain = lower($1) AND idp_type = 'OIDC' \
+             WHERE type = $2 AND email_domain = lower($1) AND idp_type = $3 \
              ORDER BY id",
         )
         .bind(domain)
+        .bind(PrincipalType::User)
+        .bind(IdentityProviderType::Oidc)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(|(id,)| id).collect())
@@ -1397,17 +1407,19 @@ impl PrincipalRepository {
             return Ok(());
         }
         sqlx::query(
-            "UPDATE iam_principals SET idp_type = 'INTERNAL', external_idp_id = NULL, \
+            "UPDATE iam_principals SET idp_type = $2, external_idp_id = NULL, \
              updated_at = NOW() WHERE id = ANY($1)",
         )
         .bind(ids)
+        .bind(IdentityProviderType::Internal)
         .execute(&mut **tx.inner)
         .await?;
         sqlx::query(
             "DELETE FROM iam_principal_roles \
-             WHERE principal_id = ANY($1) AND assignment_source = 'IDP_SYNC'",
+             WHERE principal_id = ANY($1) AND assignment_source = $2",
         )
         .bind(ids)
+        .bind(AssignmentSource::IdpSync)
         .execute(&mut **tx.inner)
         .await?;
         Ok(())

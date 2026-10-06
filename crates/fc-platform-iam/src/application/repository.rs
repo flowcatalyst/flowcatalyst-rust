@@ -6,7 +6,7 @@ use sqlx::PgPool;
 
 use super::entity::{Application, ApplicationType};
 use fc_platform_core::directory::{ApplicationDirectory, ApplicationRef};
-use fc_platform_core::shared::enum_str::decode;
+use fc_platform_core::shared::enum_str::Stored;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase::unit_of_work::HasId;
 use fc_platform_core::usecase::DbTx;
@@ -18,7 +18,7 @@ use std::collections::HashMap;
 struct ApplicationRow {
     id: ApplicationId,
     #[sqlx(rename = "type")]
-    application_type: String,
+    application_type: Stored<ApplicationType>,
     code: String,
     name: String,
     description: Option<String>,
@@ -36,12 +36,9 @@ struct ApplicationRow {
 impl TryFrom<ApplicationRow> for Application {
     type Error = PlatformError;
     fn try_from(r: ApplicationRow) -> Result<Self> {
-        let application_type = decode(
-            &r.application_type,
-            "app_applications",
-            "application_type",
-            r.id.as_str(),
-        )?;
+        let application_type =
+            r.application_type
+                .decode("app_applications", "application_type", r.id.as_str())?;
         Ok(Self {
             id: r.id,
             application_type,
@@ -77,7 +74,7 @@ impl ApplicationRepository {
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"
         )
         .bind(&app.id)
-        .bind(app.application_type.as_str())
+        .bind(app.application_type)
         .bind(&app.code)
         .bind(&app.name)
         .bind(&app.description)
@@ -209,7 +206,7 @@ impl ApplicationRepository {
         let rows = sqlx::query_as::<_, ApplicationRow>(
             "SELECT * FROM app_applications WHERE type = $1 AND active = TRUE",
         )
-        .bind(app_type.as_str())
+        .bind(app_type)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(Application::try_from).collect()
@@ -264,7 +261,7 @@ impl ApplicationRepository {
              WHERE id = $1",
         )
         .bind(&app.id)
-        .bind(app.application_type.as_str())
+        .bind(app.application_type)
         .bind(&app.code)
         .bind(&app.name)
         .bind(&app.description)
@@ -399,7 +396,7 @@ impl Persist<Application> for ApplicationRepository {
                 updated_at = EXCLUDED.updated_at"
         )
         .bind(&a.id)
-        .bind(a.application_type.as_str())
+        .bind(a.application_type)
         .bind(&a.code)
         .bind(&a.name)
         .bind(&a.description)

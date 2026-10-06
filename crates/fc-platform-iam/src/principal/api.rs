@@ -972,7 +972,7 @@ pub async fn create_principal(
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
     let ctx = &auth.0;
-    if !ctx.is_anchor() && req.scope != "CLIENT" {
+    if !ctx.is_anchor() && req.scope.parse::<UserScope>().ok() != Some(UserScope::Client) {
         return Err(PlatformError::forbidden(
             "Client administrators can only create client-scope users",
         ));
@@ -1001,17 +1001,9 @@ pub async fn create_principal(
             "email must be a valid address",
         ));
     }
-    let scope = match req.scope.as_str() {
-        "ANCHOR" => UserScope::Anchor,
-        "PARTNER" => UserScope::Partner,
-        "CLIENT" => UserScope::Client,
-        _ => {
-            return Err(PlatformError::bad_request_code(
-                "INVALID_SCOPE",
-                "scope must be ANCHOR, PARTNER, or CLIENT",
-            ))
-        }
-    };
+    let scope: UserScope = req.scope.parse().map_err(|_| {
+        PlatformError::bad_request_code("INVALID_SCOPE", "scope must be ANCHOR, PARTNER, or CLIENT")
+    })?;
     if scope != UserScope::Anchor && client_id.is_none() {
         return Err(PlatformError::bad_request_code(
             "CLIENT_REQUIRED",
@@ -1182,9 +1174,15 @@ pub fn derive_user_scope(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_uppercase)
-        .unwrap_or_else(|| "CLIENT".to_string());
-    match scope.as_str() {
-        "ANCHOR" => {
+        .unwrap_or_else(|| UserScope::Client.as_str().to_string());
+    let Ok(scope) = scope.parse::<UserScope>() else {
+        return Err(PlatformError::bad_request_code(
+            "INVALID_SCOPE",
+            "scope must be ANCHOR, PARTNER, or CLIENT",
+        ));
+    };
+    match scope {
+        UserScope::Anchor => {
             let anchor_mapped = mapping.is_some_and(|m| m.scope_type == ScopeType::Anchor);
             if !is_anchor_domain && !anchor_mapped {
                 return Err(PlatformError::bad_request_code(
@@ -1194,7 +1192,7 @@ pub fn derive_user_scope(
             }
             Ok((UserScope::Anchor, None))
         }
-        "PARTNER" => {
+        UserScope::Partner => {
             let Some(m) = mapping.filter(|m| m.scope_type == ScopeType::Partner) else {
                 return Err(PlatformError::bad_request_code(
                     "PARTNER_DOMAIN_REQUIRED",
@@ -1220,7 +1218,7 @@ pub fn derive_user_scope(
             }
             Ok((UserScope::Partner, Some(client_id)))
         }
-        "CLIENT" => {
+        UserScope::Client => {
             let client_id = client_id.or_else(|| {
                 mapping
                     .filter(|m| m.scope_type == ScopeType::Client)
@@ -1228,10 +1226,6 @@ pub fn derive_user_scope(
             });
             Ok((UserScope::Client, client_id))
         }
-        _ => Err(PlatformError::bad_request_code(
-            "INVALID_SCOPE",
-            "scope must be ANCHOR, PARTNER, or CLIENT",
-        )),
     }
 }
 

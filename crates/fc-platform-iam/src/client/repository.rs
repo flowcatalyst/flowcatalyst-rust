@@ -7,7 +7,7 @@ use sqlx::PgPool;
 use super::entity::{Client, ClientNote, ClientStatus};
 use crate::client::entity;
 use fc_platform_core::directory::{ClientDirectory, ClientRef};
-use fc_platform_core::shared::enum_str::decode;
+use fc_platform_core::shared::enum_str::Stored;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::shared::id::decode_id;
 use fc_platform_core::usecase::unit_of_work::HasId;
@@ -21,7 +21,7 @@ struct ClientRow {
     id: String,
     name: String,
     identifier: String,
-    status: String,
+    status: Stored<ClientStatus>,
     status_reason: Option<String>,
     status_changed_at: Option<DateTime<Utc>>,
     notes: Option<serde_json::Value>,
@@ -32,7 +32,7 @@ struct ClientRow {
 impl TryFrom<ClientRow> for Client {
     type Error = PlatformError;
     fn try_from(r: ClientRow) -> Result<Self> {
-        let status = decode(&r.status, "tnt_clients", "status", &r.id)?;
+        let status = r.status.decode("tnt_clients", "status", &r.id)?;
         let notes: Vec<ClientNote> = r
             .notes
             .and_then(|v| serde_json::from_value(v).ok())
@@ -71,7 +71,7 @@ impl ClientRepository {
         .bind(&client.id)
         .bind(&client.name)
         .bind(&client.identifier)
-        .bind(client.status.as_str())
+        .bind(client.status)
         .bind(&client.status_reason)
         .bind(client.status_changed_at)
         .bind(&notes_json)
@@ -118,10 +118,10 @@ impl ClientRepository {
     }
 
     pub async fn find_active(&self) -> Result<Vec<Client>> {
-        let rows =
-            sqlx::query_as::<_, ClientRow>("SELECT * FROM tnt_clients WHERE status = 'ACTIVE'")
-                .fetch_all(&self.pool)
-                .await?;
+        let rows = sqlx::query_as::<_, ClientRow>("SELECT * FROM tnt_clients WHERE status = $1")
+            .bind(ClientStatus::Active)
+            .fetch_all(&self.pool)
+            .await?;
         rows.into_iter().map(Client::try_from).collect()
     }
 
@@ -151,7 +151,7 @@ impl ClientRepository {
             "SELECT * FROM tnt_clients WHERE ($1::text IS NULL OR status = $1) \
              ORDER BY identifier",
         )
-        .bind(status.map(|s| s.as_str()))
+        .bind(status)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(Client::try_from).collect()
@@ -201,7 +201,7 @@ impl ClientRepository {
         .bind(&client.id)
         .bind(&client.name)
         .bind(&client.identifier)
-        .bind(client.status.as_str())
+        .bind(client.status)
         .bind(&client.status_reason)
         .bind(client.status_changed_at)
         .bind(&notes_json)
@@ -294,7 +294,7 @@ impl Persist<Client> for ClientRepository {
         .bind(&c.id)
         .bind(&c.name)
         .bind(&c.identifier)
-        .bind(c.status.as_str())
+        .bind(c.status)
         .bind(&c.status_reason)
         .bind(c.status_changed_at)
         .bind(&notes_json)

@@ -1,5 +1,7 @@
 //! Authentication Configuration Repositories — PostgreSQL via SQLx
 
+use crate::auth::config_entity::AuthConfigType;
+use crate::auth::config_entity::AuthProvider;
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::AnchorDomainId;
 use fc_platform_core::shared::id::ClientAccessGrantId;
@@ -11,7 +13,7 @@ use sqlx::PgPool;
 
 use crate::auth::config_entity::{AnchorDomain, ClientAuthConfig, IdpRoleMapping};
 use crate::principal::entity::ClientAccessGrant;
-use fc_platform_core::shared::enum_str::decode;
+use fc_platform_core::shared::enum_str::Stored;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase;
 use fc_platform_core::usecase::unit_of_work::HasId;
@@ -43,11 +45,11 @@ impl From<AnchorDomainRow> for AnchorDomain {
 struct ClientAuthConfigRow {
     id: ClientAuthConfigId,
     email_domain: String,
-    config_type: String,
+    config_type: Stored<AuthConfigType>,
     primary_client_id: Option<ClientId>,
     additional_client_ids: serde_json::Value,
     granted_client_ids: serde_json::Value,
-    auth_provider: String,
+    auth_provider: Stored<AuthProvider>,
     oidc_issuer_url: Option<String>,
     oidc_client_id: Option<String>,
     oidc_multi_tenant: bool,
@@ -60,18 +62,12 @@ struct ClientAuthConfigRow {
 impl TryFrom<ClientAuthConfigRow> for ClientAuthConfig {
     type Error = PlatformError;
     fn try_from(r: ClientAuthConfigRow) -> Result<Self> {
-        let config_type = decode(
-            &r.config_type,
-            "tnt_client_auth_configs",
-            "config_type",
-            r.id.as_str(),
-        )?;
-        let auth_provider = decode(
-            &r.auth_provider,
-            "tnt_client_auth_configs",
-            "auth_provider",
-            r.id.as_str(),
-        )?;
+        let config_type =
+            r.config_type
+                .decode("tnt_client_auth_configs", "config_type", r.id.as_str())?;
+        let auth_provider =
+            r.auth_provider
+                .decode("tnt_client_auth_configs", "auth_provider", r.id.as_str())?;
         let additional_client_ids: Vec<ClientId> =
             serde_json::from_value(r.additional_client_ids).unwrap_or_default();
         let granted_client_ids: Vec<ClientId> =
@@ -252,11 +248,11 @@ impl ClientAuthConfigRepository {
         )
         .bind(&config.id)
         .bind(&config.email_domain)
-        .bind(config.config_type.as_str())
+        .bind(config.config_type)
         .bind(&config.primary_client_id)
         .bind(&additional_ids_json)
         .bind(&granted_ids_json)
-        .bind(config.auth_provider.as_str())
+        .bind(config.auth_provider)
         .bind(&config.oidc_issuer_url)
         .bind(&config.oidc_client_id)
         .bind(config.oidc_multi_tenant)
@@ -325,11 +321,11 @@ impl ClientAuthConfigRepository {
         )
         .bind(&config.id)
         .bind(&config.email_domain)
-        .bind(config.config_type.as_str())
+        .bind(config.config_type)
         .bind(&config.primary_client_id)
         .bind(&additional_ids_json)
         .bind(&granted_ids_json)
-        .bind(config.auth_provider.as_str())
+        .bind(config.auth_provider)
         .bind(&config.oidc_issuer_url)
         .bind(&config.oidc_client_id)
         .bind(config.oidc_multi_tenant)
@@ -561,11 +557,11 @@ impl Persist<ClientAuthConfig> for ClientAuthConfigRepository {
         )
         .bind(&c.id)
         .bind(&c.email_domain)
-        .bind(c.config_type.as_str())
+        .bind(c.config_type)
         .bind(&c.primary_client_id)
         .bind(&additional_client_ids_json)
         .bind(&granted_client_ids_json)
-        .bind(c.auth_provider.as_str())
+        .bind(c.auth_provider)
         .bind(&c.oidc_issuer_url)
         .bind(&c.oidc_client_id)
         .bind(c.oidc_multi_tenant)

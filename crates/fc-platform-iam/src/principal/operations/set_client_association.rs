@@ -33,6 +33,28 @@ pub struct SetClientAssociationCommand {
 
 impl AuditMasked for SetClientAssociationCommand {}
 
+/// What a specific `clientId` is to do to the user. The command keeps the
+/// caller's text (it is what the audit row records); this is that text read
+/// once, forgivingly as ever: surrounding space and letter case do not matter,
+/// anything else is no mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AssociationMode {
+    /// Make the client the user's home client (scope CLIENT).
+    ChangeClient,
+    /// Add the client to the user's assigned clients (scope PARTNER).
+    ToPartner,
+}
+
+impl AssociationMode {
+    fn from_input(text: &str) -> Option<Self> {
+        match text.trim().to_ascii_uppercase().as_str() {
+            "CHANGE_CLIENT" => Some(Self::ChangeClient),
+            "TO_PARTNER" => Some(Self::ToPartner),
+            _ => None,
+        }
+    }
+}
+
 pub struct SetClientAssociationUseCase<U: UnitOfWork> {
     principal_repo: Arc<PrincipalRepository>,
     client_repo: Arc<ClientRepository>,
@@ -118,16 +140,15 @@ impl<U: UnitOfWork> UseCase for SetClientAssociationUseCase<U> {
         let mode = command
             .mode
             .as_deref()
-            .map(|m| m.trim().to_ascii_uppercase())
-            .unwrap_or_default();
+            .and_then(AssociationMode::from_input);
         if target == "*" {
             p.scope = UserScope::Anchor;
             p.client_id = None;
-        } else if mode == "CHANGE_CLIENT" {
+        } else if mode == Some(AssociationMode::ChangeClient) {
             let client_id = self.require_client(target).await?;
             p.scope = UserScope::Client;
             p.client_id = Some(client_id);
-        } else if mode == "TO_PARTNER" {
+        } else if mode == Some(AssociationMode::ToPartner) {
             let target_id = self.require_client(target).await?;
             let mut grants = Vec::new();
             if p.scope == UserScope::Client {

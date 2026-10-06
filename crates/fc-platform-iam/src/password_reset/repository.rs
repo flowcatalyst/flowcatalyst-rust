@@ -1,12 +1,13 @@
 //! PasswordResetToken Repository — PostgreSQL via SQLx
 
+use crate::password_reset::entity::TokenPurpose;
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::PasswordResetTokenId;
 use fc_platform_core::shared::id::PrincipalId;
 use sqlx::PgPool;
 
 use super::entity::PasswordResetToken;
-use fc_platform_core::shared::enum_str::decode;
+use fc_platform_core::shared::enum_str::Stored;
 use fc_platform_core::shared::error::{PlatformError, Result};
 
 #[derive(sqlx::FromRow)]
@@ -14,7 +15,7 @@ struct PasswordResetTokenRow {
     id: PasswordResetTokenId,
     principal_id: PrincipalId,
     token_hash: String,
-    purpose: String,
+    purpose: Stored<TokenPurpose>,
     reset_2fa: bool,
     requires_factor: bool,
     factor_attempts: i32,
@@ -28,12 +29,9 @@ impl TryFrom<PasswordResetTokenRow> for PasswordResetToken {
     /// An unknown purpose is a loud read error, never read as `reset`
     /// (X-06; Go `scanToken`).
     fn try_from(r: PasswordResetTokenRow) -> Result<Self> {
-        let purpose = decode(
-            &r.purpose,
-            "iam_password_reset_tokens",
-            "purpose",
-            r.id.as_str(),
-        )?;
+        let purpose = r
+            .purpose
+            .decode("iam_password_reset_tokens", "purpose", r.id.as_str())?;
         Ok(Self {
             id: r.id,
             principal_id: r.principal_id,
@@ -71,7 +69,7 @@ impl PasswordResetTokenRepository {
         .bind(&token.id)
         .bind(&token.principal_id)
         .bind(&token.token_hash)
-        .bind(token.purpose.as_str())
+        .bind(token.purpose)
         .bind(token.reset_2fa)
         .bind(token.requires_factor)
         .bind(&token.redirect_uri)

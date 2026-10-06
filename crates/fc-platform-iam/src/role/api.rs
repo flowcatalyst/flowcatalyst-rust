@@ -546,17 +546,9 @@ pub async fn get_roles_by_source(
     checks::can_read_roles(&auth.0)?;
 
     // Go `role.ParseSource`: the exact upper-case names only.
-    let source = match source.as_str() {
-        "CODE" => RoleSource::Code,
-        "DATABASE" => RoleSource::Database,
-        "SDK" => RoleSource::Sdk,
-        _ => {
-            return Err(PlatformError::bad_request_code(
-                "INVALID_SOURCE",
-                "source must be CODE, DATABASE, or SDK",
-            ))
-        }
-    };
+    let source: RoleSource = source.parse().map_err(|_| {
+        PlatformError::bad_request_code("INVALID_SOURCE", "source must be CODE, DATABASE, or SDK")
+    })?;
     let roles = state.role_repo.find_by_source(source).await?;
     let response: Vec<RoleResponse> = roles.into_iter().map(|r| r.into()).collect();
     Ok(Json(response))
