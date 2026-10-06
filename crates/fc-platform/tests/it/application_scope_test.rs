@@ -809,3 +809,43 @@ async fn service_account_reads_only_its_own_application() {
         .collect();
     assert_eq!(codes, vec!["read-a"]);
 }
+
+/// An application's service account publishes its own application's OpenAPI
+/// document and nobody else's (the handler's application-scope rule).
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn service_account_syncs_only_its_own_openapi_document() {
+    let app = TestApp::setup().await;
+    let app_a = create_app(&app, "oas-a").await;
+    create_app(&app, "oas-b").await;
+
+    let sa_a = token_for(
+        &app,
+        Principal::new_service("oas_sa_a", "OAS SA A", UserScope::Anchor)
+            .with_application_id(app_a.id.clone()),
+        &[&app_a],
+    )
+    .await;
+    let spec = json!({
+        "spec": {
+            "openapi": "3.0.0",
+            "info": { "title": "A", "version": "1.0.0" },
+            "paths": {}
+        }
+    });
+
+    let (status, body) = read_json(
+        app.post("/api/applications/oas-a/openapi/sync", &sa_a, spec.clone())
+            .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["applicationCode"], "oas-a");
+
+    let (status, _) = read_json(
+        app.post("/api/applications/oas-b/openapi/sync", &sa_a, spec)
+            .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

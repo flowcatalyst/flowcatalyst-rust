@@ -403,6 +403,11 @@ pub mod application_service {
     // by `checks::can_read_application`; not a grant to read every application.
     pub const APPLICATION_READ: &str = "platform:application-service:application:view";
 
+    // Publish its own application's OpenAPI document (the SDK definitions
+    // sync). The handler confines it to the applications it is bound to.
+    pub const APPLICATION_OPENAPI_SYNC: &str =
+        "platform:application-service:application-openapi:sync";
+
     /// All application service permissions, in Go's order
     /// (seed/permissions.go:200-225).
     pub const ALL: &[&str] = &[
@@ -431,6 +436,7 @@ pub mod application_service {
         PROCESS_READ,
         PROCESS_SYNC,
         APPLICATION_READ,
+        APPLICATION_OPENAPI_SYNC,
     ];
 }
 

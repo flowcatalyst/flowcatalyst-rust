@@ -983,4 +983,25 @@ mod tests {
         // The BFF and the server-rendered UI keep the admin-only guard.
         assert!(checks::can_read_applications(&svc).is_err());
     }
+
+    /// Go `TestCanSyncApplicationOpenAPIAdmitsApplicationService`: the SDK
+    /// definitions sync publishes an application's OpenAPI document as the
+    /// application's own service account.
+    #[test]
+    fn openapi_sync_admits_application_service() {
+        let svc = create_test_context(
+            vec!["platform:application-service:application-openapi:sync"],
+            "CLIENT",
+            vec![],
+        );
+        assert!(checks::can_sync_application_openapi(&svc).is_ok());
+        let developer = create_test_context(
+            vec!["platform:developer:application-openapi:sync"],
+            "CLIENT",
+            vec![],
+        );
+        assert!(checks::can_sync_application_openapi(&developer).is_ok());
+        let view_only = create_test_context(vec![APP_SVC_APP_VIEW], "CLIENT", vec![]);
+        assert!(checks::can_sync_application_openapi(&view_only).is_err());
+    }
 }

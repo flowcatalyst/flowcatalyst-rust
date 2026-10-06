@@ -872,12 +872,16 @@ pub mod checks {
         }
     }
 
-    /// SDK ingest: sync an application's OpenAPI document.
-    /// Service-account-belongs-to-application is enforced in the handler.
+    /// SDK ingest: sync an application's OpenAPI document. Admits the
+    /// developer sync/manage permissions and the application-service sync an
+    /// SDK service account holds. Per-application scope is enforced in the
+    /// handler (`require_application_access`), so a service account can
+    /// publish only the document of an application it is bound to.
     pub fn can_sync_application_openapi(context: &impl Authority) -> Result<()> {
         if context.has_any_permission(&[
             permissions::developer::APPLICATION_OPENAPI_SYNC,
             permissions::developer::APPLICATION_OPENAPI_MANAGE,
+            permissions::application_service::APPLICATION_OPENAPI_SYNC,
         ]) {
             Ok(())
         } else {

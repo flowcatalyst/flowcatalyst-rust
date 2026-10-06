@@ -302,6 +302,7 @@ const GO_ROLES: &[(&str, &str, &str, &[&str])] = &[
             "platform:application-service:process:view",
             "platform:application-service:process:sync",
             "platform:application-service:application:view",
+            "platform:application-service:application-openapi:sync",
         ],
     ),
 ];
