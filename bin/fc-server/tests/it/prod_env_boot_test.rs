@@ -44,6 +44,7 @@ use std::io::Read;
 use std::net;
 use std::thread;
 use testcontainers::runners::AsyncRunner;
+use testcontainers::ImageExt;
 use testcontainers_modules::postgres::Postgres;
 use tokio::net::TcpListener;
 use tokio::time;
@@ -331,10 +332,13 @@ fn session_cookie(resp: &reqwest::Response) -> Option<String> {
 async fn fc_server_runs_with_the_production_task_definitions_env() {
     // Postgres, with an application role whose credentials only the secret
     // knows (the container's own superuser is never given to fc-server).
+    // PostgreSQL 18, as in production: the scheduler's pool sets
+    // `plan_cache_mode`, which the module's default image (11) does not know.
     let container = Postgres::default()
         .with_db_name("flowcatalyst")
         .with_user("postgres")
         .with_password("postgres")
+        .with_tag("18-alpine")
         .start()
         .await
         .expect("start postgres");

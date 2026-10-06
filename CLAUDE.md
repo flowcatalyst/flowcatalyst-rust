@@ -155,6 +155,32 @@ and `router.rs` allow it, because handler paths inside `routes!(…)` and
 router.rs's `crate::<module>::routes(ctx)` list stay fully qualified for the
 route-auth and route-wiring scanners.
 
+## Toolchain and lints
+`rust-toolchain.toml` pins the compiler (workspace `rust-version` and the
+`toolchain:` of every `dtolnay/rust-toolchain` step in `.github/workflows` move
+with it; the Dockerfile's cargo-chef tag too). Every crate has
+`[lints] workspace = true`; the one table is `[workspace.lints]` in the root
+`Cargo.toml`, limits in `clippy.toml`. CI denies warnings. What the table
+enforces, and the exemption each takes:
+- `unsafe_code = "deny"`: `#[expect(unsafe_code, reason = "...")]` on the item
+  (or the module) that needs it, a `// SAFETY:` comment on each block.
+- `wildcard_enum_match_arm`: list the variants of our own enums, so a new one
+  fails to compile. `#[expect(...)]` with a reason only for foreign or
+  `#[non_exhaustive]` enums.
+- `unwrap_used`, `expect_used`, `panic`: propagate with `?` where a runtime
+  failure is possible; an `expect("why this cannot fail")` plus
+  `#[expect(clippy::expect_used, reason = "...")]` for start-up invariants and
+  statically valid constants. Tests may unwrap (`clippy.toml`); an
+  integration-test crate's helpers carry one crate-level `#![expect(...)]`.
+- `let_underscore_must_use`: log a failure that matters (warn, with context);
+  `#[expect(...)]` with a reason where it cannot (a `writeln!` into a `String`,
+  a send whose receiver is gone at shutdown, best-effort cleanup).
+- `await_holding_lock`, `await_holding_refcell_ref`, `dbg_macro`, `todo`,
+  `unimplemented`.
+A lint attribute on a `match` arm or an expression does not cover the lint;
+put the `#[expect]` on the enclosing function (an attribute macro such as
+`#[op2]` rejects it: move the code into a helper function).
+
 ## Dependencies (supply chain)
 Read `docs/operations/supply-chain.md` before adding or updating a crate.
 - crates.io only, declared once in `[workspace.dependencies]`, `default-features = false`
@@ -425,6 +451,24 @@ testcontainers directly). A test that starts anything else in Docker (the
 SQS publisher test's LocalStack) still needs Docker. macOS allows 32 SysV
 shared-memory segments for the whole machine, one per running postgres: do
 not start a cluster per test.
+
+CI runs the database tests on every pull request and push (the `database-tests`
+job in `.github/workflows/ci.yml`), through `scripts/db-tests.sh`: the same
+command locally, with the same selection. It runs every ignored Docker-backed
+test of fc-platform (`--test it`, `--test function_host_e2e_test`), fc-fnhost-core
+(`db_postgres`, `wasm_db`), fc-queue (`postgres_integration_tests`, behind the
+`postgres` feature), fc-outbox (the Postgres and MySQL repositories),
+fc-standby, fc-outbox-processor (MySQL) and fc-server (`prod_env_boot_test`),
+377 tests at the time of writing, and fails if a test fails or fewer than 350
+ran. Cargo cannot filter by ignore reason, so the selection is by package, test
+binary and `--skip`; left out on purpose are the LocalStack tests (fc-queue's
+SQS), the NATS tests, the measurement and benchmark tests (`throughput_bench`,
+`wasm_neighbour`, `wasm_fuel`, `js_density`), the JVM function-host test (Java 25
+and Maven) and the `harness/` Go-vs-Rust runs. With Docker running it needs
+nothing else; `FC_TEST_PG_BIN=$DIR/bin scripts/db-tests.sh` moves the tests that
+go through `support::start_db` onto a local PostgreSQL (the rest still start
+containers); CI uses a Postgres service container
+(`FC_TEST_DATABASE_URL`) for those.
 
 Binaries and tests build a `PlatformContext` and call
 `fc_platform::router::build(&ctx)`. Guardrails:
