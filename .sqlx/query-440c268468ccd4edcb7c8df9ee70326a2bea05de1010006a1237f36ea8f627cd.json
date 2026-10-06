@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT GREATEST(p.updated_at, COALESCE((SELECT MAX(r.updated_at) FROM iam_principal_roles pr JOIN iam_roles r ON r.name = pr.role_name WHERE pr.principal_id = p.id), p.updated_at)) AS \"version\" FROM iam_principals p WHERE p.id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "version",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "440c268468ccd4edcb7c8df9ee70326a2bea05de1010006a1237f36ea8f627cd"
+}

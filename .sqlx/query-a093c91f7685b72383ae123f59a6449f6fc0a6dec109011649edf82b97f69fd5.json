@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM portal_identity_apps WHERE identity_id = $1 AND portal_app_id = ANY($2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a093c91f7685b72383ae123f59a6449f6fc0a6dec109011649edf82b97f69fd5"
+}

@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO iam_principals (id, type, scope, client_id, name, active, email, email_domain, idp_type, password_hash, created_at, updated_at, all_applications)\n             SELECT u.id, u.type, u.scope, u.client_id, u.name, u.active, u.email, u.email_domain, u.idp_type, u.password_hash, u.created_at, $13, u.all_applications\n             FROM UNNEST($1::varchar[], $2::varchar[], $3::varchar[], $4::varchar[], $5::varchar[], $6::bool[], $7::varchar[], $8::varchar[], $9::varchar[], $10::varchar[], $11::timestamptz[], $12::bool[])\n                  AS u(id, type, scope, client_id, name, active, email, email_domain, idp_type, password_hash, created_at, all_applications)\n             ON CONFLICT (id) DO UPDATE SET\n                name = EXCLUDED.name,\n                active = EXCLUDED.active,\n                password_hash = EXCLUDED.password_hash,\n                updated_at = EXCLUDED.updated_at",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "VarcharArray",
+        "VarcharArray",
+        "VarcharArray",
+        "VarcharArray",
+        "VarcharArray",
+        "BoolArray",
+        "VarcharArray",
+        "VarcharArray",
+        "VarcharArray",
+        "VarcharArray",
+        "TimestamptzArray",
+        "BoolArray",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "149030780caae985ebec9b623eb5b0afe1175833349bc1c8f062ba2226a21a85"
+}

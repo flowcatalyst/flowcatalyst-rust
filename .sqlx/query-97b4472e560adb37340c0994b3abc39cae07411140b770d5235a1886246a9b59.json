@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM app_platform_configs WHERE application_code = $1 AND section = $2 AND property = $3 AND scope = $4 AND client_id = $5",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "97b4472e560adb37340c0994b3abc39cae07411140b770d5235a1886246a9b59"
+}

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM app_docs WHERE application_id = $1 AND slug = ANY($2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f70a10897107377f1e2551f48804cb47af89dc746635d07edefd7cae9bec4198"
+}

@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT email_domain_mapping_id AS \"email_domain_mapping_id: EmailDomainMappingId\", method FROM tnt_email_domain_mapping_2fa_methods WHERE email_domain_mapping_id = ANY($1) ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "email_domain_mapping_id: EmailDomainMappingId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "method",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "87a87e6493e0f177dbfea818434d390589dc10474318b017305561317a30f412"
+}

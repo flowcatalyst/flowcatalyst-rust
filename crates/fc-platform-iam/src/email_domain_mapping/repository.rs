@@ -19,7 +19,6 @@ use fc_platform_core::usecase::Persist;
 
 // ── Row structs ─────────────────────────────────────────────────────
 
-#[derive(sqlx::FromRow)]
 struct EmailDomainMappingRow {
     id: EmailDomainMappingId,
     email_domain: String,
@@ -73,18 +72,22 @@ impl EmailDomainMappingRepository {
 
     async fn hydrate(&self, mut edm: EmailDomainMapping) -> Result<EmailDomainMapping> {
         let (additional, granted, roles, methods) = tokio::try_join!(
-            sqlx::query_scalar::<_, ClientId>(
-                "SELECT client_id FROM tnt_email_domain_mapping_additional_clients WHERE email_domain_mapping_id = $1"
-            ).bind(&edm.id).fetch_all(&self.pool),
-            sqlx::query_scalar::<_, ClientId>(
-                "SELECT client_id FROM tnt_email_domain_mapping_granted_clients WHERE email_domain_mapping_id = $1"
-            ).bind(&edm.id).fetch_all(&self.pool),
-            sqlx::query_scalar::<_, String>(
-                "SELECT role_id FROM tnt_email_domain_mapping_allowed_roles WHERE email_domain_mapping_id = $1"
-            ).bind(&edm.id).fetch_all(&self.pool),
-            sqlx::query_scalar::<_, String>(
-                "SELECT method FROM tnt_email_domain_mapping_2fa_methods WHERE email_domain_mapping_id = $1 ORDER BY id"
-            ).bind(&edm.id).fetch_all(&self.pool),
+            sqlx::query_scalar!(
+            "SELECT client_id AS \"client_id: ClientId\" FROM tnt_email_domain_mapping_additional_clients WHERE email_domain_mapping_id = $1",
+            &edm.id as &EmailDomainMappingId
+        ).fetch_all(&self.pool),
+            sqlx::query_scalar!(
+            "SELECT client_id AS \"client_id: ClientId\" FROM tnt_email_domain_mapping_granted_clients WHERE email_domain_mapping_id = $1",
+            &edm.id as &EmailDomainMappingId
+        ).fetch_all(&self.pool),
+            sqlx::query_scalar!(
+            "SELECT role_id FROM tnt_email_domain_mapping_allowed_roles WHERE email_domain_mapping_id = $1",
+            &edm.id as &EmailDomainMappingId
+        ).fetch_all(&self.pool),
+            sqlx::query_scalar!(
+            "SELECT method FROM tnt_email_domain_mapping_2fa_methods WHERE email_domain_mapping_id = $1 ORDER BY id",
+            &edm.id as &EmailDomainMappingId
+        ).fetch_all(&self.pool),
         )?;
         edm.additional_client_ids = additional;
         edm.granted_client_ids = granted;
@@ -104,35 +107,48 @@ impl EmailDomainMappingRepository {
 
         let ids: Vec<&str> = edms.iter().map(|e| e.id.as_str()).collect();
 
-        #[derive(sqlx::FromRow)]
         struct ClientRow {
             email_domain_mapping_id: EmailDomainMappingId,
             client_id: ClientId,
         }
-        #[derive(sqlx::FromRow)]
         struct RoleRow {
             email_domain_mapping_id: EmailDomainMappingId,
             role_id: String,
         }
-        #[derive(sqlx::FromRow)]
         struct MethodRow {
             email_domain_mapping_id: EmailDomainMappingId,
             method: String,
         }
 
         let (additional_rows, granted_rows, role_rows, method_rows) = tokio::try_join!(
-            sqlx::query_as::<_, ClientRow>(
-                "SELECT email_domain_mapping_id, client_id FROM tnt_email_domain_mapping_additional_clients WHERE email_domain_mapping_id = ANY($1)"
-            ).bind(&ids).fetch_all(&self.pool),
-            sqlx::query_as::<_, ClientRow>(
-                "SELECT email_domain_mapping_id, client_id FROM tnt_email_domain_mapping_granted_clients WHERE email_domain_mapping_id = ANY($1)"
-            ).bind(&ids).fetch_all(&self.pool),
-            sqlx::query_as::<_, RoleRow>(
-                "SELECT email_domain_mapping_id, role_id FROM tnt_email_domain_mapping_allowed_roles WHERE email_domain_mapping_id = ANY($1)"
-            ).bind(&ids).fetch_all(&self.pool),
-            sqlx::query_as::<_, MethodRow>(
-                "SELECT email_domain_mapping_id, method FROM tnt_email_domain_mapping_2fa_methods WHERE email_domain_mapping_id = ANY($1) ORDER BY id"
-            ).bind(&ids).fetch_all(&self.pool),
+            sqlx::query_as!(
+            ClientRow,
+            "SELECT email_domain_mapping_id AS \"email_domain_mapping_id: EmailDomainMappingId\", \
+                    client_id AS \"client_id: ClientId\" \
+                    FROM tnt_email_domain_mapping_additional_clients WHERE email_domain_mapping_id = ANY($1)",
+            &ids as &[&str]
+        ).fetch_all(&self.pool),
+            sqlx::query_as!(
+            ClientRow,
+            "SELECT email_domain_mapping_id AS \"email_domain_mapping_id: EmailDomainMappingId\", \
+                    client_id AS \"client_id: ClientId\" \
+                    FROM tnt_email_domain_mapping_granted_clients WHERE email_domain_mapping_id = ANY($1)",
+            &ids as &[&str]
+        ).fetch_all(&self.pool),
+            sqlx::query_as!(
+            RoleRow,
+            "SELECT email_domain_mapping_id AS \"email_domain_mapping_id: EmailDomainMappingId\", \
+                    role_id \
+                    FROM tnt_email_domain_mapping_allowed_roles WHERE email_domain_mapping_id = ANY($1)",
+            &ids as &[&str]
+        ).fetch_all(&self.pool),
+            sqlx::query_as!(
+            MethodRow,
+            "SELECT email_domain_mapping_id AS \"email_domain_mapping_id: EmailDomainMappingId\", \
+                    method \
+                    FROM tnt_email_domain_mapping_2fa_methods WHERE email_domain_mapping_id = ANY($1) ORDER BY id",
+            &ids as &[&str]
+        ).fetch_all(&self.pool),
         )?;
 
         let mut methods_map: HashMap<EmailDomainMappingId, Vec<String>> = HashMap::new();
@@ -189,10 +205,18 @@ impl EmailDomainMappingRepository {
         &self,
         id: &EmailDomainMappingId,
     ) -> Result<Option<EmailDomainMapping>> {
-        let row = sqlx::query_as::<_, EmailDomainMappingRow>(
-            "SELECT * FROM tnt_email_domain_mappings WHERE id = $1",
+        let row = sqlx::query_as!(
+            EmailDomainMappingRow,
+            "SELECT id AS \"id: EmailDomainMappingId\", email_domain, \
+                    identity_provider_id AS \"identity_provider_id: IdentityProviderId\", \
+                    scope_type AS \"scope_type: Stored<ScopeType>\", \
+                    primary_client_id AS \"primary_client_id: ClientId\", \
+                    required_oidc_tenant_id, sync_roles_from_idp, require_2fa, \
+                    remember_device_enabled, remember_device_days, created_at, \
+                    updated_at \
+                    FROM tnt_email_domain_mappings WHERE id = $1",
+            id as &EmailDomainMappingId
         )
-        .bind(id)
         .fetch_optional(&self.pool)
         .await?;
         match row {
@@ -202,10 +226,18 @@ impl EmailDomainMappingRepository {
     }
 
     pub async fn find_by_email_domain(&self, domain: &str) -> Result<Option<EmailDomainMapping>> {
-        let row = sqlx::query_as::<_, EmailDomainMappingRow>(
-            "SELECT * FROM tnt_email_domain_mappings WHERE email_domain = $1",
+        let row = sqlx::query_as!(
+            EmailDomainMappingRow,
+            "SELECT id AS \"id: EmailDomainMappingId\", email_domain, \
+                    identity_provider_id AS \"identity_provider_id: IdentityProviderId\", \
+                    scope_type AS \"scope_type: Stored<ScopeType>\", \
+                    primary_client_id AS \"primary_client_id: ClientId\", \
+                    required_oidc_tenant_id, sync_roles_from_idp, require_2fa, \
+                    remember_device_enabled, remember_device_days, created_at, \
+                    updated_at \
+                    FROM tnt_email_domain_mappings WHERE email_domain = $1",
+            domain
         )
-        .bind(domain)
         .fetch_optional(&self.pool)
         .await?;
         match row {
@@ -218,21 +250,29 @@ impl EmailDomainMappingRepository {
     /// provider. A mapping to an INTERNAL provider — the one Go's `fcdev
     /// init` creates for the anchor domain — is not federated.
     pub async fn is_federated_domain(&self, domain: &str) -> Result<bool> {
-        let (federated,): (bool,) = sqlx::query_as(
+        let federated = sqlx::query_scalar!(
             "SELECT EXISTS (SELECT 1 FROM tnt_email_domain_mappings m \
              JOIN oauth_identity_providers p ON p.id = m.identity_provider_id \
-             WHERE m.email_domain = $1 AND p.type = $2)",
+             WHERE m.email_domain = $1 AND p.type = $2) AS \"exists!\"",
+            domain,
+            IdentityProviderType::Oidc as IdentityProviderType
         )
-        .bind(domain)
-        .bind(IdentityProviderType::Oidc)
         .fetch_one(&self.pool)
         .await?;
         Ok(federated)
     }
 
     pub async fn find_all(&self) -> Result<Vec<EmailDomainMapping>> {
-        let rows = sqlx::query_as::<_, EmailDomainMappingRow>(
-            "SELECT * FROM tnt_email_domain_mappings ORDER BY email_domain",
+        let rows = sqlx::query_as!(
+            EmailDomainMappingRow,
+            "SELECT id AS \"id: EmailDomainMappingId\", email_domain, \
+                    identity_provider_id AS \"identity_provider_id: IdentityProviderId\", \
+                    scope_type AS \"scope_type: Stored<ScopeType>\", \
+                    primary_client_id AS \"primary_client_id: ClientId\", \
+                    required_oidc_tenant_id, sync_roles_from_idp, require_2fa, \
+                    remember_device_enabled, remember_device_days, created_at, \
+                    updated_at \
+                    FROM tnt_email_domain_mappings ORDER BY email_domain"
         )
         .fetch_all(&self.pool)
         .await?;
@@ -249,11 +289,19 @@ impl EmailDomainMappingRepository {
         &self,
         identity_provider_id: &IdentityProviderId,
     ) -> Result<Vec<EmailDomainMapping>> {
-        let rows = sqlx::query_as::<_, EmailDomainMappingRow>(
-            "SELECT * FROM tnt_email_domain_mappings WHERE identity_provider_id = $1 \
+        let rows = sqlx::query_as!(
+            EmailDomainMappingRow,
+            "SELECT id AS \"id: EmailDomainMappingId\", email_domain, \
+                    identity_provider_id AS \"identity_provider_id: IdentityProviderId\", \
+                    scope_type AS \"scope_type: Stored<ScopeType>\", \
+                    primary_client_id AS \"primary_client_id: ClientId\", \
+                    required_oidc_tenant_id, sync_roles_from_idp, require_2fa, \
+                    remember_device_enabled, remember_device_days, created_at, \
+                    updated_at \
+                    FROM tnt_email_domain_mappings WHERE identity_provider_id = $1 \
              ORDER BY email_domain",
+            identity_provider_id as &IdentityProviderId
         )
-        .bind(identity_provider_id)
         .fetch_all(&self.pool)
         .await?;
         let edms: Vec<EmailDomainMapping> = rows
@@ -269,13 +317,13 @@ impl EmailDomainMappingRepository {
         &self,
         identity_provider_id: &IdentityProviderId,
     ) -> Result<Vec<String>> {
-        let domains = sqlx::query_scalar::<_, String>(
+        let domains = sqlx::query_scalar!(
             "SELECT email_domain FROM tnt_email_domain_mappings
              WHERE identity_provider_id = $1
                AND coalesce(btrim(required_oidc_tenant_id), '') = ''
              ORDER BY email_domain",
+            identity_provider_id as &IdentityProviderId
         )
-        .bind(identity_provider_id)
         .fetch_all(&self.pool)
         .await?;
         Ok(domains)
@@ -309,7 +357,7 @@ impl EmailDomainMappingRepository {
 /// Upsert a mapping and replace its junction rows, inside the caller's
 /// transaction: the one write path for `tnt_email_domain_mappings`.
 async fn write_mapping(edm: &EmailDomainMapping, tx: &mut DbTx<'_>) -> Result<()> {
-    sqlx::query(
+    sqlx::query!(
         r#"INSERT INTO tnt_email_domain_mappings
             (id, email_domain, identity_provider_id, scope_type,
              primary_client_id, required_oidc_tenant_id, sync_roles_from_idp,
@@ -327,18 +375,18 @@ async fn write_mapping(edm: &EmailDomainMapping, tx: &mut DbTx<'_>) -> Result<()
             remember_device_enabled = EXCLUDED.remember_device_enabled,
             remember_device_days = EXCLUDED.remember_device_days,
             updated_at = NOW()"#,
+        &edm.id as &EmailDomainMappingId,
+        &edm.email_domain,
+        &edm.identity_provider_id as &IdentityProviderId,
+        edm.scope_type as ScopeType,
+        &edm.primary_client_id as &Option<ClientId>,
+        edm.required_oidc_tenant_id.as_ref(),
+        edm.sync_roles_from_idp,
+        edm.require_2fa,
+        edm.remember_device_enabled,
+        edm.remember_device_days,
+        edm.created_at
     )
-    .bind(&edm.id)
-    .bind(&edm.email_domain)
-    .bind(&edm.identity_provider_id)
-    .bind(edm.scope_type)
-    .bind(&edm.primary_client_id)
-    .bind(&edm.required_oidc_tenant_id)
-    .bind(edm.sync_roles_from_idp)
-    .bind(edm.require_2fa)
-    .bind(edm.remember_device_enabled)
-    .bind(edm.remember_device_days)
-    .bind(edm.created_at)
     .execute(&mut **tx.inner)
     .await?;
     delete_junctions(&edm.id, tx).await?;
@@ -367,12 +415,12 @@ async fn write_mapping(edm: &EmailDomainMapping, tx: &mut DbTx<'_>) -> Result<()
     )
     .await?;
     if !edm.allowed_2fa_methods.is_empty() {
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO tnt_email_domain_mapping_2fa_methods (email_domain_mapping_id, method) \
              SELECT $1, m FROM UNNEST($2::text[]) WITH ORDINALITY AS t(m, n) ORDER BY n",
+            &edm.id as &EmailDomainMappingId,
+            &edm.allowed_2fa_methods
         )
-        .bind(&edm.id)
-        .bind(&edm.allowed_2fa_methods)
         .execute(&mut **tx.inner)
         .await?;
     }
@@ -398,10 +446,12 @@ async fn delete_junctions(id: &EmailDomainMappingId, tx: &mut DbTx<'_>) -> Resul
 
 async fn delete_mapping(id: &EmailDomainMappingId, tx: &mut DbTx<'_>) -> Result<bool> {
     delete_junctions(id, tx).await?;
-    let result = sqlx::query("DELETE FROM tnt_email_domain_mappings WHERE id = $1")
-        .bind(id)
-        .execute(&mut **tx.inner)
-        .await?;
+    let result = sqlx::query!(
+        "DELETE FROM tnt_email_domain_mappings WHERE id = $1",
+        id as &EmailDomainMappingId
+    )
+    .execute(&mut **tx.inner)
+    .await?;
     Ok(result.rows_affected() > 0)
 }
 

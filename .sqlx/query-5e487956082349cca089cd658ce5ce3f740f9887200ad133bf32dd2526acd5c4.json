@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id AS \"id: PrincipalId\" FROM iam_principals WHERE type = $2 AND email_domain = lower($1) AND idp_type = $3 ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: PrincipalId",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "5e487956082349cca089cd658ce5ce3f740f9887200ad133bf32dd2526acd5c4"
+}

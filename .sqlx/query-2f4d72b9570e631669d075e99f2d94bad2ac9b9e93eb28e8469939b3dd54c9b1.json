@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO aud_logs\n                (id, entity_type, entity_id, operation, operation_json,\n                 principal_id, application_id, client_id, performed_at)\n            SELECT * FROM UNNEST(\n                $1::varchar[], $2::varchar[], $3::varchar[], $4::varchar[],\n                $5::jsonb[], $6::varchar[], $7::varchar[], $8::varchar[],\n                $9::timestamptz[])",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "VarcharArray",
+        "VarcharArray",
+        "VarcharArray",
+        "VarcharArray",
+        "JsonbArray",
+        "VarcharArray",
+        "VarcharArray",
+        "VarcharArray",
+        "TimestamptzArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2f4d72b9570e631669d075e99f2d94bad2ac9b9e93eb28e8469939b3dd54c9b1"
+}

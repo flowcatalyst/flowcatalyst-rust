@@ -25,7 +25,6 @@ use fc_platform_core::usecase::Persist;
 
 // ── Row structs ─────────────────────────────────────────────────────
 
-#[derive(sqlx::FromRow)]
 struct OAuthClientRow {
     id: OAuthClientId,
     client_id: String,
@@ -124,10 +123,10 @@ impl OAuthClientRepository {
     // ── Junction table helpers ───────────────────────────────────
 
     async fn load_redirect_uris(&self, oauth_client_id: &OAuthClientId) -> Result<Vec<String>> {
-        let rows = sqlx::query_scalar::<_, String>(
+        let rows = sqlx::query_scalar!(
             "SELECT redirect_uri FROM oauth_client_redirect_uris WHERE oauth_client_id = $1",
+            oauth_client_id as &OAuthClientId
         )
-        .bind(oauth_client_id)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)
@@ -137,21 +136,21 @@ impl OAuthClientRepository {
         &self,
         oauth_client_id: &OAuthClientId,
     ) -> Result<Vec<String>> {
-        let rows = sqlx::query_scalar::<_, String>(
+        let rows = sqlx::query_scalar!(
             "SELECT post_logout_redirect_uri FROM oauth_client_post_logout_redirect_uris \
              WHERE oauth_client_id = $1",
+            oauth_client_id as &OAuthClientId
         )
-        .bind(oauth_client_id)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)
     }
 
     async fn load_grant_types(&self, oauth_client_id: &OAuthClientId) -> Result<Vec<GrantType>> {
-        let rows = sqlx::query_scalar::<_, Stored<GrantType>>(
-            "SELECT grant_type FROM oauth_client_grant_types WHERE oauth_client_id = $1",
+        let rows = sqlx::query_scalar!(
+            "SELECT grant_type AS \"grant_type: Stored<GrantType>\" FROM oauth_client_grant_types WHERE oauth_client_id = $1",
+            oauth_client_id as &OAuthClientId
         )
-        .bind(oauth_client_id)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter()
@@ -169,20 +168,20 @@ impl OAuthClientRepository {
         &self,
         oauth_client_id: &OAuthClientId,
     ) -> Result<Vec<ApplicationId>> {
-        let rows = sqlx::query_scalar::<_, ApplicationId>(
-            "SELECT application_id FROM oauth_client_application_ids WHERE oauth_client_id = $1",
+        let rows = sqlx::query_scalar!(
+            "SELECT application_id AS \"application_id: ApplicationId\" FROM oauth_client_application_ids WHERE oauth_client_id = $1",
+            oauth_client_id as &OAuthClientId
         )
-        .bind(oauth_client_id)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)
     }
 
     async fn load_allowed_origins(&self, oauth_client_id: &OAuthClientId) -> Result<Vec<String>> {
-        let rows = sqlx::query_scalar::<_, String>(
+        let rows = sqlx::query_scalar!(
             "SELECT allowed_origin FROM oauth_client_allowed_origins WHERE oauth_client_id = $1",
+            oauth_client_id as &OAuthClientId
         )
-        .bind(oauth_client_id)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)
@@ -213,48 +212,67 @@ impl OAuthClientRepository {
         let ids: Vec<&str> = clients.iter().map(|c| c.id.as_str()).collect();
 
         // Batch-load all junction tables concurrently
-        #[derive(sqlx::FromRow)]
         struct UriRow {
             oauth_client_id: OAuthClientId,
             redirect_uri: String,
         }
-        #[derive(sqlx::FromRow)]
         struct PostLogoutUriRow {
             oauth_client_id: OAuthClientId,
             post_logout_redirect_uri: String,
         }
-        #[derive(sqlx::FromRow)]
         struct GrantRow {
             oauth_client_id: OAuthClientId,
             grant_type: Stored<GrantType>,
         }
-        #[derive(sqlx::FromRow)]
         struct AppRow {
             oauth_client_id: OAuthClientId,
             application_id: ApplicationId,
         }
-        #[derive(sqlx::FromRow)]
         struct OriginRow {
             oauth_client_id: OAuthClientId,
             allowed_origin: String,
         }
 
         let (uri_rows, post_logout_rows, grant_rows, app_rows, origin_rows) = tokio::try_join!(
-            sqlx::query_as::<_, UriRow>(
-                "SELECT oauth_client_id, redirect_uri FROM oauth_client_redirect_uris WHERE oauth_client_id = ANY($1)"
-            ).bind(&ids).fetch_all(&self.pool),
-            sqlx::query_as::<_, PostLogoutUriRow>(
-                "SELECT oauth_client_id, post_logout_redirect_uri FROM oauth_client_post_logout_redirect_uris WHERE oauth_client_id = ANY($1)"
-            ).bind(&ids).fetch_all(&self.pool),
-            sqlx::query_as::<_, GrantRow>(
-                "SELECT oauth_client_id, grant_type FROM oauth_client_grant_types WHERE oauth_client_id = ANY($1)"
-            ).bind(&ids).fetch_all(&self.pool),
-            sqlx::query_as::<_, AppRow>(
-                "SELECT oauth_client_id, application_id FROM oauth_client_application_ids WHERE oauth_client_id = ANY($1)"
-            ).bind(&ids).fetch_all(&self.pool),
-            sqlx::query_as::<_, OriginRow>(
-                "SELECT oauth_client_id, allowed_origin FROM oauth_client_allowed_origins WHERE oauth_client_id = ANY($1)"
-            ).bind(&ids).fetch_all(&self.pool),
+            sqlx::query_as!(
+                UriRow,
+                "SELECT oauth_client_id AS \"oauth_client_id: OAuthClientId\", redirect_uri \
+                    FROM oauth_client_redirect_uris WHERE oauth_client_id = ANY($1)",
+                &ids as &[&str]
+            )
+            .fetch_all(&self.pool),
+            sqlx::query_as!(
+                PostLogoutUriRow,
+                "SELECT oauth_client_id AS \"oauth_client_id: OAuthClientId\", \
+                    post_logout_redirect_uri \
+                    FROM oauth_client_post_logout_redirect_uris WHERE oauth_client_id = ANY($1)",
+                &ids as &[&str]
+            )
+            .fetch_all(&self.pool),
+            sqlx::query_as!(
+                GrantRow,
+                "SELECT oauth_client_id AS \"oauth_client_id: OAuthClientId\", \
+                    grant_type AS \"grant_type: Stored<GrantType>\" \
+                    FROM oauth_client_grant_types WHERE oauth_client_id = ANY($1)",
+                &ids as &[&str]
+            )
+            .fetch_all(&self.pool),
+            sqlx::query_as!(
+                AppRow,
+                "SELECT oauth_client_id AS \"oauth_client_id: OAuthClientId\", \
+                    application_id AS \"application_id: ApplicationId\" \
+                    FROM oauth_client_application_ids WHERE oauth_client_id = ANY($1)",
+                &ids as &[&str]
+            )
+            .fetch_all(&self.pool),
+            sqlx::query_as!(
+                OriginRow,
+                "SELECT oauth_client_id AS \"oauth_client_id: OAuthClientId\", \
+                    allowed_origin \
+                    FROM oauth_client_allowed_origins WHERE oauth_client_id = ANY($1)",
+                &ids as &[&str]
+            )
+            .fetch_all(&self.pool),
         )?;
 
         // Group by parent ID
@@ -326,16 +344,18 @@ impl OAuthClientRepository {
         oauth_client_id: &OAuthClientId,
         uris: &[String],
     ) -> Result<()> {
-        sqlx::query("DELETE FROM oauth_client_redirect_uris WHERE oauth_client_id = $1")
-            .bind(oauth_client_id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM oauth_client_redirect_uris WHERE oauth_client_id = $1",
+            oauth_client_id as &OAuthClientId
+        )
+        .execute(&self.pool)
+        .await?;
         for uri in uris {
-            sqlx::query(
-                "INSERT INTO oauth_client_redirect_uris (oauth_client_id, redirect_uri) VALUES ($1, $2)"
-            )
-            .bind(oauth_client_id)
-            .bind(uri)
+            sqlx::query!(
+            "INSERT INTO oauth_client_redirect_uris (oauth_client_id, redirect_uri) VALUES ($1, $2)",
+            oauth_client_id as &OAuthClientId,
+            uri
+        )
             .execute(&self.pool)
             .await?;
         }
@@ -347,19 +367,19 @@ impl OAuthClientRepository {
         oauth_client_id: &OAuthClientId,
         uris: &[String],
     ) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "DELETE FROM oauth_client_post_logout_redirect_uris WHERE oauth_client_id = $1",
+            oauth_client_id as &OAuthClientId
         )
-        .bind(oauth_client_id)
         .execute(&self.pool)
         .await?;
         for uri in uris {
-            sqlx::query(
+            sqlx::query!(
                 "INSERT INTO oauth_client_post_logout_redirect_uris \
                  (oauth_client_id, post_logout_redirect_uri) VALUES ($1, $2)",
+                oauth_client_id as &OAuthClientId,
+                uri
             )
-            .bind(oauth_client_id)
-            .bind(uri)
             .execute(&self.pool)
             .await?;
         }
@@ -371,16 +391,18 @@ impl OAuthClientRepository {
         oauth_client_id: &OAuthClientId,
         grant_types: &[GrantType],
     ) -> Result<()> {
-        sqlx::query("DELETE FROM oauth_client_grant_types WHERE oauth_client_id = $1")
-            .bind(oauth_client_id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM oauth_client_grant_types WHERE oauth_client_id = $1",
+            oauth_client_id as &OAuthClientId
+        )
+        .execute(&self.pool)
+        .await?;
         for gt in grant_types {
-            sqlx::query(
-                "INSERT INTO oauth_client_grant_types (oauth_client_id, grant_type) VALUES ($1, $2)"
-            )
-            .bind(oauth_client_id)
-            .bind(gt)
+            sqlx::query!(
+            "INSERT INTO oauth_client_grant_types (oauth_client_id, grant_type) VALUES ($1, $2)",
+            oauth_client_id as &OAuthClientId,
+            gt as &GrantType
+        )
             .execute(&self.pool)
             .await?;
         }
@@ -392,16 +414,18 @@ impl OAuthClientRepository {
         oauth_client_id: &OAuthClientId,
         origins: &[String],
     ) -> Result<()> {
-        sqlx::query("DELETE FROM oauth_client_allowed_origins WHERE oauth_client_id = $1")
-            .bind(oauth_client_id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM oauth_client_allowed_origins WHERE oauth_client_id = $1",
+            oauth_client_id as &OAuthClientId
+        )
+        .execute(&self.pool)
+        .await?;
         for origin in origins {
-            sqlx::query(
-                "INSERT INTO oauth_client_allowed_origins (oauth_client_id, allowed_origin) VALUES ($1, $2)"
-            )
-            .bind(oauth_client_id)
-            .bind(origin)
+            sqlx::query!(
+            "INSERT INTO oauth_client_allowed_origins (oauth_client_id, allowed_origin) VALUES ($1, $2)",
+            oauth_client_id as &OAuthClientId,
+            origin
+        )
             .execute(&self.pool)
             .await?;
         }
@@ -413,16 +437,18 @@ impl OAuthClientRepository {
         oauth_client_id: &OAuthClientId,
         app_ids: &[ApplicationId],
     ) -> Result<()> {
-        sqlx::query("DELETE FROM oauth_client_application_ids WHERE oauth_client_id = $1")
-            .bind(oauth_client_id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM oauth_client_application_ids WHERE oauth_client_id = $1",
+            oauth_client_id as &OAuthClientId
+        )
+        .execute(&self.pool)
+        .await?;
         for app_id in app_ids {
-            sqlx::query(
-                "INSERT INTO oauth_client_application_ids (oauth_client_id, application_id) VALUES ($1, $2)"
-            )
-            .bind(oauth_client_id)
-            .bind(app_id)
+            sqlx::query!(
+            "INSERT INTO oauth_client_application_ids (oauth_client_id, application_id) VALUES ($1, $2)",
+            oauth_client_id as &OAuthClientId,
+            app_id as &ApplicationId
+        )
             .execute(&self.pool)
             .await?;
         }
@@ -438,26 +464,26 @@ impl OAuthClientRepository {
             Some(client.default_scopes.join(","))
         };
 
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO oauth_clients
                 (id, client_id, client_name, client_type, client_secret_ref,
                  default_scopes, pkce_required, service_account_principal_id, active,
                  created_at, updated_at, previous_secret_ref, previous_secret_expires_at,
                  previous_secret_last_used_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW(), $10, $11, $12)"#,
+            &client.id as &OAuthClientId,
+            &client.client_id,
+            &client.client_name,
+            client.client_type as OAuthClientType,
+            client.client_secret_ref.as_ref(),
+            scopes.as_ref(),
+            client.pkce_required,
+            &client.service_account_principal_id as &Option<PrincipalId>,
+            client.active,
+            client.previous_secret_ref.as_ref(),
+            client.previous_secret_expires_at,
+            client.previous_secret_last_used_at
         )
-        .bind(&client.id)
-        .bind(&client.client_id)
-        .bind(&client.client_name)
-        .bind(client.client_type)
-        .bind(&client.client_secret_ref)
-        .bind(&scopes)
-        .bind(client.pkce_required)
-        .bind(&client.service_account_principal_id)
-        .bind(client.active)
-        .bind(&client.previous_secret_ref)
-        .bind(client.previous_secret_expires_at)
-        .bind(client.previous_secret_last_used_at)
         .execute(&self.pool)
         .await?;
 
@@ -476,10 +502,20 @@ impl OAuthClientRepository {
     }
 
     pub async fn find_by_id(&self, id: &OAuthClientId) -> Result<Option<OAuthClient>> {
-        let row = sqlx::query_as::<_, OAuthClientRow>("SELECT * FROM oauth_clients WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query_as!(
+            OAuthClientRow,
+            "SELECT id AS \"id: OAuthClientId\", client_id, client_name, \
+                    client_type AS \"client_type: Stored<OAuthClientType>\", \
+                    client_secret_ref, previous_secret_ref, previous_secret_expires_at, \
+                    previous_secret_last_used_at, default_scopes, pkce_required, \
+                    service_account_principal_id AS \"service_account_principal_id: PrincipalId\", \
+                    active, api_access, created_at, updated_at, portal_client_id, \
+                    portal_app_id \
+                    FROM oauth_clients WHERE id = $1",
+            id as &OAuthClientId
+        )
+        .fetch_optional(&self.pool)
+        .await?;
         match row {
             Some(r) => Ok(Some(self.hydrate(OAuthClient::try_from(r)?).await?)),
             None => Ok(None),
@@ -497,11 +533,20 @@ impl OAuthClientRepository {
             }
         }
 
-        let row =
-            sqlx::query_as::<_, OAuthClientRow>("SELECT * FROM oauth_clients WHERE client_id = $1")
-                .bind(client_id)
-                .fetch_optional(&self.pool)
-                .await?;
+        let row = sqlx::query_as!(
+            OAuthClientRow,
+            "SELECT id AS \"id: OAuthClientId\", client_id, client_name, \
+                    client_type AS \"client_type: Stored<OAuthClientType>\", \
+                    client_secret_ref, previous_secret_ref, previous_secret_expires_at, \
+                    previous_secret_last_used_at, default_scopes, pkce_required, \
+                    service_account_principal_id AS \"service_account_principal_id: PrincipalId\", \
+                    active, api_access, created_at, updated_at, portal_client_id, \
+                    portal_app_id \
+                    FROM oauth_clients WHERE client_id = $1",
+            client_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
         match row {
             Some(r) => {
                 let client = self.hydrate(OAuthClient::try_from(r)?).await?;
@@ -520,10 +565,19 @@ impl OAuthClientRepository {
     }
 
     pub async fn find_active(&self) -> Result<Vec<OAuthClient>> {
-        let rows =
-            sqlx::query_as::<_, OAuthClientRow>("SELECT * FROM oauth_clients WHERE active = true")
-                .fetch_all(&self.pool)
-                .await?;
+        let rows = sqlx::query_as!(
+            OAuthClientRow,
+            "SELECT id AS \"id: OAuthClientId\", client_id, client_name, \
+                    client_type AS \"client_type: Stored<OAuthClientType>\", \
+                    client_secret_ref, previous_secret_ref, previous_secret_expires_at, \
+                    previous_secret_last_used_at, default_scopes, pkce_required, \
+                    service_account_principal_id AS \"service_account_principal_id: PrincipalId\", \
+                    active, api_access, created_at, updated_at, portal_client_id, \
+                    portal_app_id \
+                    FROM oauth_clients WHERE active = true"
+        )
+        .fetch_all(&self.pool)
+        .await?;
         let clients: Vec<OAuthClient> = rows
             .into_iter()
             .map(OAuthClient::try_from)
@@ -532,9 +586,19 @@ impl OAuthClientRepository {
     }
 
     pub async fn find_all(&self) -> Result<Vec<OAuthClient>> {
-        let rows = sqlx::query_as::<_, OAuthClientRow>("SELECT * FROM oauth_clients")
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sqlx::query_as!(
+            OAuthClientRow,
+            "SELECT id AS \"id: OAuthClientId\", client_id, client_name, \
+                    client_type AS \"client_type: Stored<OAuthClientType>\", \
+                    client_secret_ref, previous_secret_ref, previous_secret_expires_at, \
+                    previous_secret_last_used_at, default_scopes, pkce_required, \
+                    service_account_principal_id AS \"service_account_principal_id: PrincipalId\", \
+                    active, api_access, created_at, updated_at, portal_client_id, \
+                    portal_app_id \
+                    FROM oauth_clients"
+        )
+        .fetch_all(&self.pool)
+        .await?;
         let clients: Vec<OAuthClient> = rows
             .into_iter()
             .map(OAuthClient::try_from)
@@ -550,10 +614,18 @@ impl OAuthClientRepository {
         &self,
         principal_id: &PrincipalId,
     ) -> Result<Vec<OAuthClient>> {
-        let rows = sqlx::query_as::<_, OAuthClientRow>(
-            "SELECT * FROM oauth_clients WHERE service_account_principal_id = $1",
+        let rows = sqlx::query_as!(
+            OAuthClientRow,
+            "SELECT id AS \"id: OAuthClientId\", client_id, client_name, \
+                    client_type AS \"client_type: Stored<OAuthClientType>\", \
+                    client_secret_ref, previous_secret_ref, previous_secret_expires_at, \
+                    previous_secret_last_used_at, default_scopes, pkce_required, \
+                    service_account_principal_id AS \"service_account_principal_id: PrincipalId\", \
+                    active, api_access, created_at, updated_at, portal_client_id, \
+                    portal_app_id \
+                    FROM oauth_clients WHERE service_account_principal_id = $1",
+            principal_id as &PrincipalId
         )
-        .bind(principal_id)
         .fetch_all(&self.pool)
         .await?;
         let clients: Vec<OAuthClient> = rows
@@ -567,10 +639,10 @@ impl OAuthClientRepository {
         &self,
         application_id: &ApplicationId,
     ) -> Result<Vec<OAuthClient>> {
-        let client_ids = sqlx::query_scalar::<_, String>(
+        let client_ids = sqlx::query_scalar!(
             "SELECT oauth_client_id FROM oauth_client_application_ids WHERE application_id = $1",
+            application_id as &ApplicationId
         )
-        .bind(application_id)
         .fetch_all(&self.pool)
         .await?;
 
@@ -578,11 +650,20 @@ impl OAuthClientRepository {
             return Ok(vec![]);
         }
 
-        let rows =
-            sqlx::query_as::<_, OAuthClientRow>("SELECT * FROM oauth_clients WHERE id = ANY($1)")
-                .bind(&client_ids)
-                .fetch_all(&self.pool)
-                .await?;
+        let rows = sqlx::query_as!(
+            OAuthClientRow,
+            "SELECT id AS \"id: OAuthClientId\", client_id, client_name, \
+                    client_type AS \"client_type: Stored<OAuthClientType>\", \
+                    client_secret_ref, previous_secret_ref, previous_secret_expires_at, \
+                    previous_secret_last_used_at, default_scopes, pkce_required, \
+                    service_account_principal_id AS \"service_account_principal_id: PrincipalId\", \
+                    active, api_access, created_at, updated_at, portal_client_id, \
+                    portal_app_id \
+                    FROM oauth_clients WHERE id = ANY($1)",
+            &client_ids
+        )
+        .fetch_all(&self.pool)
+        .await?;
         let clients: Vec<OAuthClient> = rows
             .into_iter()
             .map(OAuthClient::try_from)
@@ -591,11 +672,12 @@ impl OAuthClientRepository {
     }
 
     pub async fn exists_by_client_id(&self, client_id: &str) -> Result<bool> {
-        let exists: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM oauth_clients WHERE client_id = $1)")
-                .bind(client_id)
-                .fetch_one(&self.pool)
-                .await?;
+        let exists: bool = sqlx::query_scalar!(
+            "SELECT EXISTS(SELECT 1 FROM oauth_clients WHERE client_id = $1) AS \"exists!\"",
+            client_id
+        )
+        .fetch_one(&self.pool)
+        .await?;
         Ok(exists)
     }
 
@@ -606,7 +688,7 @@ impl OAuthClientRepository {
             Some(client.default_scopes.join(","))
         };
 
-        sqlx::query(
+        sqlx::query!(
             r#"UPDATE oauth_clients SET
                 client_id = $2, client_name = $3, client_type = $4,
                 client_secret_ref = $5, default_scopes = $6,
@@ -615,19 +697,19 @@ impl OAuthClientRepository {
                 previous_secret_ref = $10, previous_secret_expires_at = $11,
                 previous_secret_last_used_at = $12
             WHERE id = $1"#,
+            &client.id as &OAuthClientId,
+            &client.client_id,
+            &client.client_name,
+            client.client_type as OAuthClientType,
+            client.client_secret_ref.as_ref(),
+            scopes.as_ref(),
+            client.pkce_required,
+            &client.service_account_principal_id as &Option<PrincipalId>,
+            client.active,
+            client.previous_secret_ref.as_ref(),
+            client.previous_secret_expires_at,
+            client.previous_secret_last_used_at
         )
-        .bind(&client.id)
-        .bind(&client.client_id)
-        .bind(&client.client_name)
-        .bind(client.client_type)
-        .bind(&client.client_secret_ref)
-        .bind(&scopes)
-        .bind(client.pkce_required)
-        .bind(&client.service_account_principal_id)
-        .bind(client.active)
-        .bind(&client.previous_secret_ref)
-        .bind(client.previous_secret_expires_at)
-        .bind(client.previous_secret_last_used_at)
         .execute(&self.pool)
         .await?;
 
@@ -661,13 +743,13 @@ impl OAuthClientRepository {
         verified_ref: &str,
         new_ref: &str,
     ) -> Result<bool> {
-        let result = sqlx::query(
+        let result = sqlx::query!(
             "UPDATE oauth_clients SET client_secret_ref = $3, updated_at = NOW() \
              WHERE id = $1 AND client_secret_ref = $2",
+            &client.id as &OAuthClientId,
+            verified_ref,
+            new_ref
         )
-        .bind(&client.id)
-        .bind(verified_ref)
-        .bind(new_ref)
         .execute(&self.pool)
         .await?;
         self.invalidate_cache(client).await;
@@ -685,13 +767,13 @@ impl OAuthClientRepository {
         verified_ref: &str,
         new_ref: &str,
     ) -> Result<bool> {
-        let result = sqlx::query(
+        let result = sqlx::query!(
             "UPDATE oauth_clients SET previous_secret_ref = $3, updated_at = NOW() \
              WHERE id = $1 AND previous_secret_ref = $2",
+            &client.id as &OAuthClientId,
+            verified_ref,
+            new_ref
         )
-        .bind(&client.id)
-        .bind(verified_ref)
-        .bind(new_ref)
         .execute(&self.pool)
         .await?;
         self.invalidate_cache(client).await;
@@ -711,15 +793,15 @@ impl OAuthClientRepository {
         now: DateTime<Utc>,
         stale_before: DateTime<Utc>,
     ) -> Result<u64> {
-        let result = sqlx::query(
+        let result = sqlx::query!(
             "UPDATE oauth_clients SET previous_secret_last_used_at = $2 \
              WHERE id = $1 \
                AND previous_secret_ref IS NOT NULL \
                AND (previous_secret_last_used_at IS NULL OR previous_secret_last_used_at < $3)",
+            id as &OAuthClientId,
+            now,
+            stale_before
         )
-        .bind(id)
-        .bind(now)
-        .bind(stale_before)
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected())
@@ -732,13 +814,13 @@ impl OAuthClientRepository {
     /// expired previous ref, so this is hygiene, not enforcement. Returns how
     /// many rows were cleared.
     pub async fn purge_lapsed_previous_secrets(&self) -> Result<u64> {
-        let result = sqlx::query(
+        let result = sqlx::query!(
             "UPDATE oauth_clients \
              SET previous_secret_ref = NULL, \
                  previous_secret_expires_at = NULL \
              WHERE previous_secret_ref IS NOT NULL \
                AND previous_secret_expires_at IS NOT NULL \
-               AND previous_secret_expires_at < NOW()",
+               AND previous_secret_expires_at < NOW()"
         )
         .execute(&self.pool)
         .await?;
@@ -765,33 +847,43 @@ impl OAuthClientRepository {
         }
 
         // Junction tables have ON DELETE CASCADE, but delete explicitly for safety
-        sqlx::query("DELETE FROM oauth_client_redirect_uris WHERE oauth_client_id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-        sqlx::query(
-            "DELETE FROM oauth_client_post_logout_redirect_uris WHERE oauth_client_id = $1",
+        sqlx::query!(
+            "DELETE FROM oauth_client_redirect_uris WHERE oauth_client_id = $1",
+            id as &OAuthClientId
         )
-        .bind(id)
         .execute(&self.pool)
         .await?;
-        sqlx::query("DELETE FROM oauth_client_grant_types WHERE oauth_client_id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-        sqlx::query("DELETE FROM oauth_client_application_ids WHERE oauth_client_id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-        sqlx::query("DELETE FROM oauth_client_allowed_origins WHERE oauth_client_id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM oauth_client_post_logout_redirect_uris WHERE oauth_client_id = $1",
+            id as &OAuthClientId
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query!(
+            "DELETE FROM oauth_client_grant_types WHERE oauth_client_id = $1",
+            id as &OAuthClientId
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query!(
+            "DELETE FROM oauth_client_application_ids WHERE oauth_client_id = $1",
+            id as &OAuthClientId
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query!(
+            "DELETE FROM oauth_client_allowed_origins WHERE oauth_client_id = $1",
+            id as &OAuthClientId
+        )
+        .execute(&self.pool)
+        .await?;
 
-        let result = sqlx::query("DELETE FROM oauth_clients WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        let result = sqlx::query!(
+            "DELETE FROM oauth_clients WHERE id = $1",
+            id as &OAuthClientId
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(result.rows_affected() > 0)
     }
 }
@@ -812,7 +904,7 @@ impl Persist<OAuthClient> for OAuthClientRepository {
             Some(c.default_scopes.join(","))
         };
 
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO oauth_clients
                 (id, client_id, client_name, client_type, client_secret_ref,
                  default_scopes, pkce_required, service_account_principal_id, active,
@@ -834,86 +926,100 @@ impl Persist<OAuthClient> for OAuthClientRepository {
                 updated_at = EXCLUDED.updated_at,
                 portal_client_id = EXCLUDED.portal_client_id,
                 portal_app_id = EXCLUDED.portal_app_id"#,
+            &c.id as &OAuthClientId,
+            &c.client_id,
+            &c.client_name,
+            c.client_type as OAuthClientType,
+            c.client_secret_ref.as_ref(),
+            scopes.as_ref(),
+            c.pkce_required,
+            &c.service_account_principal_id as &Option<PrincipalId>,
+            c.active,
+            c.created_at,
+            c.updated_at,
+            c.previous_secret_ref.as_ref(),
+            c.previous_secret_expires_at,
+            c.previous_secret_last_used_at,
+            &c.portal_client_id as &Option<ClientId>,
+            &c.portal_app_id as &Option<PortalAppId>
         )
-        .bind(&c.id)
-        .bind(&c.client_id)
-        .bind(&c.client_name)
-        .bind(c.client_type)
-        .bind(&c.client_secret_ref)
-        .bind(&scopes)
-        .bind(c.pkce_required)
-        .bind(&c.service_account_principal_id)
-        .bind(c.active)
-        .bind(c.created_at)
-        .bind(c.updated_at)
-        .bind(&c.previous_secret_ref)
-        .bind(c.previous_secret_expires_at)
-        .bind(c.previous_secret_last_used_at)
-        .bind(&c.portal_client_id)
-        .bind(&c.portal_app_id)
         .execute(&mut **tx.inner)
         .await?;
 
         // Sync junction tables: delete-then-reinsert all in the same tx
-        sqlx::query("DELETE FROM oauth_client_redirect_uris WHERE oauth_client_id = $1")
-            .bind(&c.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM oauth_client_redirect_uris WHERE oauth_client_id = $1",
+            &c.id as &OAuthClientId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         for uri in &c.redirect_uris {
-            sqlx::query(
-                "INSERT INTO oauth_client_redirect_uris (oauth_client_id, redirect_uri) VALUES ($1, $2)"
-            )
-            .bind(&c.id).bind(uri).execute(&mut **tx.inner).await?;
+            sqlx::query!(
+            "INSERT INTO oauth_client_redirect_uris (oauth_client_id, redirect_uri) VALUES ($1, $2)",
+            &c.id as &OAuthClientId,
+            uri
+        ).execute(&mut **tx.inner).await?;
         }
 
-        sqlx::query(
+        sqlx::query!(
             "DELETE FROM oauth_client_post_logout_redirect_uris WHERE oauth_client_id = $1",
+            &c.id as &OAuthClientId
         )
-        .bind(&c.id)
         .execute(&mut **tx.inner)
         .await?;
         for uri in &c.post_logout_redirect_uris {
-            sqlx::query(
+            sqlx::query!(
                 "INSERT INTO oauth_client_post_logout_redirect_uris \
                  (oauth_client_id, post_logout_redirect_uri) VALUES ($1, $2)",
+                &c.id as &OAuthClientId,
+                uri
             )
-            .bind(&c.id)
-            .bind(uri)
             .execute(&mut **tx.inner)
             .await?;
         }
 
-        sqlx::query("DELETE FROM oauth_client_grant_types WHERE oauth_client_id = $1")
-            .bind(&c.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM oauth_client_grant_types WHERE oauth_client_id = $1",
+            &c.id as &OAuthClientId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         for gt in &c.grant_types {
-            sqlx::query(
-                "INSERT INTO oauth_client_grant_types (oauth_client_id, grant_type) VALUES ($1, $2)"
-            )
-            .bind(&c.id).bind(gt).execute(&mut **tx.inner).await?;
-        }
-
-        sqlx::query("DELETE FROM oauth_client_application_ids WHERE oauth_client_id = $1")
-            .bind(&c.id)
+            sqlx::query!(
+            "INSERT INTO oauth_client_grant_types (oauth_client_id, grant_type) VALUES ($1, $2)",
+            &c.id as &OAuthClientId,
+            gt as &GrantType
+        )
             .execute(&mut **tx.inner)
             .await?;
+        }
+
+        sqlx::query!(
+            "DELETE FROM oauth_client_application_ids WHERE oauth_client_id = $1",
+            &c.id as &OAuthClientId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         for app_id in &c.application_ids {
-            sqlx::query(
-                "INSERT INTO oauth_client_application_ids (oauth_client_id, application_id) VALUES ($1, $2)"
-            )
-            .bind(&c.id).bind(app_id).execute(&mut **tx.inner).await?;
+            sqlx::query!(
+            "INSERT INTO oauth_client_application_ids (oauth_client_id, application_id) VALUES ($1, $2)",
+            &c.id as &OAuthClientId,
+            app_id as &ApplicationId
+        ).execute(&mut **tx.inner).await?;
         }
 
-        sqlx::query("DELETE FROM oauth_client_allowed_origins WHERE oauth_client_id = $1")
-            .bind(&c.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM oauth_client_allowed_origins WHERE oauth_client_id = $1",
+            &c.id as &OAuthClientId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         for origin in &c.allowed_origins {
-            sqlx::query(
-                "INSERT INTO oauth_client_allowed_origins (oauth_client_id, allowed_origin) VALUES ($1, $2)"
-            )
-            .bind(&c.id).bind(origin).execute(&mut **tx.inner).await?;
+            sqlx::query!(
+            "INSERT INTO oauth_client_allowed_origins (oauth_client_id, allowed_origin) VALUES ($1, $2)",
+            &c.id as &OAuthClientId,
+            origin
+        ).execute(&mut **tx.inner).await?;
         }
 
         self.invalidate_cache(c).await;
@@ -921,32 +1027,42 @@ impl Persist<OAuthClient> for OAuthClientRepository {
     }
 
     async fn delete(&self, c: &OAuthClient, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query("DELETE FROM oauth_client_redirect_uris WHERE oauth_client_id = $1")
-            .bind(&c.id)
-            .execute(&mut **tx.inner)
-            .await?;
-        sqlx::query(
-            "DELETE FROM oauth_client_post_logout_redirect_uris WHERE oauth_client_id = $1",
+        sqlx::query!(
+            "DELETE FROM oauth_client_redirect_uris WHERE oauth_client_id = $1",
+            &c.id as &OAuthClientId
         )
-        .bind(&c.id)
         .execute(&mut **tx.inner)
         .await?;
-        sqlx::query("DELETE FROM oauth_client_grant_types WHERE oauth_client_id = $1")
-            .bind(&c.id)
-            .execute(&mut **tx.inner)
-            .await?;
-        sqlx::query("DELETE FROM oauth_client_application_ids WHERE oauth_client_id = $1")
-            .bind(&c.id)
-            .execute(&mut **tx.inner)
-            .await?;
-        sqlx::query("DELETE FROM oauth_client_allowed_origins WHERE oauth_client_id = $1")
-            .bind(&c.id)
-            .execute(&mut **tx.inner)
-            .await?;
-        sqlx::query("DELETE FROM oauth_clients WHERE id = $1")
-            .bind(&c.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM oauth_client_post_logout_redirect_uris WHERE oauth_client_id = $1",
+            &c.id as &OAuthClientId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
+        sqlx::query!(
+            "DELETE FROM oauth_client_grant_types WHERE oauth_client_id = $1",
+            &c.id as &OAuthClientId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
+        sqlx::query!(
+            "DELETE FROM oauth_client_application_ids WHERE oauth_client_id = $1",
+            &c.id as &OAuthClientId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
+        sqlx::query!(
+            "DELETE FROM oauth_client_allowed_origins WHERE oauth_client_id = $1",
+            &c.id as &OAuthClientId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
+        sqlx::query!(
+            "DELETE FROM oauth_clients WHERE id = $1",
+            &c.id as &OAuthClientId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         self.invalidate_cache(c).await;
         Ok(())
     }

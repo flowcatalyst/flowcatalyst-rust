@@ -1,0 +1,93 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT pi.id AS \"id: PortalIdentityId\", pi.client_id AS \"client_id: ClientId\", pi.email, pi.name, pi.password_hash, pi.status AS \"status: Stored<IdentityStatus>\", pi.source AS \"source: Stored<IdentitySource>\", pi.last_login_at, pi.invited_at, pi.invite_expires_at, pi.created_at, pi.updated_at FROM portal_identities pi WHERE pi.client_id = $1 AND ($2::text IS NULL OR pi.email LIKE $2 OR lower(pi.name) LIKE $2) AND ($3::text IS NULL OR EXISTS (SELECT 1 FROM portal_identity_apps g WHERE g.identity_id = pi.id AND g.portal_app_id = $3)) AND (NOT $4 OR NOT EXISTS (SELECT 1 FROM portal_identity_apps g WHERE g.identity_id = pi.id)) ORDER BY pi.created_at DESC, pi.id DESC LIMIT $5 OFFSET $6",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: PortalIdentityId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "client_id: ClientId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "email",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "password_hash",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "status: Stored<IdentityStatus>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "source: Stored<IdentitySource>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "last_login_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "invited_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "invite_expires_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Bool",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "c1279182ae08931a947c992b2c53c83f271f7793fe09105a753d2e072ba28111"
+}

@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO oauth_idp_role_mappings\n                (id, idp_role_name, internal_role_name, created_at, updated_at)\n             VALUES ($1, $2, $3, $4, $5)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4e8728457579354a6e90172c6a06d24f6fa6539aeb462354acad4f5eb9a55552"
+}

@@ -34,10 +34,9 @@ use std::fmt::Formatter;
 use std::slice::from_ref;
 
 /// Row mapping for iam_principals table (SERVICE type rows)
-#[derive(sqlx::FromRow, Clone)]
+#[derive(Clone)]
 struct PrincipalRow {
     id: PrincipalId,
-    #[sqlx(rename = "type")]
     #[allow(dead_code)]
     principal_type: Stored<PrincipalType>,
     scope: Option<Stored<UserScope>>,
@@ -52,7 +51,7 @@ struct PrincipalRow {
 }
 
 /// Row mapping for iam_service_accounts table (webhook credentials side)
-#[derive(sqlx::FromRow, Clone)]
+#[derive(Clone)]
 struct ServiceAccountRow {
     id: String,
     code: String,
@@ -83,14 +82,12 @@ struct ServiceAccountRow {
 }
 
 /// Row mapping for iam_client_access_grants (a PARTNER account's clients)
-#[derive(sqlx::FromRow)]
 struct ClientGrantRow {
     principal_id: PrincipalId,
     client_id: ClientId,
 }
 
 /// Row mapping for iam_principal_application_access
-#[derive(sqlx::FromRow)]
 struct ApplicationGrantRow {
     principal_id: PrincipalId,
     application_id: ApplicationId,
@@ -105,7 +102,6 @@ struct Grants {
 }
 
 /// Row mapping for iam_principal_roles junction table
-#[derive(sqlx::FromRow)]
 struct PrincipalRoleRow {
     principal_id: PrincipalId,
     role_name: String,
@@ -135,7 +131,6 @@ impl TryFrom<PrincipalRoleRow> for RoleAssignment {
 
 /// A service account's webhook credentials as stored: `encrypted:` refs,
 /// opened only by [`crate::service_account::outbound_credentials`].
-#[derive(sqlx::FromRow)]
 pub struct StoredWebhookCredentials {
     pub code: String,
     pub active: bool,
@@ -154,9 +149,7 @@ impl fmt::Debug for StoredWebhookCredentials {
 }
 
 /// One row of [`ServiceAccountRepository::find_signing_accounts`].
-#[derive(sqlx::FromRow)]
 struct SigningAccountRow {
-    #[sqlx(rename = "ref")]
     reference: String,
     code: String,
     application_id: Option<String>,
@@ -181,7 +174,7 @@ impl ServiceAccountRepository {
         let wh = &account.webhook_credentials;
         let sa_id = account.account_id();
 
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO iam_service_accounts
                 (id, code, name, description, application_id, active,
                  wh_auth_type, wh_auth_token_ref, wh_signing_secret_ref, wh_signing_algorithm,
@@ -190,27 +183,27 @@ impl ServiceAccountRepository {
                  wh_username, wh_password_ref, wh_header_name, wh_signature_header)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULL, $12, $13, $14, $15, $16,
                      $17, $18, $19, $20)",
+            sa_id,
+            &account.code,
+            &account.name,
+            account.description.as_ref(),
+            &account.application_id as &Option<ApplicationId>,
+            account.active,
+            Some(wh.auth_type) as Option<WebhookAuthType>,
+            wh.token.as_ref(),
+            wh.signing_secret.as_ref(),
+            wh.signing_algorithm as Option<SigningAlgorithm>,
+            Some(now), /* wh_credentials_created_at */
+            account.last_used_at,
+            now,
+            now,
+            account.requested_scope.as_ref(),
+            &account.client_ids as &[ClientId],
+            wh.username.as_ref(),
+            wh.password.as_ref(),
+            wh.header_name.as_ref(),
+            wh.signature_header.as_ref()
         )
-        .bind(sa_id)
-        .bind(&account.code)
-        .bind(&account.name)
-        .bind(&account.description)
-        .bind(&account.application_id)
-        .bind(account.active)
-        .bind(Some(wh.auth_type))
-        .bind(&wh.token)
-        .bind(&wh.signing_secret)
-        .bind(wh.signing_algorithm)
-        .bind(Some(now)) // wh_credentials_created_at
-        .bind(account.last_used_at)
-        .bind(now)
-        .bind(now)
-        .bind(&account.requested_scope)
-        .bind(&account.client_ids)
-        .bind(&wh.username)
-        .bind(&wh.password)
-        .bind(&wh.header_name)
-        .bind(&wh.signature_header)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -222,15 +215,21 @@ impl ServiceAccountRepository {
     /// `sac_` id travels in the `PrincipalId` parameter: see
     /// [`crate::service_account::account_or_principal_id`].
     pub async fn find_by_id(&self, id: &PrincipalId) -> Result<Option<ServiceAccount>> {
-        let principal = sqlx::query_as::<_, PrincipalRow>(
-            "SELECT id, type, scope, client_id, application_id, name, active, \
-             service_account_id, all_applications, created_at, updated_at \
+        let principal = sqlx::query_as!(
+            PrincipalRow,
+            "SELECT id AS \"id: PrincipalId\", \
+                    type AS \"principal_type: Stored<PrincipalType>\", \
+                    scope AS \"scope: Stored<UserScope>\", \
+                    client_id AS \"client_id: ClientId\", \
+                    application_id AS \"application_id: ApplicationId\", name, active, \
+                    service_account_id, all_applications, created_at, updated_at \
+                    \
              FROM iam_principals WHERE id = $1 \
              OR (type = $2 AND service_account_id = $1) \
              ORDER BY (id = $1) DESC, created_at LIMIT 1",
+            id as &PrincipalId,
+            PrincipalType::Service as PrincipalType
         )
-        .bind(id)
-        .bind(PrincipalType::Service)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -243,25 +242,36 @@ impl ServiceAccountRepository {
     /// Find by service account code.
     pub async fn find_by_code(&self, code: &str) -> Result<Option<ServiceAccount>> {
         // Look up the service_account_id from iam_service_accounts, then find the principal
-        let sa = sqlx::query_as::<_, ServiceAccountRow>(
-            "SELECT id, code, name, description, application_id, scope, client_ids, active, \
-             wh_auth_type, wh_auth_token_ref, wh_signing_secret_ref, wh_signing_algorithm, \
-             wh_username, wh_password_ref, wh_header_name, wh_signature_header, \
-             last_used_at, created_at, updated_at \
+        let sa = sqlx::query_as!(
+            ServiceAccountRow,
+            "SELECT id, code, name, description, application_id, scope, \
+                    client_ids AS \"client_ids: Vec<ClientId>\", active, \
+                    wh_auth_type AS \"wh_auth_type: Stored<WebhookAuthType>\", \
+                    wh_auth_token_ref, wh_signing_secret_ref, \
+                    wh_signing_algorithm AS \"wh_signing_algorithm: Stored<SigningAlgorithm>\", \
+                    wh_username, wh_password_ref, wh_header_name, wh_signature_header, \
+                    last_used_at, created_at, updated_at \
+                    \
              FROM iam_service_accounts WHERE code = $1",
+            code
         )
-        .bind(code)
         .fetch_optional(&self.pool)
         .await?;
 
         match sa {
             Some(sa_row) => {
-                let principal = sqlx::query_as::<_, PrincipalRow>(
-                    "SELECT id, type, scope, client_id, application_id, name, active, \
-                     service_account_id, all_applications, created_at, updated_at \
+                let principal = sqlx::query_as!(
+                    PrincipalRow,
+                    "SELECT id AS \"id: PrincipalId\", \
+                    type AS \"principal_type: Stored<PrincipalType>\", \
+                    scope AS \"scope: Stored<UserScope>\", \
+                    client_id AS \"client_id: ClientId\", \
+                    application_id AS \"application_id: ApplicationId\", name, active, \
+                    service_account_id, all_applications, created_at, updated_at \
+                    \
                      FROM iam_principals WHERE service_account_id = $1",
+                    &sa_row.id
                 )
-                .bind(&sa_row.id)
                 .fetch_optional(&self.pool)
                 .await?;
                 match principal {
@@ -276,12 +286,18 @@ impl ServiceAccountRepository {
     /// Find all active service account principals.
     /// Every service account, active or not (Go `FindAll`).
     pub async fn find_all(&self) -> Result<Vec<ServiceAccount>> {
-        let principals = sqlx::query_as::<_, PrincipalRow>(
-            "SELECT id, type, scope, client_id, application_id, name, active, \
-             service_account_id, all_applications, created_at, updated_at \
+        let principals = sqlx::query_as!(
+            PrincipalRow,
+            "SELECT id AS \"id: PrincipalId\", \
+                    type AS \"principal_type: Stored<PrincipalType>\", \
+                    scope AS \"scope: Stored<UserScope>\", \
+                    client_id AS \"client_id: ClientId\", \
+                    application_id AS \"application_id: ApplicationId\", name, active, \
+                    service_account_id, all_applications, created_at, updated_at \
+                    \
              FROM iam_principals WHERE type = $1",
+            PrincipalType::Service as PrincipalType
         )
-        .bind(PrincipalType::Service)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_many(principals).await
@@ -292,20 +308,28 @@ impl ServiceAccountRepository {
     /// event (the token endpoint is infrastructure, like the login-attempt
     /// record beside it).
     pub async fn touch_last_used(&self, service_account_id: &str) -> Result<()> {
-        sqlx::query("UPDATE iam_service_accounts SET last_used_at = NOW() WHERE id = $1")
-            .bind(service_account_id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query!(
+            "UPDATE iam_service_accounts SET last_used_at = NOW() WHERE id = $1",
+            service_account_id
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
     pub async fn find_active(&self) -> Result<Vec<ServiceAccount>> {
-        let principals = sqlx::query_as::<_, PrincipalRow>(
-            "SELECT id, type, scope, client_id, application_id, name, active, \
-             service_account_id, all_applications, created_at, updated_at \
+        let principals = sqlx::query_as!(
+            PrincipalRow,
+            "SELECT id AS \"id: PrincipalId\", \
+                    type AS \"principal_type: Stored<PrincipalType>\", \
+                    scope AS \"scope: Stored<UserScope>\", \
+                    client_id AS \"client_id: ClientId\", \
+                    application_id AS \"application_id: ApplicationId\", name, active, \
+                    service_account_id, all_applications, created_at, updated_at \
+                    \
              FROM iam_principals WHERE type = $1 AND active = true",
+            PrincipalType::Service as PrincipalType
         )
-        .bind(PrincipalType::Service)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_many(principals).await
@@ -316,13 +340,19 @@ impl ServiceAccountRepository {
         &self,
         application_id: &ApplicationId,
     ) -> Result<Vec<ServiceAccount>> {
-        let principals = sqlx::query_as::<_, PrincipalRow>(
-            "SELECT id, type, scope, client_id, application_id, name, active, \
-             service_account_id, all_applications, created_at, updated_at \
+        let principals = sqlx::query_as!(
+            PrincipalRow,
+            "SELECT id AS \"id: PrincipalId\", \
+                    type AS \"principal_type: Stored<PrincipalType>\", \
+                    scope AS \"scope: Stored<UserScope>\", \
+                    client_id AS \"client_id: ClientId\", \
+                    application_id AS \"application_id: ApplicationId\", name, active, \
+                    service_account_id, all_applications, created_at, updated_at \
+                    \
              FROM iam_principals WHERE type = $2 AND application_id = $1",
+            application_id as &ApplicationId,
+            PrincipalType::Service as PrincipalType
         )
-        .bind(application_id)
-        .bind(PrincipalType::Service)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_many(principals).await
@@ -336,13 +366,14 @@ impl ServiceAccountRepository {
         &self,
         application_id: &ApplicationId,
     ) -> Result<bool> {
-        let row: Option<(Option<String>,)> = sqlx::query_as(
+        let row: Option<(Option<String>,)> = sqlx::query!(
             "SELECT wh_signing_secret_ref FROM iam_service_accounts \
              WHERE application_id = $1 AND active = true ORDER BY created_at ASC LIMIT 1",
+            application_id as &ApplicationId
         )
-        .bind(application_id)
         .fetch_optional(&self.pool)
-        .await?;
+        .await?
+        .map(|r| (r.wh_signing_secret_ref,));
         Ok(matches!(row, Some((Some(secret),)) if !secret.is_empty()))
     }
 
@@ -354,12 +385,14 @@ impl ServiceAccountRepository {
         &self,
         application_id: &ApplicationId,
     ) -> Result<Option<StoredWebhookCredentials>> {
-        let row = sqlx::query_as::<_, StoredWebhookCredentials>(
+        let row = sqlx::query_as!(
+            StoredWebhookCredentials,
             "SELECT code, active, wh_auth_token_ref AS token_ref, \
-             wh_signing_secret_ref AS signing_secret_ref FROM iam_service_accounts \
+                    wh_signing_secret_ref AS signing_secret_ref \
+                    FROM iam_service_accounts \
              WHERE application_id = $1 AND active = true ORDER BY created_at ASC LIMIT 1",
+            application_id as &ApplicationId
         )
-        .bind(application_id)
         .fetch_optional(&self.pool)
         .await?;
         Ok(row)
@@ -409,13 +442,15 @@ impl ServiceAccountRepository {
         &self,
         id: &str,
     ) -> Result<Option<StoredWebhookCredentials>> {
-        let row = sqlx::query_as::<_, StoredWebhookCredentials>(
+        let row = sqlx::query_as!(
+            StoredWebhookCredentials,
             "SELECT code, active, wh_auth_token_ref AS token_ref, \
-             wh_signing_secret_ref AS signing_secret_ref FROM iam_service_accounts \
+                    wh_signing_secret_ref AS signing_secret_ref \
+                    FROM iam_service_accounts \
              WHERE id = $1 OR id = (SELECT service_account_id FROM iam_principals WHERE id = $1) \
              LIMIT 1",
+            id
         )
-        .bind(id)
         .fetch_optional(&self.pool)
         .await?;
         Ok(row)
@@ -435,10 +470,16 @@ impl ServiceAccountRepository {
         if references.is_empty() {
             return Ok(HashMap::new());
         }
-        let rows = sqlx::query_as::<_, SigningAccountRow>(
-            "SELECT r.ref, sa.code, sa.application_id, sa.client_ids, \
-                    p.id AS principal_id, p.scope, p.client_id, \
-                    COALESCE(g.clients, '{}'::text[]) AS granted \
+        // `reference!` is the unnested NOT NULL ref, `granted!` a COALESCE: neither is NULL.
+        let rows = sqlx::query_as!(
+            SigningAccountRow,
+            "SELECT r.ref AS \"reference!\", sa.code, sa.application_id, \
+                    sa.client_ids AS \"client_ids: Vec<ClientId>\", \
+                    p.id AS \"principal_id?: PrincipalId\", \
+                    p.scope AS \"scope?: Stored<UserScope>\", \
+                    p.client_id AS \"client_id?: ClientId\", \
+                    COALESCE(g.clients, '{}'::text[]) AS \"granted!: Vec<ClientId>\" \
+                    \
              FROM unnest($1::text[]) AS r(ref) \
              JOIN iam_service_accounts sa ON sa.id = r.ref \
                   OR sa.id = (SELECT service_account_id FROM iam_principals WHERE id = r.ref) \
@@ -446,8 +487,8 @@ impl ServiceAccountRepository {
                   WHERE service_account_id = sa.id ORDER BY created_at LIMIT 1) p ON true \
              LEFT JOIN LATERAL (SELECT array_agg(client_id::text ORDER BY client_id) AS clients \
                   FROM iam_client_access_grants WHERE principal_id = p.id) g ON true",
+            references
         )
-        .bind(references)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
@@ -484,13 +525,14 @@ impl ServiceAccountRepository {
         &self,
         principal_id: &PrincipalId,
     ) -> Result<Option<ApplicationId>> {
-        let row = sqlx::query_as::<_, (Option<String>,)>(
+        let row = sqlx::query!(
             "SELECT sa.application_id FROM iam_principals p \
              JOIN iam_service_accounts sa ON sa.id = p.service_account_id WHERE p.id = $1",
+            principal_id as &PrincipalId
         )
-        .bind(principal_id)
         .fetch_optional(&self.pool)
-        .await?;
+        .await?
+        .map(|r| (r.application_id,));
         Ok(row
             .and_then(|(application_id,)| application_id)
             .filter(|a| !a.trim().is_empty())
@@ -499,13 +541,19 @@ impl ServiceAccountRepository {
 
     /// Find service accounts by client ID.
     pub async fn find_by_client(&self, client_id: &ClientId) -> Result<Vec<ServiceAccount>> {
-        let principals = sqlx::query_as::<_, PrincipalRow>(
-            "SELECT id, type, scope, client_id, application_id, name, active, \
-             service_account_id, all_applications, created_at, updated_at \
+        let principals = sqlx::query_as!(
+            PrincipalRow,
+            "SELECT id AS \"id: PrincipalId\", \
+                    type AS \"principal_type: Stored<PrincipalType>\", \
+                    scope AS \"scope: Stored<UserScope>\", \
+                    client_id AS \"client_id: ClientId\", \
+                    application_id AS \"application_id: ApplicationId\", name, active, \
+                    service_account_id, all_applications, created_at, updated_at \
+                    \
              FROM iam_principals WHERE type = $2 AND client_id = $1 AND active = true",
+            client_id as &ClientId,
+            PrincipalType::Service as PrincipalType
         )
-        .bind(client_id)
-        .bind(PrincipalType::Service)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_many(principals).await
@@ -513,15 +561,22 @@ impl ServiceAccountRepository {
 
     /// Find service accounts with a specific role.
     pub async fn find_with_role(&self, role: &str) -> Result<Vec<ServiceAccount>> {
-        let principals = sqlx::query_as::<_, PrincipalRow>(
-            "SELECT p.id, p.type, p.scope, p.client_id, p.application_id, p.name, p.active, \
-             p.service_account_id, p.all_applications, p.created_at, p.updated_at \
+        let principals = sqlx::query_as!(
+            PrincipalRow,
+            "SELECT p.id AS \"id: PrincipalId\", \
+                    p.type AS \"principal_type: Stored<PrincipalType>\", \
+                    p.scope AS \"scope?: Stored<UserScope>\", \
+                    p.client_id AS \"client_id?: ClientId\", \
+                    p.application_id AS \"application_id: ApplicationId\", p.name, \
+                    p.active, p.service_account_id, p.all_applications, p.created_at, \
+                    p.updated_at \
+                    \
              FROM iam_principals p
              INNER JOIN iam_principal_roles pr ON pr.principal_id = p.id
              WHERE p.type = $2 AND p.active = true AND pr.role_name = $1",
+            role,
+            PrincipalType::Service as PrincipalType
         )
-        .bind(role)
-        .bind(PrincipalType::Service)
         .fetch_all(&self.pool)
         .await?;
 
@@ -533,7 +588,7 @@ impl ServiceAccountRepository {
         if account.service_account_table_id.is_some() {
             let sa_table_id = account.account_id();
             let wh = &account.webhook_credentials;
-            sqlx::query(
+            sqlx::query!(
                 "UPDATE iam_service_accounts SET
                     code = $2, name = $3, description = $4, application_id = $5, active = $6,
                     wh_auth_type = $7, wh_auth_token_ref = $8, wh_signing_secret_ref = $9,
@@ -541,25 +596,25 @@ impl ServiceAccountRepository {
                     scope = $13, client_ids = $14, wh_username = $15, wh_password_ref = $16,
                     wh_header_name = $17, wh_signature_header = $18
                  WHERE id = $1",
+                sa_table_id,
+                &account.code,
+                &account.name,
+                account.description.as_ref(),
+                &account.application_id as &Option<ApplicationId>,
+                account.active,
+                Some(wh.auth_type) as Option<WebhookAuthType>,
+                wh.token.as_ref(),
+                wh.signing_secret.as_ref(),
+                wh.signing_algorithm as Option<SigningAlgorithm>,
+                account.last_used_at,
+                now,
+                account.requested_scope.as_ref(),
+                &account.client_ids as &[ClientId],
+                wh.username.as_ref(),
+                wh.password.as_ref(),
+                wh.header_name.as_ref(),
+                wh.signature_header.as_ref()
             )
-            .bind(sa_table_id)
-            .bind(&account.code)
-            .bind(&account.name)
-            .bind(&account.description)
-            .bind(&account.application_id)
-            .bind(account.active)
-            .bind(Some(wh.auth_type))
-            .bind(&wh.token)
-            .bind(&wh.signing_secret)
-            .bind(wh.signing_algorithm)
-            .bind(account.last_used_at)
-            .bind(now)
-            .bind(&account.requested_scope)
-            .bind(&account.client_ids)
-            .bind(&wh.username)
-            .bind(&wh.password)
-            .bind(&wh.header_name)
-            .bind(&wh.signature_header)
             .execute(&self.pool)
             .await?;
         }
@@ -568,10 +623,12 @@ impl ServiceAccountRepository {
 
     pub async fn delete(&self, id: &PrincipalId) -> Result<bool> {
         // Delete the principal (CASCADE will clean up roles)
-        let result = sqlx::query("DELETE FROM iam_principals WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        let result = sqlx::query!(
+            "DELETE FROM iam_principals WHERE id = $1",
+            id as &PrincipalId
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -581,14 +638,19 @@ impl ServiceAccountRepository {
     /// webhook credentials from iam_service_accounts and its grants.
     async fn hydrate(&self, principal: PrincipalRow) -> Result<ServiceAccount> {
         let sa_row = if let Some(ref sa_id) = principal.service_account_id {
-            sqlx::query_as::<_, ServiceAccountRow>(
-                "SELECT id, code, name, description, application_id, scope, client_ids, active, \
-                 wh_auth_type, wh_auth_token_ref, wh_signing_secret_ref, wh_signing_algorithm, \
-                 wh_username, wh_password_ref, wh_header_name, wh_signature_header, \
-                 last_used_at, created_at, updated_at \
+            sqlx::query_as!(
+                ServiceAccountRow,
+                "SELECT id, code, name, description, application_id, scope, \
+                    client_ids AS \"client_ids: Vec<ClientId>\", active, \
+                    wh_auth_type AS \"wh_auth_type: Stored<WebhookAuthType>\", \
+                    wh_auth_token_ref, wh_signing_secret_ref, \
+                    wh_signing_algorithm AS \"wh_signing_algorithm: Stored<SigningAlgorithm>\", \
+                    wh_username, wh_password_ref, wh_header_name, wh_signature_header, \
+                    last_used_at, created_at, updated_at \
+                    \
                  FROM iam_service_accounts WHERE id = $1",
+                sa_id
             )
-            .bind(sa_id)
             .fetch_optional(&self.pool)
             .await?
         } else {
@@ -623,14 +685,19 @@ impl ServiceAccountRepository {
             .collect();
 
         let sa_rows: HashMap<String, ServiceAccountRow> = if !sa_ids.is_empty() {
-            sqlx::query_as::<_, ServiceAccountRow>(
-                "SELECT id, code, name, description, application_id, scope, client_ids, active, \
-                 wh_auth_type, wh_auth_token_ref, wh_signing_secret_ref, wh_signing_algorithm, \
-                 wh_username, wh_password_ref, wh_header_name, wh_signature_header, \
-                 last_used_at, created_at, updated_at \
+            sqlx::query_as!(
+                ServiceAccountRow,
+                "SELECT id, code, name, description, application_id, scope, \
+                    client_ids AS \"client_ids: Vec<ClientId>\", active, \
+                    wh_auth_type AS \"wh_auth_type: Stored<WebhookAuthType>\", \
+                    wh_auth_token_ref, wh_signing_secret_ref, \
+                    wh_signing_algorithm AS \"wh_signing_algorithm: Stored<SigningAlgorithm>\", \
+                    wh_username, wh_password_ref, wh_header_name, wh_signature_header, \
+                    last_used_at, created_at, updated_at \
+                    \
                  FROM iam_service_accounts WHERE id = ANY($1)",
+                &sa_ids
             )
-            .bind(&sa_ids)
             .fetch_all(&self.pool)
             .await?
             .into_iter()
@@ -756,23 +823,33 @@ impl ServiceAccountRepository {
         principal_ids: &[PrincipalId],
     ) -> Result<HashMap<PrincipalId, Grants>> {
         let (roles, clients, applications) = tokio::try_join!(
-            sqlx::query_as::<_, PrincipalRoleRow>(
-                "SELECT principal_id, role_name, assignment_source, assigned_at, assigned_by \
+            sqlx::query_as!(
+                PrincipalRoleRow,
+                "SELECT principal_id AS \"principal_id: PrincipalId\", role_name, \
+                    assignment_source AS \"assignment_source: Stored<AssignmentSource>\", \
+                    assigned_at, assigned_by \
+                    \
                  FROM iam_principal_roles WHERE principal_id = ANY($1)",
+                principal_ids as &[PrincipalId]
             )
-            .bind(principal_ids)
             .fetch_all(&self.pool),
-            sqlx::query_as::<_, ClientGrantRow>(
-                "SELECT principal_id, client_id FROM iam_client_access_grants \
+            sqlx::query_as!(
+                ClientGrantRow,
+                "SELECT principal_id AS \"principal_id: PrincipalId\", \
+                    client_id AS \"client_id: ClientId\" \
+                    FROM iam_client_access_grants \
                  WHERE principal_id = ANY($1) ORDER BY granted_at, client_id",
+                principal_ids as &[PrincipalId]
             )
-            .bind(principal_ids)
             .fetch_all(&self.pool),
-            sqlx::query_as::<_, ApplicationGrantRow>(
-                "SELECT principal_id, application_id FROM iam_principal_application_access \
+            sqlx::query_as!(
+                ApplicationGrantRow,
+                "SELECT principal_id AS \"principal_id: PrincipalId\", \
+                    application_id AS \"application_id: ApplicationId\" \
+                    FROM iam_principal_application_access \
                  WHERE principal_id = ANY($1) ORDER BY granted_at, application_id",
+                principal_ids as &[PrincipalId]
             )
-            .bind(principal_ids)
             .fetch_all(&self.pool),
         )?;
 
@@ -844,7 +921,7 @@ impl Persist<ServiceAccount> for ServiceAccountRepository {
         let wh = &sa.webhook_credentials;
 
         // 1. Upsert iam_principals (SERVICE type principal)
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO iam_principals (id, type, scope, client_id, application_id, name, active, email, email_domain, idp_type, external_idp_id, password_hash, last_login_at, service_account_id, created_at, updated_at, all_applications)
              VALUES ($1, $11, $2, $3, $4, $5, $6, NULL, NULL, NULL, NULL, NULL, NULL, $7, $8, $9, $10)
              ON CONFLICT (id) DO UPDATE SET
@@ -854,24 +931,23 @@ impl Persist<ServiceAccount> for ServiceAccountRepository {
                 active = EXCLUDED.active,
                 client_id = EXCLUDED.client_id,
                 application_id = EXCLUDED.application_id,
-                updated_at = EXCLUDED.updated_at"
+                updated_at = EXCLUDED.updated_at",
+            &sa.id as &PrincipalId,
+            sa.scope as UserScope,
+            home_client_id as Option<&ClientId>,
+            &sa.application_id as &Option<ApplicationId>,
+            &sa.name,
+            sa.active,
+            Some(&sa_table_id),
+            sa.created_at,
+            now,
+            sa.all_applications,
+            PrincipalType::Service as PrincipalType
         )
-        .bind(&sa.id)
-        .bind(sa.scope)
-        .bind(home_client_id)
-        .bind(&sa.application_id)
-        .bind(&sa.name)
-        .bind(sa.active)
-        // The principal links to the account row (Go `service_account_id`).
-        .bind(Some(&sa_table_id))
-        .bind(sa.created_at)
-        .bind(now)
-        .bind(sa.all_applications)
-        .bind(PrincipalType::Service)
         .execute(&mut **tx.inner).await?;
 
         // 2. Upsert iam_service_accounts (webhook credentials)
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO iam_service_accounts (id, code, name, description, application_id, active, wh_auth_type, wh_auth_token_ref, wh_signing_secret_ref, wh_signing_algorithm, wh_credentials_created_at, last_used_at, created_at, updated_at, scope, client_ids, wh_username, wh_password_ref, wh_header_name, wh_signature_header)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
              ON CONFLICT (id) DO UPDATE SET
@@ -891,76 +967,82 @@ impl Persist<ServiceAccount> for ServiceAccountRepository {
                 wh_header_name = EXCLUDED.wh_header_name,
                 wh_signature_header = EXCLUDED.wh_signature_header,
                 last_used_at = EXCLUDED.last_used_at,
-                updated_at = EXCLUDED.updated_at"
+                updated_at = EXCLUDED.updated_at",
+            sa_table_id,
+            &sa.code,
+            &sa.name,
+            sa.description.as_ref(),
+            &sa.application_id as &Option<ApplicationId>,
+            sa.active,
+            Some(wh.auth_type) as Option<WebhookAuthType>,
+            wh.token.as_ref(),
+            wh.signing_secret.as_ref(),
+            wh.signing_algorithm as Option<SigningAlgorithm>,
+            Some(now),
+            sa.last_used_at,
+            now,
+            now,
+            sa.requested_scope.as_ref(),
+            &sa.client_ids as &[ClientId],
+            wh.username.as_ref(),
+            wh.password.as_ref(),
+            wh.header_name.as_ref(),
+            wh.signature_header.as_ref()
         )
-        .bind(sa_table_id)
-        .bind(&sa.code)
-        .bind(&sa.name)
-        .bind(&sa.description)
-        .bind(&sa.application_id)
-        .bind(sa.active)
-        .bind(Some(wh.auth_type))
-        .bind(&wh.token)
-        .bind(&wh.signing_secret)
-        .bind(wh.signing_algorithm)
-        .bind(Some(now))
-        .bind(sa.last_used_at)
-        .bind(now)
-        .bind(now)
-        .bind(&sa.requested_scope)
-        .bind(&sa.client_ids)
-        .bind(&wh.username)
-        .bind(&wh.password)
-        .bind(&wh.header_name)
-        .bind(&wh.signature_header)
         .execute(&mut **tx.inner).await?;
 
         // 3. Sync client grants: exactly the PARTNER account's clients.
-        sqlx::query("DELETE FROM iam_client_access_grants WHERE principal_id = $1")
-            .bind(&sa.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM iam_client_access_grants WHERE principal_id = $1",
+            &sa.id as &PrincipalId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         if !granted_client_ids.is_empty() {
             let grant_ids: Vec<String> = granted_client_ids
                 .iter()
                 .map(|_| tsid::generate(EntityType::ClientAccessGrant))
                 .collect();
-            sqlx::query(
+            sqlx::query!(
                 "INSERT INTO iam_client_access_grants
                     (id, principal_id, client_id, granted_by, granted_at, created_at, updated_at)
                  SELECT g.id, $1, g.client_id, $1, $4, $4, $4
                  FROM UNNEST($2::text[], $3::text[]) AS g(id, client_id)",
+                &sa.id as &PrincipalId,
+                &grant_ids,
+                granted_client_ids as &[ClientId],
+                now
             )
-            .bind(&sa.id)
-            .bind(&grant_ids)
-            .bind(granted_client_ids)
-            .bind(now)
             .execute(&mut **tx.inner)
             .await?;
         }
 
         // 4. Sync application grants.
-        sqlx::query("DELETE FROM iam_principal_application_access WHERE principal_id = $1")
-            .bind(&sa.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM iam_principal_application_access WHERE principal_id = $1",
+            &sa.id as &PrincipalId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         if !sa.accessible_application_ids.is_empty() {
-            sqlx::query(
-                "INSERT INTO iam_principal_application_access (principal_id, application_id, granted_at)
+            sqlx::query!(
+            "INSERT INTO iam_principal_application_access (principal_id, application_id, granted_at)
                  SELECT $1, a, $3 FROM UNNEST($2::varchar[]) AS a",
-            )
-            .bind(&sa.id)
-            .bind(&sa.accessible_application_ids)
-            .bind(now)
+            &sa.id as &PrincipalId,
+            &sa.accessible_application_ids as &[ApplicationId],
+            now
+        )
             .execute(&mut **tx.inner)
             .await?;
         }
 
         // 5. Sync roles to iam_principal_roles using the principal ID
-        sqlx::query("DELETE FROM iam_principal_roles WHERE principal_id = $1")
-            .bind(&sa.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM iam_principal_roles WHERE principal_id = $1",
+            &sa.id as &PrincipalId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         if !sa.roles.is_empty() {
             let role_names: Vec<&str> = sa.roles.iter().map(|r| r.role.as_str()).collect();
             let sources: Vec<Option<&str>> = sa
@@ -971,18 +1053,18 @@ impl Persist<ServiceAccount> for ServiceAccountRepository {
             let assigned_ats: Vec<DateTime<Utc>> = sa.roles.iter().map(|r| r.assigned_at).collect();
             let assigned_bys: Vec<Option<&str>> =
                 sa.roles.iter().map(|r| r.assigned_by.as_deref()).collect();
-            sqlx::query(
+            sqlx::query!(
                 "INSERT INTO iam_principal_roles \
                  (principal_id, role_name, assignment_source, assigned_at, assigned_by)
                  SELECT $1, r.role_name, r.source, r.assigned_at, r.assigned_by
                  FROM UNNEST($2::varchar[], $3::varchar[], $4::timestamptz[], $5::varchar[])
                       AS r(role_name, source, assigned_at, assigned_by)",
+                &sa.id as &PrincipalId,
+                &role_names as &[&str],
+                &sources as &[Option<&str>],
+                &assigned_ats,
+                &assigned_bys as &[Option<&str>]
             )
-            .bind(&sa.id)
-            .bind(&role_names)
-            .bind(&sources)
-            .bind(&assigned_ats)
-            .bind(&assigned_bys)
             .execute(&mut **tx.inner)
             .await?;
         }
@@ -998,24 +1080,30 @@ impl Persist<ServiceAccount> for ServiceAccountRepository {
         // the order of deletes is explicit in the use-case path.
         // `oauth_clients`'s junction tables (redirect_uris, allowed_origins,
         // grant_types, application_ids) already cascade from oauth_clients.id.
-        sqlx::query("DELETE FROM oauth_clients WHERE service_account_principal_id = $1")
-            .bind(&sa.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM oauth_clients WHERE service_account_principal_id = $1",
+            &sa.id as &PrincipalId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         // The principal's application-access and client-access grants. Neither
         // table has an FK on principal_id, so without these the rows outlive
         // the principal, and the application delete guard (decision #34) then
         // counts them and refuses with APPLICATION_HAS_REFERENCES. Go's
         // `serviceaccount.Repository.Delete` removes both in the same
         // transaction, in this order. Role rows cascade from iam_principals.
-        sqlx::query("DELETE FROM iam_principal_application_access WHERE principal_id = $1")
-            .bind(&sa.id)
-            .execute(&mut **tx.inner)
-            .await?;
-        sqlx::query("DELETE FROM iam_client_access_grants WHERE principal_id = $1")
-            .bind(&sa.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM iam_principal_application_access WHERE principal_id = $1",
+            &sa.id as &PrincipalId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
+        sqlx::query!(
+            "DELETE FROM iam_client_access_grants WHERE principal_id = $1",
+            &sa.id as &PrincipalId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         // Clear any application pointer at this SA. Without this, the
         // application keeps `service_account_id` set to a dead principal
         // and the provision-service-account handler refuses to mint a
@@ -1023,22 +1111,26 @@ impl Persist<ServiceAccount> for ServiceAccountRepository {
         // Migration 028 adds an `ON DELETE SET NULL` FK so the DB does
         // this automatically; the explicit UPDATE here is defense in
         // depth for pre-migration installs.
-        sqlx::query(
+        sqlx::query!(
             "UPDATE app_applications SET service_account_id = NULL WHERE service_account_id = $1",
+            &sa.id as &PrincipalId
         )
-        .bind(&sa.id)
         .execute(&mut **tx.inner)
         .await?;
         if sa.service_account_table_id.is_some() {
-            sqlx::query("DELETE FROM iam_service_accounts WHERE id = $1")
-                .bind(sa.account_id())
-                .execute(&mut **tx.inner)
-                .await?;
-        }
-        sqlx::query("DELETE FROM iam_principals WHERE id = $1")
-            .bind(&sa.id)
+            sqlx::query!(
+                "DELETE FROM iam_service_accounts WHERE id = $1",
+                sa.account_id()
+            )
             .execute(&mut **tx.inner)
             .await?;
+        }
+        sqlx::query!(
+            "DELETE FROM iam_principals WHERE id = $1",
+            &sa.id as &PrincipalId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         Ok(())
     }
 }

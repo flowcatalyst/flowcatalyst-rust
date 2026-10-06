@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT email_domain FROM tnt_email_domain_mappings\n             WHERE identity_provider_id = $1\n               AND coalesce(btrim(required_oidc_tenant_id), '') = ''\n             ORDER BY email_domain",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "email_domain",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "9493f7641d5b8cf09c9b0ffc8512e3f685f503e0bad0ee87774050e79d122c50"
+}

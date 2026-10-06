@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT application_id AS \"application_id: ApplicationId\", slug, title FROM app_docs ORDER BY application_id, position, slug",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "application_id: ApplicationId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "slug",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "title",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "3266af8c46da8b4197463ea69785dd94e4a542fb8ac0f39d9e6cbc36c0fa010f"
+}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM iam_principal_roles WHERE principal_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "65f8a7ea41ee0cfd1a434fea6f8ac1004a1b2af90018d7ae25328254c08db66d"
+}

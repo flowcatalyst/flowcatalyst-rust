@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO tnt_client_auth_configs (id, email_domain, config_type, primary_client_id, additional_client_ids, granted_client_ids, auth_provider, oidc_issuer_url, oidc_client_id, oidc_multi_tenant, oidc_issuer_pattern, oidc_client_secret_ref, created_at, updated_at)\n             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)\n             ON CONFLICT (id) DO UPDATE SET\n                email_domain = EXCLUDED.email_domain,\n                config_type = EXCLUDED.config_type,\n                primary_client_id = EXCLUDED.primary_client_id,\n                additional_client_ids = EXCLUDED.additional_client_ids,\n                granted_client_ids = EXCLUDED.granted_client_ids,\n                auth_provider = EXCLUDED.auth_provider,\n                oidc_issuer_url = EXCLUDED.oidc_issuer_url,\n                oidc_client_id = EXCLUDED.oidc_client_id,\n                oidc_multi_tenant = EXCLUDED.oidc_multi_tenant,\n                oidc_issuer_pattern = EXCLUDED.oidc_issuer_pattern,\n                oidc_client_secret_ref = EXCLUDED.oidc_client_secret_ref,\n                updated_at = EXCLUDED.updated_at",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Jsonb",
+        "Jsonb",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Bool",
+        "Varchar",
+        "Varchar",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c26120a0c4bee225f7629b465d794c6e3afb9ac6620064fd1407dea8b85cab07"
+}

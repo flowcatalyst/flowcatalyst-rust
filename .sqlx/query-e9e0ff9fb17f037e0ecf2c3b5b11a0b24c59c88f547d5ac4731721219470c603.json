@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO iam_mfa_email_pins (id, principal_id, purpose, pin_hash, attempts, expires_at, created_at) VALUES ($1, $2, $3, $4, 0, $5, NOW())",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e9e0ff9fb17f037e0ecf2c3b5b11a0b24c59c88f547d5ac4731721219470c603"
+}

@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO iam_permissions (id, code, subdomain, context, aggregate, action, description)\n             VALUES ($1, $2, $3, $4, $5, $6, $7)\n             ON CONFLICT (code) DO UPDATE SET\n                subdomain   = EXCLUDED.subdomain,\n                context     = EXCLUDED.context,\n                aggregate   = EXCLUDED.aggregate,\n                action      = EXCLUDED.action,\n                description = EXCLUDED.description,\n                updated_at  = NOW()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5a0c3fd16f01b58e3b7952b78b1aa58ad2094fdc1218bc90930594300230e203"
+}

@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT identity_provider_id AS \"identity_provider_id: IdentityProviderId\", role_id FROM oauth_identity_provider_allowed_roles WHERE identity_provider_id = ANY($1) ORDER BY identity_provider_id, role_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "identity_provider_id: IdentityProviderId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "role_id",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "01f248d87c39f052b0b1f0484c9b7d9115ad80773ef34eb4d9c2ee794b16e133"
+}

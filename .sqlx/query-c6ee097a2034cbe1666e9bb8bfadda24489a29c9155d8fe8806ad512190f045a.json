@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE iam_user_mfa_methods SET confirmed_at = $2 WHERE id = $1 AND confirmed_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c6ee097a2034cbe1666e9bb8bfadda24489a29c9155d8fe8806ad512190f045a"
+}

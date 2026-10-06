@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM iam_mfa_trusted_devices WHERE principal_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "132df3509382d7247f0d95a8cca3d4cd2d490ba1ce71ec5825dd136af7c85e43"
+}

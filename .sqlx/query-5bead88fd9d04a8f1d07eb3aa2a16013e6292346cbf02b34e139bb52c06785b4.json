@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO iam_user_mfa_recovery_codes (id, principal_id, code_hash, created_at) SELECT id, $1, code_hash, NOW() FROM UNNEST($2::text[], $3::text[]) AS t(id, code_hash)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "TextArray",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5bead88fd9d04a8f1d07eb3aa2a16013e6292346cbf02b34e139bb52c06785b4"
+}

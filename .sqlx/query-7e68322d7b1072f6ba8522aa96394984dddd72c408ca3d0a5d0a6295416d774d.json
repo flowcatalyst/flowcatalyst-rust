@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.all_applications,\n                    ARRAY(SELECT a.application_id FROM iam_principal_application_access a\n                          WHERE a.principal_id = p.id) AS \"granted_application_ids!: Vec<ApplicationId>\"\n             FROM iam_principals p WHERE p.id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "all_applications",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 1,
+        "name": "granted_application_ids!: Vec<ApplicationId>",
+        "type_info": "VarcharArray"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "7e68322d7b1072f6ba8522aa96394984dddd72c408ca3d0a5d0a6295416d774d"
+}

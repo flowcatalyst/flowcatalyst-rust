@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM app_platform_config_access WHERE application_code = $1 AND role_code = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9fed69f6f3c77e6b091268e6ca0bc2a3457693df8ad39dc8aeb3bb0eebf047e2"
+}

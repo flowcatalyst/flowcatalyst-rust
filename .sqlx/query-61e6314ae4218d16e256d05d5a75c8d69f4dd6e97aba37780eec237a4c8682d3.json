@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM tnt_cors_allowed_origins WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "61e6314ae4218d16e256d05d5a75c8d69f4dd6e97aba37780eec237a4c8682d3"
+}

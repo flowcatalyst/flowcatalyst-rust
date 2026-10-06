@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM iam_mfa_email_pins WHERE principal_id = $1 AND purpose = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "098754b3f885a579837b990da6d943930aa495f6dd0e803392ef1f5d9104b041"
+}

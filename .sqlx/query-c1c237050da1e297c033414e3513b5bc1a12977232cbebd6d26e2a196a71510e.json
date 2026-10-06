@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO tnt_client_auth_configs\n                (id, email_domain, config_type, primary_client_id, additional_client_ids,\n                 granted_client_ids, auth_provider, oidc_issuer_url, oidc_client_id,\n                 oidc_multi_tenant, oidc_issuer_pattern, oidc_client_secret_ref,\n                 created_at, updated_at)\n             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Jsonb",
+        "Jsonb",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Bool",
+        "Varchar",
+        "Varchar",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c1c237050da1e297c033414e3513b5bc1a12977232cbebd6d26e2a196a71510e"
+}

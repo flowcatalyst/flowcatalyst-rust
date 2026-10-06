@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO iam_client_access_grants\n                     (id, principal_id, client_id, granted_by, granted_at, created_at, updated_at)\n                 SELECT g.id, $1, g.client_id, $1, $4, $4, $4\n                 FROM UNNEST($2::varchar[], $3::varchar[]) AS g(id, client_id)\n                 ON CONFLICT (principal_id, client_id) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "VarcharArray",
+        "VarcharArray",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b64fd0e2295e82ffadbdecee5a8a4fd3112ecc5ba1bc137554e7f4968bd32dc6"
+}

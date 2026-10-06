@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO oauth_clients\n                (id, client_id, client_name, client_type, client_secret_ref,\n                 default_scopes, pkce_required, service_account_principal_id, active,\n                 created_at, updated_at, previous_secret_ref, previous_secret_expires_at,\n                 previous_secret_last_used_at)\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW(), $10, $11, $12)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Bool",
+        "Varchar",
+        "Bool",
+        "Text",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cb2763d8517126b87172dda96774ff9c070a1908c7e68201fe0f16e31c3c96be"
+}

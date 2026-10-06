@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.id AS \"id: RoleId\", r.application_id AS \"application_id: ApplicationId\", r.application_code, r.name, r.display_name, r.description, r.source AS \"source: Stored<RoleSource>\", r.client_managed, r.created_at, r.updated_at FROM iam_roles r\n             INNER JOIN iam_role_permissions rp ON rp.role_id = r.id\n             WHERE rp.permission = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: RoleId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "application_id: ApplicationId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "application_code",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "display_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "source: Stored<RoleSource>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "client_managed",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "fab5be9dc9b92f7b5854008a28a8bfb9369aac318b400aecb570e50d0fa32480"
+}

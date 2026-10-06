@@ -1,0 +1,50 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id AS \"id: CorsOriginId\", origin, description, created_by, created_at, updated_at FROM tnt_cors_allowed_origins ORDER BY origin",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: CorsOriginId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "origin",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "created_by",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "66675bbf314a993e211343317b0ca1cba2aad7b1e10df7d42828fa00978da863"
+}

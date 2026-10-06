@@ -59,7 +59,6 @@ impl TryFrom<RoleRow> for AuthRole {
 }
 
 /// Row mapping for iam_role_permissions junction table
-#[derive(sqlx::FromRow)]
 struct RolePermissionRow {
     role_id: RoleId,
     permission: String,
@@ -76,20 +75,20 @@ impl RoleRepository {
 
     pub async fn insert(&self, role: &AuthRole) -> Result<()> {
         let now = Utc::now();
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO iam_roles (id, application_id, application_code, name, display_name, description, source, client_managed, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+            &role.id as &RoleId,
+            &role.application_id as &Option<ApplicationId>,
+            Some(&role.application_code),
+            &role.name,
+            &role.display_name,
+            role.description.as_ref(),
+            role.source as RoleSource,
+            role.client_managed,
+            now,
+            now
         )
-        .bind(&role.id)
-        .bind(&role.application_id)
-        .bind(Some(&role.application_code))
-        .bind(&role.name)
-        .bind(&role.display_name)
-        .bind(&role.description)
-        .bind(role.source)
-        .bind(role.client_managed)
-        .bind(now)
-        .bind(now)
         .execute(&self.pool)
         .await?;
 
@@ -100,10 +99,18 @@ impl RoleRepository {
     }
 
     pub async fn find_by_id(&self, id: &RoleId) -> Result<Option<AuthRole>> {
-        let row = sqlx::query_as::<_, RoleRow>("SELECT * FROM iam_roles WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query_as!(
+            RoleRow,
+            "SELECT id AS \"id: RoleId\", \
+                    application_id AS \"application_id: ApplicationId\", \
+                    application_code, name, display_name, description, \
+                    source AS \"source: Stored<RoleSource>\", client_managed, created_at, \
+                    updated_at \
+                    FROM iam_roles WHERE id = $1",
+            id as &RoleId
+        )
+        .fetch_optional(&self.pool)
+        .await?;
 
         match row {
             Some(r) => {
@@ -117,10 +124,18 @@ impl RoleRepository {
 
     /// Find role by name (formerly find_by_code)
     pub async fn find_by_name(&self, name: &str) -> Result<Option<AuthRole>> {
-        let row = sqlx::query_as::<_, RoleRow>("SELECT * FROM iam_roles WHERE name = $1")
-            .bind(name)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query_as!(
+            RoleRow,
+            "SELECT id AS \"id: RoleId\", \
+                    application_id AS \"application_id: ApplicationId\", \
+                    application_code, name, display_name, description, \
+                    source AS \"source: Stored<RoleSource>\", client_managed, created_at, \
+                    updated_at \
+                    FROM iam_roles WHERE name = $1",
+            name
+        )
+        .fetch_optional(&self.pool)
+        .await?;
 
         match row {
             Some(r) => {
@@ -138,18 +153,32 @@ impl RoleRepository {
     }
 
     pub async fn find_all(&self) -> Result<Vec<AuthRole>> {
-        let rows = sqlx::query_as::<_, RoleRow>("SELECT * FROM iam_roles ORDER BY name")
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sqlx::query_as!(
+            RoleRow,
+            "SELECT id AS \"id: RoleId\", \
+                    application_id AS \"application_id: ApplicationId\", \
+                    application_code, name, display_name, description, \
+                    source AS \"source: Stored<RoleSource>\", client_managed, created_at, \
+                    updated_at \
+                    FROM iam_roles ORDER BY name"
+        )
+        .fetch_all(&self.pool)
+        .await?;
 
         self.hydrate_roles(rows).await
     }
 
     pub async fn find_by_application(&self, application_code: &str) -> Result<Vec<AuthRole>> {
-        let rows = sqlx::query_as::<_, RoleRow>(
-            "SELECT * FROM iam_roles WHERE application_code = $1 ORDER BY name",
+        let rows = sqlx::query_as!(
+            RoleRow,
+            "SELECT id AS \"id: RoleId\", \
+                    application_id AS \"application_id: ApplicationId\", \
+                    application_code, name, display_name, description, \
+                    source AS \"source: Stored<RoleSource>\", client_managed, created_at, \
+                    updated_at \
+                    FROM iam_roles WHERE application_code = $1 ORDER BY name",
+            application_code
         )
-        .bind(application_code)
         .fetch_all(&self.pool)
         .await?;
 
@@ -160,10 +189,16 @@ impl RoleRepository {
         &self,
         application_id: &ApplicationId,
     ) -> Result<Vec<AuthRole>> {
-        let rows = sqlx::query_as::<_, RoleRow>(
-            "SELECT * FROM iam_roles WHERE application_id = $1 ORDER BY name",
+        let rows = sqlx::query_as!(
+            RoleRow,
+            "SELECT id AS \"id: RoleId\", \
+                    application_id AS \"application_id: ApplicationId\", \
+                    application_code, name, display_name, description, \
+                    source AS \"source: Stored<RoleSource>\", client_managed, created_at, \
+                    updated_at \
+                    FROM iam_roles WHERE application_id = $1 ORDER BY name",
+            application_id as &ApplicationId
         )
-        .bind(application_id)
         .fetch_all(&self.pool)
         .await?;
 
@@ -171,20 +206,34 @@ impl RoleRepository {
     }
 
     pub async fn find_by_source(&self, source: RoleSource) -> Result<Vec<AuthRole>> {
-        let rows =
-            sqlx::query_as::<_, RoleRow>("SELECT * FROM iam_roles WHERE source = $1 ORDER BY name")
-                .bind(source)
-                .fetch_all(&self.pool)
-                .await?;
+        let rows = sqlx::query_as!(
+            RoleRow,
+            "SELECT id AS \"id: RoleId\", \
+                    application_id AS \"application_id: ApplicationId\", \
+                    application_code, name, display_name, description, \
+                    source AS \"source: Stored<RoleSource>\", client_managed, created_at, \
+                    updated_at \
+                    FROM iam_roles WHERE source = $1 ORDER BY name",
+            source as RoleSource
+        )
+        .fetch_all(&self.pool)
+        .await?;
 
         self.hydrate_roles(rows).await
     }
 
     pub async fn find_client_managed(&self) -> Result<Vec<AuthRole>> {
-        let rows =
-            sqlx::query_as::<_, RoleRow>("SELECT * FROM iam_roles WHERE client_managed = true")
-                .fetch_all(&self.pool)
-                .await?;
+        let rows = sqlx::query_as!(
+            RoleRow,
+            "SELECT id AS \"id: RoleId\", \
+                    application_id AS \"application_id: ApplicationId\", \
+                    application_code, name, display_name, description, \
+                    source AS \"source: Stored<RoleSource>\", client_managed, created_at, \
+                    updated_at \
+                    FROM iam_roles WHERE client_managed = true"
+        )
+        .fetch_all(&self.pool)
+        .await?;
 
         self.hydrate_roles(rows).await
     }
@@ -224,9 +273,10 @@ impl RoleRepository {
     /// The distinct application codes roles use, sorted (Go
     /// `RoleApplicationCodes`).
     pub async fn find_application_codes(&self) -> Result<Vec<String>> {
-        let codes = sqlx::query_scalar::<_, String>(
-            "SELECT DISTINCT application_code FROM iam_roles \
-             WHERE application_code IS NOT NULL ORDER BY application_code",
+        // `application_code!`: the WHERE excludes NULLs of this nullable column.
+        let codes = sqlx::query_scalar!(
+            "SELECT DISTINCT application_code AS \"application_code!\" FROM iam_roles \
+             WHERE application_code IS NOT NULL ORDER BY application_code"
         )
         .fetch_all(&self.pool)
         .await?;
@@ -237,10 +287,18 @@ impl RoleRepository {
         if codes.is_empty() {
             return Ok(vec![]);
         }
-        let rows = sqlx::query_as::<_, RoleRow>("SELECT * FROM iam_roles WHERE name = ANY($1)")
-            .bind(codes)
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sqlx::query_as!(
+            RoleRow,
+            "SELECT id AS \"id: RoleId\", \
+                    application_id AS \"application_id: ApplicationId\", \
+                    application_code, name, display_name, description, \
+                    source AS \"source: Stored<RoleSource>\", client_managed, created_at, \
+                    updated_at \
+                    FROM iam_roles WHERE name = ANY($1)",
+            codes
+        )
+        .fetch_all(&self.pool)
+        .await?;
 
         self.hydrate_roles(rows).await
     }
@@ -251,10 +309,16 @@ impl RoleRepository {
         if refs.is_empty() {
             return Ok(vec![]);
         }
-        let rows = sqlx::query_as::<_, RoleRow>(
-            "SELECT * FROM iam_roles WHERE name = ANY($1) OR id = ANY($1)",
+        let rows = sqlx::query_as!(
+            RoleRow,
+            "SELECT id AS \"id: RoleId\", \
+                    application_id AS \"application_id: ApplicationId\", \
+                    application_code, name, display_name, description, \
+                    source AS \"source: Stored<RoleSource>\", client_managed, created_at, \
+                    updated_at \
+                    FROM iam_roles WHERE name = ANY($1) OR id = ANY($1)",
+            refs
         )
-        .bind(refs)
         .fetch_all(&self.pool)
         .await?;
 
@@ -303,7 +367,7 @@ impl RoleRepository {
         if role_names.is_empty() || application_ids.is_empty() {
             return Ok(vec![]);
         }
-        let rows: Vec<(String,)> = sqlx::query_as(
+        let rows: Vec<(String,)> = sqlx::query!(
             "SELECT r.name
              FROM UNNEST($1::text[]) WITH ORDINALITY AS u(assigned, ord)
              JOIN LATERAL (
@@ -316,21 +380,30 @@ impl RoleRepository {
              ) r ON TRUE
              WHERE r.application_id = ANY($2::text[])
              ORDER BY u.ord",
+            role_names,
+            application_ids as &[ApplicationId]
         )
-        .bind(role_names)
-        .bind(application_ids)
         .fetch_all(&self.pool)
-        .await?;
+        .await?
+        .into_iter()
+        .map(|r| (r.name,))
+        .collect();
         Ok(rows.into_iter().map(|(name,)| name).collect())
     }
 
     /// Search roles by name or display_name (case-insensitive partial match)
     pub async fn search(&self, term: &str) -> Result<Vec<AuthRole>> {
         let pattern = format!("%{}%", term);
-        let rows = sqlx::query_as::<_, RoleRow>(
-            "SELECT * FROM iam_roles WHERE name ILIKE $1 OR display_name ILIKE $1",
+        let rows = sqlx::query_as!(
+            RoleRow,
+            "SELECT id AS \"id: RoleId\", \
+                    application_id AS \"application_id: ApplicationId\", \
+                    application_code, name, display_name, description, \
+                    source AS \"source: Stored<RoleSource>\", client_managed, created_at, \
+                    updated_at \
+                    FROM iam_roles WHERE name ILIKE $1 OR display_name ILIKE $1",
+            &pattern
         )
-        .bind(&pattern)
         .fetch_all(&self.pool)
         .await?;
 
@@ -338,12 +411,18 @@ impl RoleRepository {
     }
 
     pub async fn find_with_permission(&self, permission: &str) -> Result<Vec<AuthRole>> {
-        let rows = sqlx::query_as::<_, RoleRow>(
-            "SELECT r.* FROM iam_roles r
+        let rows = sqlx::query_as!(
+            RoleRow,
+            "SELECT r.id AS \"id: RoleId\", \
+                    r.application_id AS \"application_id: ApplicationId\", \
+                    r.application_code, r.name, r.display_name, r.description, \
+                    r.source AS \"source: Stored<RoleSource>\", r.client_managed, \
+                    r.created_at, r.updated_at \
+                    FROM iam_roles r
              INNER JOIN iam_role_permissions rp ON rp.role_id = r.id
              WHERE rp.permission = $1",
+            permission
         )
-        .bind(permission)
         .fetch_all(&self.pool)
         .await?;
 
@@ -351,11 +430,13 @@ impl RoleRepository {
     }
 
     pub async fn exists(&self, id: &RoleId) -> Result<bool> {
-        let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM iam_roles WHERE id = $1")
-            .bind(id)
-            .fetch_one(&self.pool)
-            .await?;
-        Ok(row.0 > 0)
+        let row = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM iam_roles WHERE id = $1",
+            id as &RoleId
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row > 0)
     }
 
     /// Check if a role with the given name exists
@@ -364,38 +445,42 @@ impl RoleRepository {
     }
 
     pub async fn exists_by_code(&self, code: &str) -> Result<bool> {
-        let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM iam_roles WHERE name = $1")
-            .bind(code)
-            .fetch_one(&self.pool)
-            .await?;
-        Ok(row.0 > 0)
+        let row = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM iam_roles WHERE name = $1",
+            code
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row > 0)
     }
 
     pub async fn update(&self, role: &AuthRole) -> Result<()> {
         let now = Utc::now();
-        sqlx::query(
+        sqlx::query!(
             "UPDATE iam_roles SET
                 application_id = $2, application_code = $3, name = $4, display_name = $5,
                 description = $6, source = $7, client_managed = $8, updated_at = $9
              WHERE id = $1",
+            &role.id as &RoleId,
+            &role.application_id as &Option<ApplicationId>,
+            Some(&role.application_code),
+            &role.name,
+            &role.display_name,
+            role.description.as_ref(),
+            role.source as RoleSource,
+            role.client_managed,
+            now
         )
-        .bind(&role.id)
-        .bind(&role.application_id)
-        .bind(Some(&role.application_code))
-        .bind(&role.name)
-        .bind(&role.display_name)
-        .bind(&role.description)
-        .bind(role.source)
-        .bind(role.client_managed)
-        .bind(now)
         .execute(&self.pool)
         .await?;
 
         // Sync permissions: delete all then re-insert
-        sqlx::query("DELETE FROM iam_role_permissions WHERE role_id = $1")
-            .bind(&role.id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM iam_role_permissions WHERE role_id = $1",
+            &role.id as &RoleId
+        )
+        .execute(&self.pool)
+        .await?;
 
         self.insert_permissions(&role.id, &role.permissions).await?;
 
@@ -411,20 +496,20 @@ impl RoleRepository {
 
         // Look up the name so we can cascade the text-keyed junction.
         let role_name: Option<String> =
-            sqlx::query_scalar("SELECT name FROM iam_roles WHERE id = $1")
-                .bind(id)
+            sqlx::query_scalar!("SELECT name FROM iam_roles WHERE id = $1", id as &RoleId)
                 .fetch_optional(&mut *tx)
                 .await?;
 
         if let Some(name) = role_name {
-            sqlx::query("DELETE FROM iam_principal_roles WHERE role_name = $1")
-                .bind(&name)
-                .execute(&mut *tx)
-                .await?;
+            sqlx::query!(
+                "DELETE FROM iam_principal_roles WHERE role_name = $1",
+                &name
+            )
+            .execute(&mut *tx)
+            .await?;
         }
 
-        let result = sqlx::query("DELETE FROM iam_roles WHERE id = $1")
-            .bind(id)
+        let result = sqlx::query!("DELETE FROM iam_roles WHERE id = $1", id as &RoleId)
             .execute(&mut *tx)
             .await?;
 
@@ -436,11 +521,12 @@ impl RoleRepository {
     /// refuse to delete when assignments exist (e.g. code role sync) can gate
     /// on this instead of silently dropping user assignments.
     pub async fn count_assignments(&self, role_name: &str) -> Result<i64> {
-        let (count,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM iam_principal_roles WHERE role_name = $1")
-                .bind(role_name)
-                .fetch_one(&self.pool)
-                .await?;
+        let count = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM iam_principal_roles WHERE role_name = $1",
+            role_name
+        )
+        .fetch_one(&self.pool)
+        .await?;
         Ok(count)
     }
 
@@ -448,9 +534,9 @@ impl RoleRepository {
     /// has no matching `iam_roles.name`. Startup scans use this to detect
     /// integrity drift.
     pub async fn count_orphaned_assignments(&self) -> Result<i64> {
-        let (count,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM iam_principal_roles pr \
-             WHERE NOT EXISTS (SELECT 1 FROM iam_roles r WHERE r.name = pr.role_name)",
+        let count = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM iam_principal_roles pr \
+             WHERE NOT EXISTS (SELECT 1 FROM iam_roles r WHERE r.name = pr.role_name)"
         )
         .fetch_one(&self.pool)
         .await?;
@@ -461,11 +547,12 @@ impl RoleRepository {
 
     /// Load permissions for a role from the junction table
     async fn load_permissions(&self, role_id: &RoleId) -> Result<HashSet<String>> {
-        let perms: Vec<String> =
-            sqlx::query_scalar("SELECT permission FROM iam_role_permissions WHERE role_id = $1")
-                .bind(role_id)
-                .fetch_all(&self.pool)
-                .await?;
+        let perms: Vec<String> = sqlx::query_scalar!(
+            "SELECT permission FROM iam_role_permissions WHERE role_id = $1",
+            role_id as &RoleId
+        )
+        .fetch_all(&self.pool)
+        .await?;
 
         Ok(perms.into_iter().collect())
     }
@@ -484,12 +571,12 @@ impl RoleRepository {
             iter::repeat_n(role_id.to_string(), permissions.len()).collect();
         let perms: Vec<String> = permissions.iter().cloned().collect();
 
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO iam_role_permissions (role_id, permission)
              SELECT * FROM UNNEST($1::text[], $2::text[])",
+            &role_ids,
+            &perms
         )
-        .bind(&role_ids)
-        .bind(&perms)
         .execute(&self.pool)
         .await?;
 
@@ -504,10 +591,12 @@ impl RoleRepository {
 
         // Batch-load all permissions for these roles
         let role_ids: Vec<RoleId> = rows.iter().map(|r| r.id.clone()).collect();
-        let all_perms = sqlx::query_as::<_, RolePermissionRow>(
-            "SELECT role_id, permission FROM iam_role_permissions WHERE role_id = ANY($1)",
+        let all_perms = sqlx::query_as!(
+            RolePermissionRow,
+            "SELECT role_id AS \"role_id: RoleId\", permission \
+                    FROM iam_role_permissions WHERE role_id = ANY($1)",
+            &role_ids as &[RoleId]
         )
-        .bind(&role_ids)
         .fetch_all(&self.pool)
         .await?;
 
@@ -546,7 +635,7 @@ impl Persist<AuthRole> for RoleRepository {
     async fn persist(&self, r: &AuthRole, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
 
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO iam_roles (id, application_id, application_code, name, display_name, description, source, client_managed, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
              ON CONFLICT (id) DO UPDATE SET
@@ -557,31 +646,35 @@ impl Persist<AuthRole> for RoleRepository {
                 description = EXCLUDED.description,
                 source = EXCLUDED.source,
                 client_managed = EXCLUDED.client_managed,
-                updated_at = EXCLUDED.updated_at"
+                updated_at = EXCLUDED.updated_at",
+            &r.id as &RoleId,
+            &r.application_id as &Option<ApplicationId>,
+            Some(&r.application_code),
+            &r.name,
+            &r.display_name,
+            r.description.as_ref(),
+            r.source as RoleSource,
+            r.client_managed,
+            now,
+            now
         )
-        .bind(&r.id)
-        .bind(&r.application_id)
-        .bind(Some(&r.application_code))
-        .bind(&r.name)
-        .bind(&r.display_name)
-        .bind(&r.description)
-        .bind(r.source)
-        .bind(r.client_managed)
-        .bind(now)
-        .bind(now)
         .execute(&mut **tx.inner).await?;
 
-        sqlx::query("DELETE FROM iam_role_permissions WHERE role_id = $1")
-            .bind(&r.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM iam_role_permissions WHERE role_id = $1",
+            &r.id as &RoleId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
 
         for perm in &r.permissions {
-            sqlx::query("INSERT INTO iam_role_permissions (role_id, permission) VALUES ($1, $2)")
-                .bind(&r.id)
-                .bind(perm)
-                .execute(&mut **tx.inner)
-                .await?;
+            sqlx::query!(
+                "INSERT INTO iam_role_permissions (role_id, permission) VALUES ($1, $2)",
+                &r.id as &RoleId,
+                perm
+            )
+            .execute(&mut **tx.inner)
+            .await?;
         }
 
         Ok(())
@@ -591,14 +684,15 @@ impl Persist<AuthRole> for RoleRepository {
         // iam_principal_roles has no DB-level FK on role_name (by design —
         // integrity lives in code). Cascade inline inside the same tx as the
         // role row delete so the invariant holds on every write path.
-        sqlx::query("DELETE FROM iam_principal_roles WHERE role_name = $1")
-            .bind(&r.name)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM iam_principal_roles WHERE role_name = $1",
+            &r.name
+        )
+        .execute(&mut **tx.inner)
+        .await?;
 
         // iam_role_permissions has a real FK + ON DELETE CASCADE — no manual cleanup needed.
-        sqlx::query("DELETE FROM iam_roles WHERE id = $1")
-            .bind(&r.id)
+        sqlx::query!("DELETE FROM iam_roles WHERE id = $1", &r.id as &RoleId)
             .execute(&mut **tx.inner)
             .await?;
         Ok(())

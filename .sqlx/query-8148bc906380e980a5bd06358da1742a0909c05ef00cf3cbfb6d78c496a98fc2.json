@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO iam_roles (id, application_id, application_code, name, display_name, description, source, client_managed, created_at, updated_at)\n             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)\n             ON CONFLICT (id) DO UPDATE SET\n                application_id = EXCLUDED.application_id,\n                application_code = EXCLUDED.application_code,\n                name = EXCLUDED.name,\n                display_name = EXCLUDED.display_name,\n                description = EXCLUDED.description,\n                source = EXCLUDED.source,\n                client_managed = EXCLUDED.client_managed,\n                updated_at = EXCLUDED.updated_at",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "Bool",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8148bc906380e980a5bd06358da1742a0909c05ef00cf3cbfb6d78c496a98fc2"
+}

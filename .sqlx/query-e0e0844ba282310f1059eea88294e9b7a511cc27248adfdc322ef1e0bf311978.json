@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE iam_user_mfa_methods SET last_used_at = $2 WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < $2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e0e0844ba282310f1059eea88294e9b7a511cc27248adfdc322ef1e0bf311978"
+}

@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE tnt_clients SET\n                name = $2,\n                identifier = $3,\n                status = $4,\n                status_reason = $5,\n                status_changed_at = $6,\n                notes = $7,\n                updated_at = $8\n             WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Timestamptz",
+        "Jsonb",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "801ff1382e55cbb7aedb28e1db79d488aa9585bb76d49d91102fe0d7b1cb9529"
+}

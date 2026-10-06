@@ -1,0 +1,58 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id AS \"id: MfaMethodId\", principal_id AS \"principal_id: PrincipalId\", method AS \"method: Stored<MethodType>\", secret_encrypted, confirmed_at, last_used_at, created_at FROM iam_user_mfa_methods WHERE principal_id = $1 ORDER BY created_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: MfaMethodId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "principal_id: PrincipalId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "method: Stored<MethodType>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "secret_encrypted",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "confirmed_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "last_used_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "daa7676224ab2bbb69d1808a7ceb458f4c2f3856dddbf09e939210529fe9d8eb"
+}

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM iam_client_access_grants WHERE principal_id = $1 AND client_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cd959c426cddbd3c1af3dd6781fcbc7fae3a856d4e76b7d0f1192cdc832bfed7"
+}

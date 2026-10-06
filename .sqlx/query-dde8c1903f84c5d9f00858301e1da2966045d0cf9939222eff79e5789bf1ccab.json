@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT sa.application_id FROM iam_principals p JOIN iam_service_accounts sa ON sa.id = p.service_account_id WHERE p.id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "application_id",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "dde8c1903f84c5d9f00858301e1da2966045d0cf9939222eff79e5789bf1ccab"
+}

@@ -1,0 +1,53 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id AS \"id: PlatformConfigAccessId\", application_code, role_code, can_read, can_write, created_at FROM app_platform_config_access WHERE application_code = $1 AND role_code = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: PlatformConfigAccessId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "application_code",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "role_code",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "can_read",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "can_write",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "fe65fe5a3db9514501f56b47a65c5e1dffc1f5cfc51c1841cadc49e8eb489edb"
+}

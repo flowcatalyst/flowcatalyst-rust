@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT grant_type AS \"grant_type: Stored<GrantType>\" FROM oauth_client_grant_types WHERE oauth_client_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "grant_type: Stored<GrantType>",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "77592267f53f353f14e0b9000852177588aec864b18b82515a5bb4afe157b625"
+}

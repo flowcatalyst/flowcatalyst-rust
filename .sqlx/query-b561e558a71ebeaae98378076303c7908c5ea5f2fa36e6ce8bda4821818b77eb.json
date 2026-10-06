@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT client_id AS \"client_id!\" FROM aud_logs WHERE client_id IS NOT NULL ORDER BY client_id LIMIT 500",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "client_id!",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "b561e558a71ebeaae98378076303c7908c5ea5f2fa36e6ce8bda4821818b77eb"
+}

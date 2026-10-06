@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE app_applications SET service_account_id = NULL WHERE service_account_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f0e4a47f8f69b670b6f6d18f5e5e9ce1d5fabdae421e062b48cfcd9f769e74c3"
+}

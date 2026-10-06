@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO iam_principal_roles (principal_id, role_name, assignment_source, assigned_at, assigned_by)\n                 SELECT * FROM UNNEST($1::varchar[], $2::varchar[], $3::varchar[], $4::timestamptz[], $5::varchar[])\n                 ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "VarcharArray",
+        "VarcharArray",
+        "VarcharArray",
+        "TimestamptzArray",
+        "VarcharArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "764522acbacbd4bb80bf9926df05f5a00c55ad6fccc8585dbea35cf1a9f0580a"
+}

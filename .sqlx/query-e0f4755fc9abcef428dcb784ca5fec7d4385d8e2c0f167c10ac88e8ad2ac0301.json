@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM oauth_client_application_ids WHERE oauth_client_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e0f4755fc9abcef428dcb784ca5fec7d4385d8e2c0f167c10ac88e8ad2ac0301"
+}

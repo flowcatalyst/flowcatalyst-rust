@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO oauth_identity_providers\n            (id, code, name, type, oidc_issuer_url, oidc_client_id,\n             oidc_client_secret_ref, oidc_multi_tenant, oidc_issuer_pattern,\n             sync_roles_from_idp, created_at, updated_at)\n        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())\n        ON CONFLICT (id) DO UPDATE SET\n            code = EXCLUDED.code, name = EXCLUDED.name, type = EXCLUDED.type,\n            oidc_issuer_url = EXCLUDED.oidc_issuer_url,\n            oidc_client_id = EXCLUDED.oidc_client_id,\n            oidc_client_secret_ref = EXCLUDED.oidc_client_secret_ref,\n            oidc_multi_tenant = EXCLUDED.oidc_multi_tenant,\n            oidc_issuer_pattern = EXCLUDED.oidc_issuer_pattern,\n            sync_roles_from_idp = EXCLUDED.sync_roles_from_idp,\n            updated_at = NOW()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Bool",
+        "Varchar",
+        "Bool",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2424d040f7337ece6be7a2b21bbd332c8b8c9271e09125c287f174b16dd3710a"
+}

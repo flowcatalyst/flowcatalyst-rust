@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE iam_principals SET idp_type = $2, external_idp_id = NULL, updated_at = NOW() WHERE id = ANY($1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c1248091252565b26cdad9f5aca8c99a601e07b72b6482d54ebec5ec3458d394"
+}

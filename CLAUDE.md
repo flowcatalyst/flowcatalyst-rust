@@ -140,7 +140,8 @@ repository at a time; a crate is done when it has no runtime `sqlx::query*`
 call left except the exceptions below.
 
 Done (every static query checked; only `QueryBuilder` queries stay runtime):
-`fc-platform-scheduled-jobs`, `fc-platform-auth`, `fc-platform-functions`, `fc-platform-messaging` (its dispatch-job, event and projection writes are macros only where the SQL text is byte-identical to the tuned runtime text; the claim/mark lifecycle lives in `fc-common`, still runtime). Partly done: `fc-platform-iam` (`application_openapi_spec`).
+`fc-platform-scheduled-jobs`, `fc-platform-auth`, `fc-platform-functions`, `fc-platform-iam` (435 queries), `fc-platform-messaging` (its dispatch-job, event and projection writes are macros only where the SQL text is byte-identical to the tuned runtime text; the claim/mark lifecycle lives in `fc-common`, still runtime). Not done: `fc-platform`, `fc-stream`, `fc-common`, `fc-dev` and `fc-server`
+bootstraps.
 Everything else is still runtime SQL (`sqlx::query_as::<_, FooRow>("SELECT ...")`)
 and is converted the next time the work resumes; convert a repository you are
 editing if it is not done (one repository per commit, with its `.sqlx/` files).
@@ -188,6 +189,11 @@ need no `!`/`?`; use `!` only where the query itself guarantees it (EXISTS,
 COUNT, COALESCE, a join condition, RETURNING of a NOT NULL column) and say why.
 A nullable column read into a non-`Option` field is a latent runtime error: the
 macro reports it, make the field `Option`.
+**Outer joins**: the macro does not always see that a LEFT JOIN makes the
+right side's columns nullable, and `query_as!` converts a non-null `String` into
+an `Option<String>` field without complaint, so a NULL then fails at run time
+("unexpected null"). Mark every column from the nullable side of a LEFT JOIN
+(or LATERAL) with `?`: `ap.code AS "application_code?"`.
 A bind parameter whose type is ours needs a cast, which tells the macro to take
 it as is (and fails to compile if the argument is of another kind): `id as &ClientId`.
 - **Typed ids**: `id AS "id: ApplicationOpenApiSpecId"`; nullable column:

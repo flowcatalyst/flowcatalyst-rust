@@ -1,0 +1,70 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, entity_type, entity_id, operation, operation_json AS \"operation_json: serde_json::Value\", principal_id, application_id, client_id, performed_at FROM aud_logs WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "entity_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "entity_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "operation",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "operation_json: serde_json::Value",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 5,
+        "name": "principal_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "application_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "client_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "performed_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "f3c1401dd9433218f336c6366ef5068aa3e4e70b3e210c6efa5477d3a984d3af"
+}

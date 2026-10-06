@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE app_platform_config_access SET\n                application_code = $2, role_code = $3, can_read = $4, can_write = $5\n            WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Varchar",
+        "Varchar",
+        "Bool",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e73a2b044ac5b0747db1fd75aab5d4a0e880f8f47b5c2ba21629b4a532479d9a"
+}

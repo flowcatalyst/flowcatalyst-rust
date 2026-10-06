@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE tnt_client_auth_configs SET\n                email_domain = $2, config_type = $3, primary_client_id = $4,\n                additional_client_ids = $5, granted_client_ids = $6,\n                auth_provider = $7, oidc_issuer_url = $8, oidc_client_id = $9,\n                oidc_multi_tenant = $10, oidc_issuer_pattern = $11,\n                oidc_client_secret_ref = $12, updated_at = $13\n             WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Jsonb",
+        "Jsonb",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Bool",
+        "Varchar",
+        "Varchar",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1ff31de018f112462e0db1fb476edfc16d0dae3cee202f2196f6a0d90bcd3f6d"
+}

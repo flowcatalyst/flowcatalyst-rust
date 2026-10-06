@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE app_platform_configs SET\n                application_code = $2, section = $3, property = $4, scope = $5,\n                client_id = $6, value_type = $7, value = $8, description = $9,\n                updated_at = NOW()\n            WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e019db4b5cb249160926d0417b7c9cbdf405198afbf4f57199ec7f2e52869447"
+}

@@ -1,0 +1,68 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id AS \"id: PermissionId\", code, subdomain, context, aggregate, action, description, created_at, updated_at FROM iam_permissions ORDER BY code",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: PermissionId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "code",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "subdomain",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "context",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "aggregate",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "action",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "daaab1d17ffa003e09dca16956f347a9b286d3e4dd6e61e33aa22a8468d33798"
+}

@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT client_id AS \"client_id: ClientId\" FROM tnt_email_domain_mapping_additional_clients WHERE email_domain_mapping_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "client_id: ClientId",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "8939f07024721e2ad1e9cb3101e44566395f970c735296a6511f2ab514feeb89"
+}

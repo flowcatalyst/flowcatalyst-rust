@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE oauth_clients SET\n                client_id = $2, client_name = $3, client_type = $4,\n                client_secret_ref = $5, default_scopes = $6,\n                pkce_required = $7, service_account_principal_id = $8,\n                active = $9, updated_at = NOW(),\n                previous_secret_ref = $10, previous_secret_expires_at = $11,\n                previous_secret_last_used_at = $12\n            WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Bool",
+        "Varchar",
+        "Bool",
+        "Text",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "96edac66eb7d73ac7804ce995d2238d2d27b4f0629d01b32bcaa6d7eab17c5d2"
+}

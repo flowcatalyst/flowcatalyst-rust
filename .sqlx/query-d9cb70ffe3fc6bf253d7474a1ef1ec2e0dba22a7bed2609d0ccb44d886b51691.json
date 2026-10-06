@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE aud_logs AS a\n               SET operation_json = u.doc::jsonb\n               FROM UNNEST($1::varchar[], $2::text[]) AS u(id, doc)\n               WHERE a.id = u.id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "VarcharArray",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d9cb70ffe3fc6bf253d7474a1ef1ec2e0dba22a7bed2609d0ccb44d886b51691"
+}

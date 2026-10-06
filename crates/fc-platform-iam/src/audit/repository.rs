@@ -162,7 +162,7 @@ impl AuditLogRepository {
             client_ids.push(log.client_id.clone());
             performed_ats.push(log.performed_at);
         }
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO aud_logs
                 (id, entity_type, entity_id, operation, operation_json,
                  principal_id, application_id, client_id, performed_at)
@@ -170,26 +170,32 @@ impl AuditLogRepository {
                 $1::varchar[], $2::varchar[], $3::varchar[], $4::varchar[],
                 $5::jsonb[], $6::varchar[], $7::varchar[], $8::varchar[],
                 $9::timestamptz[])"#,
+            &ids as &[&str],
+            &entity_types as &[&str],
+            &entity_ids as &[&str],
+            &operations as &[&str],
+            &operation_jsons as &[Option<serde_json::Value>],
+            &principal_ids as &[Option<String>],
+            &application_ids as &[Option<String>],
+            &client_ids as &[Option<String>],
+            &performed_ats
         )
-        .bind(&ids)
-        .bind(&entity_types)
-        .bind(&entity_ids)
-        .bind(&operations)
-        .bind(&operation_jsons)
-        .bind(&principal_ids)
-        .bind(&application_ids)
-        .bind(&client_ids)
-        .bind(&performed_ats)
         .execute(&self.pool)
         .await?;
         Ok(())
     }
 
     pub async fn find_by_id(&self, id: &str) -> Result<Option<AuditLog>> {
-        let row = sqlx::query_as::<_, AuditLogRow>("SELECT * FROM aud_logs WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query_as!(
+            AuditLogRow,
+            "SELECT id, entity_type, entity_id, operation, \
+                    operation_json AS \"operation_json: serde_json::Value\", \
+                    principal_id, application_id, client_id, performed_at \
+                    FROM aud_logs WHERE id = $1",
+            id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
         Ok(row.map(AuditLog::from))
     }
 
@@ -199,34 +205,46 @@ impl AuditLogRepository {
         entity_id: &str,
         limit: i64,
     ) -> Result<Vec<AuditLog>> {
-        let rows = sqlx::query_as::<_, AuditLogRow>(
-            "SELECT * FROM aud_logs WHERE entity_type = $1 AND entity_id = $2 \
+        let rows = sqlx::query_as!(
+            AuditLogRow,
+            "SELECT id, entity_type, entity_id, operation, \
+                    operation_json AS \"operation_json: serde_json::Value\", \
+                    principal_id, application_id, client_id, performed_at \
+                    FROM aud_logs WHERE entity_type = $1 AND entity_id = $2 \
              ORDER BY performed_at DESC LIMIT $3",
+            entity_type,
+            entity_id,
+            limit
         )
-        .bind(entity_type)
-        .bind(entity_id)
-        .bind(limit)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(AuditLog::from).collect())
     }
 
     pub async fn find_by_principal(&self, principal_id: &str, limit: i64) -> Result<Vec<AuditLog>> {
-        let rows = sqlx::query_as::<_, AuditLogRow>(
-            "SELECT * FROM aud_logs WHERE principal_id = $1 ORDER BY performed_at DESC LIMIT $2",
+        let rows = sqlx::query_as!(
+            AuditLogRow,
+            "SELECT id, entity_type, entity_id, operation, \
+                    operation_json AS \"operation_json: serde_json::Value\", \
+                    principal_id, application_id, client_id, performed_at \
+                    FROM aud_logs WHERE principal_id = $1 ORDER BY performed_at DESC LIMIT $2",
+            principal_id,
+            limit
         )
-        .bind(principal_id)
-        .bind(limit)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(AuditLog::from).collect())
     }
 
     pub async fn find_recent(&self, limit: i64) -> Result<Vec<AuditLog>> {
-        let rows = sqlx::query_as::<_, AuditLogRow>(
-            "SELECT * FROM aud_logs ORDER BY performed_at DESC LIMIT $1",
+        let rows = sqlx::query_as!(
+            AuditLogRow,
+            "SELECT id, entity_type, entity_id, operation, \
+                    operation_json AS \"operation_json: serde_json::Value\", \
+                    principal_id, application_id, client_id, performed_at \
+                    FROM aud_logs ORDER BY performed_at DESC LIMIT $1",
+            limit
         )
-        .bind(limit)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(AuditLog::from).collect())
@@ -325,8 +343,8 @@ impl AuditLogRepository {
     }
 
     pub async fn find_distinct_entity_types(&self) -> Result<Vec<String>> {
-        let rows = sqlx::query_scalar::<_, String>(
-            "SELECT DISTINCT entity_type FROM aud_logs ORDER BY entity_type LIMIT 500",
+        let rows = sqlx::query_scalar!(
+            "SELECT DISTINCT entity_type FROM aud_logs ORDER BY entity_type LIMIT 500"
         )
         .fetch_all(&self.pool)
         .await?;
@@ -334,9 +352,10 @@ impl AuditLogRepository {
     }
 
     pub async fn find_distinct_application_ids(&self) -> Result<Vec<String>> {
-        let rows = sqlx::query_scalar::<_, String>(
-            "SELECT DISTINCT application_id FROM aud_logs \
-             WHERE application_id IS NOT NULL ORDER BY application_id LIMIT 500",
+        // `application_id!`: the WHERE excludes NULLs of this nullable column.
+        let rows = sqlx::query_scalar!(
+            "SELECT DISTINCT application_id AS \"application_id!\" FROM aud_logs \
+             WHERE application_id IS NOT NULL ORDER BY application_id LIMIT 500"
         )
         .fetch_all(&self.pool)
         .await?;
@@ -344,9 +363,10 @@ impl AuditLogRepository {
     }
 
     pub async fn find_distinct_client_ids(&self) -> Result<Vec<String>> {
-        let rows = sqlx::query_scalar::<_, String>(
-            "SELECT DISTINCT client_id FROM aud_logs \
-             WHERE client_id IS NOT NULL ORDER BY client_id LIMIT 500",
+        // `client_id!`: the WHERE excludes NULLs of this nullable column.
+        let rows = sqlx::query_scalar!(
+            "SELECT DISTINCT client_id AS \"client_id!\" FROM aud_logs \
+             WHERE client_id IS NOT NULL ORDER BY client_id LIMIT 500"
         )
         .fetch_all(&self.pool)
         .await?;
@@ -405,22 +425,22 @@ impl AuditLogRepository {
         }
         let ids: Vec<&str> = rows.iter().map(|(id, _)| id.as_str()).collect();
         let docs: Vec<String> = rows.iter().map(|(_, doc)| doc.to_string()).collect();
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"UPDATE aud_logs AS a
                SET operation_json = u.doc::jsonb
                FROM UNNEST($1::varchar[], $2::text[]) AS u(id, doc)
                WHERE a.id = u.id"#,
+            &ids as &[&str],
+            &docs
         )
-        .bind(&ids)
-        .bind(&docs)
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected())
     }
 
     pub async fn find_distinct_operations(&self) -> Result<Vec<String>> {
-        let rows = sqlx::query_scalar::<_, String>(
-            "SELECT DISTINCT operation FROM aud_logs ORDER BY operation LIMIT 500",
+        let rows = sqlx::query_scalar!(
+            "SELECT DISTINCT operation FROM aud_logs ORDER BY operation LIMIT 500"
         )
         .fetch_all(&self.pool)
         .await?;

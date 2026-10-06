@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT child.relname::text AS \"relname!\" FROM pg_inherits i JOIN pg_class parent ON i.inhparent = parent.oid JOIN pg_class child ON i.inhrelid = child.oid WHERE parent.relname = 'iam_login_attempts'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "relname!",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "55b6196b61332f8a6360d9f9982f2504abb003be9980722bf363d3d0ef101f38"
+}

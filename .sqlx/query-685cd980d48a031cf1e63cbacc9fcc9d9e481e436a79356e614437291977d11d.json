@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(*) AS \"count!\" FROM portal_identities pi WHERE pi.client_id = $1 AND ($2::text IS NULL OR pi.email LIKE $2 OR lower(pi.name) LIKE $2) AND ($3::text IS NULL OR EXISTS (SELECT 1 FROM portal_identity_apps g WHERE g.identity_id = pi.id AND g.portal_app_id = $3)) AND (NOT $4 OR NOT EXISTS (SELECT 1 FROM portal_identity_apps g WHERE g.identity_id = pi.id))",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "685cd980d48a031cf1e63cbacc9fcc9d9e481e436a79356e614437291977d11d"
+}

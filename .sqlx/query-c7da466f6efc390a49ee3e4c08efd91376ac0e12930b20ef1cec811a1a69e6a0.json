@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT code, active, wh_auth_token_ref AS token_ref, wh_signing_secret_ref AS signing_secret_ref FROM iam_service_accounts WHERE application_id = $1 AND active = true ORDER BY created_at ASC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "code",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "active",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 2,
+        "name": "token_ref",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "signing_secret_ref",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "c7da466f6efc390a49ee3e4c08efd91376ac0e12930b20ef1cec811a1a69e6a0"
+}

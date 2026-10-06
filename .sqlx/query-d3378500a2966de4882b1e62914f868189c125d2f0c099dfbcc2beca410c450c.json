@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO iam_principal_application_access (principal_id, application_id, granted_at)\n                 SELECT * FROM UNNEST($1::varchar[], $2::varchar[], $3::timestamptz[])",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "VarcharArray",
+        "VarcharArray",
+        "TimestamptzArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d3378500a2966de4882b1e62914f868189c125d2f0c099dfbcc2beca410c450c"
+}

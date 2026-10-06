@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO oauth_oidc_login_states (state, email_domain, identity_provider_id, email_domain_mapping_id, nonce, code_verifier, oauth_client_id, oauth_redirect_uri, oauth_scope, oauth_state, oauth_code_challenge, oauth_code_challenge_method, oauth_nonce, created_at, expires_at, portal_client_id) VALUES ($1, '', $2, '', $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), $12, $13)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Timestamptz",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b2fa55b7fdaaef917ad05e12371aa16b064deaf6b2c3af9be42f869d18d9bed3"
+}

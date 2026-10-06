@@ -1,0 +1,71 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, attempt_type AS \"attempt_type: Stored<AttemptType>\", outcome AS \"outcome: Stored<LoginOutcome>\", failure_reason, identifier, principal_id AS \"principal_id: PrincipalId\", ip_address, user_agent, attempted_at FROM iam_login_attempts WHERE identifier = $1 ORDER BY attempted_at DESC, id DESC LIMIT $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "attempt_type: Stored<AttemptType>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "outcome: Stored<LoginOutcome>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "failure_reason",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "identifier",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "principal_id: PrincipalId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "ip_address",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "user_agent",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "attempted_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "a76534d9903a5d07180222da41faead0e5e999031ba4091d991b7a55d131853f"
+}

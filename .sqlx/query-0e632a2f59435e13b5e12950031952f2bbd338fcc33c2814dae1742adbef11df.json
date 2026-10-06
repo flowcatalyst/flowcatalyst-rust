@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE iam_principals SET\n                type = $2, scope = $3, client_id = $4, application_id = $5, name = $6,\n                active = $7, email = $8, email_domain = $9, idp_type = $10,\n                external_idp_id = $11, password_hash = $12, last_login_at = $13,\n                service_account_id = $14, updated_at = $15, all_applications = $16\n             WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Bool",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Timestamptz",
+        "Varchar",
+        "Timestamptz",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0e632a2f59435e13b5e12950031952f2bbd338fcc33c2814dae1742adbef11df"
+}

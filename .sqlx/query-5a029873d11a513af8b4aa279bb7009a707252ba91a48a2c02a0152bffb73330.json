@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT principal_id AS \"principal_id: PrincipalId\", client_id AS \"client_id: ClientId\" FROM iam_client_access_grants WHERE principal_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "principal_id: PrincipalId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "client_id: ClientId",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "5a029873d11a513af8b4aa279bb7009a707252ba91a48a2c02a0152bffb73330"
+}

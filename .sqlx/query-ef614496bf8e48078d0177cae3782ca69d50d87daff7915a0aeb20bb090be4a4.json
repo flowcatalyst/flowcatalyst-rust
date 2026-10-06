@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT portal_app_id AS \"portal_app_id!: PortalAppId\", COUNT(*) AS \"c1!\" FROM portal_identity_apps WHERE portal_app_id = ANY($1) GROUP BY portal_app_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "portal_app_id!: PortalAppId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "c1!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "ef614496bf8e48078d0177cae3782ca69d50d87daff7915a0aeb20bb090be4a4"
+}

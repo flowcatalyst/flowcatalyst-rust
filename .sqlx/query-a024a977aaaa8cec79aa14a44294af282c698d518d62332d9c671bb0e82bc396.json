@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO tnt_clients (id, name, identifier, status, status_reason, status_changed_at, notes, created_at, updated_at)\n             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)\n             ON CONFLICT (id) DO UPDATE SET\n                name = EXCLUDED.name,\n                identifier = EXCLUDED.identifier,\n                status = EXCLUDED.status,\n                status_reason = EXCLUDED.status_reason,\n                status_changed_at = EXCLUDED.status_changed_at,\n                notes = EXCLUDED.notes,\n                updated_at = EXCLUDED.updated_at",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Timestamptz",
+        "Jsonb",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a024a977aaaa8cec79aa14a44294af282c698d518d62332d9c671bb0e82bc396"
+}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM app_client_configs WHERE application_id = $1 AND NOT enabled",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a8cb48be72dc9d4ebca1fcb0da236744fb6d935213ceef22a1d0f368445a86cb"
+}

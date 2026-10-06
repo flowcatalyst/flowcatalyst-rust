@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM tnt_client_auth_configs WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "30bad8e255d0dd589ff58d4bebab5ecdcd0bd868d549ea7eede9d4bbfbf33494"
+}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM oauth_identity_provider_allowed_roles WHERE identity_provider_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cc571b1a717300211cadc67b64e1ec92c3ad5c335db90bdd9cc95cd6e01c7e59"
+}

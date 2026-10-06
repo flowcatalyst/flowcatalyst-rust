@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(*) AS \"count!\" FROM portal_identities pi WHERE pi.client_id = $1 AND NOT EXISTS (SELECT 1 FROM portal_identity_apps g WHERE g.identity_id = pi.id)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "11b96515bf1d2313eff98ac6ef63fc15fc0b0a218f48e44e4e0a9e104ebf9e1d"
+}

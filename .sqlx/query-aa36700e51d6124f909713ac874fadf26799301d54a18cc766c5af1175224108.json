@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE iam_mfa_trusted_devices SET last_used_at = NOW() WHERE principal_id = $1 AND token_hash = $2 AND expires_at > NOW()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "aa36700e51d6124f909713ac874fadf26799301d54a18cc766c5af1175224108"
+}

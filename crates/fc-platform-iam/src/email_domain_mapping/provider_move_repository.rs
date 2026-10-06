@@ -50,14 +50,14 @@ impl ProviderMoveRepository {
 
 impl Persist<ProviderMove> for ProviderMoveRepository {
     async fn persist(&self, m: &ProviderMove, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "UPDATE tnt_email_domain_mappings SET identity_provider_id = $2, \
              primary_client_id = COALESCE($3, primary_client_id), updated_at = NOW() \
              WHERE id = $1",
+            &m.mapping_id as &EmailDomainMappingId,
+            &m.identity_provider_id as &IdentityProviderId,
+            &m.primary_client_id as &Option<ClientId>
         )
-        .bind(&m.mapping_id)
-        .bind(&m.identity_provider_id)
-        .bind(&m.primary_client_id)
         .execute(&mut **tx.inner)
         .await?;
         self.principal_repo

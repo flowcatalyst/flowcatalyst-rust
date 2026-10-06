@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT principal_id AS \"principal_id: PrincipalId\", application_id AS \"application_id: ApplicationId\" FROM iam_principal_application_access WHERE principal_id = ANY($1) ORDER BY granted_at, application_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "principal_id: PrincipalId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "application_id: ApplicationId",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "2469639e90b3df8b81b90b3b0fd9126fc1a77f3c3fac1594a4b62ec320836bfb"
+}

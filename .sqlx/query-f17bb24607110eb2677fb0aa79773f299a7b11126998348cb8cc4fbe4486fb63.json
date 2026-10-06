@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE portal_identities SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f17bb24607110eb2677fb0aa79773f299a7b11126998348cb8cc4fbe4486fb63"
+}

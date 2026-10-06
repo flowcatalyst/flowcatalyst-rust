@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO iam_mfa_trusted_devices (id, principal_id, token_hash, label, expires_at, created_at) VALUES ($1, $2, $3, $4, $5, NOW())",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bb0f9cedf214eb7c57c6dc6f04086f7c0ec55441d814491652e2373cc9d52afb"
+}

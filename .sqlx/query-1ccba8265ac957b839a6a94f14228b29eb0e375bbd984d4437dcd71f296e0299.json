@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE oauth_clients SET previous_secret_last_used_at = $2 WHERE id = $1 AND previous_secret_ref IS NOT NULL AND (previous_secret_last_used_at IS NULL OR previous_secret_last_used_at < $3)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1ccba8265ac957b839a6a94f14228b29eb0e375bbd984d4437dcd71f296e0299"
+}

@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO oauth_idp_role_mappings (id, idp_role_name, internal_role_name, created_at, updated_at)\n             VALUES ($1, $2, $3, $4, $5)\n             ON CONFLICT (id) DO UPDATE SET\n                idp_role_name = EXCLUDED.idp_role_name,\n                internal_role_name = EXCLUDED.internal_role_name,\n                updated_at = EXCLUDED.updated_at",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1eae40032d2250976b2b6fc1edc120a7b8238710fc1b7275771b45a623c81aae"
+}

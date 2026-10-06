@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM iam_mfa_trusted_devices WHERE expires_at <= NOW()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "b32605b880f8538c02b1c5bbc7be5f199c68e5a818e2a87d563cfc3d7d72a6cf"
+}

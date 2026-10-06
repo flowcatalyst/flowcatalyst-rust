@@ -10,7 +10,6 @@ use fc_platform_core::usecase::DbTx;
 use fc_platform_core::usecase::HasId;
 use fc_platform_core::usecase::Persist;
 
-#[derive(sqlx::FromRow)]
 struct CorsOriginRow {
     id: CorsOriginId,
     origin: String,
@@ -43,28 +42,37 @@ impl CorsOriginRepository {
     }
 
     pub async fn find_by_id(&self, id: &CorsOriginId) -> Result<Option<CorsAllowedOrigin>> {
-        let row = sqlx::query_as::<_, CorsOriginRow>(
-            "SELECT * FROM tnt_cors_allowed_origins WHERE id = $1",
+        let row = sqlx::query_as!(
+            CorsOriginRow,
+            "SELECT id AS \"id: CorsOriginId\", origin, description, created_by, \
+                    created_at, updated_at \
+                    FROM tnt_cors_allowed_origins WHERE id = $1",
+            id as &CorsOriginId
         )
-        .bind(id)
         .fetch_optional(&self.pool)
         .await?;
         Ok(row.map(CorsAllowedOrigin::from))
     }
 
     pub async fn find_by_origin(&self, origin: &str) -> Result<Option<CorsAllowedOrigin>> {
-        let row = sqlx::query_as::<_, CorsOriginRow>(
-            "SELECT * FROM tnt_cors_allowed_origins WHERE origin = $1",
+        let row = sqlx::query_as!(
+            CorsOriginRow,
+            "SELECT id AS \"id: CorsOriginId\", origin, description, created_by, \
+                    created_at, updated_at \
+                    FROM tnt_cors_allowed_origins WHERE origin = $1",
+            origin
         )
-        .bind(origin)
         .fetch_optional(&self.pool)
         .await?;
         Ok(row.map(CorsAllowedOrigin::from))
     }
 
     pub async fn find_all(&self) -> Result<Vec<CorsAllowedOrigin>> {
-        let rows = sqlx::query_as::<_, CorsOriginRow>(
-            "SELECT * FROM tnt_cors_allowed_origins ORDER BY origin",
+        let rows = sqlx::query_as!(
+            CorsOriginRow,
+            "SELECT id AS \"id: CorsOriginId\", origin, description, created_by, \
+                    created_at, updated_at \
+                    FROM tnt_cors_allowed_origins ORDER BY origin"
         )
         .fetch_all(&self.pool)
         .await?;
@@ -72,7 +80,7 @@ impl CorsOriginRepository {
     }
 
     pub async fn get_allowed_origins(&self) -> Result<Vec<String>> {
-        let rows = sqlx::query_scalar::<_, String>("SELECT origin FROM tnt_cors_allowed_origins")
+        let rows = sqlx::query_scalar!("SELECT origin FROM tnt_cors_allowed_origins")
             .fetch_all(&self.pool)
             .await?;
         Ok(rows)
@@ -88,7 +96,7 @@ impl HasId for CorsAllowedOrigin {
 impl Persist<CorsAllowedOrigin> for CorsOriginRepository {
     async fn persist(&self, o: &CorsAllowedOrigin, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO tnt_cors_allowed_origins
                 (id, origin, description, created_by, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6)
@@ -96,23 +104,25 @@ impl Persist<CorsAllowedOrigin> for CorsOriginRepository {
                 origin = EXCLUDED.origin,
                 description = EXCLUDED.description,
                 updated_at = EXCLUDED.updated_at",
+            &o.id as &CorsOriginId,
+            &o.origin,
+            o.description.as_ref(),
+            o.created_by.as_ref(),
+            now,
+            now
         )
-        .bind(&o.id)
-        .bind(&o.origin)
-        .bind(&o.description)
-        .bind(&o.created_by)
-        .bind(now)
-        .bind(now)
         .execute(&mut **tx.inner)
         .await?;
         Ok(())
     }
 
     async fn delete(&self, o: &CorsAllowedOrigin, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query("DELETE FROM tnt_cors_allowed_origins WHERE id = $1")
-            .bind(&o.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM tnt_cors_allowed_origins WHERE id = $1",
+            &o.id as &CorsOriginId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         Ok(())
     }
 }

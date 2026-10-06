@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE iam_service_accounts SET\n                    code = $2, name = $3, description = $4, application_id = $5, active = $6,\n                    wh_auth_type = $7, wh_auth_token_ref = $8, wh_signing_secret_ref = $9,\n                    wh_signing_algorithm = $10, last_used_at = $11, updated_at = $12,\n                    scope = $13, client_ids = $14, wh_username = $15, wh_password_ref = $16,\n                    wh_header_name = $17, wh_signature_header = $18\n                 WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Bool",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Timestamptz",
+        "Timestamptz",
+        "Varchar",
+        "TextArray",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "03875fa4dca5f4213c8f0f4e4ccf8e1b671cfee53b3a70b1031c256eaf1cf738"
+}

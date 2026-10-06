@@ -1,0 +1,83 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id AS \"id: PrincipalId\", type AS \"principal_type: Stored<PrincipalType>\", scope AS \"scope: Stored<UserScope>\", client_id AS \"client_id: ClientId\", application_id AS \"application_id: ApplicationId\", name, active, service_account_id, all_applications, created_at, updated_at FROM iam_principals WHERE type = $2 AND application_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: PrincipalId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "principal_type: Stored<PrincipalType>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "scope: Stored<UserScope>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "client_id: ClientId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "application_id: ApplicationId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "active",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "service_account_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "all_applications",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "07803a0c7c075342759fed5d6b86adbfe664abaf0a3b3601db8dc47573038968"
+}

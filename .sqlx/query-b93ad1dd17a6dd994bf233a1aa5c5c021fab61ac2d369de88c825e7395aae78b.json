@@ -1,0 +1,82 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id AS \"id: PlatformConfigId\", application_code, section, property, scope AS \"scope: Stored<ConfigScope>\", client_id AS \"client_id: ClientId\", value_type AS \"value_type: Stored<ConfigValueType>\", value, description, created_at, updated_at FROM app_platform_configs WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: PlatformConfigId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "application_code",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "section",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "property",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "scope: Stored<ConfigScope>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "client_id: ClientId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "value_type: Stored<ConfigValueType>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "value",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "b93ad1dd17a6dd994bf233a1aa5c5c021fab61ac2d369de88c825e7395aae78b"
+}

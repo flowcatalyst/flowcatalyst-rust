@@ -1,0 +1,130 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, type AS \"principal_type: Stored<PrincipalType>\", scope AS \"scope: Stored<UserScope>\", client_id, application_id AS \"application_id: ApplicationId\", name, active, email, email_domain, idp_type, external_idp_id, password_hash, last_login_at, service_account_id, all_applications, created_at, updated_at, dev_client_secret_ref, dev_client_secret_updated_at FROM iam_principals WHERE name LIKE $1 OR email LIKE $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "principal_type: Stored<PrincipalType>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "scope: Stored<UserScope>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "client_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "application_id: ApplicationId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "active",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "email",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "email_domain",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "idp_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 10,
+        "name": "external_idp_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 11,
+        "name": "password_hash",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 12,
+        "name": "last_login_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "service_account_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 14,
+        "name": "all_applications",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 15,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 16,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 17,
+        "name": "dev_client_secret_ref",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 18,
+        "name": "dev_client_secret_updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "3e0e917fd9b0ec85e1168e57f77207135ae83a3b2f5c4fea21e73164b9317729"
+}

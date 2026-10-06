@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE tnt_email_domain_mappings SET identity_provider_id = $2, primary_client_id = COALESCE($3, primary_client_id), updated_at = NOW() WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Varchar",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0627382d3e3099b194c62fff0a9cab152903afda674e23fdbcc188270a0b393d"
+}

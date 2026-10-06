@@ -1,0 +1,130 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT p.id, p.type AS \"principal_type: Stored<PrincipalType>\", p.scope AS \"scope: Stored<UserScope>\", p.client_id, p.application_id AS \"application_id: ApplicationId\", p.name, p.active, p.email, p.email_domain, p.idp_type, p.external_idp_id, p.password_hash, p.last_login_at, p.service_account_id, p.all_applications, p.created_at, p.updated_at, p.dev_client_secret_ref, p.dev_client_secret_updated_at FROM iam_principals p\n             LEFT JOIN iam_client_access_grants g ON g.principal_id = p.id\n             WHERE p.active = true AND (p.client_id = $1 OR g.client_id = $1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "principal_type: Stored<PrincipalType>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "scope: Stored<UserScope>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "client_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "application_id: ApplicationId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "active",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "email",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "email_domain",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "idp_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 10,
+        "name": "external_idp_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 11,
+        "name": "password_hash",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 12,
+        "name": "last_login_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "service_account_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 14,
+        "name": "all_applications",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 15,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 16,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 17,
+        "name": "dev_client_secret_ref",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 18,
+        "name": "dev_client_secret_updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "8d1de15426284a45d5ded8ad8003daf9bd562237057d8726cd6d1a9a16097eef"
+}

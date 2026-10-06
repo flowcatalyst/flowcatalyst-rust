@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT allowed_origin FROM oauth_client_allowed_origins WHERE oauth_client_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "allowed_origin",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "686d96f8f49b99cd073c82f678eb6058bf56bee86a89eeb8b148d4c5b312ec13"
+}

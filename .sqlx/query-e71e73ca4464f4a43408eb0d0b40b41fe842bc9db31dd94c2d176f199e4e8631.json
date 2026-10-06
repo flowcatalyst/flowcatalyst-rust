@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO iam_principals (id, type, scope, client_id, application_id, name, active, email, email_domain, idp_type, external_idp_id, password_hash, last_login_at, service_account_id, created_at, updated_at, all_applications)\n             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)\n             ON CONFLICT (id) DO UPDATE SET\n                type = EXCLUDED.type,\n                scope = EXCLUDED.scope,\n                client_id = EXCLUDED.client_id,\n                application_id = EXCLUDED.application_id,\n                name = EXCLUDED.name,\n                active = EXCLUDED.active,\n                email = EXCLUDED.email,\n                email_domain = EXCLUDED.email_domain,\n                idp_type = EXCLUDED.idp_type,\n                external_idp_id = EXCLUDED.external_idp_id,\n                password_hash = EXCLUDED.password_hash,\n                last_login_at = EXCLUDED.last_login_at,\n                service_account_id = EXCLUDED.service_account_id,\n                updated_at = EXCLUDED.updated_at,\n                all_applications = EXCLUDED.all_applications",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Bool",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Timestamptz",
+        "Varchar",
+        "Timestamptz",
+        "Timestamptz",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e71e73ca4464f4a43408eb0d0b40b41fe842bc9db31dd94c2d176f199e4e8631"
+}

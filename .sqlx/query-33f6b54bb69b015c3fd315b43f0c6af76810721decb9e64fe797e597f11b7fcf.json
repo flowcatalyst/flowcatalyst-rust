@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT principal_id AS \"principal_id: PrincipalId\", role_name, assignment_source AS \"assignment_source: Stored<AssignmentSource>\", assigned_at, assigned_by FROM iam_principal_roles WHERE principal_id = ANY($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "principal_id: PrincipalId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "role_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "assignment_source: Stored<AssignmentSource>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "assigned_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 4,
+        "name": "assigned_by",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "33f6b54bb69b015c3fd315b43f0c6af76810721decb9e64fe797e597f11b7fcf"
+}

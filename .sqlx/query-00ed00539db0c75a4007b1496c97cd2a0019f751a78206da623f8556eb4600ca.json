@@ -1,0 +1,88 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id AS \"id: EmailDomainMappingId\", email_domain, identity_provider_id AS \"identity_provider_id: IdentityProviderId\", scope_type AS \"scope_type: Stored<ScopeType>\", primary_client_id AS \"primary_client_id: ClientId\", required_oidc_tenant_id, sync_roles_from_idp, require_2fa, remember_device_enabled, remember_device_days, created_at, updated_at FROM tnt_email_domain_mappings WHERE identity_provider_id = $1 ORDER BY email_domain",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: EmailDomainMappingId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "email_domain",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "identity_provider_id: IdentityProviderId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "scope_type: Stored<ScopeType>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "primary_client_id: ClientId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "required_oidc_tenant_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "sync_roles_from_idp",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "require_2fa",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "remember_device_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 9,
+        "name": "remember_device_days",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "00ed00539db0c75a4007b1496c97cd2a0019f751a78206da623f8556eb4600ca"
+}

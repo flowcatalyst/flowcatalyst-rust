@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO oauth_identity_provider_allowed_roles (identity_provider_id, role_id) SELECT $1, r FROM UNNEST($2::varchar[]) AS r",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "VarcharArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0f4b938f49c8ee7f71cd1192721bd758a55da1aedded55ffafb85db78d7204d3"
+}

@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE iam_roles SET\n                application_id = $2, application_code = $3, name = $4, display_name = $5,\n                description = $6, source = $7, client_managed = $8, updated_at = $9\n             WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "Bool",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0c16b3670ccddf33679d5b4d0c41568b867d540037ea79d0377bf11cd5397ed2"
+}

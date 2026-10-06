@@ -16,7 +16,6 @@ use fc_platform_core::usecase::Persist;
 use std::collections::HashMap;
 
 /// Row mapping for tnt_clients table
-#[derive(sqlx::FromRow)]
 struct ClientRow {
     id: String,
     name: String,
@@ -64,37 +63,49 @@ impl ClientRepository {
     pub async fn insert(&self, client: &Client) -> Result<()> {
         let notes_json = serde_json::to_value(&client.notes).unwrap_or_default();
         let now = Utc::now();
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO tnt_clients (id, name, identifier, status, status_reason, status_changed_at, notes, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            &client.id as &ClientId,
+            &client.name,
+            &client.identifier,
+            client.status as ClientStatus,
+            client.status_reason.as_ref(),
+            client.status_changed_at,
+            &notes_json,
+            now,
+            now
         )
-        .bind(&client.id)
-        .bind(&client.name)
-        .bind(&client.identifier)
-        .bind(client.status)
-        .bind(&client.status_reason)
-        .bind(client.status_changed_at)
-        .bind(&notes_json)
-        .bind(now)
-        .bind(now)
         .execute(&self.pool)
         .await?;
         Ok(())
     }
 
     pub async fn find_by_id(&self, id: &ClientId) -> Result<Option<Client>> {
-        let row = sqlx::query_as::<_, ClientRow>("SELECT * FROM tnt_clients WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query_as!(
+            ClientRow,
+            "SELECT id, name, identifier, status AS \"status: Stored<ClientStatus>\", \
+                    status_reason, status_changed_at, \
+                    notes AS \"notes: serde_json::Value\", created_at, updated_at \
+                    FROM tnt_clients WHERE id = $1",
+            id as &ClientId
+        )
+        .fetch_optional(&self.pool)
+        .await?;
         row.map(Client::try_from).transpose()
     }
 
     pub async fn find_by_identifier(&self, identifier: &str) -> Result<Option<Client>> {
-        let row = sqlx::query_as::<_, ClientRow>("SELECT * FROM tnt_clients WHERE identifier = $1")
-            .bind(identifier)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query_as!(
+            ClientRow,
+            "SELECT id, name, identifier, status AS \"status: Stored<ClientStatus>\", \
+                    status_reason, status_changed_at, \
+                    notes AS \"notes: serde_json::Value\", created_at, updated_at \
+                    FROM tnt_clients WHERE identifier = $1",
+            identifier
+        )
+        .fetch_optional(&self.pool)
+        .await?;
         row.map(Client::try_from).transpose()
     }
 
@@ -108,37 +119,56 @@ impl ClientRepository {
         if identifiers.is_empty() {
             return Ok(HashMap::new());
         }
-        let rows = sqlx::query_as::<_, (String, ClientId)>(
-            "SELECT identifier, id FROM tnt_clients WHERE identifier = ANY($1)",
+        let rows = sqlx::query!(
+            "SELECT identifier, id AS \"id: ClientId\" FROM tnt_clients WHERE identifier = ANY($1)",
+            identifiers
         )
-        .bind(identifiers)
         .fetch_all(&self.pool)
-        .await?;
+        .await?
+        .into_iter()
+        .map(|r| (r.identifier, r.id))
+        .collect::<Vec<_>>();
         Ok(rows.into_iter().collect())
     }
 
     pub async fn find_active(&self) -> Result<Vec<Client>> {
-        let rows = sqlx::query_as::<_, ClientRow>("SELECT * FROM tnt_clients WHERE status = $1")
-            .bind(ClientStatus::Active)
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sqlx::query_as!(
+            ClientRow,
+            "SELECT id, name, identifier, status AS \"status: Stored<ClientStatus>\", \
+                    status_reason, status_changed_at, \
+                    notes AS \"notes: serde_json::Value\", created_at, updated_at \
+                    FROM tnt_clients WHERE status = $1",
+            ClientStatus::Active as ClientStatus
+        )
+        .fetch_all(&self.pool)
+        .await?;
         rows.into_iter().map(Client::try_from).collect()
     }
 
     pub async fn find_all(&self) -> Result<Vec<Client>> {
-        let rows = sqlx::query_as::<_, ClientRow>("SELECT * FROM tnt_clients")
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sqlx::query_as!(
+            ClientRow,
+            "SELECT id, name, identifier, status AS \"status: Stored<ClientStatus>\", \
+                    status_reason, status_changed_at, \
+                    notes AS \"notes: serde_json::Value\", created_at, updated_at \
+                    FROM tnt_clients"
+        )
+        .fetch_all(&self.pool)
+        .await?;
         rows.into_iter().map(Client::try_from).collect()
     }
 
     /// Search clients by name or identifier (case-insensitive partial match)
     pub async fn search(&self, term: &str) -> Result<Vec<Client>> {
         let pattern = format!("%{}%", term);
-        let rows = sqlx::query_as::<_, ClientRow>(
-            "SELECT * FROM tnt_clients WHERE name ILIKE $1 OR identifier ILIKE $1",
+        let rows = sqlx::query_as!(
+            ClientRow,
+            "SELECT id, name, identifier, status AS \"status: Stored<ClientStatus>\", \
+                    status_reason, status_changed_at, \
+                    notes AS \"notes: serde_json::Value\", created_at, updated_at \
+                    FROM tnt_clients WHERE name ILIKE $1 OR identifier ILIKE $1",
+            &pattern
         )
-        .bind(&pattern)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(Client::try_from).collect()
@@ -147,11 +177,15 @@ impl ClientRepository {
     /// The client list: every client, or only those with `status`, ordered
     /// by identifier as Go's `ClientFindAll` is.
     pub async fn list(&self, status: Option<ClientStatus>) -> Result<Vec<Client>> {
-        let rows = sqlx::query_as::<_, ClientRow>(
-            "SELECT * FROM tnt_clients WHERE ($1::text IS NULL OR status = $1) \
+        let rows = sqlx::query_as!(
+            ClientRow,
+            "SELECT id, name, identifier, status AS \"status: Stored<ClientStatus>\", \
+                    status_reason, status_changed_at, \
+                    notes AS \"notes: serde_json::Value\", created_at, updated_at \
+                    FROM tnt_clients WHERE ($1::text IS NULL OR status = $1) \
              ORDER BY identifier",
+            status as Option<ClientStatus>
         )
-        .bind(status)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(Client::try_from).collect()
@@ -161,33 +195,42 @@ impl ClientRepository {
         if ids.is_empty() {
             return Ok(vec![]);
         }
-        let rows = sqlx::query_as::<_, ClientRow>("SELECT * FROM tnt_clients WHERE id = ANY($1)")
-            .bind(ids)
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sqlx::query_as!(
+            ClientRow,
+            "SELECT id, name, identifier, status AS \"status: Stored<ClientStatus>\", \
+                    status_reason, status_changed_at, \
+                    notes AS \"notes: serde_json::Value\", created_at, updated_at \
+                    FROM tnt_clients WHERE id = ANY($1)",
+            ids as &[ClientId]
+        )
+        .fetch_all(&self.pool)
+        .await?;
         rows.into_iter().map(Client::try_from).collect()
     }
 
     pub async fn exists(&self, id: &ClientId) -> Result<bool> {
-        let row: (bool,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM tnt_clients WHERE id = $1)")
-            .bind(id)
-            .fetch_one(&self.pool)
-            .await?;
-        Ok(row.0)
+        let row = sqlx::query_scalar!(
+            "SELECT EXISTS(SELECT 1 FROM tnt_clients WHERE id = $1) AS \"exists!\"",
+            id as &ClientId
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row)
     }
 
     pub async fn exists_by_identifier(&self, identifier: &str) -> Result<bool> {
-        let row: (bool,) =
-            sqlx::query_as("SELECT EXISTS(SELECT 1 FROM tnt_clients WHERE identifier = $1)")
-                .bind(identifier)
-                .fetch_one(&self.pool)
-                .await?;
-        Ok(row.0)
+        let row = sqlx::query_scalar!(
+            "SELECT EXISTS(SELECT 1 FROM tnt_clients WHERE identifier = $1) AS \"exists!\"",
+            identifier
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row)
     }
 
     pub async fn update(&self, client: &Client) -> Result<()> {
         let notes_json = serde_json::to_value(&client.notes).unwrap_or_default();
-        sqlx::query(
+        sqlx::query!(
             "UPDATE tnt_clients SET
                 name = $2,
                 identifier = $3,
@@ -197,15 +240,15 @@ impl ClientRepository {
                 notes = $7,
                 updated_at = $8
              WHERE id = $1",
+            &client.id as &ClientId,
+            &client.name,
+            &client.identifier,
+            client.status as ClientStatus,
+            client.status_reason.as_ref(),
+            client.status_changed_at,
+            &notes_json,
+            Utc::now()
         )
-        .bind(&client.id)
-        .bind(&client.name)
-        .bind(&client.identifier)
-        .bind(client.status)
-        .bind(&client.status_reason)
-        .bind(client.status_changed_at)
-        .bind(&notes_json)
-        .bind(Utc::now())
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -220,13 +263,14 @@ impl ClientRepository {
     pub async fn delete(&self, id: &ClientId) -> Result<bool> {
         let mut tx = self.pool.begin().await?;
 
-        sqlx::query("DELETE FROM iam_client_access_grants WHERE client_id = $1")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM iam_client_access_grants WHERE client_id = $1",
+            id as &ClientId
+        )
+        .execute(&mut *tx)
+        .await?;
 
-        let result = sqlx::query("DELETE FROM tnt_clients WHERE id = $1")
-            .bind(id)
+        let result = sqlx::query!("DELETE FROM tnt_clients WHERE id = $1", id as &ClientId)
             .execute(&mut *tx)
             .await?;
 
@@ -236,11 +280,12 @@ impl ClientRepository {
 
     /// Count access grants targeting this client.
     pub async fn count_access_grants(&self, client_id: &ClientId) -> Result<i64> {
-        let (count,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM iam_client_access_grants WHERE client_id = $1")
-                .bind(client_id)
-                .fetch_one(&self.pool)
-                .await?;
+        let count = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM iam_client_access_grants WHERE client_id = $1",
+            client_id as &ClientId
+        )
+        .fetch_one(&self.pool)
+        .await?;
         Ok(count)
     }
 
@@ -248,21 +293,23 @@ impl ClientRepository {
     /// while any exist — home-client is meaningful domain state; silently
     /// orphaning it would change a user's scope without explicit action.
     pub async fn count_home_principals(&self, client_id: &ClientId) -> Result<i64> {
-        let (count,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM iam_principals WHERE client_id = $1")
-                .bind(client_id)
-                .fetch_one(&self.pool)
-                .await?;
+        let count = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM iam_principals WHERE client_id = $1",
+            client_id as &ClientId
+        )
+        .fetch_one(&self.pool)
+        .await?;
         Ok(count)
     }
 
     /// Count per-application config entries scoped to this client.
     pub async fn count_client_configs(&self, client_id: &ClientId) -> Result<i64> {
-        let (count,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM app_client_configs WHERE client_id = $1")
-                .bind(client_id)
-                .fetch_one(&self.pool)
-                .await?;
+        let count = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM app_client_configs WHERE client_id = $1",
+            client_id as &ClientId
+        )
+        .fetch_one(&self.pool)
+        .await?;
         Ok(count)
     }
 }
@@ -279,7 +326,7 @@ impl Persist<Client> for ClientRepository {
     async fn persist(&self, c: &Client, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
         let notes_json = serde_json::to_value(&c.notes).unwrap_or_default();
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO tnt_clients (id, name, identifier, status, status_reason, status_changed_at, notes, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
              ON CONFLICT (id) DO UPDATE SET
@@ -289,17 +336,17 @@ impl Persist<Client> for ClientRepository {
                 status_reason = EXCLUDED.status_reason,
                 status_changed_at = EXCLUDED.status_changed_at,
                 notes = EXCLUDED.notes,
-                updated_at = EXCLUDED.updated_at"
+                updated_at = EXCLUDED.updated_at",
+            &c.id as &ClientId,
+            &c.name,
+            &c.identifier,
+            c.status as ClientStatus,
+            c.status_reason.as_ref(),
+            c.status_changed_at,
+            &notes_json,
+            now,
+            now
         )
-        .bind(&c.id)
-        .bind(&c.name)
-        .bind(&c.identifier)
-        .bind(c.status)
-        .bind(&c.status_reason)
-        .bind(c.status_changed_at)
-        .bind(&notes_json)
-        .bind(now)
-        .bind(now)
         .execute(&mut **tx.inner)
         .await?;
         Ok(())
@@ -312,13 +359,14 @@ impl Persist<Client> for ClientRepository {
         // the use case. iam_principals.client_id is left alone — the delete
         // use case refuses when principals still hold this as home, and
         // silently un-homing them here would be a worse data-loss mode.
-        sqlx::query("DELETE FROM iam_client_access_grants WHERE client_id = $1")
-            .bind(&c.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM iam_client_access_grants WHERE client_id = $1",
+            &c.id as &ClientId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
 
-        sqlx::query("DELETE FROM tnt_clients WHERE id = $1")
-            .bind(&c.id)
+        sqlx::query!("DELETE FROM tnt_clients WHERE id = $1", &c.id as &ClientId)
             .execute(&mut **tx.inner)
             .await?;
         Ok(())
@@ -330,11 +378,15 @@ impl ClientRepository {
     /// `ILIKE %term%`, by identifier, at most 50. The term is not escaped,
     /// so `%` and `_` in it are wildcards, as in Go.
     pub async fn search_top(&self, term: &str) -> Result<Vec<Client>> {
-        let rows = sqlx::query_as::<_, ClientRow>(
-            "SELECT * FROM tnt_clients WHERE name ILIKE $1 OR identifier ILIKE $1 \
+        let rows = sqlx::query_as!(
+            ClientRow,
+            "SELECT id, name, identifier, status AS \"status: Stored<ClientStatus>\", \
+                    status_reason, status_changed_at, \
+                    notes AS \"notes: serde_json::Value\", created_at, updated_at \
+                    FROM tnt_clients WHERE name ILIKE $1 OR identifier ILIKE $1 \
              ORDER BY identifier LIMIT 50",
+            format!("%{term}%")
         )
-        .bind(format!("%{term}%"))
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(Client::try_from).collect()

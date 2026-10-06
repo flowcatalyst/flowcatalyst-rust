@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO app_platform_config_access\n                (id, application_code, role_code, can_read, can_write, created_at)\n             VALUES ($1, $2, $3, $4, $5, $6)\n             ON CONFLICT (id) DO UPDATE SET\n                application_code = EXCLUDED.application_code,\n                role_code = EXCLUDED.role_code,\n                can_read = EXCLUDED.can_read,\n                can_write = EXCLUDED.can_write",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Bool",
+        "Bool",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "02efa60a6ba0140d8ae749f79ae2f6ea93e1a57a956a276670d6614136317065"
+}

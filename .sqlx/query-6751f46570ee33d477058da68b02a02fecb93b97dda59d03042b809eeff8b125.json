@@ -1,0 +1,58 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id AS \"id: OAuthClientId\", client_id, client_name, active, pkce_required, portal_client_id, portal_app_id FROM oauth_clients WHERE portal_client_id = $1 ORDER BY client_name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: OAuthClientId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "client_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "client_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "active",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "pkce_required",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "portal_client_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "portal_app_id",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "6751f46570ee33d477058da68b02a02fecb93b97dda59d03042b809eeff8b125"
+}

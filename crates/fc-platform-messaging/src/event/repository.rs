@@ -510,7 +510,7 @@ impl EventRepository {
                     r.time, r.data, r.deduplication_id, r.client_id, r.message_group, \
                     r.correlation_id, r.causation_id, r.created_at, r.application, \
                     r.subdomain, r.aggregate, r.projected_at, \
-                    e.context_data AS \"context_data: serde_json::Value\" \
+                    e.context_data AS \"context_data?: serde_json::Value\" \
                     \
              FROM msg_events_read r \
              LEFT JOIN msg_events e ON e.id = r.id AND e.created_at = r.created_at \

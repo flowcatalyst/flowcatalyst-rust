@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE app_applications SET\n                type = $2,\n                code = $3,\n                name = $4,\n                description = $5,\n                icon_url = $6,\n                website = $7,\n                logo = $8,\n                logo_mime_type = $9,\n                default_base_url = $10,\n                service_account_id = $11,\n                active = $12,\n                updated_at = $13\n             WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Bool",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d2b34015a93a71b6104b4d49b6e33e6a859c9f2080a556238e21e81bf4c53e6e"
+}

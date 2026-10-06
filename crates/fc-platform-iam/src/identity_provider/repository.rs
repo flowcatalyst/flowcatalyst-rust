@@ -15,7 +15,6 @@ use fc_platform_core::usecase::Persist;
 
 // ── Row structs ─────────────────────────────────────────────────────
 
-#[derive(sqlx::FromRow)]
 struct IdentityProviderRow {
     id: IdentityProviderId,
     code: String,
@@ -27,7 +26,6 @@ struct IdentityProviderRow {
     oidc_multi_tenant: bool,
     oidc_issuer_pattern: Option<String>,
     /// Go's 040 (this platform's 055).
-    #[sqlx(default)]
     sync_roles_from_idp: bool,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -92,20 +90,20 @@ impl IdentityProviderRepository {
         }
         let ids: Vec<&IdentityProviderId> = idps.iter().map(|i| &i.id).collect();
 
-        let domains = sqlx::query_as::<_, (IdentityProviderId, String)>(
-            "SELECT identity_provider_id, email_domain FROM tnt_email_domain_mappings \
+        let domains = sqlx::query!(
+            "SELECT identity_provider_id AS \"identity_provider_id: IdentityProviderId\", email_domain FROM tnt_email_domain_mappings \
              WHERE identity_provider_id = ANY($1) ORDER BY identity_provider_id, email_domain",
+            &ids as &[&IdentityProviderId]
         )
-        .bind(&ids)
         .fetch_all(&self.pool)
-        .await?;
-        let roles = sqlx::query_as::<_, (IdentityProviderId, String)>(
-            "SELECT identity_provider_id, role_id FROM oauth_identity_provider_allowed_roles \
+        .await?.into_iter().map(|r| (r.identity_provider_id, r.email_domain)).collect::<Vec<_>>();
+        let roles = sqlx::query!(
+            "SELECT identity_provider_id AS \"identity_provider_id: IdentityProviderId\", role_id FROM oauth_identity_provider_allowed_roles \
              WHERE identity_provider_id = ANY($1) ORDER BY identity_provider_id, role_id",
+            &ids as &[&IdentityProviderId]
         )
-        .bind(&ids)
         .fetch_all(&self.pool)
-        .await?;
+        .await?.into_iter().map(|r| (r.identity_provider_id, r.role_id)).collect::<Vec<_>>();
 
         let mut domain_map: HashMap<IdentityProviderId, Vec<String>> = HashMap::new();
         for (idp_id, domain) in domains {
@@ -123,10 +121,15 @@ impl IdentityProviderRepository {
     }
 
     pub async fn find_by_id(&self, id: &IdentityProviderId) -> Result<Option<IdentityProvider>> {
-        let row = sqlx::query_as::<_, IdentityProviderRow>(
-            "SELECT * FROM oauth_identity_providers WHERE id = $1",
+        let row = sqlx::query_as!(
+            IdentityProviderRow,
+            "SELECT id AS \"id: IdentityProviderId\", code, name, \
+                    type AS \"type: Stored<IdentityProviderType>\", oidc_issuer_url, \
+                    oidc_client_id, oidc_client_secret_ref, oidc_multi_tenant, \
+                    oidc_issuer_pattern, sync_roles_from_idp, created_at, updated_at \
+                    FROM oauth_identity_providers WHERE id = $1",
+            id as &IdentityProviderId
         )
-        .bind(id)
         .fetch_optional(&self.pool)
         .await?;
         match row {
@@ -136,10 +139,15 @@ impl IdentityProviderRepository {
     }
 
     pub async fn find_by_code(&self, code: &str) -> Result<Option<IdentityProvider>> {
-        let row = sqlx::query_as::<_, IdentityProviderRow>(
-            "SELECT * FROM oauth_identity_providers WHERE code = $1",
+        let row = sqlx::query_as!(
+            IdentityProviderRow,
+            "SELECT id AS \"id: IdentityProviderId\", code, name, \
+                    type AS \"type: Stored<IdentityProviderType>\", oidc_issuer_url, \
+                    oidc_client_id, oidc_client_secret_ref, oidc_multi_tenant, \
+                    oidc_issuer_pattern, sync_roles_from_idp, created_at, updated_at \
+                    FROM oauth_identity_providers WHERE code = $1",
+            code
         )
-        .bind(code)
         .fetch_optional(&self.pool)
         .await?;
         match row {
@@ -149,8 +157,13 @@ impl IdentityProviderRepository {
     }
 
     pub async fn find_all(&self) -> Result<Vec<IdentityProvider>> {
-        let rows = sqlx::query_as::<_, IdentityProviderRow>(
-            "SELECT * FROM oauth_identity_providers ORDER BY code",
+        let rows = sqlx::query_as!(
+            IdentityProviderRow,
+            "SELECT id AS \"id: IdentityProviderId\", code, name, \
+                    type AS \"type: Stored<IdentityProviderType>\", oidc_issuer_url, \
+                    oidc_client_id, oidc_client_secret_ref, oidc_multi_tenant, \
+                    oidc_issuer_pattern, sync_roles_from_idp, created_at, updated_at \
+                    FROM oauth_identity_providers ORDER BY code"
         )
         .fetch_all(&self.pool)
         .await?;
@@ -170,12 +183,12 @@ impl IdentityProviderRepository {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
-        let rows = sqlx::query_as::<_, (IdentityProviderId, String)>(
-            "SELECT id, name FROM oauth_identity_providers WHERE id = ANY($1)",
+        let rows = sqlx::query!(
+            "SELECT id AS \"id: IdentityProviderId\", name FROM oauth_identity_providers WHERE id = ANY($1)",
+            ids as &[IdentityProviderId]
         )
-        .bind(ids)
         .fetch_all(&self.pool)
-        .await?;
+        .await?.into_iter().map(|r| (r.id, r.name)).collect::<Vec<_>>();
         Ok(rows.into_iter().collect())
     }
 
@@ -186,10 +199,10 @@ impl IdentityProviderRepository {
         if role_ids.is_empty() {
             return Ok(Vec::new());
         }
-        let names = sqlx::query_scalar::<_, String>(
+        let names = sqlx::query_scalar!(
             "SELECT name FROM iam_roles WHERE id = ANY($1) ORDER BY name",
+            role_ids
         )
-        .bind(role_ids)
         .fetch_all(&self.pool)
         .await?;
         Ok(names)
@@ -226,7 +239,7 @@ impl IdentityProviderRepository {
 /// Upsert the provider row and replace its allowed roles (Go `Persist`).
 /// The routed domains are the mappings', never written here.
 async fn write_provider(idp: &IdentityProvider, tx: &mut DbTx<'_>) -> Result<()> {
-    sqlx::query(
+    sqlx::query!(
         r#"INSERT INTO oauth_identity_providers
             (id, code, name, type, oidc_issuer_url, oidc_client_id,
              oidc_client_secret_ref, oidc_multi_tenant, oidc_issuer_pattern,
@@ -241,33 +254,33 @@ async fn write_provider(idp: &IdentityProvider, tx: &mut DbTx<'_>) -> Result<()>
             oidc_issuer_pattern = EXCLUDED.oidc_issuer_pattern,
             sync_roles_from_idp = EXCLUDED.sync_roles_from_idp,
             updated_at = NOW()"#,
+        &idp.id as &IdentityProviderId,
+        &idp.code,
+        &idp.name,
+        idp.r#type as IdentityProviderType,
+        idp.oidc_issuer_url.as_ref(),
+        idp.oidc_client_id.as_ref(),
+        idp.oidc_client_secret_ref.as_ref(),
+        idp.oidc_multi_tenant,
+        idp.oidc_issuer_pattern.as_ref(),
+        idp.sync_roles_from_idp,
+        idp.created_at
     )
-    .bind(&idp.id)
-    .bind(&idp.code)
-    .bind(&idp.name)
-    .bind(idp.r#type)
-    .bind(&idp.oidc_issuer_url)
-    .bind(&idp.oidc_client_id)
-    .bind(&idp.oidc_client_secret_ref)
-    .bind(idp.oidc_multi_tenant)
-    .bind(&idp.oidc_issuer_pattern)
-    .bind(idp.sync_roles_from_idp)
-    .bind(idp.created_at)
     .execute(&mut **tx.inner)
     .await?;
-    sqlx::query(
+    sqlx::query!(
         "DELETE FROM oauth_identity_provider_allowed_roles WHERE identity_provider_id = $1",
+        &idp.id as &IdentityProviderId
     )
-    .bind(&idp.id)
     .execute(&mut **tx.inner)
     .await?;
     if !idp.allowed_role_ids.is_empty() {
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO oauth_identity_provider_allowed_roles (identity_provider_id, role_id) \
              SELECT $1, r FROM UNNEST($2::varchar[]) AS r",
+            &idp.id as &IdentityProviderId,
+            &idp.allowed_role_ids
         )
-        .bind(&idp.id)
-        .bind(&idp.allowed_role_ids)
         .execute(&mut **tx.inner)
         .await?;
     }
@@ -277,22 +290,24 @@ async fn write_provider(idp: &IdentityProvider, tx: &mut DbTx<'_>) -> Result<()>
 /// Delete the provider and clear its junctions (the allowed roles, and the
 /// legacy allowed-domains rows so an old install keeps no orphans).
 async fn delete_provider(id: &IdentityProviderId, tx: &mut DbTx<'_>) -> Result<bool> {
-    sqlx::query(
+    sqlx::query!(
         "DELETE FROM oauth_identity_provider_allowed_domains WHERE identity_provider_id = $1",
+        id as &IdentityProviderId
     )
-    .bind(id)
     .execute(&mut **tx.inner)
     .await?;
-    sqlx::query(
+    sqlx::query!(
         "DELETE FROM oauth_identity_provider_allowed_roles WHERE identity_provider_id = $1",
+        id as &IdentityProviderId
     )
-    .bind(id)
     .execute(&mut **tx.inner)
     .await?;
-    let result = sqlx::query("DELETE FROM oauth_identity_providers WHERE id = $1")
-        .bind(id)
-        .execute(&mut **tx.inner)
-        .await?;
+    let result = sqlx::query!(
+        "DELETE FROM oauth_identity_providers WHERE id = $1",
+        id as &IdentityProviderId
+    )
+    .execute(&mut **tx.inner)
+    .await?;
     Ok(result.rows_affected() > 0)
 }
 

@@ -1,0 +1,68 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, name, identifier, status AS \"status: Stored<ClientStatus>\", status_reason, status_changed_at, notes AS \"notes: serde_json::Value\", created_at, updated_at FROM tnt_clients",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "identifier",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "status: Stored<ClientStatus>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "status_reason",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "status_changed_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "notes: serde_json::Value",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "0e7fbeb5a79a1c6afa8aee82dc883e429854b0893402de06b0cbf606fd47cc6a"
+}

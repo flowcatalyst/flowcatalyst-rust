@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM iam_client_access_grants\n             WHERE principal_id = $1 AND NOT (client_id = ANY($2::varchar[]))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "VarcharArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "716d772b9cacc97cf79205301692c9bf6337c12d649abb2a8a8f99357b4fa671"
+}

@@ -10,7 +10,6 @@ use super::entity::PasswordResetToken;
 use fc_platform_core::shared::enum_str::Stored;
 use fc_platform_core::shared::error::{PlatformError, Result};
 
-#[derive(sqlx::FromRow)]
 struct PasswordResetTokenRow {
     id: PasswordResetTokenId,
     principal_id: PrincipalId,
@@ -47,9 +46,6 @@ impl TryFrom<PasswordResetTokenRow> for PasswordResetToken {
     }
 }
 
-const TOKEN_COLUMNS: &str = "id, principal_id, token_hash, purpose, reset_2fa, requires_factor, \
-     factor_attempts, redirect_uri, expires_at, created_at";
-
 pub struct PasswordResetTokenRepository {
     pool: PgPool,
 }
@@ -60,30 +56,36 @@ impl PasswordResetTokenRepository {
     }
 
     pub async fn create(&self, token: &PasswordResetToken) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO iam_password_reset_tokens
                 (id, principal_id, token_hash, purpose, reset_2fa, requires_factor,
                  redirect_uri, expires_at, created_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())"#,
+            &token.id as &PasswordResetTokenId,
+            &token.principal_id as &PrincipalId,
+            &token.token_hash,
+            token.purpose as TokenPurpose,
+            token.reset_2fa,
+            token.requires_factor,
+            token.redirect_uri.as_ref(),
+            token.expires_at
         )
-        .bind(&token.id)
-        .bind(&token.principal_id)
-        .bind(&token.token_hash)
-        .bind(token.purpose)
-        .bind(token.reset_2fa)
-        .bind(token.requires_factor)
-        .bind(&token.redirect_uri)
-        .bind(token.expires_at)
         .execute(&self.pool)
         .await?;
         Ok(())
     }
 
     pub async fn find_by_token_hash(&self, hash: &str) -> Result<Option<PasswordResetToken>> {
-        let row = sqlx::query_as::<_, PasswordResetTokenRow>(&format!(
-            "SELECT {TOKEN_COLUMNS} FROM iam_password_reset_tokens WHERE token_hash = $1"
-        ))
-        .bind(hash)
+        let row = sqlx::query_as!(
+            PasswordResetTokenRow,
+            "SELECT id AS \"id: PasswordResetTokenId\", \
+                    principal_id AS \"principal_id: PrincipalId\", token_hash, \
+                    purpose AS \"purpose: Stored<TokenPurpose>\", reset_2fa, \
+                    requires_factor, factor_attempts, redirect_uri, expires_at, \
+                    created_at \
+                    FROM iam_password_reset_tokens WHERE token_hash = $1",
+            hash
+        )
         .fetch_optional(&self.pool)
         .await?;
         row.map(PasswordResetToken::try_from).transpose()
@@ -96,21 +98,23 @@ impl PasswordResetTokenRepository {
         &self,
         id: &PasswordResetTokenId,
     ) -> Result<Option<i32>> {
-        let n = sqlx::query_scalar::<_, i32>(
+        let n = sqlx::query_scalar!(
             "UPDATE iam_password_reset_tokens SET factor_attempts = factor_attempts + 1 \
              WHERE id = $1 RETURNING factor_attempts",
+            id as &PasswordResetTokenId
         )
-        .bind(id)
         .fetch_optional(&self.pool)
         .await?;
         Ok(n)
     }
 
     pub async fn delete_by_principal_id(&self, principal_id: &PrincipalId) -> Result<()> {
-        sqlx::query("DELETE FROM iam_password_reset_tokens WHERE principal_id = $1")
-            .bind(principal_id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM iam_password_reset_tokens WHERE principal_id = $1",
+            principal_id as &PrincipalId
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
@@ -118,25 +122,29 @@ impl PasswordResetTokenRepository {
     /// purge keeps an expired token for a grace period so a late click on the
     /// link still answers "expired" rather than "not found".
     pub async fn purge_expired_before(&self, cutoff: DateTime<Utc>) -> Result<u64> {
-        let result = sqlx::query("DELETE FROM iam_password_reset_tokens WHERE expires_at <= $1")
-            .bind(cutoff)
-            .execute(&self.pool)
-            .await?;
+        let result = sqlx::query!(
+            "DELETE FROM iam_password_reset_tokens WHERE expires_at <= $1",
+            cutoff
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(result.rows_affected())
     }
 
     pub async fn delete_expired(&self) -> Result<u64> {
-        let result = sqlx::query("DELETE FROM iam_password_reset_tokens WHERE expires_at < NOW()")
+        let result = sqlx::query!("DELETE FROM iam_password_reset_tokens WHERE expires_at < NOW()")
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected())
     }
 
     pub async fn delete_by_id(&self, id: &PasswordResetTokenId) -> Result<()> {
-        sqlx::query("DELETE FROM iam_password_reset_tokens WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM iam_password_reset_tokens WHERE id = $1",
+            id as &PasswordResetTokenId
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 }

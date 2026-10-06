@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO oauth_client_allowed_origins (oauth_client_id, allowed_origin) VALUES ($1, $2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ff74f01c35f3a50d75a1078f59c8c740ccfbe1d00b3f6257cb757d8a26fce4b4"
+}

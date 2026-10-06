@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.name\n             FROM UNNEST($1::text[]) WITH ORDINALITY AS u(assigned, ord)\n             JOIN LATERAL (\n                 SELECT name, application_id FROM iam_roles\n                 WHERE name = u.assigned\n                    OR (application_id = ANY($2::text[])\n                        AND name = application_code || ':' || u.assigned)\n                 ORDER BY (name = u.assigned) DESC\n                 LIMIT 1\n             ) r ON TRUE\n             WHERE r.application_id = ANY($2::text[])\n             ORDER BY u.ord",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "4695bb6734f40d01476ba58235516d9bb969f292ce283cc2df74980ff8f5f80b"
+}

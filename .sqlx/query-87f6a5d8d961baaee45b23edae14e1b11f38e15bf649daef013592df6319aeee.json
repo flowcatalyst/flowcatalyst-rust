@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO tnt_cors_allowed_origins\n                (id, origin, description, created_by, created_at, updated_at)\n             VALUES ($1, $2, $3, $4, $5, $6)\n             ON CONFLICT (id) DO UPDATE SET\n                origin = EXCLUDED.origin,\n                description = EXCLUDED.description,\n                updated_at = EXCLUDED.updated_at",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "87f6a5d8d961baaee45b23edae14e1b11f38e15bf649daef013592df6319aeee"
+}

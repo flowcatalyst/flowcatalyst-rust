@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT pa.id AS \"id: PortalAppId\", pa.client_id AS \"client_id: ClientId\", pa.code, pa.name, pa.description, pa.active, pa.created_at, pa.updated_at FROM portal_apps pa WHERE ($1::text IS NULL OR pa.client_id = $1) ORDER BY pa.name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: PortalAppId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "client_id: ClientId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "code",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "description",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "active",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "4bdc41e4a4230c3301e7759db859c86cfb1ba7df7ef71a540251f915bbbc5c83"
+}

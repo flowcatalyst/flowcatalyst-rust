@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT application_id AS \"application_id: ApplicationId\" FROM oauth_client_application_ids WHERE oauth_client_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "application_id: ApplicationId",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3de932268244cc6e2e8ebce18450f29e21109bf0d07a0837360f89a2a51fe138"
+}

@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT email_domain_mapping_id AS \"email_domain_mapping_id: EmailDomainMappingId\", role_id FROM tnt_email_domain_mapping_allowed_roles WHERE email_domain_mapping_id = ANY($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "email_domain_mapping_id: EmailDomainMappingId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "role_id",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "69688de2b15a754c26e0813f5ed999cc9081f14c189c690513469bf222a359e6"
+}

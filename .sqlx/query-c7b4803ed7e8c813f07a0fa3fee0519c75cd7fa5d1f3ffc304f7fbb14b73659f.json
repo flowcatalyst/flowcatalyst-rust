@@ -1,0 +1,88 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM oauth_oidc_login_states WHERE state = $1 AND portal_client_id IS NOT NULL AND portal_client_id <> '' AND expires_at > NOW() RETURNING state, identity_provider_id AS \"identity_provider_id: IdentityProviderId\", nonce, code_verifier, portal_client_id AS \"portal_client_id: ClientId\", oauth_client_id, oauth_redirect_uri, oauth_scope, oauth_state, oauth_code_challenge, oauth_code_challenge_method, oauth_nonce",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "state",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "identity_provider_id: IdentityProviderId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "nonce",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "code_verifier",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "portal_client_id: ClientId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "oauth_client_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "oauth_redirect_uri",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "oauth_scope",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "oauth_state",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "oauth_code_challenge",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 10,
+        "name": "oauth_code_challenge_method",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 11,
+        "name": "oauth_nonce",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "c7b4803ed7e8c813f07a0fa3fee0519c75cd7fa5d1f3ffc304f7fbb14b73659f"
+}

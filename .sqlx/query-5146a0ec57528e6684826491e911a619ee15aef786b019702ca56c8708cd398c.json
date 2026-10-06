@@ -1,0 +1,58 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id AS \"id: ClientAccessGrantId\", principal_id AS \"principal_id: PrincipalId\", client_id AS \"client_id: ClientId\", granted_by, granted_at, created_at, updated_at FROM iam_client_access_grants WHERE client_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: ClientAccessGrantId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "principal_id: PrincipalId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "client_id: ClientId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "granted_by",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "granted_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "5146a0ec57528e6684826491e911a619ee15aef786b019702ca56c8708cd398c"
+}

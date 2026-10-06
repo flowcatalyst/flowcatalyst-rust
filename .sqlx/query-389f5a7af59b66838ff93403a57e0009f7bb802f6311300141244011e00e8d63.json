@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT identity_provider_id AS \"identity_provider_id: IdentityProviderId\", email_domain FROM tnt_email_domain_mappings WHERE identity_provider_id = ANY($1) ORDER BY identity_provider_id, email_domain",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "identity_provider_id: IdentityProviderId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "email_domain",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "389f5a7af59b66838ff93403a57e0009f7bb802f6311300141244011e00e8d63"
+}

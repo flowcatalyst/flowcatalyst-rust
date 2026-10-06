@@ -14,7 +14,6 @@ use fc_platform_core::usecase::DbTx;
 use fc_platform_core::usecase::Persist;
 
 /// Row mapping for app_client_configs table
-#[derive(sqlx::FromRow)]
 struct AppClientConfigRow {
     id: AppClientConfigId,
     application_id: ApplicationId,
@@ -52,19 +51,19 @@ impl ApplicationClientConfigRepository {
 
     pub async fn insert(&self, config: &ApplicationClientConfig) -> Result<()> {
         let now = Utc::now();
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO app_client_configs (id, application_id, client_id, enabled, \
              base_url_override, config_json, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+            &config.id as &AppClientConfigId,
+            &config.application_id as &ApplicationId,
+            &config.client_id as &ClientId,
+            config.enabled,
+            config.base_url_override.as_ref(),
+            config.config_json.as_ref(),
+            now,
+            now
         )
-        .bind(&config.id)
-        .bind(&config.application_id)
-        .bind(&config.client_id)
-        .bind(config.enabled)
-        .bind(&config.base_url_override)
-        .bind(&config.config_json)
-        .bind(now)
-        .bind(now)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -74,10 +73,16 @@ impl ApplicationClientConfigRepository {
         &self,
         id: &AppClientConfigId,
     ) -> Result<Option<ApplicationClientConfig>> {
-        let row = sqlx::query_as::<_, AppClientConfigRow>(
-            "SELECT * FROM app_client_configs WHERE id = $1",
+        let row = sqlx::query_as!(
+            AppClientConfigRow,
+            "SELECT id AS \"id: AppClientConfigId\", \
+                    application_id AS \"application_id: ApplicationId\", \
+                    client_id AS \"client_id: ClientId\", enabled, base_url_override, \
+                    config_json AS \"config_json: serde_json::Value\", created_at, \
+                    updated_at \
+                    FROM app_client_configs WHERE id = $1",
+            id as &AppClientConfigId
         )
-        .bind(id)
         .fetch_optional(&self.pool)
         .await?;
         Ok(row.map(ApplicationClientConfig::from))
@@ -87,10 +92,16 @@ impl ApplicationClientConfigRepository {
         &self,
         application_id: &ApplicationId,
     ) -> Result<Vec<ApplicationClientConfig>> {
-        let rows = sqlx::query_as::<_, AppClientConfigRow>(
-            "SELECT * FROM app_client_configs WHERE application_id = $1",
+        let rows = sqlx::query_as!(
+            AppClientConfigRow,
+            "SELECT id AS \"id: AppClientConfigId\", \
+                    application_id AS \"application_id: ApplicationId\", \
+                    client_id AS \"client_id: ClientId\", enabled, base_url_override, \
+                    config_json AS \"config_json: serde_json::Value\", created_at, \
+                    updated_at \
+                    FROM app_client_configs WHERE application_id = $1",
+            application_id as &ApplicationId
         )
-        .bind(application_id)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
@@ -103,10 +114,16 @@ impl ApplicationClientConfigRepository {
         &self,
         client_id: &ClientId,
     ) -> Result<Vec<ApplicationClientConfig>> {
-        let rows = sqlx::query_as::<_, AppClientConfigRow>(
-            "SELECT * FROM app_client_configs WHERE client_id = $1",
+        let rows = sqlx::query_as!(
+            AppClientConfigRow,
+            "SELECT id AS \"id: AppClientConfigId\", \
+                    application_id AS \"application_id: ApplicationId\", \
+                    client_id AS \"client_id: ClientId\", enabled, base_url_override, \
+                    config_json AS \"config_json: serde_json::Value\", created_at, \
+                    updated_at \
+                    FROM app_client_configs WHERE client_id = $1",
+            client_id as &ClientId
         )
-        .bind(client_id)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
@@ -120,11 +137,17 @@ impl ApplicationClientConfigRepository {
         application_id: &ApplicationId,
         client_id: &ClientId,
     ) -> Result<Option<ApplicationClientConfig>> {
-        let row = sqlx::query_as::<_, AppClientConfigRow>(
-            "SELECT * FROM app_client_configs WHERE application_id = $1 AND client_id = $2",
+        let row = sqlx::query_as!(
+            AppClientConfigRow,
+            "SELECT id AS \"id: AppClientConfigId\", \
+                    application_id AS \"application_id: ApplicationId\", \
+                    client_id AS \"client_id: ClientId\", enabled, base_url_override, \
+                    config_json AS \"config_json: serde_json::Value\", created_at, \
+                    updated_at \
+                    FROM app_client_configs WHERE application_id = $1 AND client_id = $2",
+            application_id as &ApplicationId,
+            client_id as &ClientId
         )
-        .bind(application_id)
-        .bind(client_id)
         .fetch_optional(&self.pool)
         .await?;
         Ok(row.map(ApplicationClientConfig::from))
@@ -134,10 +157,16 @@ impl ApplicationClientConfigRepository {
         &self,
         client_id: &ClientId,
     ) -> Result<Vec<ApplicationClientConfig>> {
-        let rows = sqlx::query_as::<_, AppClientConfigRow>(
-            "SELECT * FROM app_client_configs WHERE client_id = $1 AND enabled = TRUE",
+        let rows = sqlx::query_as!(
+            AppClientConfigRow,
+            "SELECT id AS \"id: AppClientConfigId\", \
+                    application_id AS \"application_id: ApplicationId\", \
+                    client_id AS \"client_id: ClientId\", enabled, base_url_override, \
+                    config_json AS \"config_json: serde_json::Value\", created_at, \
+                    updated_at \
+                    FROM app_client_configs WHERE client_id = $1 AND enabled = TRUE",
+            client_id as &ClientId
         )
-        .bind(client_id)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
@@ -157,11 +186,11 @@ impl ApplicationClientConfigRepository {
             .await?;
         if let Some(config) = existing {
             // Update
-            sqlx::query(
+            sqlx::query!(
                 "UPDATE app_client_configs SET enabled = TRUE, updated_at = $2 WHERE id = $1",
+                &config.id as &AppClientConfigId,
+                Utc::now()
             )
-            .bind(&config.id)
-            .bind(Utc::now())
             .execute(&self.pool)
             .await?;
             Ok(self
@@ -188,11 +217,11 @@ impl ApplicationClientConfigRepository {
             .find_by_application_and_client(application_id, client_id)
             .await?;
         if let Some(config) = existing {
-            sqlx::query(
+            sqlx::query!(
                 "UPDATE app_client_configs SET enabled = FALSE, updated_at = $2 WHERE id = $1",
+                &config.id as &AppClientConfigId,
+                Utc::now()
             )
-            .bind(&config.id)
-            .bind(Utc::now())
             .execute(&self.pool)
             .await?;
             Ok(true)
@@ -202,7 +231,7 @@ impl ApplicationClientConfigRepository {
     }
 
     pub async fn update(&self, config: &ApplicationClientConfig) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "UPDATE app_client_configs SET
                 application_id = $2,
                 client_id = $3,
@@ -211,24 +240,26 @@ impl ApplicationClientConfigRepository {
                 config_json = $6,
                 updated_at = $7
              WHERE id = $1",
+            &config.id as &AppClientConfigId,
+            &config.application_id as &ApplicationId,
+            &config.client_id as &ClientId,
+            config.enabled,
+            config.base_url_override.as_ref(),
+            config.config_json.as_ref(),
+            Utc::now()
         )
-        .bind(&config.id)
-        .bind(&config.application_id)
-        .bind(&config.client_id)
-        .bind(config.enabled)
-        .bind(&config.base_url_override)
-        .bind(&config.config_json)
-        .bind(Utc::now())
         .execute(&self.pool)
         .await?;
         Ok(())
     }
 
     pub async fn delete(&self, id: &AppClientConfigId) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM app_client_configs WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        let result = sqlx::query!(
+            "DELETE FROM app_client_configs WHERE id = $1",
+            id as &AppClientConfigId
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -237,11 +268,11 @@ impl ApplicationClientConfigRepository {
         application_id: &ApplicationId,
         client_id: &ClientId,
     ) -> Result<bool> {
-        let result = sqlx::query(
+        let result = sqlx::query!(
             "DELETE FROM app_client_configs WHERE application_id = $1 AND client_id = $2",
+            application_id as &ApplicationId,
+            client_id as &ClientId
         )
-        .bind(application_id)
-        .bind(client_id)
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected() > 0)
@@ -259,7 +290,7 @@ impl HasId for ApplicationClientConfig {
 impl Persist<ApplicationClientConfig> for ApplicationClientConfigRepository {
     async fn persist(&self, c: &ApplicationClientConfig, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO app_client_configs (id, application_id, client_id, enabled, \
              base_url_override, config_json, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -268,25 +299,27 @@ impl Persist<ApplicationClientConfig> for ApplicationClientConfigRepository {
                 base_url_override = EXCLUDED.base_url_override,
                 config_json = EXCLUDED.config_json,
                 updated_at = EXCLUDED.updated_at",
+            &c.id as &AppClientConfigId,
+            &c.application_id as &ApplicationId,
+            &c.client_id as &ClientId,
+            c.enabled,
+            c.base_url_override.as_ref(),
+            c.config_json.as_ref(),
+            now,
+            now
         )
-        .bind(&c.id)
-        .bind(&c.application_id)
-        .bind(&c.client_id)
-        .bind(c.enabled)
-        .bind(&c.base_url_override)
-        .bind(&c.config_json)
-        .bind(now)
-        .bind(now)
         .execute(&mut **tx.inner)
         .await?;
         Ok(())
     }
 
     async fn delete(&self, c: &ApplicationClientConfig, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query("DELETE FROM app_client_configs WHERE id = $1")
-            .bind(&c.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM app_client_configs WHERE id = $1",
+            &c.id as &AppClientConfigId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         Ok(())
     }
 }

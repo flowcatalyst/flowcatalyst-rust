@@ -11,7 +11,6 @@ use fc_platform_core::usecase::unit_of_work::HasId;
 use fc_platform_core::usecase::DbTx;
 use fc_platform_core::usecase::Persist;
 
-#[derive(sqlx::FromRow)]
 struct PermissionRow {
     id: PermissionId,
     code: String,
@@ -40,9 +39,6 @@ impl From<PermissionRow> for CatalogPermission {
     }
 }
 
-const COLUMNS: &str =
-    "id, code, subdomain, context, aggregate, action, description, created_at, updated_at";
-
 pub struct PermissionCatalogRepository {
     pool: PgPool,
 }
@@ -53,19 +49,25 @@ impl PermissionCatalogRepository {
     }
 
     pub async fn find_all(&self) -> Result<Vec<CatalogPermission>> {
-        let rows = sqlx::query_as::<_, PermissionRow>(&format!(
-            "SELECT {COLUMNS} FROM iam_permissions ORDER BY code"
-        ))
+        let rows = sqlx::query_as!(
+            PermissionRow,
+            "SELECT id AS \"id: PermissionId\", code, subdomain, context, aggregate, \
+                    action, description, created_at, updated_at \
+                    FROM iam_permissions ORDER BY code"
+        )
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
     pub async fn find_by_code(&self, code: &str) -> Result<Option<CatalogPermission>> {
-        let row = sqlx::query_as::<_, PermissionRow>(&format!(
-            "SELECT {COLUMNS} FROM iam_permissions WHERE code = $1"
-        ))
-        .bind(code)
+        let row = sqlx::query_as!(
+            PermissionRow,
+            "SELECT id AS \"id: PermissionId\", code, subdomain, context, aggregate, \
+                    action, description, created_at, updated_at \
+                    FROM iam_permissions WHERE code = $1",
+            code
+        )
         .fetch_optional(&self.pool)
         .await?;
         Ok(row.map(Into::into))
@@ -81,7 +83,7 @@ impl HasId for CatalogPermission {
 impl Persist<CatalogPermission> for PermissionCatalogRepository {
     /// Go's `PermissionUpsert`: idempotent by code.
     async fn persist(&self, p: &CatalogPermission, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO iam_permissions (id, code, subdomain, context, aggregate, action, description)
              VALUES ($1, $2, $3, $4, $5, $6, $7)
              ON CONFLICT (code) DO UPDATE SET
@@ -91,22 +93,21 @@ impl Persist<CatalogPermission> for PermissionCatalogRepository {
                 action      = EXCLUDED.action,
                 description = EXCLUDED.description,
                 updated_at  = NOW()",
+            &p.id as &PermissionId,
+            &p.code,
+            &p.subdomain,
+            &p.context,
+            &p.aggregate,
+            &p.action,
+            p.description.as_ref()
         )
-        .bind(&p.id)
-        .bind(&p.code)
-        .bind(&p.subdomain)
-        .bind(&p.context)
-        .bind(&p.aggregate)
-        .bind(&p.action)
-        .bind(&p.description)
         .execute(&mut **tx.inner)
         .await?;
         Ok(())
     }
 
     async fn delete(&self, p: &CatalogPermission, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query("DELETE FROM iam_permissions WHERE code = $1")
-            .bind(&p.code)
+        sqlx::query!("DELETE FROM iam_permissions WHERE code = $1", &p.code)
             .execute(&mut **tx.inner)
             .await?;
         Ok(())

@@ -1,0 +1,88 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT pi.id AS \"id: PortalIdentityId\", pi.client_id AS \"client_id: ClientId\", pi.email, pi.name, pi.password_hash, pi.status AS \"status: Stored<IdentityStatus>\", pi.source AS \"source: Stored<IdentitySource>\", pi.last_login_at, pi.invited_at, pi.invite_expires_at, pi.created_at, pi.updated_at FROM portal_identities pi WHERE pi.client_id = $1 AND NOT EXISTS (SELECT 1 FROM portal_identity_apps g WHERE g.identity_id = pi.id) ORDER BY pi.created_at, pi.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: PortalIdentityId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "client_id: ClientId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "email",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "password_hash",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "status: Stored<IdentityStatus>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "source: Stored<IdentitySource>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "last_login_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "invited_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "invite_expires_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "a8e9356b291c3eb6c8d27835d4e012ebb3abeb3c555da5f9a3cdda176138dab8"
+}

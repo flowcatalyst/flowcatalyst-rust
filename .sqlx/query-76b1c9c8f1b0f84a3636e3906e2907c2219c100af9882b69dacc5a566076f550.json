@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id AS \"id: AppClientConfigId\", application_id AS \"application_id: ApplicationId\", client_id AS \"client_id: ClientId\", enabled, base_url_override, config_json AS \"config_json: serde_json::Value\", created_at, updated_at FROM app_client_configs WHERE client_id = $1 AND enabled = TRUE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: AppClientConfigId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "application_id: ApplicationId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "client_id: ClientId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "base_url_override",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "config_json: serde_json::Value",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 6,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "76b1c9c8f1b0f84a3636e3906e2907c2219c100af9882b69dacc5a566076f550"
+}

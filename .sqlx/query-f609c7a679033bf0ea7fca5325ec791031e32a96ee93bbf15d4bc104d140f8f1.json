@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id AS \"id: IdpRoleMappingId\", idp_role_name, internal_role_name, created_at, updated_at FROM oauth_idp_role_mappings WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: IdpRoleMappingId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "idp_role_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "internal_role_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 4,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "f609c7a679033bf0ea7fca5325ec791031e32a96ee93bbf15d4bc104d140f8f1"
+}

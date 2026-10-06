@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT email_domain_mapping_id AS \"email_domain_mapping_id: EmailDomainMappingId\", client_id AS \"client_id: ClientId\" FROM tnt_email_domain_mapping_granted_clients WHERE email_domain_mapping_id = ANY($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "email_domain_mapping_id: EmailDomainMappingId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "client_id: ClientId",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "4fbbe73c7fcee87de0444315fa53721965d57bf13242a92762682e9bb870c32b"
+}

@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT identifier, id AS \"id: ClientId\" FROM tnt_clients WHERE identifier = ANY($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "identifier",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "id: ClientId",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "cff307c0aa7bbdfbc8edeff6293e377a084440b4934d97a73b4fd928455443d2"
+}

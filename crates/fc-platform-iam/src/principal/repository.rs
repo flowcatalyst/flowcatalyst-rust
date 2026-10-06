@@ -120,7 +120,6 @@ impl TryFrom<PrincipalRow> for Principal {
     }
 }
 
-#[derive(sqlx::FromRow)]
 struct PrincipalRoleRow {
     principal_id: PrincipalId,
     role_name: String,
@@ -148,19 +147,16 @@ impl TryFrom<PrincipalRoleRow> for RoleAssignment {
     }
 }
 
-#[derive(sqlx::FromRow)]
 struct ClientAccessGrantRow {
     principal_id: PrincipalId,
     client_id: ClientId,
 }
 
-#[derive(sqlx::FromRow)]
 struct ClientIdentifierRow {
     id: ClientId,
     identifier: String,
 }
 
-#[derive(sqlx::FromRow)]
 struct PrincipalApplicationAccessRow {
     principal_id: PrincipalId,
     application_id: ApplicationId,
@@ -215,30 +211,30 @@ impl PrincipalRepository {
             .as_ref()
             .and_then(|i| i.last_login_at);
 
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO iam_principals
                 (id, type, scope, client_id, application_id, name, active, email, email_domain,
                  idp_type, external_idp_id, password_hash, last_login_at, service_account_id,
                  created_at, updated_at, all_applications)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
+            &principal.id as &PrincipalId,
+            principal.principal_type as PrincipalType,
+            Some(principal.scope) as Option<UserScope>,
+            &principal.client_id as &Option<ClientId>,
+            &principal.application_id as &Option<ApplicationId>,
+            &principal.name,
+            principal.active,
+            email.as_ref(),
+            email_domain.as_ref(),
+            idp_type.as_ref(),
+            external_idp_id.as_ref(),
+            password_hash.as_ref(),
+            last_login_at,
+            principal.service_account_id.as_ref(),
+            now,
+            now,
+            principal.all_applications
         )
-        .bind(&principal.id)
-        .bind(principal.principal_type)
-        .bind(Some(principal.scope))
-        .bind(&principal.client_id)
-        .bind(&principal.application_id)
-        .bind(&principal.name)
-        .bind(principal.active)
-        .bind(&email)
-        .bind(&email_domain)
-        .bind(&idp_type)
-        .bind(&external_idp_id)
-        .bind(&password_hash)
-        .bind(last_login_at)
-        .bind(&principal.service_account_id)
-        .bind(now)
-        .bind(now)
-        .bind(principal.all_applications)
         .execute(&self.pool)
         .await?;
 
@@ -247,13 +243,13 @@ impl PrincipalRepository {
 
         // Insert application access grants
         if !principal.accessible_application_ids.is_empty() {
-            sqlx::query(
-                "INSERT INTO iam_principal_application_access (principal_id, application_id, granted_at)
+            sqlx::query!(
+            "INSERT INTO iam_principal_application_access (principal_id, application_id, granted_at)
                  SELECT $1, a, $3 FROM UNNEST($2::varchar[]) AS a",
-            )
-            .bind(&principal.id)
-            .bind(&principal.accessible_application_ids)
-            .bind(now)
+            &principal.id as &PrincipalId,
+            &principal.accessible_application_ids as &[ApplicationId],
+            now
+        )
             .execute(&self.pool)
             .await?;
         }
@@ -262,10 +258,19 @@ impl PrincipalRepository {
     }
 
     pub async fn find_by_id(&self, id: &PrincipalId) -> Result<Option<Principal>> {
-        let row = sqlx::query_as::<_, PrincipalRow>("SELECT * FROM iam_principals WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query_as!(
+            PrincipalRow,
+            "SELECT id, type AS \"principal_type: Stored<PrincipalType>\", \
+                    scope AS \"scope: Stored<UserScope>\", client_id, \
+                    application_id AS \"application_id: ApplicationId\", name, active, \
+                    email, email_domain, idp_type, external_idp_id, password_hash, \
+                    last_login_at, service_account_id, all_applications, created_at, \
+                    updated_at, dev_client_secret_ref, dev_client_secret_updated_at \
+                    FROM iam_principals WHERE id = $1",
+            id as &PrincipalId
+        )
+        .fetch_optional(&self.pool)
+        .await?;
 
         match row {
             Some(r) => Ok(Some(self.hydrate_principal(r).await?)),
@@ -274,11 +279,18 @@ impl PrincipalRepository {
     }
 
     pub async fn find_by_email(&self, email: &str) -> Result<Option<Principal>> {
-        let row = sqlx::query_as::<_, PrincipalRow>(
-            "SELECT * FROM iam_principals WHERE type = $2 AND email = $1",
+        let row = sqlx::query_as!(
+            PrincipalRow,
+            "SELECT id, type AS \"principal_type: Stored<PrincipalType>\", \
+                    scope AS \"scope: Stored<UserScope>\", client_id, \
+                    application_id AS \"application_id: ApplicationId\", name, active, \
+                    email, email_domain, idp_type, external_idp_id, password_hash, \
+                    last_login_at, service_account_id, all_applications, created_at, \
+                    updated_at, dev_client_secret_ref, dev_client_secret_updated_at \
+                    FROM iam_principals WHERE type = $2 AND email = $1",
+            email,
+            PrincipalType::User as PrincipalType
         )
-        .bind(email)
-        .bind(PrincipalType::User)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -295,12 +307,14 @@ impl PrincipalRepository {
     /// UPDATE with no event or audit (principal/repository.go:760-770,
     /// called from auth/login/endpoint.go:519-525).
     pub async fn update_password_hash(&self, principal_id: &PrincipalId, hash: &str) -> Result<()> {
-        sqlx::query("UPDATE iam_principals SET password_hash = $1, updated_at = $2 WHERE id = $3")
-            .bind(hash)
-            .bind(Utc::now())
-            .bind(principal_id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query!(
+            "UPDATE iam_principals SET password_hash = $1, updated_at = $2 WHERE id = $3",
+            hash,
+            Utc::now(),
+            principal_id as &PrincipalId
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
@@ -311,11 +325,18 @@ impl PrincipalRepository {
             return Ok(vec![]);
         }
         let lowered: Vec<String> = emails.iter().map(|e| e.to_lowercase()).collect();
-        let rows = sqlx::query_as::<_, PrincipalRow>(
-            "SELECT * FROM iam_principals WHERE type = $2 AND lower(email) = ANY($1)",
+        let rows = sqlx::query_as!(
+            PrincipalRow,
+            "SELECT id, type AS \"principal_type: Stored<PrincipalType>\", \
+                    scope AS \"scope: Stored<UserScope>\", client_id, \
+                    application_id AS \"application_id: ApplicationId\", name, active, \
+                    email, email_domain, idp_type, external_idp_id, password_hash, \
+                    last_login_at, service_account_id, all_applications, created_at, \
+                    updated_at, dev_client_secret_ref, dev_client_secret_updated_at \
+                    FROM iam_principals WHERE type = $2 AND lower(email) = ANY($1)",
+            &lowered,
+            PrincipalType::User as PrincipalType
         )
-        .bind(&lowered)
-        .bind(PrincipalType::User)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_principals(rows).await
@@ -328,13 +349,15 @@ impl PrincipalRepository {
         &self,
         principal_id: &PrincipalId,
     ) -> Result<Option<PrincipalApplicationBinding>> {
-        let row = sqlx::query_as::<_, PrincipalApplicationBinding>(
+        // `granted_application_ids!`: ARRAY(subquery) is never NULL.
+        let row = sqlx::query_as!(
+            PrincipalApplicationBinding,
             "SELECT p.all_applications,
                     ARRAY(SELECT a.application_id FROM iam_principal_application_access a
-                          WHERE a.principal_id = p.id) AS granted_application_ids
+                          WHERE a.principal_id = p.id) AS \"granted_application_ids!: Vec<ApplicationId>\"
              FROM iam_principals p WHERE p.id = $1",
+            principal_id as &PrincipalId
         )
-        .bind(principal_id)
         .fetch_optional(&self.pool)
         .await?;
         Ok(row)
@@ -344,11 +367,18 @@ impl PrincipalRepository {
         &self,
         service_account_id: &str,
     ) -> Result<Option<Principal>> {
-        let row = sqlx::query_as::<_, PrincipalRow>(
-            "SELECT * FROM iam_principals WHERE type = $2 AND service_account_id = $1",
+        let row = sqlx::query_as!(
+            PrincipalRow,
+            "SELECT id, type AS \"principal_type: Stored<PrincipalType>\", \
+                    scope AS \"scope: Stored<UserScope>\", client_id, \
+                    application_id AS \"application_id: ApplicationId\", name, active, \
+                    email, email_domain, idp_type, external_idp_id, password_hash, \
+                    last_login_at, service_account_id, all_applications, created_at, \
+                    updated_at, dev_client_secret_ref, dev_client_secret_updated_at \
+                    FROM iam_principals WHERE type = $2 AND service_account_id = $1",
+            service_account_id,
+            PrincipalType::Service as PrincipalType
         )
-        .bind(service_account_id)
-        .bind(PrincipalType::Service)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -359,35 +389,66 @@ impl PrincipalRepository {
     }
 
     pub async fn find_all(&self) -> Result<Vec<Principal>> {
-        let rows = sqlx::query_as::<_, PrincipalRow>("SELECT * FROM iam_principals")
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sqlx::query_as!(
+            PrincipalRow,
+            "SELECT id, type AS \"principal_type: Stored<PrincipalType>\", \
+                    scope AS \"scope: Stored<UserScope>\", client_id, \
+                    application_id AS \"application_id: ApplicationId\", name, active, \
+                    email, email_domain, idp_type, external_idp_id, password_hash, \
+                    last_login_at, service_account_id, all_applications, created_at, \
+                    updated_at, dev_client_secret_ref, dev_client_secret_updated_at \
+                    FROM iam_principals"
+        )
+        .fetch_all(&self.pool)
+        .await?;
         self.hydrate_principals(rows).await
     }
 
     pub async fn find_active(&self) -> Result<Vec<Principal>> {
-        let rows =
-            sqlx::query_as::<_, PrincipalRow>("SELECT * FROM iam_principals WHERE active = true")
-                .fetch_all(&self.pool)
-                .await?;
+        let rows = sqlx::query_as!(
+            PrincipalRow,
+            "SELECT id, type AS \"principal_type: Stored<PrincipalType>\", \
+                    scope AS \"scope: Stored<UserScope>\", client_id, \
+                    application_id AS \"application_id: ApplicationId\", name, active, \
+                    email, email_domain, idp_type, external_idp_id, password_hash, \
+                    last_login_at, service_account_id, all_applications, created_at, \
+                    updated_at, dev_client_secret_ref, dev_client_secret_updated_at \
+                    FROM iam_principals WHERE active = true"
+        )
+        .fetch_all(&self.pool)
+        .await?;
         self.hydrate_principals(rows).await
     }
 
     pub async fn find_users(&self) -> Result<Vec<Principal>> {
-        let rows = sqlx::query_as::<_, PrincipalRow>(
-            "SELECT * FROM iam_principals WHERE type = $1 AND active = true",
+        let rows = sqlx::query_as!(
+            PrincipalRow,
+            "SELECT id, type AS \"principal_type: Stored<PrincipalType>\", \
+                    scope AS \"scope: Stored<UserScope>\", client_id, \
+                    application_id AS \"application_id: ApplicationId\", name, active, \
+                    email, email_domain, idp_type, external_idp_id, password_hash, \
+                    last_login_at, service_account_id, all_applications, created_at, \
+                    updated_at, dev_client_secret_ref, dev_client_secret_updated_at \
+                    FROM iam_principals WHERE type = $1 AND active = true",
+            PrincipalType::User as PrincipalType
         )
-        .bind(PrincipalType::User)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_principals(rows).await
     }
 
     pub async fn find_services(&self) -> Result<Vec<Principal>> {
-        let rows = sqlx::query_as::<_, PrincipalRow>(
-            "SELECT * FROM iam_principals WHERE type = $1 AND active = true",
+        let rows = sqlx::query_as!(
+            PrincipalRow,
+            "SELECT id, type AS \"principal_type: Stored<PrincipalType>\", \
+                    scope AS \"scope: Stored<UserScope>\", client_id, \
+                    application_id AS \"application_id: ApplicationId\", name, active, \
+                    email, email_domain, idp_type, external_idp_id, password_hash, \
+                    last_login_at, service_account_id, all_applications, created_at, \
+                    updated_at, dev_client_secret_ref, dev_client_secret_updated_at \
+                    FROM iam_principals WHERE type = $1 AND active = true",
+            PrincipalType::Service as PrincipalType
         )
-        .bind(PrincipalType::Service)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_principals(rows).await
@@ -395,22 +456,37 @@ impl PrincipalRepository {
 
     pub async fn find_by_client(&self, client_id: &ClientId) -> Result<Vec<Principal>> {
         // Find principals that either have this client_id OR have a grant for it
-        let rows = sqlx::query_as::<_, PrincipalRow>(
-            "SELECT DISTINCT p.* FROM iam_principals p
+        let rows = sqlx::query_as!(
+            PrincipalRow,
+            "SELECT DISTINCT p.id, p.type AS \"principal_type: Stored<PrincipalType>\", \
+                    p.scope AS \"scope: Stored<UserScope>\", p.client_id, \
+                    p.application_id AS \"application_id: ApplicationId\", p.name, \
+                    p.active, p.email, p.email_domain, p.idp_type, p.external_idp_id, \
+                    p.password_hash, p.last_login_at, p.service_account_id, \
+                    p.all_applications, p.created_at, p.updated_at, \
+                    p.dev_client_secret_ref, p.dev_client_secret_updated_at \
+                    FROM iam_principals p
              LEFT JOIN iam_client_access_grants g ON g.principal_id = p.id
              WHERE p.active = true AND (p.client_id = $1 OR g.client_id = $1)",
+            client_id as &ClientId
         )
-        .bind(client_id)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_principals(rows).await
     }
 
     pub async fn find_by_scope(&self, scope: UserScope) -> Result<Vec<Principal>> {
-        let rows = sqlx::query_as::<_, PrincipalRow>(
-            "SELECT * FROM iam_principals WHERE scope = $1 AND active = true",
+        let rows = sqlx::query_as!(
+            PrincipalRow,
+            "SELECT id, type AS \"principal_type: Stored<PrincipalType>\", \
+                    scope AS \"scope: Stored<UserScope>\", client_id, \
+                    application_id AS \"application_id: ApplicationId\", name, active, \
+                    email, email_domain, idp_type, external_idp_id, password_hash, \
+                    last_login_at, service_account_id, all_applications, created_at, \
+                    updated_at, dev_client_secret_ref, dev_client_secret_updated_at \
+                    FROM iam_principals WHERE scope = $1 AND active = true",
+            scope as UserScope
         )
-        .bind(scope)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_principals(rows).await
@@ -486,10 +562,17 @@ impl PrincipalRepository {
     }
 
     pub async fn find_anchors(&self) -> Result<Vec<Principal>> {
-        let rows = sqlx::query_as::<_, PrincipalRow>(
-            "SELECT * FROM iam_principals WHERE scope = $1 AND active = true",
+        let rows = sqlx::query_as!(
+            PrincipalRow,
+            "SELECT id, type AS \"principal_type: Stored<PrincipalType>\", \
+                    scope AS \"scope: Stored<UserScope>\", client_id, \
+                    application_id AS \"application_id: ApplicationId\", name, active, \
+                    email, email_domain, idp_type, external_idp_id, password_hash, \
+                    last_login_at, service_account_id, all_applications, created_at, \
+                    updated_at, dev_client_secret_ref, dev_client_secret_updated_at \
+                    FROM iam_principals WHERE scope = $1 AND active = true",
+            UserScope::Anchor as UserScope
         )
-        .bind(UserScope::Anchor)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_principals(rows).await
@@ -499,22 +582,37 @@ impl PrincipalRepository {
         &self,
         application_id: &ApplicationId,
     ) -> Result<Vec<Principal>> {
-        let rows = sqlx::query_as::<_, PrincipalRow>(
-            "SELECT * FROM iam_principals WHERE application_id = $1",
+        let rows = sqlx::query_as!(
+            PrincipalRow,
+            "SELECT id, type AS \"principal_type: Stored<PrincipalType>\", \
+                    scope AS \"scope: Stored<UserScope>\", client_id, \
+                    application_id AS \"application_id: ApplicationId\", name, active, \
+                    email, email_domain, idp_type, external_idp_id, password_hash, \
+                    last_login_at, service_account_id, all_applications, created_at, \
+                    updated_at, dev_client_secret_ref, dev_client_secret_updated_at \
+                    FROM iam_principals WHERE application_id = $1",
+            application_id as &ApplicationId
         )
-        .bind(application_id)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_principals(rows).await
     }
 
     pub async fn find_with_role(&self, role: &str) -> Result<Vec<Principal>> {
-        let rows = sqlx::query_as::<_, PrincipalRow>(
-            "SELECT p.* FROM iam_principals p
+        let rows = sqlx::query_as!(
+            PrincipalRow,
+            "SELECT p.id, p.type AS \"principal_type: Stored<PrincipalType>\", \
+                    p.scope AS \"scope: Stored<UserScope>\", p.client_id, \
+                    p.application_id AS \"application_id: ApplicationId\", p.name, \
+                    p.active, p.email, p.email_domain, p.idp_type, p.external_idp_id, \
+                    p.password_hash, p.last_login_at, p.service_account_id, \
+                    p.all_applications, p.created_at, p.updated_at, \
+                    p.dev_client_secret_ref, p.dev_client_secret_updated_at \
+                    FROM iam_principals p
              INNER JOIN iam_principal_roles r ON r.principal_id = p.id
              WHERE r.role_name = $1 AND p.active = true",
+            role
         )
-        .bind(role)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_principals(rows).await
@@ -551,45 +649,49 @@ impl PrincipalRepository {
             .as_ref()
             .and_then(|i| i.last_login_at);
 
-        sqlx::query(
+        sqlx::query!(
             "UPDATE iam_principals SET
                 type = $2, scope = $3, client_id = $4, application_id = $5, name = $6,
                 active = $7, email = $8, email_domain = $9, idp_type = $10,
                 external_idp_id = $11, password_hash = $12, last_login_at = $13,
                 service_account_id = $14, updated_at = $15, all_applications = $16
              WHERE id = $1",
+            &principal.id as &PrincipalId,
+            principal.principal_type as PrincipalType,
+            Some(principal.scope) as Option<UserScope>,
+            &principal.client_id as &Option<ClientId>,
+            &principal.application_id as &Option<ApplicationId>,
+            &principal.name,
+            principal.active,
+            email.as_ref(),
+            email_domain.as_ref(),
+            idp_type.as_ref(),
+            external_idp_id.as_ref(),
+            password_hash.as_ref(),
+            last_login_at,
+            principal.service_account_id.as_ref(),
+            now,
+            principal.all_applications
         )
-        .bind(&principal.id)
-        .bind(principal.principal_type)
-        .bind(Some(principal.scope))
-        .bind(&principal.client_id)
-        .bind(&principal.application_id)
-        .bind(&principal.name)
-        .bind(principal.active)
-        .bind(&email)
-        .bind(&email_domain)
-        .bind(&idp_type)
-        .bind(&external_idp_id)
-        .bind(&password_hash)
-        .bind(last_login_at)
-        .bind(&principal.service_account_id)
-        .bind(now)
-        .bind(principal.all_applications)
         .execute(&self.pool)
         .await?;
 
         // Sync roles: delete all then re-insert
-        sqlx::query("DELETE FROM iam_principal_roles WHERE principal_id = $1")
-            .bind(&principal.id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM iam_principal_roles WHERE principal_id = $1",
+            &principal.id as &PrincipalId
+        )
+        .execute(&self.pool)
+        .await?;
         self.insert_roles(&principal.id, &principal.roles).await?;
 
         // Sync application access
-        sqlx::query("DELETE FROM iam_principal_application_access WHERE principal_id = $1")
-            .bind(&principal.id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM iam_principal_application_access WHERE principal_id = $1",
+            &principal.id as &PrincipalId
+        )
+        .execute(&self.pool)
+        .await?;
 
         if !principal.accessible_application_ids.is_empty() {
             let count = principal.accessible_application_ids.len();
@@ -598,13 +700,13 @@ impl PrincipalRepository {
             let app_ids: Vec<ApplicationId> = principal.accessible_application_ids.clone();
             let granted_ats: Vec<DateTime<Utc>> = iter::repeat_n(now, count).collect();
 
-            sqlx::query(
-                "INSERT INTO iam_principal_application_access (principal_id, application_id, granted_at)
-                 SELECT * FROM UNNEST($1::varchar[], $2::varchar[], $3::timestamptz[])"
-            )
-            .bind(&principal_ids)
-            .bind(&app_ids)
-            .bind(&granted_ats)
+            sqlx::query!(
+            "INSERT INTO iam_principal_application_access (principal_id, application_id, granted_at)
+                 SELECT * FROM UNNEST($1::varchar[], $2::varchar[], $3::timestamptz[])",
+            &principal_ids as &[PrincipalId],
+            &app_ids as &[ApplicationId],
+            &granted_ats
+        )
             .execute(&self.pool)
             .await?;
         }
@@ -618,22 +720,30 @@ impl PrincipalRepository {
     pub async fn delete(&self, id: &PrincipalId) -> Result<bool> {
         let mut tx = self.pool.begin().await?;
 
-        sqlx::query("DELETE FROM iam_principal_roles WHERE principal_id = $1")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM iam_client_access_grants WHERE principal_id = $1")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM iam_principal_application_access WHERE principal_id = $1")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-        let result = sqlx::query("DELETE FROM iam_principals WHERE id = $1")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM iam_principal_roles WHERE principal_id = $1",
+            id as &PrincipalId
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!(
+            "DELETE FROM iam_client_access_grants WHERE principal_id = $1",
+            id as &PrincipalId
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!(
+            "DELETE FROM iam_principal_application_access WHERE principal_id = $1",
+            id as &PrincipalId
+        )
+        .execute(&mut *tx)
+        .await?;
+        let result = sqlx::query!(
+            "DELETE FROM iam_principals WHERE id = $1",
+            id as &PrincipalId
+        )
+        .execute(&mut *tx)
+        .await?;
 
         tx.commit().await?;
         Ok(result.rows_affected() > 0)
@@ -647,19 +757,19 @@ impl PrincipalRepository {
         client_id: &ClientId,
     ) -> Result<bool> {
         let now = Utc::now();
-        let result = sqlx::query(
+        let result = sqlx::query!(
             "INSERT INTO iam_client_access_grants
                 (id, principal_id, client_id, granted_by, granted_at, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7)
              ON CONFLICT (principal_id, client_id) DO NOTHING",
+            tsid::generate(EntityType::ClientAccessGrant),
+            principal_id as &PrincipalId,
+            client_id as &ClientId,
+            principal_id as &PrincipalId,
+            now,
+            now,
+            now
         )
-        .bind(tsid::generate(EntityType::ClientAccessGrant))
-        .bind(principal_id)
-        .bind(client_id)
-        .bind(principal_id)
-        .bind(now)
-        .bind(now)
-        .bind(now)
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected() > 0)
@@ -668,10 +778,17 @@ impl PrincipalRepository {
     /// Search principals by name or email (case-insensitive partial match)
     pub async fn search(&self, term: &str) -> Result<Vec<Principal>> {
         let pattern = format!("%{}%", term);
-        let rows = sqlx::query_as::<_, PrincipalRow>(
-            "SELECT * FROM iam_principals WHERE name LIKE $1 OR email LIKE $1",
+        let rows = sqlx::query_as!(
+            PrincipalRow,
+            "SELECT id, type AS \"principal_type: Stored<PrincipalType>\", \
+                    scope AS \"scope: Stored<UserScope>\", client_id, \
+                    application_id AS \"application_id: ApplicationId\", name, active, \
+                    email, email_domain, idp_type, external_idp_id, password_hash, \
+                    last_login_at, service_account_id, all_applications, created_at, \
+                    updated_at, dev_client_secret_ref, dev_client_secret_updated_at \
+                    FROM iam_principals WHERE name LIKE $1 OR email LIKE $1",
+            &pattern
         )
-        .bind(&pattern)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_principals(rows).await
@@ -685,24 +802,28 @@ impl PrincipalRepository {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
-        let rows: Vec<(PrincipalId, String)> =
-            sqlx::query_as("SELECT id, name FROM iam_principals WHERE id = ANY($1)")
-                .bind(ids)
-                .fetch_all(&self.pool)
-                .await?;
+        let rows: Vec<(PrincipalId, String)> = sqlx::query!(
+            "SELECT id AS \"id: PrincipalId\", name FROM iam_principals WHERE id = ANY($1)",
+            ids as &[PrincipalId]
+        )
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(|r| (r.id, r.name))
+        .collect();
         Ok(rows.into_iter().collect())
     }
 
     /// Count principals with email ending in the given domain
     pub async fn count_by_email_domain(&self, domain: &str) -> Result<i64> {
-        let row: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM iam_principals WHERE type = $2 AND email_domain = $1",
+        let row = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM iam_principals WHERE type = $2 AND email_domain = $1",
+            domain.to_lowercase(),
+            PrincipalType::User as PrincipalType
         )
-        .bind(domain.to_lowercase())
-        .bind(PrincipalType::User)
         .fetch_one(&self.pool)
         .await?;
-        Ok(row.0)
+        Ok(row)
     }
 
     /// Insert roles into the junction table via UNNEST
@@ -726,17 +847,17 @@ impl PrincipalRepository {
         let assigned_bys: Vec<Option<&str>> =
             roles.iter().map(|r| r.assigned_by.as_deref()).collect();
 
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO iam_principal_roles \
              (principal_id, role_name, assignment_source, assigned_at, assigned_by)
              SELECT * FROM UNNEST($1::varchar[], $2::varchar[], $3::varchar[], \
              $4::timestamptz[], $5::varchar[])",
+            &pids,
+            &role_names,
+            &sources as &[Option<&str>],
+            &assigned_ats,
+            &assigned_bys as &[Option<&str>]
         )
-        .bind(&pids)
-        .bind(&role_names)
-        .bind(&sources as &[Option<&str>])
-        .bind(&assigned_ats)
-        .bind(&assigned_bys)
         .execute(&self.pool)
         .await?;
 
@@ -750,11 +871,14 @@ impl PrincipalRepository {
         let home_client_id = principal.client_id.clone();
 
         // Load roles
-        let role_rows = sqlx::query_as::<_, PrincipalRoleRow>(
-            "SELECT principal_id, role_name, assignment_source, assigned_at, assigned_by
-             FROM iam_principal_roles WHERE principal_id = $1 ORDER BY assigned_at",
+        let role_rows = sqlx::query_as!(
+            PrincipalRoleRow,
+            "SELECT principal_id AS \"principal_id: PrincipalId\", role_name, \
+                    assignment_source AS \"assignment_source: Stored<AssignmentSource>\", \
+                    assigned_at, assigned_by \
+                    FROM iam_principal_roles WHERE principal_id = $1 ORDER BY assigned_at",
+            &id as &PrincipalId
         )
-        .bind(&id)
         .fetch_all(&self.pool)
         .await?;
         principal.roles = role_rows
@@ -763,10 +887,13 @@ impl PrincipalRepository {
             .collect::<Result<_>>()?;
 
         // Load client access grants
-        let grant_rows = sqlx::query_as::<_, ClientAccessGrantRow>(
-            "SELECT principal_id, client_id FROM iam_client_access_grants WHERE principal_id = $1",
+        let grant_rows = sqlx::query_as!(
+            ClientAccessGrantRow,
+            "SELECT principal_id AS \"principal_id: PrincipalId\", \
+                    client_id AS \"client_id: ClientId\" \
+                    FROM iam_client_access_grants WHERE principal_id = $1",
+            &id as &PrincipalId
         )
-        .bind(&id)
         .fetch_all(&self.pool)
         .await?;
         let client_ids: Vec<ClientId> = grant_rows.into_iter().map(|g| g.client_id).collect();
@@ -781,10 +908,12 @@ impl PrincipalRepository {
         let mut identifier_map: HashMap<ClientId, String> = HashMap::new();
         if !all_client_ids.is_empty() {
             let ids_vec: Vec<ClientId> = all_client_ids.into_iter().collect();
-            let client_rows = sqlx::query_as::<_, ClientIdentifierRow>(
-                "SELECT id, identifier FROM tnt_clients WHERE id = ANY($1)",
+            let client_rows = sqlx::query_as!(
+                ClientIdentifierRow,
+                "SELECT id AS \"id: ClientId\", identifier \
+                    FROM tnt_clients WHERE id = ANY($1)",
+                &ids_vec as &[ClientId]
             )
-            .bind(&ids_vec)
             .fetch_all(&self.pool)
             .await?;
             for c in client_rows {
@@ -797,14 +926,17 @@ impl PrincipalRepository {
         // Load application access
         // Go's hydrateAppAccess (principal/repository.go:286-322): LEFT JOIN
         // for the code, ordered by application id.
-        let app_rows = sqlx::query_as::<_, PrincipalApplicationAccessRow>(
-            "SELECT a.principal_id, a.application_id, ap.code AS application_code
-             FROM iam_principal_application_access a
+        let app_rows = sqlx::query_as!(
+            PrincipalApplicationAccessRow,
+            "SELECT a.principal_id AS \"principal_id: PrincipalId\", \
+                    a.application_id AS \"application_id: ApplicationId\", \
+                    ap.code AS \"application_code?\" \
+                    FROM iam_principal_application_access a
              LEFT JOIN app_applications ap ON ap.id = a.application_id
              WHERE a.principal_id = $1
              ORDER BY a.application_id",
+            &id as &PrincipalId
         )
-        .bind(&id)
         .fetch_all(&self.pool)
         .await?;
         for a in app_rows {
@@ -832,11 +964,14 @@ impl PrincipalRepository {
         let principal_ids: Vec<PrincipalId> = principals.iter().map(|p| p.id.clone()).collect();
 
         // Batch-load roles
-        let all_roles = sqlx::query_as::<_, PrincipalRoleRow>(
-            "SELECT principal_id, role_name, assignment_source, assigned_at, assigned_by
-             FROM iam_principal_roles WHERE principal_id = ANY($1) ORDER BY assigned_at",
+        let all_roles = sqlx::query_as!(
+            PrincipalRoleRow,
+            "SELECT principal_id AS \"principal_id: PrincipalId\", role_name, \
+                    assignment_source AS \"assignment_source: Stored<AssignmentSource>\", \
+                    assigned_at, assigned_by \
+                    FROM iam_principal_roles WHERE principal_id = ANY($1) ORDER BY assigned_at",
+            &principal_ids as &[PrincipalId]
         )
-        .bind(&principal_ids)
         .fetch_all(&self.pool)
         .await?;
 
@@ -849,10 +984,13 @@ impl PrincipalRepository {
         }
 
         // Batch-load client access grants
-        let all_grants = sqlx::query_as::<_, ClientAccessGrantRow>(
-            "SELECT principal_id, client_id FROM iam_client_access_grants WHERE principal_id = ANY($1)"
+        let all_grants = sqlx::query_as!(
+            ClientAccessGrantRow,
+            "SELECT principal_id AS \"principal_id: PrincipalId\", \
+                    client_id AS \"client_id: ClientId\" \
+                    FROM iam_client_access_grants WHERE principal_id = ANY($1)",
+            &principal_ids as &[PrincipalId]
         )
-        .bind(&principal_ids)
         .fetch_all(&self.pool)
         .await?;
 
@@ -878,10 +1016,12 @@ impl PrincipalRepository {
         let mut client_id_to_identifier: HashMap<ClientId, String> = HashMap::new();
         if !all_client_ids.is_empty() {
             let ids_vec: Vec<ClientId> = all_client_ids.into_iter().collect();
-            let client_rows = sqlx::query_as::<_, ClientIdentifierRow>(
-                "SELECT id, identifier FROM tnt_clients WHERE id = ANY($1)",
+            let client_rows = sqlx::query_as!(
+                ClientIdentifierRow,
+                "SELECT id AS \"id: ClientId\", identifier \
+                    FROM tnt_clients WHERE id = ANY($1)",
+                &ids_vec as &[ClientId]
             )
-            .bind(&ids_vec)
             .fetch_all(&self.pool)
             .await?;
             for c in client_rows {
@@ -890,14 +1030,17 @@ impl PrincipalRepository {
         }
 
         // Batch-load application access
-        let all_app_access = sqlx::query_as::<_, PrincipalApplicationAccessRow>(
-            "SELECT a.principal_id, a.application_id, ap.code AS application_code
-             FROM iam_principal_application_access a
+        let all_app_access = sqlx::query_as!(
+            PrincipalApplicationAccessRow,
+            "SELECT a.principal_id AS \"principal_id: PrincipalId\", \
+                    a.application_id AS \"application_id: ApplicationId\", \
+                    ap.code AS \"application_code?\" \
+                    FROM iam_principal_application_access a
              LEFT JOIN app_applications ap ON ap.id = a.application_id
              WHERE a.principal_id = ANY($1)
              ORDER BY a.application_id",
+            &principal_ids as &[PrincipalId]
         )
-        .bind(&principal_ids)
         .fetch_all(&self.pool)
         .await?;
 
@@ -1003,7 +1146,7 @@ impl Persist<PrincipalSyncBatch> for PrincipalRepository {
         let created: Vec<DateTime<Utc>> = ps.iter().map(|p| p.created_at).collect();
         let all_apps: Vec<bool> = ps.iter().map(|p| p.all_applications).collect();
 
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO iam_principals (id, type, scope, client_id, name, active, email, email_domain, idp_type, password_hash, created_at, updated_at, all_applications)
              SELECT u.id, u.type, u.scope, u.client_id, u.name, u.active, u.email, u.email_domain, u.idp_type, u.password_hash, u.created_at, $13, u.all_applications
              FROM UNNEST($1::varchar[], $2::varchar[], $3::varchar[], $4::varchar[], $5::varchar[], $6::bool[], $7::varchar[], $8::varchar[], $9::varchar[], $10::varchar[], $11::timestamptz[], $12::bool[])
@@ -1013,27 +1156,29 @@ impl Persist<PrincipalSyncBatch> for PrincipalRepository {
                 active = EXCLUDED.active,
                 password_hash = EXCLUDED.password_hash,
                 updated_at = EXCLUDED.updated_at",
+            &ids as &[&str],
+            &types as &[&str],
+            &scopes as &[&str],
+            &client_ids as &[Option<&str>],
+            &names as &[&str],
+            &actives,
+            &emails as &[Option<&str>],
+            &domains as &[Option<String>],
+            &idp_types as &[Option<String>],
+            &hashes as &[Option<&str>],
+            &created,
+            &all_apps,
+            now
         )
-        .bind(&ids)
-        .bind(&types)
-        .bind(&scopes)
-        .bind(&client_ids)
-        .bind(&names)
-        .bind(&actives)
-        .bind(&emails)
-        .bind(&domains)
-        .bind(&idp_types)
-        .bind(&hashes)
-        .bind(&created)
-        .bind(&all_apps)
-        .bind(now)
         .execute(&mut **tx.inner)
         .await?;
 
-        sqlx::query("DELETE FROM iam_principal_roles WHERE principal_id = ANY($1)")
-            .bind(&ids)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM iam_principal_roles WHERE principal_id = ANY($1)",
+            &ids as &[&str]
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         let mut role_pids: Vec<&str> = Vec::new();
         let mut role_names: Vec<&str> = Vec::new();
         let mut role_sources: Vec<Option<&str>> = Vec::new();
@@ -1049,18 +1194,18 @@ impl Persist<PrincipalSyncBatch> for PrincipalRepository {
             }
         }
         if !role_pids.is_empty() {
-            sqlx::query(
+            sqlx::query!(
                 "INSERT INTO iam_principal_roles \
                  (principal_id, role_name, assignment_source, assigned_at, assigned_by)
                  SELECT * FROM UNNEST($1::varchar[], $2::varchar[], $3::varchar[], \
                  $4::timestamptz[], $5::varchar[])
                  ON CONFLICT DO NOTHING",
+                &role_pids as &[&str],
+                &role_names as &[&str],
+                &role_sources as &[Option<&str>],
+                &role_ats,
+                &role_bys as &[Option<&str>]
             )
-            .bind(&role_pids)
-            .bind(&role_names)
-            .bind(&role_sources)
-            .bind(&role_ats)
-            .bind(&role_bys)
             .execute(&mut **tx.inner)
             .await?;
         }
@@ -1113,7 +1258,7 @@ impl Persist<Principal> for PrincipalRepository {
         let last_login_at = p.user_identity.as_ref().and_then(|i| i.last_login_at);
 
         // 1. Upsert main row
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO iam_principals (id, type, scope, client_id, application_id, name, active, email, email_domain, idp_type, external_idp_id, password_hash, last_login_at, service_account_id, created_at, updated_at, all_applications)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
              ON CONFLICT (id) DO UPDATE SET
@@ -1131,32 +1276,34 @@ impl Persist<Principal> for PrincipalRepository {
                 last_login_at = EXCLUDED.last_login_at,
                 service_account_id = EXCLUDED.service_account_id,
                 updated_at = EXCLUDED.updated_at,
-                all_applications = EXCLUDED.all_applications"
+                all_applications = EXCLUDED.all_applications",
+            &p.id as &PrincipalId,
+            p.principal_type as PrincipalType,
+            Some(p.scope) as Option<UserScope>,
+            &p.client_id as &Option<ClientId>,
+            &p.application_id as &Option<ApplicationId>,
+            &p.name,
+            p.active,
+            email.as_ref(),
+            email_domain.as_ref(),
+            idp_type.as_ref(),
+            external_idp_id.as_ref(),
+            password_hash.as_ref(),
+            last_login_at,
+            p.service_account_id.as_ref(),
+            now,
+            now,
+            p.all_applications
         )
-        .bind(&p.id)
-        .bind(p.principal_type)
-        .bind(Some(p.scope))
-        .bind(&p.client_id)
-        .bind(&p.application_id)
-        .bind(&p.name)
-        .bind(p.active)
-        .bind(&email)
-        .bind(&email_domain)
-        .bind(&idp_type)
-        .bind(&external_idp_id)
-        .bind(&password_hash)
-        .bind(last_login_at)
-        .bind(&p.service_account_id)
-        .bind(now)
-        .bind(now)
-        .bind(p.all_applications)
         .execute(&mut **tx.inner).await?;
 
         // 2. Sync roles: delete then re-insert, one statement for the set.
-        sqlx::query("DELETE FROM iam_principal_roles WHERE principal_id = $1")
-            .bind(&p.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM iam_principal_roles WHERE principal_id = $1",
+            &p.id as &PrincipalId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         if !p.roles.is_empty() {
             let role_names: Vec<&str> = p.roles.iter().map(|r| r.role.as_str()).collect();
             let sources: Vec<Option<&str>> = p
@@ -1167,18 +1314,18 @@ impl Persist<Principal> for PrincipalRepository {
             let assigned_ats: Vec<DateTime<Utc>> = p.roles.iter().map(|r| r.assigned_at).collect();
             let assigned_bys: Vec<Option<&str>> =
                 p.roles.iter().map(|r| r.assigned_by.as_deref()).collect();
-            sqlx::query(
+            sqlx::query!(
                 "INSERT INTO iam_principal_roles \
                  (principal_id, role_name, assignment_source, assigned_at, assigned_by)
                  SELECT $1, r.role_name, r.source, r.assigned_at, r.assigned_by
                  FROM UNNEST($2::varchar[], $3::varchar[], $4::timestamptz[], $5::varchar[])
                       AS r(role_name, source, assigned_at, assigned_by)",
+                &p.id as &PrincipalId,
+                &role_names as &[&str],
+                &sources as &[Option<&str>],
+                &assigned_ats,
+                &assigned_bys as &[Option<&str>]
             )
-            .bind(&p.id)
-            .bind(&role_names)
-            .bind(&sources)
-            .bind(&assigned_ats)
-            .bind(&assigned_bys)
             .execute(&mut **tx.inner)
             .await?;
         }
@@ -1187,12 +1334,12 @@ impl Persist<Principal> for PrincipalRepository {
         //    and date (Go `ClientAccessGrant`), so a save keeps the grants
         //    still assigned and only removes the dropped ones and adds the
         //    new ones.
-        sqlx::query(
+        sqlx::query!(
             "DELETE FROM iam_client_access_grants
              WHERE principal_id = $1 AND NOT (client_id = ANY($2::varchar[]))",
+            &p.id as &PrincipalId,
+            &p.assigned_clients as &[ClientId]
         )
-        .bind(&p.id)
-        .bind(&p.assigned_clients)
         .execute(&mut **tx.inner)
         .await?;
         if !p.assigned_clients.is_empty() {
@@ -1201,35 +1348,37 @@ impl Persist<Principal> for PrincipalRepository {
                 .iter()
                 .map(|_| tsid::generate(EntityType::ClientAccessGrant))
                 .collect();
-            sqlx::query(
+            sqlx::query!(
                 "INSERT INTO iam_client_access_grants
                      (id, principal_id, client_id, granted_by, granted_at, created_at, updated_at)
                  SELECT g.id, $1, g.client_id, $1, $4, $4, $4
                  FROM UNNEST($2::varchar[], $3::varchar[]) AS g(id, client_id)
                  ON CONFLICT (principal_id, client_id) DO NOTHING",
+                &p.id as &PrincipalId,
+                &grant_ids,
+                &p.assigned_clients as &[ClientId],
+                now
             )
-            .bind(&p.id)
-            .bind(&grant_ids)
-            .bind(&p.assigned_clients)
-            .bind(now)
             .execute(&mut **tx.inner)
             .await?;
         }
 
         // 4. Sync application access: delete then re-insert, one statement.
-        sqlx::query("DELETE FROM iam_principal_application_access WHERE principal_id = $1")
-            .bind(&p.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM iam_principal_application_access WHERE principal_id = $1",
+            &p.id as &PrincipalId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         if !p.accessible_application_ids.is_empty() {
-            sqlx::query(
-                "INSERT INTO iam_principal_application_access (principal_id, application_id, granted_at)
+            sqlx::query!(
+            "INSERT INTO iam_principal_application_access (principal_id, application_id, granted_at)
                  SELECT $1, a, $3 FROM UNNEST($2::varchar[]) AS a
                  ON CONFLICT DO NOTHING",
-            )
-            .bind(&p.id)
-            .bind(&p.accessible_application_ids)
-            .bind(now)
+            &p.id as &PrincipalId,
+            &p.accessible_application_ids as &[ApplicationId],
+            now
+        )
             .execute(&mut **tx.inner)
             .await?;
         }
@@ -1238,22 +1387,30 @@ impl Persist<Principal> for PrincipalRepository {
     }
 
     async fn delete(&self, p: &Principal, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query("DELETE FROM iam_principal_roles WHERE principal_id = $1")
-            .bind(&p.id)
-            .execute(&mut **tx.inner)
-            .await?;
-        sqlx::query("DELETE FROM iam_client_access_grants WHERE principal_id = $1")
-            .bind(&p.id)
-            .execute(&mut **tx.inner)
-            .await?;
-        sqlx::query("DELETE FROM iam_principal_application_access WHERE principal_id = $1")
-            .bind(&p.id)
-            .execute(&mut **tx.inner)
-            .await?;
-        sqlx::query("DELETE FROM iam_principals WHERE id = $1")
-            .bind(&p.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM iam_principal_roles WHERE principal_id = $1",
+            &p.id as &PrincipalId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
+        sqlx::query!(
+            "DELETE FROM iam_client_access_grants WHERE principal_id = $1",
+            &p.id as &PrincipalId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
+        sqlx::query!(
+            "DELETE FROM iam_principal_application_access WHERE principal_id = $1",
+            &p.id as &PrincipalId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
+        sqlx::query!(
+            "DELETE FROM iam_principals WHERE id = $1",
+            &p.id as &PrincipalId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         Ok(())
     }
 }
@@ -1272,24 +1429,24 @@ impl HasId for DeveloperCredential {
 /// (Go `SetDevClientSecretRef` / `ClearDevClientSecretRef`).
 impl Persist<DeveloperCredential> for PrincipalRepository {
     async fn persist(&self, c: &DeveloperCredential, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "UPDATE iam_principals SET dev_client_secret_ref = $2, \
              dev_client_secret_updated_at = CASE WHEN $2::text IS NULL THEN NULL ELSE NOW() END, \
              updated_at = NOW() WHERE id = $1",
+            &c.principal_id as &PrincipalId,
+            c.secret_ref.as_ref()
         )
-        .bind(&c.principal_id)
-        .bind(&c.secret_ref)
         .execute(&mut **tx.inner)
         .await?;
         Ok(())
     }
 
     async fn delete(&self, c: &DeveloperCredential, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "UPDATE iam_principals SET dev_client_secret_ref = NULL, \
              dev_client_secret_updated_at = NULL, updated_at = NOW() WHERE id = $1",
+            &c.principal_id as &PrincipalId
         )
-        .bind(&c.principal_id)
         .execute(&mut **tx.inner)
         .await?;
         Ok(())
@@ -1302,14 +1459,14 @@ impl PrincipalRepository {
         &self,
         principal_id: &PrincipalId,
     ) -> Result<Option<(Option<String>, Option<chrono::DateTime<chrono::Utc>>)>> {
-        let row = sqlx::query_as::<_, (Option<String>, Option<chrono::DateTime<chrono::Utc>>)>(
+        let row = sqlx::query!(
             "SELECT dev_client_secret_ref, dev_client_secret_updated_at FROM iam_principals \
              WHERE id = $1",
+            principal_id as &PrincipalId
         )
-        .bind(principal_id)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row)
+        Ok(row.map(|r| (r.dev_client_secret_ref, r.dev_client_secret_updated_at)))
     }
 
     /// When each of `ids` last set a developer secret (absent: none set).
@@ -1317,16 +1474,16 @@ impl PrincipalRepository {
         &self,
         ids: &[PrincipalId],
     ) -> Result<HashMap<PrincipalId, chrono::DateTime<chrono::Utc>>> {
-        let rows = sqlx::query_as::<_, (PrincipalId, Option<chrono::DateTime<chrono::Utc>>)>(
-            "SELECT id, dev_client_secret_updated_at FROM iam_principals \
+        let rows = sqlx::query!(
+            "SELECT id AS \"id: PrincipalId\", dev_client_secret_updated_at FROM iam_principals \
              WHERE id = ANY($1) AND dev_client_secret_ref IS NOT NULL",
+            ids as &[PrincipalId]
         )
-        .bind(ids)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
             .into_iter()
-            .map(|(id, at)| (id, at.unwrap_or_default()))
+            .map(|r| (r.id, r.dev_client_secret_updated_at.unwrap_or_default()))
             .collect())
     }
 
@@ -1340,12 +1497,12 @@ impl PrincipalRepository {
         principal_id: &PrincipalId,
         new_ref: &str,
     ) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "UPDATE iam_principals SET dev_client_secret_ref = $2, \
              dev_client_secret_updated_at = NOW(), updated_at = NOW() WHERE id = $1",
+            principal_id as &PrincipalId,
+            new_ref
         )
-        .bind(principal_id)
-        .bind(new_ref)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -1362,11 +1519,15 @@ impl PrincipalRepository {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
-        let rows: Vec<(PrincipalId, String, Option<String>)> =
-            sqlx::query_as("SELECT id, name, email FROM iam_principals WHERE id = ANY($1)")
-                .bind(ids)
-                .fetch_all(&self.pool)
-                .await?;
+        let rows: Vec<(PrincipalId, String, Option<String>)> = sqlx::query!(
+            "SELECT id AS \"id: PrincipalId\", name, email FROM iam_principals WHERE id = ANY($1)",
+            ids as &[PrincipalId]
+        )
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(|r| (r.id, r.name, r.email))
+        .collect();
         Ok(rows
             .into_iter()
             .map(|(id, name, email)| (id, (name, email.unwrap_or_default())))
@@ -1382,16 +1543,19 @@ impl PrincipalRepository {
         &self,
         domain: &str,
     ) -> Result<Vec<PrincipalId>> {
-        let rows: Vec<(PrincipalId,)> = sqlx::query_as(
-            "SELECT id FROM iam_principals \
+        let rows: Vec<(PrincipalId,)> = sqlx::query!(
+            "SELECT id AS \"id: PrincipalId\" FROM iam_principals \
              WHERE type = $2 AND email_domain = lower($1) AND idp_type = $3 \
              ORDER BY id",
+            domain,
+            PrincipalType::User as PrincipalType,
+            IdentityProviderType::Oidc as IdentityProviderType
         )
-        .bind(domain)
-        .bind(PrincipalType::User)
-        .bind(IdentityProviderType::Oidc)
         .fetch_all(&self.pool)
-        .await?;
+        .await?
+        .into_iter()
+        .map(|r| (r.id,))
+        .collect();
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
@@ -1406,20 +1570,20 @@ impl PrincipalRepository {
         if ids.is_empty() {
             return Ok(());
         }
-        sqlx::query(
+        sqlx::query!(
             "UPDATE iam_principals SET idp_type = $2, external_idp_id = NULL, \
              updated_at = NOW() WHERE id = ANY($1)",
+            ids as &[PrincipalId],
+            IdentityProviderType::Internal as IdentityProviderType
         )
-        .bind(ids)
-        .bind(IdentityProviderType::Internal)
         .execute(&mut **tx.inner)
         .await?;
-        sqlx::query(
+        sqlx::query!(
             "DELETE FROM iam_principal_roles \
              WHERE principal_id = ANY($1) AND assignment_source = $2",
+            ids as &[PrincipalId],
+            AssignmentSource::IdpSync as AssignmentSource
         )
-        .bind(ids)
-        .bind(AssignmentSource::IdpSync)
         .execute(&mut **tx.inner)
         .await?;
         Ok(())
@@ -1430,16 +1594,16 @@ impl PrincipalRepository {
     /// Go `LookupVersion` (principal/repository.go:74): the later of the
     /// principal's own `updated_at` and its roles' newest `updated_at`.
     pub async fn lookup_version(&self, id: &PrincipalId) -> Result<Option<DateTime<Utc>>> {
-        let row: Option<(Option<DateTime<Utc>>,)> = sqlx::query_as(
+        let row = sqlx::query_scalar!(
             "SELECT GREATEST(p.updated_at, COALESCE((SELECT MAX(r.updated_at) \
                  FROM iam_principal_roles pr JOIN iam_roles r ON r.name = pr.role_name \
-                 WHERE pr.principal_id = p.id), p.updated_at)) \
+                 WHERE pr.principal_id = p.id), p.updated_at)) AS \"version\" \
              FROM iam_principals p WHERE p.id = $1",
+            id as &PrincipalId
         )
-        .bind(id)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.and_then(|(v,)| v))
+        Ok(row.flatten())
     }
 
     /// The emails of `emails` that already belong to a principal (lower-cased).
@@ -1447,12 +1611,14 @@ impl PrincipalRepository {
         if emails.is_empty() {
             return Ok(Vec::new());
         }
-        let rows: Vec<(String,)> =
-            sqlx::query_as("SELECT lower(email) FROM iam_principals WHERE lower(email) = ANY($1)")
-                .bind(emails)
-                .fetch_all(&self.pool)
-                .await?;
-        Ok(rows.into_iter().map(|(e,)| e).collect())
+        // `email!`: `= ANY($1)` never matches a NULL.
+        let rows = sqlx::query_scalar!(
+            "SELECT lower(email) AS \"email!\" FROM iam_principals WHERE lower(email) = ANY($1)",
+            emails
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
     }
 }
 

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM iam_principal_roles WHERE principal_id = ANY($1) AND assignment_source = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0d9440e1fc5fe1e3e9daf3f500d72c14e98c57fc420bbea21ebd97e66ff02d9c"
+}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM oauth_identity_provider_allowed_domains WHERE identity_provider_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3791623bc3c5906478db93bd5cb90cd8d65c7a0a480c7fd371164e1ff7b5fdad"
+}

@@ -1,0 +1,82 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM portal_login_flows WHERE id = $1 AND expires_at > NOW() RETURNING id, oauth_client_id, portal_client_id AS \"portal_client_id: ClientId\", redirect_uri, scope, state, nonce, code_challenge, code_challenge_method, created_at, expires_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "oauth_client_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "portal_client_id: ClientId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "redirect_uri",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "scope",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "state",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "nonce",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "code_challenge",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "code_challenge_method",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "expires_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "e48fcb659f49000c160b3a589a5e65f0eb489ee65824f2fd75cb61167be58318"
+}

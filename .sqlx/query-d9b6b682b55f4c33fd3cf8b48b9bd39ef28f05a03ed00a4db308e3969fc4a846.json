@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT a.principal_id AS \"principal_id: PrincipalId\", a.application_id AS \"application_id: ApplicationId\", ap.code AS \"application_code?\" FROM iam_principal_application_access a\n             LEFT JOIN app_applications ap ON ap.id = a.application_id\n             WHERE a.principal_id = ANY($1)\n             ORDER BY a.application_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "principal_id: PrincipalId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "application_id: ApplicationId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "application_code?",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "d9b6b682b55f4c33fd3cf8b48b9bd39ef28f05a03ed00a4db308e3969fc4a846"
+}

@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.ref AS \"reference!\", sa.code, sa.application_id, sa.client_ids AS \"client_ids: Vec<ClientId>\", p.id AS \"principal_id?: PrincipalId\", p.scope AS \"scope?: Stored<UserScope>\", p.client_id AS \"client_id?: ClientId\", COALESCE(g.clients, '{}'::text[]) AS \"granted!: Vec<ClientId>\" FROM unnest($1::text[]) AS r(ref) JOIN iam_service_accounts sa ON sa.id = r.ref OR sa.id = (SELECT service_account_id FROM iam_principals WHERE id = r.ref) LEFT JOIN LATERAL (SELECT id, scope, client_id FROM iam_principals WHERE service_account_id = sa.id ORDER BY created_at LIMIT 1) p ON true LEFT JOIN LATERAL (SELECT array_agg(client_id::text ORDER BY client_id) AS clients FROM iam_client_access_grants WHERE principal_id = p.id) g ON true",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "reference!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "code",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "application_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "client_ids: Vec<ClientId>",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 4,
+        "name": "principal_id?: PrincipalId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "scope?: Stored<UserScope>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "client_id?: ClientId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "granted!: Vec<ClientId>",
+        "type_info": "TextArray"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      null,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      null
+    ]
+  },
+  "hash": "a2060593fd61348b016d4ce95717ea21b362021eb73eb66f41ae05b11892302a"
+}

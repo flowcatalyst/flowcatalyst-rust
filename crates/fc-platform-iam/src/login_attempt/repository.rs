@@ -66,21 +66,21 @@ impl LoginAttemptRepository {
     }
 
     pub async fn create(&self, attempt: &LoginAttempt) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO iam_login_attempts
                 (id, attempt_type, outcome, failure_reason, identifier,
                  principal_id, ip_address, user_agent, attempted_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
+            &attempt.id as &LoginAttemptId,
+            attempt.attempt_type as AttemptType,
+            attempt.outcome as LoginOutcome,
+            attempt.failure_reason.as_ref(),
+            attempt.identifier.as_ref(),
+            &attempt.principal_id as &Option<PrincipalId>,
+            attempt.ip_address.as_ref(),
+            attempt.user_agent.as_ref(),
+            attempt.attempted_at
         )
-        .bind(&attempt.id)
-        .bind(attempt.attempt_type)
-        .bind(attempt.outcome)
-        .bind(&attempt.failure_reason)
-        .bind(&attempt.identifier)
-        .bind(&attempt.principal_id)
-        .bind(&attempt.ip_address)
-        .bind(&attempt.user_agent)
-        .bind(attempt.attempted_at)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -157,12 +157,17 @@ impl LoginAttemptRepository {
         identifier: &str,
         limit: i64,
     ) -> Result<Vec<LoginAttempt>> {
-        let rows = sqlx::query_as::<_, LoginAttemptRow>(
-            "SELECT * FROM iam_login_attempts WHERE identifier = $1 \
+        let rows = sqlx::query_as!(
+            LoginAttemptRow,
+            "SELECT id, attempt_type AS \"attempt_type: Stored<AttemptType>\", \
+                    outcome AS \"outcome: Stored<LoginOutcome>\", failure_reason, \
+                    identifier, principal_id AS \"principal_id: PrincipalId\", \
+                    ip_address, user_agent, attempted_at \
+                    FROM iam_login_attempts WHERE identifier = $1 \
              ORDER BY attempted_at DESC, id DESC LIMIT $2",
+            identifier,
+            limit
         )
-        .bind(identifier)
-        .bind(limit)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(LoginAttempt::try_from).collect()
@@ -173,12 +178,12 @@ impl LoginAttemptRepository {
     pub async fn last_success_at(&self, identifier: &str) -> Result<Option<DateTime<Utc>>> {
         // MAX(...) over zero rows returns NULL — query_as decodes the single
         // aggregated row, then we treat the NULL as None.
-        let (ts,): (Option<DateTime<Utc>>,) = sqlx::query_as(
+        let ts = sqlx::query_scalar!(
             "SELECT MAX(attempted_at) FROM iam_login_attempts
              WHERE identifier = $1 AND outcome = $2",
+            identifier,
+            LoginOutcome::Success as LoginOutcome
         )
-        .bind(identifier)
-        .bind(LoginOutcome::Success)
         .fetch_one(&self.pool)
         .await?;
         Ok(ts)
@@ -192,18 +197,18 @@ impl LoginAttemptRepository {
         ip: &str,
         since: DateTime<Utc>,
     ) -> Result<(i64, Option<DateTime<Utc>>)> {
-        let row: (i64, Option<DateTime<Utc>>) = sqlx::query_as(
-            "SELECT COUNT(*), MAX(attempted_at) FROM iam_login_attempts
+        let row = sqlx::query!(
+            "SELECT COUNT(*) AS \"count!\", MAX(attempted_at) AS last_at FROM iam_login_attempts
              WHERE identifier = $1 AND ip_address = $2 AND outcome = $4
                AND attempted_at > $3",
+            identifier,
+            ip,
+            since,
+            LoginOutcome::Failure as LoginOutcome
         )
-        .bind(identifier)
-        .bind(ip)
-        .bind(since)
-        .bind(LoginOutcome::Failure)
         .fetch_one(&self.pool)
         .await?;
-        Ok(row)
+        Ok((row.count, row.last_at))
     }
 
     /// Count failures across all IPs for `identifier` strictly after `since`.
@@ -213,16 +218,16 @@ impl LoginAttemptRepository {
         identifier: &str,
         since: DateTime<Utc>,
     ) -> Result<i64> {
-        let count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM iam_login_attempts
+        let count = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM iam_login_attempts
              WHERE identifier = $1 AND outcome = $3 AND attempted_at > $2",
+            identifier,
+            since,
+            LoginOutcome::Failure as LoginOutcome
         )
-        .bind(identifier)
-        .bind(since)
-        .bind(LoginOutcome::Failure)
         .fetch_one(&self.pool)
         .await?;
-        Ok(count.0)
+        Ok(count)
     }
 }
 
@@ -283,12 +288,13 @@ impl LoginAttemptRepository {
     /// Whether `iam_login_attempts` is a partitioned table (Go
     /// `isPartitioned`); `false` when it is a plain table or absent.
     async fn is_partitioned(&self) -> Result<bool> {
-        let relkind: Option<(String,)> = sqlx::query_as(
-            "SELECT relkind::text FROM pg_class WHERE relname = 'iam_login_attempts'",
+        // `relkind!`: pg_class.relkind is NOT NULL (a cast loses that).
+        let relkind = sqlx::query_scalar!(
+            "SELECT relkind::text AS \"relkind!\" FROM pg_class WHERE relname = 'iam_login_attempts'",
         )
         .fetch_optional(&self.pool)
         .await?;
-        Ok(relkind.is_some_and(|(k,)| k == "p"))
+        Ok(relkind.is_some_and(|k| k == "p"))
     }
 
     /// Create the partition covering `at`'s calendar quarter unless it
@@ -324,8 +330,9 @@ impl LoginAttemptRepository {
         if !self.is_partitioned().await? {
             return Ok(Vec::new());
         }
-        let children: Vec<(String,)> = sqlx::query_as(
-            "SELECT child.relname::text FROM pg_inherits i \
+        // `relname!`: pg_class.relname is NOT NULL (a cast loses that).
+        let children = sqlx::query_scalar!(
+            "SELECT child.relname::text AS \"relname!\" FROM pg_inherits i \
              JOIN pg_class parent ON i.inhparent = parent.oid \
              JOIN pg_class child ON i.inhrelid = child.oid \
              WHERE parent.relname = 'iam_login_attempts'",
@@ -334,7 +341,7 @@ impl LoginAttemptRepository {
         .await?;
         let cutoff = cutoff.date_naive();
         let mut dropped = Vec::new();
-        for (name,) in children {
+        for name in children {
             let Some(end) = quarter_partition_end(&name) else {
                 continue;
             };

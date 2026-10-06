@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO app_platform_config_access\n                (id, application_code, role_code, can_read, can_write, created_at)\n            VALUES ($1, $2, $3, $4, $5, NOW())",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Bool",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f803bd6440ee8f64a37008c72413b5b9fbf3fc4f5366cba46597681bbcddcae0"
+}

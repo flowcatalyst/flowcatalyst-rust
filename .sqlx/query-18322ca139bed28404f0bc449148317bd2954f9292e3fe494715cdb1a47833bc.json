@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO portal_identity_apps (identity_id, portal_app_id, source, granted_at) SELECT $1, a, s, g FROM UNNEST($2::text[], $3::text[], $4::timestamptz[]) AS t(a, s, g) ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "TextArray",
+        "TextArray",
+        "TimestamptzArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "18322ca139bed28404f0bc449148317bd2954f9292e3fe494715cdb1a47833bc"
+}

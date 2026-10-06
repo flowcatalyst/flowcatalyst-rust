@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT application_id AS \"application_id!\" FROM aud_logs WHERE application_id IS NOT NULL ORDER BY application_id LIMIT 500",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "application_id!",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "935d9b5ce5865b2681f5e8caa21234c1a1910f7e43314db0bcf9ad91e79b4d49"
+}

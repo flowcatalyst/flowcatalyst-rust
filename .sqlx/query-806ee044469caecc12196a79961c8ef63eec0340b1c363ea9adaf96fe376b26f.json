@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM iam_user_mfa_methods WHERE principal_id = $1 AND method = $2 AND confirmed_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "806ee044469caecc12196a79961c8ef63eec0340b1c363ea9adaf96fe376b26f"
+}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE iam_principals SET dev_client_secret_ref = NULL, dev_client_secret_updated_at = NULL, updated_at = NOW() WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "30ee528786d580abafd16ea575b5df75780001263b11b46563cdcf4458dd4530"
+}

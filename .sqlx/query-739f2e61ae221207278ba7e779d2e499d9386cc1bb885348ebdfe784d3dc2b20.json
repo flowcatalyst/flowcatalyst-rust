@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO oauth_client_grant_types (oauth_client_id, grant_type) VALUES ($1, $2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "739f2e61ae221207278ba7e779d2e499d9386cc1bb885348ebdfe784d3dc2b20"
+}

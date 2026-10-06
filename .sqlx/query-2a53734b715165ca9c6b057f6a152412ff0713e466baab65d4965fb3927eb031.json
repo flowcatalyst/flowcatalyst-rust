@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT oauth_client_id AS \"oauth_client_id: OAuthClientId\", allowed_origin FROM oauth_client_allowed_origins WHERE oauth_client_id = ANY($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "oauth_client_id: OAuthClientId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "allowed_origin",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "2a53734b715165ca9c6b057f6a152412ff0713e466baab65d4965fb3927eb031"
+}

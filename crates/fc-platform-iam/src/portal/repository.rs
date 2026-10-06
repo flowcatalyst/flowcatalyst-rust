@@ -32,7 +32,6 @@ use fc_platform_core::usecase::Persist;
 
 // ── Portal identities ─────────────────────────────────────────────────────
 
-#[derive(sqlx::FromRow)]
 struct IdentityRow {
     id: PortalIdentityId,
     client_id: ClientId,
@@ -76,21 +75,12 @@ impl TryFrom<IdentityRow> for PortalIdentity {
     }
 }
 
-#[derive(sqlx::FromRow)]
 struct GrantRow {
     identity_id: PortalIdentityId,
     portal_app_id: PortalAppId,
     source: Stored<IdentitySource>,
     granted_at: DateTime<Utc>,
 }
-
-const IDENTITY_COLUMNS: &str = "pi.id, pi.client_id, pi.email, pi.name, pi.password_hash, \
-     pi.status, pi.source, pi.last_login_at, pi.invited_at, pi.invite_expires_at, \
-     pi.created_at, pi.updated_at";
-
-/// Identities holding no portal-app grant.
-const NOT_ASSIGNED: &str =
-    "NOT EXISTS (SELECT 1 FROM portal_identity_apps g WHERE g.identity_id = pi.id)";
 
 /// Narrows a client's identities for the admin list (Go `SearchFilter`).
 #[derive(Debug, Clone)]
@@ -117,11 +107,18 @@ impl PortalIdentityRepository {
 
     /// The identity with its app grants.
     pub async fn find_by_id(&self, id: &PortalIdentityId) -> Result<Option<PortalIdentity>> {
-        let sql = format!("SELECT {IDENTITY_COLUMNS} FROM portal_identities pi WHERE pi.id = $1");
-        let row = sqlx::query_as::<_, IdentityRow>(&sql)
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query_as!(
+            IdentityRow,
+            "SELECT pi.id AS \"id: PortalIdentityId\", \
+                    pi.client_id AS \"client_id: ClientId\", pi.email, pi.name, \
+                    pi.password_hash, pi.status AS \"status: Stored<IdentityStatus>\", \
+                    pi.source AS \"source: Stored<IdentitySource>\", pi.last_login_at, \
+                    pi.invited_at, pi.invite_expires_at, pi.created_at, pi.updated_at \
+                    FROM portal_identities pi WHERE pi.id = $1",
+            id as &PortalIdentityId
+        )
+        .fetch_optional(&self.pool)
+        .await?;
         self.one(row).await
     }
 
@@ -131,15 +128,20 @@ impl PortalIdentityRepository {
         client_id: &ClientId,
         email: &str,
     ) -> Result<Option<PortalIdentity>> {
-        let sql = format!(
-            "SELECT {IDENTITY_COLUMNS} FROM portal_identities pi \
-             WHERE pi.client_id = $1 AND pi.email = $2"
-        );
-        let row = sqlx::query_as::<_, IdentityRow>(&sql)
-            .bind(client_id)
-            .bind(super::entity::normalize_email(email))
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query_as!(
+            IdentityRow,
+            "SELECT pi.id AS \"id: PortalIdentityId\", \
+                    pi.client_id AS \"client_id: ClientId\", pi.email, pi.name, \
+                    pi.password_hash, pi.status AS \"status: Stored<IdentityStatus>\", \
+                    pi.source AS \"source: Stored<IdentitySource>\", pi.last_login_at, \
+                    pi.invited_at, pi.invite_expires_at, pi.created_at, pi.updated_at \
+                    FROM portal_identities pi \
+             WHERE pi.client_id = $1 AND pi.email = $2",
+            client_id as &ClientId,
+            super::entity::normalize_email(email)
+        )
+        .fetch_optional(&self.pool)
+        .await?;
         self.one(row).await
     }
 
@@ -157,31 +159,38 @@ impl PortalIdentityRepository {
         let query = f.query.trim().to_lowercase();
         let pattern = (!query.is_empty()).then(|| format!("{}%", escape_like(&query)));
         // One statement shape; the optional filters switch off when NULL.
-        let cond = format!(
-            "pi.client_id = $1 \
+        let count = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM portal_identities pi WHERE pi.client_id = $1 \
              AND ($2::text IS NULL OR pi.email LIKE $2 OR lower(pi.name) LIKE $2) \
              AND ($3::text IS NULL OR EXISTS (SELECT 1 FROM portal_identity_apps g \
                   WHERE g.identity_id = pi.id AND g.portal_app_id = $3)) \
-             AND (NOT $4 OR {NOT_ASSIGNED})"
-        );
-        let count_sql = format!("SELECT COUNT(*) FROM portal_identities pi WHERE {cond}");
-        let page_sql = format!(
-            "SELECT {IDENTITY_COLUMNS} FROM portal_identities pi WHERE {cond} \
-             ORDER BY pi.created_at DESC, pi.id DESC LIMIT $5 OFFSET $6"
-        );
-        let count = sqlx::query_scalar::<_, i64>(&count_sql)
-            .bind(&f.client_id)
-            .bind(&pattern)
-            .bind(&f.app_id)
-            .bind(f.unassigned)
+             AND (NOT $4 OR NOT EXISTS (SELECT 1 FROM portal_identity_apps g WHERE g.identity_id = pi.id))",
+            &f.client_id as &ClientId,
+            pattern.as_ref(),
+            &f.app_id as &Option<PortalAppId>,
+            f.unassigned
+        )
             .fetch_one(&self.pool);
-        let page = sqlx::query_as::<_, IdentityRow>(&page_sql)
-            .bind(&f.client_id)
-            .bind(&pattern)
-            .bind(&f.app_id)
-            .bind(f.unassigned)
-            .bind(f.limit)
-            .bind(f.offset)
+        let page = sqlx::query_as!(
+            IdentityRow,
+            "SELECT pi.id AS \"id: PortalIdentityId\", \
+                    pi.client_id AS \"client_id: ClientId\", pi.email, pi.name, \
+                    pi.password_hash, pi.status AS \"status: Stored<IdentityStatus>\", \
+                    pi.source AS \"source: Stored<IdentitySource>\", pi.last_login_at, \
+                    pi.invited_at, pi.invite_expires_at, pi.created_at, pi.updated_at \
+                    FROM portal_identities pi WHERE pi.client_id = $1 \
+             AND ($2::text IS NULL OR pi.email LIKE $2 OR lower(pi.name) LIKE $2) \
+             AND ($3::text IS NULL OR EXISTS (SELECT 1 FROM portal_identity_apps g \
+                  WHERE g.identity_id = pi.id AND g.portal_app_id = $3)) \
+             AND (NOT $4 OR NOT EXISTS (SELECT 1 FROM portal_identity_apps g WHERE g.identity_id = pi.id)) \
+             ORDER BY pi.created_at DESC, pi.id DESC LIMIT $5 OFFSET $6",
+            &f.client_id as &ClientId,
+            pattern.as_ref(),
+            &f.app_id as &Option<PortalAppId>,
+            f.unassigned,
+            f.limit,
+            f.offset
+        )
             .fetch_all(&self.pool);
         let (total, rows) = tokio::try_join!(count, page)?;
         let mut idents = rows
@@ -194,12 +203,17 @@ impl PortalIdentityRepository {
 
     /// A client's identities holding no portal-app grant, oldest first.
     pub async fn find_unassigned(&self, client_id: &ClientId) -> Result<Vec<PortalIdentity>> {
-        let sql = format!(
-            "SELECT {IDENTITY_COLUMNS} FROM portal_identities pi \
-             WHERE pi.client_id = $1 AND {NOT_ASSIGNED} ORDER BY pi.created_at, pi.id"
-        );
-        let rows = sqlx::query_as::<_, IdentityRow>(&sql)
-            .bind(client_id)
+        let rows = sqlx::query_as!(
+            IdentityRow,
+            "SELECT pi.id AS \"id: PortalIdentityId\", \
+                    pi.client_id AS \"client_id: ClientId\", pi.email, pi.name, \
+                    pi.password_hash, pi.status AS \"status: Stored<IdentityStatus>\", \
+                    pi.source AS \"source: Stored<IdentitySource>\", pi.last_login_at, \
+                    pi.invited_at, pi.invite_expires_at, pi.created_at, pi.updated_at \
+                    FROM portal_identities pi \
+             WHERE pi.client_id = $1 AND NOT EXISTS (SELECT 1 FROM portal_identity_apps g WHERE g.identity_id = pi.id) ORDER BY pi.created_at, pi.id",
+            client_id as &ClientId
+        )
             .fetch_all(&self.pool)
             .await?;
         rows.into_iter().map(PortalIdentity::try_from).collect()
@@ -207,11 +221,10 @@ impl PortalIdentityRepository {
 
     /// How many of a client's identities hold no portal-app grant.
     pub async fn count_unassigned(&self, client_id: &ClientId) -> Result<i64> {
-        let sql = format!(
-            "SELECT COUNT(*) FROM portal_identities pi WHERE pi.client_id = $1 AND {NOT_ASSIGNED}"
-        );
-        Ok(sqlx::query_scalar::<_, i64>(&sql)
-            .bind(client_id)
+        Ok(sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM portal_identities pi WHERE pi.client_id = $1 AND NOT EXISTS (SELECT 1 FROM portal_identity_apps g WHERE g.identity_id = pi.id)",
+            client_id as &ClientId
+        )
             .fetch_one(&self.pool)
             .await?)
     }
@@ -222,11 +235,15 @@ impl PortalIdentityRepository {
             return Ok(());
         }
         let ids: Vec<PortalIdentityId> = idents.iter().map(|i| i.id.clone()).collect();
-        let rows = sqlx::query_as::<_, GrantRow>(
-            "SELECT identity_id, portal_app_id, source, granted_at FROM portal_identity_apps \
+        let rows = sqlx::query_as!(
+            GrantRow,
+            "SELECT identity_id AS \"identity_id: PortalIdentityId\", \
+                    portal_app_id AS \"portal_app_id: PortalAppId\", \
+                    source AS \"source: Stored<IdentitySource>\", granted_at \
+                    FROM portal_identity_apps \
              WHERE identity_id = ANY($1) ORDER BY granted_at",
+            &ids as &[PortalIdentityId]
         )
-        .bind(&ids)
         .fetch_all(&self.pool)
         .await?;
         let mut by_identity: HashMap<PortalIdentityId, Vec<AppGrant>> = HashMap::new();
@@ -248,10 +265,10 @@ impl PortalIdentityRepository {
 
     /// Best-effort stamp of a successful login.
     pub async fn touch_last_login(&self, id: &PortalIdentityId) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "UPDATE portal_identities SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1",
+            id as &PortalIdentityId
         )
-        .bind(id)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -264,13 +281,13 @@ impl PortalIdentityRepository {
         at: DateTime<Utc>,
         expires_at: Option<DateTime<Utc>>,
     ) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "UPDATE portal_identities SET invited_at = $2, invite_expires_at = $3, \
              updated_at = NOW() WHERE id = $1",
+            id as &PortalIdentityId,
+            at,
+            expires_at
         )
-        .bind(id)
-        .bind(at)
-        .bind(expires_at)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -278,11 +295,11 @@ impl PortalIdentityRepository {
 
     /// Write a freshly set password (the invite/reset confirm path).
     pub async fn set_password_hash(&self, id: &PortalIdentityId, hash: &str) -> Result<()> {
-        let done = sqlx::query(
+        let done = sqlx::query!(
             "UPDATE portal_identities SET password_hash = $2, updated_at = NOW() WHERE id = $1",
+            id as &PortalIdentityId,
+            hash
         )
-        .bind(id)
-        .bind(hash)
         .execute(&self.pool)
         .await?;
         if done.rows_affected() == 0 {
@@ -306,7 +323,7 @@ impl Persist<PortalIdentity> for PortalIdentityRepository {
     /// grant in `apps` is inserted if missing, nothing else is touched.
     async fn persist(&self, i: &PortalIdentity, tx: &mut DbTx<'_>) -> Result<()> {
         let name = (!i.name.is_empty()).then_some(i.name.as_str());
-        let row_id: PortalIdentityId = sqlx::query_scalar(
+        let row_id: PortalIdentityId = sqlx::query_scalar!(
             "INSERT INTO portal_identities \
                  (id, client_id, email, name, password_hash, status, source, last_login_at, \
                   created_at, updated_at) \
@@ -315,28 +332,28 @@ impl Persist<PortalIdentity> for PortalIdentityRepository {
                  name = EXCLUDED.name, \
                  status = EXCLUDED.status, \
                  updated_at = EXCLUDED.updated_at \
-             RETURNING id",
+             RETURNING id AS \"id: PortalIdentityId\"",
+            &i.id as &PortalIdentityId,
+            &i.client_id as &ClientId,
+            &i.email,
+            name,
+            i.password_hash.as_ref(),
+            i.status as IdentityStatus,
+            i.source as IdentitySource,
+            i.last_login_at,
+            i.created_at,
+            Utc::now()
         )
-        .bind(&i.id)
-        .bind(&i.client_id)
-        .bind(&i.email)
-        .bind(name)
-        .bind(&i.password_hash)
-        .bind(i.status)
-        .bind(i.source)
-        .bind(i.last_login_at)
-        .bind(i.created_at)
-        .bind(Utc::now())
         .fetch_one(&mut **tx.inner)
         .await?;
 
         if !i.revoked_apps().is_empty() {
-            sqlx::query(
+            sqlx::query!(
                 "DELETE FROM portal_identity_apps \
                  WHERE identity_id = $1 AND portal_app_id = ANY($2)",
+                &row_id as &PortalIdentityId,
+                i.revoked_apps() as &[PortalAppId]
             )
-            .bind(&row_id)
-            .bind(i.revoked_apps())
             .execute(&mut **tx.inner)
             .await?;
         }
@@ -344,16 +361,16 @@ impl Persist<PortalIdentity> for PortalIdentityRepository {
             let app_ids: Vec<&PortalAppId> = i.apps.iter().map(|g| &g.app_id).collect();
             let sources: Vec<IdentitySource> = i.apps.iter().map(|g| g.source).collect();
             let granted: Vec<DateTime<Utc>> = i.apps.iter().map(|g| g.granted_at).collect();
-            sqlx::query(
-                "INSERT INTO portal_identity_apps (identity_id, portal_app_id, source, granted_at) \
+            sqlx::query!(
+            "INSERT INTO portal_identity_apps (identity_id, portal_app_id, source, granted_at) \
                  SELECT $1, a, s, g FROM UNNEST($2::text[], $3::text[], $4::timestamptz[]) \
                      AS t(a, s, g) \
                  ON CONFLICT DO NOTHING",
-            )
-            .bind(&row_id)
-            .bind(&app_ids)
-            .bind(&sources)
-            .bind(&granted)
+            &row_id as &PortalIdentityId,
+            &app_ids as &[&PortalAppId],
+            &sources as &[IdentitySource],
+            &granted
+        )
             .execute(&mut **tx.inner)
             .await?;
         }
@@ -362,17 +379,18 @@ impl Persist<PortalIdentity> for PortalIdentityRepository {
 
     /// Offboarding is deleting the row; grants cascade.
     async fn delete(&self, i: &PortalIdentity, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query("DELETE FROM portal_identities WHERE id = $1")
-            .bind(&i.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM portal_identities WHERE id = $1",
+            &i.id as &PortalIdentityId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         Ok(())
     }
 }
 
 // ── Portal apps ───────────────────────────────────────────────────────────
 
-#[derive(sqlx::FromRow)]
 struct AppRow {
     id: PortalAppId,
     client_id: ClientId,
@@ -399,10 +417,6 @@ impl From<AppRow> for PortalApp {
     }
 }
 
-const APP_SELECT: &str = "SELECT pa.id, pa.client_id, pa.code, pa.name, pa.description, \
-     pa.active, pa.created_at, pa.updated_at FROM portal_apps pa";
-
-#[derive(sqlx::FromRow)]
 struct LinkedRow {
     portal_app_id: PortalAppId,
     id: String,
@@ -420,11 +434,16 @@ impl PortalAppRepository {
     }
 
     pub async fn find_by_id(&self, id: &PortalAppId) -> Result<Option<PortalApp>> {
-        let sql = format!("{APP_SELECT} WHERE pa.id = $1");
-        let row = sqlx::query_as::<_, AppRow>(&sql)
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query_as!(
+            AppRow,
+            "SELECT pa.id AS \"id: PortalAppId\", \
+                    pa.client_id AS \"client_id: ClientId\", pa.code, pa.name, \
+                    pa.description, pa.active, pa.created_at, pa.updated_at \
+                    FROM portal_apps pa WHERE pa.id = $1",
+            id as &PortalAppId
+        )
+        .fetch_optional(&self.pool)
+        .await?;
         Ok(row.map(PortalApp::from))
     }
 
@@ -434,12 +453,17 @@ impl PortalAppRepository {
         client_id: &ClientId,
         code: &str,
     ) -> Result<Option<PortalApp>> {
-        let sql = format!("{APP_SELECT} WHERE pa.client_id = $1 AND pa.code = $2");
-        let row = sqlx::query_as::<_, AppRow>(&sql)
-            .bind(client_id)
-            .bind(super::entity::normalize_app_code(code))
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query_as!(
+            AppRow,
+            "SELECT pa.id AS \"id: PortalAppId\", \
+                    pa.client_id AS \"client_id: ClientId\", pa.code, pa.name, \
+                    pa.description, pa.active, pa.created_at, pa.updated_at \
+                    FROM portal_apps pa WHERE pa.client_id = $1 AND pa.code = $2",
+            client_id as &ClientId,
+            super::entity::normalize_app_code(code)
+        )
+        .fetch_optional(&self.pool)
+        .await?;
         Ok(row.map(PortalApp::from))
     }
 
@@ -448,23 +472,30 @@ impl PortalAppRepository {
         &self,
         oauth_client_id: &str,
     ) -> Result<Option<PortalApp>> {
-        let sql = format!(
-            "{APP_SELECT} JOIN oauth_clients oc ON oc.portal_app_id = pa.id \
-             WHERE oc.client_id = $1"
-        );
-        let row = sqlx::query_as::<_, AppRow>(&sql)
-            .bind(oauth_client_id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query_as!(
+            AppRow,
+            "SELECT pa.id AS \"id: PortalAppId\", \
+                    pa.client_id AS \"client_id: ClientId\", pa.code, pa.name, \
+                    pa.description, pa.active, pa.created_at, pa.updated_at \
+                    FROM portal_apps pa JOIN oauth_clients oc ON oc.portal_app_id = pa.id \
+             WHERE oc.client_id = $1",
+            oauth_client_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
         Ok(row.map(PortalApp::from))
     }
 
     /// A client's apps by name; `None` lists every client's (anchor views).
     pub async fn find_by_client(&self, client_id: Option<&ClientId>) -> Result<Vec<PortalApp>> {
-        let sql =
-            format!("{APP_SELECT} WHERE ($1::text IS NULL OR pa.client_id = $1) ORDER BY pa.name");
-        let rows = sqlx::query_as::<_, AppRow>(&sql)
-            .bind(client_id)
+        let rows = sqlx::query_as!(
+            AppRow,
+            "SELECT pa.id AS \"id: PortalAppId\", \
+                    pa.client_id AS \"client_id: ClientId\", pa.code, pa.name, \
+                    pa.description, pa.active, pa.created_at, pa.updated_at \
+                    FROM portal_apps pa WHERE ($1::text IS NULL OR pa.client_id = $1) ORDER BY pa.name",
+            client_id as Option<&ClientId>
+        )
             .fetch_all(&self.pool)
             .await?;
         Ok(rows.into_iter().map(PortalApp::from).collect())
@@ -475,13 +506,14 @@ impl PortalAppRepository {
         if app_ids.is_empty() {
             return Ok(HashMap::new());
         }
-        let rows = sqlx::query_as::<_, (PortalAppId, i64)>(
-            "SELECT portal_app_id, COUNT(*) FROM portal_identity_apps \
+        // `portal_app_id!`: `= ANY($1)` never matches a NULL.
+        let rows = sqlx::query!(
+            "SELECT portal_app_id AS \"portal_app_id!: PortalAppId\", COUNT(*) AS \"c1!\" FROM portal_identity_apps \
              WHERE portal_app_id = ANY($1) GROUP BY portal_app_id",
+            app_ids as &[PortalAppId]
         )
-        .bind(app_ids)
         .fetch_all(&self.pool)
-        .await?;
+        .await?.into_iter().map(|r| (r.portal_app_id, r.c1)).collect::<Vec<_>>();
         Ok(rows.into_iter().collect())
     }
 
@@ -494,11 +526,15 @@ impl PortalAppRepository {
         if app_ids.is_empty() {
             return Ok(out);
         }
-        let rows = sqlx::query_as::<_, LinkedRow>(
-            "SELECT portal_app_id, id, client_id, client_name FROM oauth_clients \
+        // `portal_app_id!`: `= ANY($1)` never matches a NULL.
+        let rows = sqlx::query_as!(
+            LinkedRow,
+            "SELECT portal_app_id AS \"portal_app_id!: PortalAppId\", id, client_id, \
+                    client_name \
+                    FROM oauth_clients \
              WHERE portal_app_id = ANY($1) ORDER BY client_name",
+            app_ids as &[PortalAppId]
         )
-        .bind(app_ids)
         .fetch_all(&self.pool)
         .await?;
         for r in rows {
@@ -516,7 +552,7 @@ impl PortalAppRepository {
 
 impl Persist<PortalApp> for PortalAppRepository {
     async fn persist(&self, a: &PortalApp, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO portal_apps \
                  (id, client_id, code, name, description, active, created_at, updated_at) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
@@ -525,15 +561,15 @@ impl Persist<PortalApp> for PortalAppRepository {
                  description = EXCLUDED.description, \
                  active = EXCLUDED.active, \
                  updated_at = EXCLUDED.updated_at",
+            &a.id as &PortalAppId,
+            &a.client_id as &ClientId,
+            &a.code,
+            &a.name,
+            a.description.as_ref(),
+            a.active,
+            a.created_at,
+            Utc::now()
         )
-        .bind(&a.id)
-        .bind(&a.client_id)
-        .bind(&a.code)
-        .bind(&a.name)
-        .bind(&a.description)
-        .bind(a.active)
-        .bind(a.created_at)
-        .bind(Utc::now())
         .execute(&mut **tx.inner)
         .await?;
         Ok(())
@@ -541,17 +577,18 @@ impl Persist<PortalApp> for PortalAppRepository {
 
     /// The app's grants go with it (FK cascade).
     async fn delete(&self, a: &PortalApp, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query("DELETE FROM portal_apps WHERE id = $1")
-            .bind(&a.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM portal_apps WHERE id = $1",
+            &a.id as &PortalAppId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         Ok(())
     }
 }
 
 // ── Portal-flagged OAuth clients (reads) ──────────────────────────────────
 
-#[derive(sqlx::FromRow)]
 struct PortalOAuthClientRow {
     id: OAuthClientId,
     client_id: String,
@@ -563,9 +600,6 @@ struct PortalOAuthClientRow {
     portal_client_id: Option<String>,
     portal_app_id: Option<String>,
 }
-
-const OAUTH_SELECT: &str = "SELECT id, client_id, client_name, active, pkce_required, \
-     portal_client_id, portal_app_id FROM oauth_clients";
 
 /// The portal plane's reads of `oauth_clients` (the portal columns the
 /// shared OAuth client repository does not carry everywhere). Writes stay in
@@ -581,11 +615,15 @@ impl PortalOAuthClientReader {
 
     /// The OAuth client by its public `client_id`.
     pub async fn find_by_client_id(&self, client_id: &str) -> Result<Option<PortalOAuthClient>> {
-        let sql = format!("{OAUTH_SELECT} WHERE client_id = $1");
-        let row = sqlx::query_as::<_, PortalOAuthClientRow>(&sql)
-            .bind(client_id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query_as!(
+            PortalOAuthClientRow,
+            "SELECT id AS \"id: OAuthClientId\", client_id, client_name, active, \
+                    pkce_required, portal_client_id, portal_app_id \
+                    FROM oauth_clients WHERE client_id = $1",
+            client_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
         let Some(row) = row else {
             return Ok(None);
         };
@@ -598,11 +636,15 @@ impl PortalOAuthClientReader {
         &self,
         client_id: &ClientId,
     ) -> Result<Vec<PortalOAuthClient>> {
-        let sql = format!("{OAUTH_SELECT} WHERE portal_client_id = $1 ORDER BY client_name");
-        let rows = sqlx::query_as::<_, PortalOAuthClientRow>(&sql)
-            .bind(client_id)
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sqlx::query_as!(
+            PortalOAuthClientRow,
+            "SELECT id AS \"id: OAuthClientId\", client_id, client_name, active, \
+                    pkce_required, portal_client_id, portal_app_id \
+                    FROM oauth_clients WHERE portal_client_id = $1 ORDER BY client_name",
+            client_id as &ClientId
+        )
+        .fetch_all(&self.pool)
+        .await?;
         self.hydrate(rows).await
     }
 
@@ -610,13 +652,13 @@ impl PortalOAuthClientReader {
         let ids: Vec<OAuthClientId> = rows.iter().map(|r| r.id.clone()).collect();
         let mut uris: HashMap<OAuthClientId, Vec<String>> = HashMap::new();
         if !ids.is_empty() {
-            let pairs = sqlx::query_as::<_, (OAuthClientId, String)>(
-                "SELECT oauth_client_id, redirect_uri FROM oauth_client_redirect_uris \
+            let pairs = sqlx::query!(
+            "SELECT oauth_client_id AS \"oauth_client_id: OAuthClientId\", redirect_uri FROM oauth_client_redirect_uris \
                  WHERE oauth_client_id = ANY($1) ORDER BY redirect_uri",
-            )
-            .bind(&ids)
+            &ids as &[OAuthClientId]
+        )
             .fetch_all(&self.pool)
-            .await?;
+            .await?.into_iter().map(|r| (r.oauth_client_id, r.redirect_uri)).collect::<Vec<_>>();
             for (id, uri) in pairs {
                 uris.entry(id).or_default().push(uri);
             }
@@ -639,7 +681,6 @@ impl PortalOAuthClientReader {
 
 // ── Portal login flows (infrastructure) ───────────────────────────────────
 
-#[derive(sqlx::FromRow)]
 struct FlowRow {
     id: String,
     oauth_client_id: String,
@@ -672,9 +713,6 @@ impl From<FlowRow> for LoginFlow {
     }
 }
 
-const FLOW_COLUMNS: &str = "id, oauth_client_id, portal_client_id, redirect_uri, scope, state, \
-     nonce, code_challenge, code_challenge_method, created_at, expires_at";
-
 /// `portal_login_flows`: parked `/portal/authorize` chains.
 pub struct PortalFlowRepository {
     pool: PgPool,
@@ -687,23 +725,23 @@ impl PortalFlowRepository {
 
     /// Park a fresh flow.
     pub async fn park(&self, f: &LoginFlow) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO portal_login_flows \
                  (id, oauth_client_id, portal_client_id, redirect_uri, scope, state, \
                   nonce, code_challenge, code_challenge_method, created_at, expires_at) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+            &f.id,
+            &f.oauth_client_id,
+            &f.portal_client_id as &ClientId,
+            &f.redirect_uri,
+            f.scope.as_ref(),
+            &f.state,
+            f.nonce.as_ref(),
+            f.code_challenge.as_ref(),
+            f.code_challenge_method.as_ref(),
+            f.created_at,
+            f.expires_at
         )
-        .bind(&f.id)
-        .bind(&f.oauth_client_id)
-        .bind(&f.portal_client_id)
-        .bind(&f.redirect_uri)
-        .bind(&f.scope)
-        .bind(&f.state)
-        .bind(&f.nonce)
-        .bind(&f.code_challenge)
-        .bind(&f.code_challenge_method)
-        .bind(f.created_at)
-        .bind(f.expires_at)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -711,32 +749,36 @@ impl PortalFlowRepository {
 
     /// A live flow, NOT consumed (a failed password attempt must not burn it).
     pub async fn find_live(&self, id: &str) -> Result<Option<LoginFlow>> {
-        let sql = format!(
-            "SELECT {FLOW_COLUMNS} FROM portal_login_flows WHERE id = $1 AND expires_at > NOW()"
-        );
-        let row = sqlx::query_as::<_, FlowRow>(&sql)
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query_as!(
+            FlowRow,
+            "SELECT id, oauth_client_id, \
+                    portal_client_id AS \"portal_client_id: ClientId\", redirect_uri, \
+                    scope, state, nonce, code_challenge, code_challenge_method, \
+                    created_at, expires_at \
+                    FROM portal_login_flows WHERE id = $1 AND expires_at > NOW()",
+            id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
         Ok(row.map(LoginFlow::from))
     }
 
     /// Atomically delete and return the live flow (single use).
     pub async fn consume(&self, id: &str) -> Result<Option<LoginFlow>> {
-        let sql = format!(
+        let row = sqlx::query_as!(
+            FlowRow,
             "DELETE FROM portal_login_flows WHERE id = $1 AND expires_at > NOW() \
-             RETURNING {FLOW_COLUMNS}"
-        );
-        let row = sqlx::query_as::<_, FlowRow>(&sql)
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?;
+             RETURNING id, oauth_client_id, portal_client_id AS \"portal_client_id: ClientId\", redirect_uri, scope, state, nonce, code_challenge, code_challenge_method, created_at, expires_at",
+            id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
         Ok(row.map(LoginFlow::from))
     }
 
     /// Remove expired flows (janitor).
     pub async fn purge_expired(&self) -> Result<u64> {
-        let done = sqlx::query("DELETE FROM portal_login_flows WHERE expires_at <= NOW()")
+        let done = sqlx::query!("DELETE FROM portal_login_flows WHERE expires_at <= NOW()")
             .execute(&self.pool)
             .await?;
         Ok(done.rows_affected())
@@ -756,7 +798,6 @@ pub struct PortalResetToken {
 
 /// The table holds principal and portal-identity subjects in one column, so
 /// the subject is read as stored and only a `ptu_` one becomes a token here.
-#[derive(sqlx::FromRow)]
 struct ResetTokenRow {
     id: PasswordResetTokenId,
     principal_id: String,
@@ -783,10 +824,12 @@ impl PortalResetTokenRepository {
 
     /// Invalidate every outstanding token of the subject.
     pub async fn delete_for_subject(&self, subject_id: &PortalIdentityId) -> Result<()> {
-        sqlx::query("DELETE FROM iam_password_reset_tokens WHERE principal_id = $1")
-            .bind(subject_id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM iam_password_reset_tokens WHERE principal_id = $1",
+            subject_id as &PortalIdentityId
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
@@ -799,17 +842,17 @@ impl PortalResetTokenRepository {
         purpose: &str,
         redirect_uri: Option<&str>,
     ) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO iam_password_reset_tokens \
                  (id, principal_id, token_hash, expires_at, created_at, purpose, redirect_uri) \
              VALUES ($1, $2, $3, $4, NOW(), $5, $6)",
+            PasswordResetTokenId::generate() as PasswordResetTokenId,
+            subject_id as &PortalIdentityId,
+            token_hash,
+            expires_at,
+            purpose,
+            redirect_uri
         )
-        .bind(PasswordResetTokenId::generate())
-        .bind(subject_id)
-        .bind(token_hash)
-        .bind(expires_at)
-        .bind(purpose)
-        .bind(redirect_uri)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -818,11 +861,14 @@ impl PortalResetTokenRepository {
     /// The token with that hash, when its subject is a portal identity (a
     /// principal's token is the shared reset handlers' to answer).
     pub async fn find_by_hash(&self, token_hash: &str) -> Result<Option<PortalResetToken>> {
-        let row = sqlx::query_as::<_, ResetTokenRow>(
-            "SELECT id, principal_id, expires_at, redirect_uri FROM iam_password_reset_tokens \
+        let row = sqlx::query_as!(
+            ResetTokenRow,
+            "SELECT id AS \"id: PasswordResetTokenId\", principal_id, expires_at, \
+                    redirect_uri \
+                    FROM iam_password_reset_tokens \
              WHERE token_hash = $1",
+            token_hash
         )
-        .bind(token_hash)
         .fetch_optional(&self.pool)
         .await?;
         Ok(row.and_then(|r| {
@@ -840,7 +886,7 @@ impl PortalResetTokenRepository {
 
 /// A portal-flagged `oauth_oidc_login_states` row: the IdP handshake of a
 /// portal SSO login, carrying the flow's OAuth chain.
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone)]
 pub struct PortalOidcState {
     pub state: String,
     pub identity_provider_id: IdentityProviderId,
@@ -869,27 +915,27 @@ impl PortalOidcStateRepository {
     /// a portal login is provider-direct (Go `NewLoginState(state, "",
     /// idp.ID, "", …)`).
     pub async fn park(&self, s: &PortalOidcState, expires_at: DateTime<Utc>) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO oauth_oidc_login_states \
                  (state, email_domain, identity_provider_id, email_domain_mapping_id, nonce, \
                   code_verifier, oauth_client_id, oauth_redirect_uri, oauth_scope, oauth_state, \
                   oauth_code_challenge, oauth_code_challenge_method, oauth_nonce, \
                   created_at, expires_at, portal_client_id) \
              VALUES ($1, '', $2, '', $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), $12, $13)",
+            &s.state,
+            &s.identity_provider_id as &IdentityProviderId,
+            &s.nonce,
+            &s.code_verifier,
+            s.oauth_client_id.as_ref(),
+            s.oauth_redirect_uri.as_ref(),
+            s.oauth_scope.as_ref(),
+            s.oauth_state.as_ref(),
+            s.oauth_code_challenge.as_ref(),
+            s.oauth_code_challenge_method.as_ref(),
+            s.oauth_nonce.as_ref(),
+            expires_at,
+            &s.portal_client_id as &Option<ClientId>
         )
-        .bind(&s.state)
-        .bind(&s.identity_provider_id)
-        .bind(&s.nonce)
-        .bind(&s.code_verifier)
-        .bind(&s.oauth_client_id)
-        .bind(&s.oauth_redirect_uri)
-        .bind(&s.oauth_scope)
-        .bind(&s.oauth_state)
-        .bind(&s.oauth_code_challenge)
-        .bind(&s.oauth_code_challenge_method)
-        .bind(&s.oauth_nonce)
-        .bind(expires_at)
-        .bind(&s.portal_client_id)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -898,15 +944,14 @@ impl PortalOidcStateRepository {
     /// Atomically consume the state IF it is a live portal-plane handshake;
     /// an employee-plane state is left for the employee callback.
     pub async fn consume_portal(&self, state: &str) -> Result<Option<PortalOidcState>> {
-        Ok(sqlx::query_as::<_, PortalOidcState>(
+        Ok(sqlx::query_as!(
+            PortalOidcState,
             "DELETE FROM oauth_oidc_login_states \
              WHERE state = $1 AND portal_client_id IS NOT NULL AND portal_client_id <> '' \
                AND expires_at > NOW() \
-             RETURNING state, identity_provider_id, nonce, code_verifier, portal_client_id, \
-                 oauth_client_id, oauth_redirect_uri, oauth_scope, oauth_state, \
-                 oauth_code_challenge, oauth_code_challenge_method, oauth_nonce",
+             RETURNING state, identity_provider_id AS \"identity_provider_id: IdentityProviderId\", nonce, code_verifier, portal_client_id AS \"portal_client_id: ClientId\", oauth_client_id, oauth_redirect_uri, oauth_scope, oauth_state, oauth_code_challenge, oauth_code_challenge_method, oauth_nonce",
+            state
         )
-        .bind(state)
         .fetch_optional(&self.pool)
         .await?)
     }

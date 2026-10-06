@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO oauth_client_post_logout_redirect_uris (oauth_client_id, post_logout_redirect_uri) VALUES ($1, $2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d2be51a23ec7c52fc6bd5c4a82f8aee38bb57c372ebf053211d1a41dd659d115"
+}

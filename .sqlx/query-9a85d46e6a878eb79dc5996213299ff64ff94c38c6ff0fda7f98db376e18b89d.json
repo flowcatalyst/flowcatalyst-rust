@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM portal_login_flows WHERE expires_at <= NOW()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "9a85d46e6a878eb79dc5996213299ff64ff94c38c6ff0fda7f98db376e18b89d"
+}

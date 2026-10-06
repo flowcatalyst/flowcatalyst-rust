@@ -81,10 +81,16 @@ impl PlatformConfigRepository {
     }
 
     pub async fn find_by_id(&self, id: &PlatformConfigId) -> Result<Option<PlatformConfig>> {
-        let row = sqlx::query_as::<_, PlatformConfigRow>(
-            "SELECT * FROM app_platform_configs WHERE id = $1",
+        let row = sqlx::query_as!(
+            PlatformConfigRow,
+            "SELECT id AS \"id: PlatformConfigId\", application_code, section, property, \
+                    scope AS \"scope: Stored<ConfigScope>\", \
+                    client_id AS \"client_id: ClientId\", \
+                    value_type AS \"value_type: Stored<ConfigValueType>\", value, \
+                    description, created_at, updated_at \
+                    FROM app_platform_configs WHERE id = $1",
+            id as &PlatformConfigId
         )
-        .bind(id)
         .fetch_optional(&self.pool)
         .await?;
         row.map(PlatformConfig::try_from).transpose()
@@ -102,28 +108,40 @@ impl PlatformConfigRepository {
             scope,
         } = *key;
         let row = if let Some(cid) = client_id {
-            sqlx::query_as::<_, PlatformConfigRow>(
-                "SELECT * FROM app_platform_configs \
+            sqlx::query_as!(
+                PlatformConfigRow,
+                "SELECT id AS \"id: PlatformConfigId\", application_code, section, property, \
+                    scope AS \"scope: Stored<ConfigScope>\", \
+                    client_id AS \"client_id: ClientId\", \
+                    value_type AS \"value_type: Stored<ConfigValueType>\", value, \
+                    description, created_at, updated_at \
+                    FROM app_platform_configs \
                  WHERE application_code = $1 AND section = $2 AND property = $3 \
                  AND scope = $4 AND client_id = $5",
+                app_code,
+                section,
+                property,
+                scope,
+                cid as &ClientId
             )
-            .bind(app_code)
-            .bind(section)
-            .bind(property)
-            .bind(scope)
-            .bind(cid)
             .fetch_optional(&self.pool)
             .await?
         } else {
-            sqlx::query_as::<_, PlatformConfigRow>(
-                "SELECT * FROM app_platform_configs \
+            sqlx::query_as!(
+                PlatformConfigRow,
+                "SELECT id AS \"id: PlatformConfigId\", application_code, section, property, \
+                    scope AS \"scope: Stored<ConfigScope>\", \
+                    client_id AS \"client_id: ClientId\", \
+                    value_type AS \"value_type: Stored<ConfigValueType>\", value, \
+                    description, created_at, updated_at \
+                    FROM app_platform_configs \
                  WHERE application_code = $1 AND section = $2 AND property = $3 \
                  AND scope = $4 AND client_id IS NULL",
+                app_code,
+                section,
+                property,
+                scope
             )
-            .bind(app_code)
-            .bind(section)
-            .bind(property)
-            .bind(scope)
             .fetch_optional(&self.pool)
             .await?
         };
@@ -180,43 +198,43 @@ impl PlatformConfigRepository {
     }
 
     pub async fn insert(&self, config: &PlatformConfig) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO app_platform_configs
                 (id, application_code, section, property, scope, client_id,
                  value_type, value, description, created_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())"#,
+            &config.id as &PlatformConfigId,
+            &config.application_code,
+            &config.section,
+            &config.property,
+            config.scope as ConfigScope,
+            &config.client_id as &Option<ClientId>,
+            config.value_type as ConfigValueType,
+            &config.value,
+            config.description.as_ref()
         )
-        .bind(&config.id)
-        .bind(&config.application_code)
-        .bind(&config.section)
-        .bind(&config.property)
-        .bind(config.scope)
-        .bind(&config.client_id)
-        .bind(config.value_type)
-        .bind(&config.value)
-        .bind(&config.description)
         .execute(&self.pool)
         .await?;
         Ok(())
     }
 
     pub async fn update(&self, config: &PlatformConfig) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"UPDATE app_platform_configs SET
                 application_code = $2, section = $3, property = $4, scope = $5,
                 client_id = $6, value_type = $7, value = $8, description = $9,
                 updated_at = NOW()
             WHERE id = $1"#,
+            &config.id as &PlatformConfigId,
+            &config.application_code,
+            &config.section,
+            &config.property,
+            config.scope as ConfigScope,
+            &config.client_id as &Option<ClientId>,
+            config.value_type as ConfigValueType,
+            &config.value,
+            config.description.as_ref()
         )
-        .bind(&config.id)
-        .bind(&config.application_code)
-        .bind(&config.section)
-        .bind(&config.property)
-        .bind(config.scope)
-        .bind(&config.client_id)
-        .bind(config.value_type)
-        .bind(&config.value)
-        .bind(&config.description)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -234,28 +252,28 @@ impl PlatformConfigRepository {
             scope,
         } = *key;
         let result = if let Some(cid) = client_id {
-            sqlx::query(
+            sqlx::query!(
                 "DELETE FROM app_platform_configs \
                  WHERE application_code = $1 AND section = $2 AND property = $3 \
                  AND scope = $4 AND client_id = $5",
+                app_code,
+                section,
+                property,
+                scope,
+                cid as &ClientId
             )
-            .bind(app_code)
-            .bind(section)
-            .bind(property)
-            .bind(scope)
-            .bind(cid)
             .execute(&self.pool)
             .await?
         } else {
-            sqlx::query(
+            sqlx::query!(
                 "DELETE FROM app_platform_configs \
                  WHERE application_code = $1 AND section = $2 AND property = $3 \
                  AND scope = $4 AND client_id IS NULL",
+                app_code,
+                section,
+                property,
+                scope
             )
-            .bind(app_code)
-            .bind(section)
-            .bind(property)
-            .bind(scope)
             .execute(&self.pool)
             .await?
         };
@@ -271,7 +289,7 @@ impl HasId for PlatformConfig {
 
 impl Persist<PlatformConfig> for PlatformConfigRepository {
     async fn persist(&self, c: &PlatformConfig, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO app_platform_configs
                 (id, application_code, section, property, scope, client_id,
                  value_type, value, description, created_at, updated_at)
@@ -286,26 +304,28 @@ impl Persist<PlatformConfig> for PlatformConfigRepository {
                 value = EXCLUDED.value,
                 description = EXCLUDED.description,
                 updated_at = NOW()"#,
+            &c.id as &PlatformConfigId,
+            &c.application_code,
+            &c.section,
+            &c.property,
+            c.scope as ConfigScope,
+            &c.client_id as &Option<ClientId>,
+            c.value_type as ConfigValueType,
+            &c.value,
+            c.description.as_ref()
         )
-        .bind(&c.id)
-        .bind(&c.application_code)
-        .bind(&c.section)
-        .bind(&c.property)
-        .bind(c.scope)
-        .bind(&c.client_id)
-        .bind(c.value_type)
-        .bind(&c.value)
-        .bind(&c.description)
         .execute(&mut **tx.inner)
         .await?;
         Ok(())
     }
 
     async fn delete(&self, c: &PlatformConfig, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query("DELETE FROM app_platform_configs WHERE id = $1")
-            .bind(&c.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM app_platform_configs WHERE id = $1",
+            &c.id as &PlatformConfigId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         Ok(())
     }
 }

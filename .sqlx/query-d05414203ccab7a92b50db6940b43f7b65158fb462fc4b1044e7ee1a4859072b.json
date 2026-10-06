@@ -1,0 +1,100 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id AS \"id: ApplicationId\", type AS \"application_type: Stored<ApplicationType>\", code, name, description, icon_url, website, logo, logo_mime_type, default_base_url, service_account_id, active, created_at, updated_at FROM app_applications WHERE service_account_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: ApplicationId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "application_type: Stored<ApplicationType>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "code",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "icon_url",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "website",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "logo",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "logo_mime_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "default_base_url",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 10,
+        "name": "service_account_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 11,
+        "name": "active",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 12,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "d05414203ccab7a92b50db6940b43f7b65158fb462fc4b1044e7ee1a4859072b"
+}

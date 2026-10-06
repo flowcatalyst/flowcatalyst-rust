@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(*) AS \"count!\" FROM iam_principal_roles pr WHERE NOT EXISTS (SELECT 1 FROM iam_roles r WHERE r.name = pr.role_name)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "6a18b1a7080f6c0f98da1d98fa990d5f2d69b6cc5d7cfac5a9026460e4755d0e"
+}

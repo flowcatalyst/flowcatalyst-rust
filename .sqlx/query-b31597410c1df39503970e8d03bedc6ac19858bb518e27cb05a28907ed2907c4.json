@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO tnt_email_domain_mappings\n            (id, email_domain, identity_provider_id, scope_type,\n             primary_client_id, required_oidc_tenant_id, sync_roles_from_idp,\n             require_2fa, remember_device_enabled, remember_device_days,\n             created_at, updated_at)\n        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())\n        ON CONFLICT (id) DO UPDATE SET\n            email_domain = EXCLUDED.email_domain,\n            identity_provider_id = EXCLUDED.identity_provider_id,\n            scope_type = EXCLUDED.scope_type,\n            primary_client_id = EXCLUDED.primary_client_id,\n            required_oidc_tenant_id = EXCLUDED.required_oidc_tenant_id,\n            sync_roles_from_idp = EXCLUDED.sync_roles_from_idp,\n            require_2fa = EXCLUDED.require_2fa,\n            remember_device_enabled = EXCLUDED.remember_device_enabled,\n            remember_device_days = EXCLUDED.remember_device_days,\n            updated_at = NOW()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Int4",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b31597410c1df39503970e8d03bedc6ac19858bb518e27cb05a28907ed2907c4"
+}

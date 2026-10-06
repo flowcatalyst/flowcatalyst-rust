@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM iam_user_mfa_recovery_codes WHERE principal_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ff9f082fa7722dd03c44fd14dae21e4c22899732712a8df8f31863f6ed83e01f"
+}
