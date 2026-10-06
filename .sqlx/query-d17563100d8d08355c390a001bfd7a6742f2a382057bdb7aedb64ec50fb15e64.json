@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO msg_events_read\n                (id, type, source, subject, time, application, subdomain,\n                 aggregate, message_group, correlation_id, client_id, projected_at)\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Timestamptz",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d17563100d8d08355c390a001bfd7a6742f2a382057bdb7aedb64ec50fb15e64"
+}

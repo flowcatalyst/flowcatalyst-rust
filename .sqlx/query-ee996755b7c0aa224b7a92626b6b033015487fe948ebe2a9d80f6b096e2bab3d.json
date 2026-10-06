@@ -1,0 +1,82 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT attempt_number, status AS \"status: Stored<DispatchAttemptStatus>\", response_code, response_body, error_message, error_type AS \"error_type: Stored<ErrorType>\", duration_millis, attempted_at, completed_at, created_at, request_info AS \"request_info: serde_json::Value\" FROM msg_dispatch_job_attempts WHERE dispatch_job_id = $1 ORDER BY created_at, attempt_number",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "attempt_number",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "status: Stored<DispatchAttemptStatus>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "response_code",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "response_body",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "error_message",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "error_type: Stored<ErrorType>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "duration_millis",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "attempted_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "completed_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "request_info: serde_json::Value",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "ee996755b7c0aa224b7a92626b6b033015487fe948ebe2a9d80f6b096e2bab3d"
+}

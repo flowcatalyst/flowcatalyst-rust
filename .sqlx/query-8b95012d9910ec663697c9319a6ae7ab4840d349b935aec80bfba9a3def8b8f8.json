@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT status AS \"status!\" FROM msg_dispatch_jobs_read WHERE status IS NOT NULL AND status != '' ORDER BY status",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "status!",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "8b95012d9910ec663697c9319a6ae7ab4840d349b935aec80bfba9a3def8b8f8"
+}

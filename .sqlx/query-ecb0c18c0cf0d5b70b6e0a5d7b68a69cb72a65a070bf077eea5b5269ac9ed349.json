@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE msg_event_types SET\n                code = $2, name = $3, description = $4, status = $5, source = $6,\n                client_scoped = $7, application = $8, subdomain = $9, aggregate = $10,\n                updated_at = $11\n             WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "Varchar",
+        "Bool",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ecb0c18c0cf0d5b70b6e0a5d7b68a69cb72a65a070bf077eea5b5269ac9ed349"
+}

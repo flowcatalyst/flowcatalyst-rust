@@ -94,12 +94,12 @@ impl PausedConnectionCache {
                 return Ok(s.0.clone());
             }
         }
-        let ids: Vec<String> = sqlx::query_scalar(
+        let ids: Vec<String> = sqlx::query_scalar!(
             "SELECT s.id FROM msg_subscriptions s \
              JOIN msg_connections c ON c.id = s.connection_id \
              WHERE c.status = $1",
+            ConnectionStatus::Paused as ConnectionStatus
         )
-        .bind(ConnectionStatus::Paused)
         .fetch_all(&self.pool)
         .await?;
         debug!(

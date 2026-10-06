@@ -81,33 +81,40 @@ impl ConnectionRepository {
 
     pub async fn insert(&self, conn: &Connection) -> Result<()> {
         let now = Utc::now();
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO msg_connections (id, code, name, description, external_id, status, service_account_id, client_id, client_identifier, created_at, updated_at, application_code, source)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)"
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+            &conn.id as &ConnectionId,
+            &conn.code,
+            &conn.name,
+            conn.description.as_ref(),
+            conn.external_id.as_ref(),
+            conn.status as ConnectionStatus,
+            &conn.service_account_id,
+            &conn.client_id as &Option<ClientId>,
+            conn.client_identifier.as_ref(),
+            now,
+            now,
+            conn.application_code.as_ref(),
+            &conn.source
         )
-        .bind(&conn.id)
-        .bind(&conn.code)
-        .bind(&conn.name)
-        .bind(&conn.description)
-        .bind(&conn.external_id)
-        .bind(conn.status)
-        .bind(&conn.service_account_id)
-        .bind(&conn.client_id)
-        .bind(&conn.client_identifier)
-        .bind(now)
-        .bind(now)
-        .bind(&conn.application_code)
-        .bind(&conn.source)
         .execute(&self.pool)
         .await?;
         Ok(())
     }
 
     pub async fn find_by_id(&self, id: &ConnectionId) -> Result<Option<Connection>> {
-        let row = sqlx::query_as::<_, ConnectionRow>("SELECT * FROM msg_connections WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query_as!(
+            ConnectionRow,
+            "SELECT id, code, name, description, external_id, \
+                    status AS \"status: Stored<ConnectionStatus>\", service_account_id, \
+                    client_id, client_identifier, created_at, updated_at, \
+                    application_code, source \
+                    FROM msg_connections WHERE id = $1",
+            id as &ConnectionId
+        )
+        .fetch_optional(&self.pool)
+        .await?;
         row.map(Connection::try_from).transpose()
     }
 
@@ -116,11 +123,17 @@ impl ConnectionRepository {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        let rows =
-            sqlx::query_as::<_, ConnectionRow>("SELECT * FROM msg_connections WHERE id = ANY($1)")
-                .bind(ids)
-                .fetch_all(&self.pool)
-                .await?;
+        let rows = sqlx::query_as!(
+            ConnectionRow,
+            "SELECT id, code, name, description, external_id, \
+                    status AS \"status: Stored<ConnectionStatus>\", service_account_id, \
+                    client_id, client_identifier, created_at, updated_at, \
+                    application_code, source \
+                    FROM msg_connections WHERE id = ANY($1)",
+            ids as &[ConnectionId]
+        )
+        .fetch_all(&self.pool)
+        .await?;
         rows.into_iter().map(Connection::try_from).collect()
     }
 
@@ -130,18 +143,28 @@ impl ConnectionRepository {
         client_id: Option<&ClientId>,
     ) -> Result<Option<Connection>> {
         let row = if let Some(cid) = client_id {
-            sqlx::query_as::<_, ConnectionRow>(
-                "SELECT * FROM msg_connections WHERE code = $1 AND client_id = $2",
+            sqlx::query_as!(
+                ConnectionRow,
+                "SELECT id, code, name, description, external_id, \
+                    status AS \"status: Stored<ConnectionStatus>\", service_account_id, \
+                    client_id, client_identifier, created_at, updated_at, \
+                    application_code, source \
+                    FROM msg_connections WHERE code = $1 AND client_id = $2",
+                code,
+                cid as &ClientId
             )
-            .bind(code)
-            .bind(cid)
             .fetch_optional(&self.pool)
             .await?
         } else {
-            sqlx::query_as::<_, ConnectionRow>(
-                "SELECT * FROM msg_connections WHERE code = $1 AND client_id IS NULL",
+            sqlx::query_as!(
+                ConnectionRow,
+                "SELECT id, code, name, description, external_id, \
+                    status AS \"status: Stored<ConnectionStatus>\", service_account_id, \
+                    client_id, client_identifier, created_at, updated_at, \
+                    application_code, source \
+                    FROM msg_connections WHERE code = $1 AND client_id IS NULL",
+                code
             )
-            .bind(code)
             .fetch_optional(&self.pool)
             .await?
         };
@@ -149,10 +172,16 @@ impl ConnectionRepository {
     }
 
     pub async fn find_all(&self) -> Result<Vec<Connection>> {
-        let rows =
-            sqlx::query_as::<_, ConnectionRow>("SELECT * FROM msg_connections ORDER BY code ASC")
-                .fetch_all(&self.pool)
-                .await?;
+        let rows = sqlx::query_as!(
+            ConnectionRow,
+            "SELECT id, code, name, description, external_id, \
+                    status AS \"status: Stored<ConnectionStatus>\", service_account_id, \
+                    client_id, client_identifier, created_at, updated_at, \
+                    application_code, source \
+                    FROM msg_connections ORDER BY code ASC"
+        )
+        .fetch_all(&self.pool)
+        .await?;
         rows.into_iter().map(Connection::try_from).collect()
     }
 
@@ -188,20 +217,30 @@ impl ConnectionRepository {
     }
 
     pub async fn find_by_status(&self, status: &str) -> Result<Vec<Connection>> {
-        let rows = sqlx::query_as::<_, ConnectionRow>(
-            "SELECT * FROM msg_connections WHERE status = $1 ORDER BY code ASC",
+        let rows = sqlx::query_as!(
+            ConnectionRow,
+            "SELECT id, code, name, description, external_id, \
+                    status AS \"status: Stored<ConnectionStatus>\", service_account_id, \
+                    client_id, client_identifier, created_at, updated_at, \
+                    application_code, source \
+                    FROM msg_connections WHERE status = $1 ORDER BY code ASC",
+            status
         )
-        .bind(status)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(Connection::try_from).collect()
     }
 
     pub async fn find_by_client_id(&self, client_id: &ClientId) -> Result<Vec<Connection>> {
-        let rows = sqlx::query_as::<_, ConnectionRow>(
-            "SELECT * FROM msg_connections WHERE client_id = $1 ORDER BY code ASC",
+        let rows = sqlx::query_as!(
+            ConnectionRow,
+            "SELECT id, code, name, description, external_id, \
+                    status AS \"status: Stored<ConnectionStatus>\", service_account_id, \
+                    client_id, client_identifier, created_at, updated_at, \
+                    application_code, source \
+                    FROM msg_connections WHERE client_id = $1 ORDER BY code ASC",
+            client_id as &ClientId
         )
-        .bind(client_id)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(Connection::try_from).collect()
@@ -211,17 +250,22 @@ impl ConnectionRepository {
         &self,
         service_account_id: &str,
     ) -> Result<Vec<Connection>> {
-        let rows = sqlx::query_as::<_, ConnectionRow>(
-            "SELECT * FROM msg_connections WHERE service_account_id = $1",
+        let rows = sqlx::query_as!(
+            ConnectionRow,
+            "SELECT id, code, name, description, external_id, \
+                    status AS \"status: Stored<ConnectionStatus>\", service_account_id, \
+                    client_id, client_identifier, created_at, updated_at, \
+                    application_code, source \
+                    FROM msg_connections WHERE service_account_id = $1",
+            service_account_id
         )
-        .bind(service_account_id)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(Connection::try_from).collect()
     }
 
     pub async fn update(&self, conn: &Connection) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "UPDATE msg_connections SET
                 code = $2,
                 name = $3,
@@ -233,27 +277,29 @@ impl ConnectionRepository {
                 client_identifier = $9,
                 updated_at = $10
              WHERE id = $1",
+            &conn.id as &ConnectionId,
+            &conn.code,
+            &conn.name,
+            conn.description.as_ref(),
+            conn.external_id.as_ref(),
+            conn.status as ConnectionStatus,
+            &conn.service_account_id,
+            &conn.client_id as &Option<ClientId>,
+            conn.client_identifier.as_ref(),
+            Utc::now()
         )
-        .bind(&conn.id)
-        .bind(&conn.code)
-        .bind(&conn.name)
-        .bind(&conn.description)
-        .bind(&conn.external_id)
-        .bind(conn.status)
-        .bind(&conn.service_account_id)
-        .bind(&conn.client_id)
-        .bind(&conn.client_identifier)
-        .bind(Utc::now())
         .execute(&self.pool)
         .await?;
         Ok(())
     }
 
     pub async fn delete(&self, id: &ConnectionId) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM msg_connections WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        let result = sqlx::query!(
+            "DELETE FROM msg_connections WHERE id = $1",
+            id as &ConnectionId
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(result.rows_affected() > 0)
     }
 }
@@ -267,7 +313,7 @@ impl HasId for Connection {
 impl Persist<Connection> for ConnectionRepository {
     async fn persist(&self, c: &Connection, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO msg_connections (id, code, name, description, external_id, status, service_account_id, client_id, client_identifier, created_at, updated_at, application_code, source)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
              ON CONFLICT (id) DO UPDATE SET
@@ -281,31 +327,33 @@ impl Persist<Connection> for ConnectionRepository {
                 client_identifier = EXCLUDED.client_identifier,
                 updated_at = EXCLUDED.updated_at,
                 application_code = EXCLUDED.application_code,
-                source = EXCLUDED.source"
+                source = EXCLUDED.source",
+            &c.id as &ConnectionId,
+            &c.code,
+            &c.name,
+            c.description.as_ref(),
+            c.external_id.as_ref(),
+            c.status as ConnectionStatus,
+            &c.service_account_id,
+            &c.client_id as &Option<ClientId>,
+            c.client_identifier.as_ref(),
+            now,
+            now,
+            c.application_code.as_ref(),
+            &c.source
         )
-        .bind(&c.id)
-        .bind(&c.code)
-        .bind(&c.name)
-        .bind(&c.description)
-        .bind(&c.external_id)
-        .bind(c.status)
-        .bind(&c.service_account_id)
-        .bind(&c.client_id)
-        .bind(&c.client_identifier)
-        .bind(now)
-        .bind(now)
-        .bind(&c.application_code)
-        .bind(&c.source)
         .execute(&mut **tx.inner)
         .await?;
         Ok(())
     }
 
     async fn delete(&self, c: &Connection, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query("DELETE FROM msg_connections WHERE id = $1")
-            .bind(&c.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM msg_connections WHERE id = $1",
+            &c.id as &ConnectionId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         Ok(())
     }
 }
@@ -320,12 +368,17 @@ impl ConnectionRepository {
         application_code: &str,
         client_id: Option<&ClientId>,
     ) -> Result<Vec<(Connection, String)>> {
-        let rows = sqlx::query_as::<_, ConnectionRow>(
-            "SELECT * FROM msg_connections \
+        let rows = sqlx::query_as!(
+            ConnectionRow,
+            "SELECT id, code, name, description, external_id, \
+                    status AS \"status: Stored<ConnectionStatus>\", service_account_id, \
+                    client_id, client_identifier, created_at, updated_at, \
+                    application_code, source \
+                    FROM msg_connections \
              WHERE application_code = $1 AND client_id IS NOT DISTINCT FROM $2 ORDER BY code",
+            application_code,
+            client_id as Option<&ClientId>
         )
-        .bind(application_code)
-        .bind(client_id)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter()
@@ -348,12 +401,17 @@ impl ConnectionRepository {
         if codes.is_empty() {
             return Ok(Vec::new());
         }
-        let rows = sqlx::query_as::<_, ConnectionRow>(
-            "SELECT * FROM msg_connections WHERE code = ANY($1) \
+        let rows = sqlx::query_as!(
+            ConnectionRow,
+            "SELECT id, code, name, description, external_id, \
+                    status AS \"status: Stored<ConnectionStatus>\", service_account_id, \
+                    client_id, client_identifier, created_at, updated_at, \
+                    application_code, source \
+                    FROM msg_connections WHERE code = ANY($1) \
              AND (application_code = $2 OR application_code IS NULL)",
+            codes,
+            application_code
         )
-        .bind(codes)
-        .bind(application_code)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(Connection::try_from).collect()
@@ -368,14 +426,19 @@ impl ConnectionRepository {
         application_code: Option<&str>,
         client_id: Option<&ClientId>,
     ) -> Result<Option<Connection>> {
-        let row = sqlx::query_as::<_, ConnectionRow>(
-            "SELECT * FROM msg_connections WHERE code = $1 \
+        let row = sqlx::query_as!(
+            ConnectionRow,
+            "SELECT id, code, name, description, external_id, \
+                    status AS \"status: Stored<ConnectionStatus>\", service_account_id, \
+                    client_id, client_identifier, created_at, updated_at, \
+                    application_code, source \
+                    FROM msg_connections WHERE code = $1 \
              AND application_code IS NOT DISTINCT FROM $2 \
              AND client_id IS NOT DISTINCT FROM $3",
+            code,
+            application_code,
+            client_id as Option<&ClientId>
         )
-        .bind(code)
-        .bind(application_code)
-        .bind(client_id)
         .fetch_optional(&self.pool)
         .await?;
         row.map(Connection::try_from).transpose()
@@ -412,8 +475,8 @@ impl Persist<ConnectionSyncPlan> for ConnectionRepository {
                 created.push(c.created_at);
                 sources.push(source.clone());
             }
-            sqlx::query(
-                "INSERT INTO msg_connections (id, code, name, description, external_id, status, \
+            sqlx::query!(
+            "INSERT INTO msg_connections (id, code, name, description, external_id, status, \
                      service_account_id, client_id, client_identifier, created_at, updated_at, \
                      application_code, source) \
                  SELECT u.id, u.code, u.name, u.description, u.external_id, u.status, u.sa, \
@@ -430,28 +493,30 @@ impl Persist<ConnectionSyncPlan> for ConnectionRepository {
                      client_id = EXCLUDED.client_id, client_identifier = EXCLUDED.client_identifier, \
                      updated_at = EXCLUDED.updated_at, application_code = EXCLUDED.application_code, \
                      source = EXCLUDED.source",
-            )
-            .bind(&ids)
-            .bind(&codes)
-            .bind(&names)
-            .bind(&descriptions)
-            .bind(&external_ids)
-            .bind(&statuses)
-            .bind(&service_accounts)
-            .bind(&client_ids)
-            .bind(&identifiers)
-            .bind(&created)
-            .bind(now)
-            .bind(&plan.application_code)
-            .bind(&sources)
+            &ids as &[ConnectionId],
+            &codes,
+            &names,
+            &descriptions as &[Option<String>],
+            &external_ids as &[Option<String>],
+            &statuses,
+            &service_accounts,
+            &client_ids as &[Option<String>],
+            &identifiers as &[Option<String>],
+            &created,
+            now,
+            &plan.application_code,
+            &sources
+        )
             .execute(&mut **tx.inner)
             .await?;
         }
         if !plan.deletes.is_empty() {
-            sqlx::query("DELETE FROM msg_connections WHERE id = ANY($1)")
-                .bind(&plan.deletes)
-                .execute(&mut **tx.inner)
-                .await?;
+            sqlx::query!(
+                "DELETE FROM msg_connections WHERE id = ANY($1)",
+                &plan.deletes
+            )
+            .execute(&mut **tx.inner)
+            .await?;
         }
         Ok(())
     }

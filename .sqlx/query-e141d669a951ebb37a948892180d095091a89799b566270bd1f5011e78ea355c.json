@@ -1,0 +1,37 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE msg_subscriptions SET\n                code = $2, application_code = $3, name = $4, description = $5,\n                client_id = $6, client_identifier = $7, client_scoped = $8,\n                connection_id = $9, target = $10, queue = $11, source = $12, status = $13,\n                max_age_seconds = $14, dispatch_pool_id = $15, dispatch_pool_code = $16,\n                delay_seconds = $17, sequence = $18, mode = $19, timeout_seconds = $20,\n                max_retries = $21, service_account_id = $22, data_only = $23, updated_at = $24\n             WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "Varchar",
+        "Bool",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Int4",
+        "Varchar",
+        "Varchar",
+        "Int4",
+        "Int4",
+        "Varchar",
+        "Int4",
+        "Int4",
+        "Varchar",
+        "Bool",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e141d669a951ebb37a948892180d095091a89799b566270bd1f5011e78ea355c"
+}

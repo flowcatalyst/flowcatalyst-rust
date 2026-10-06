@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO msg_dispatch_job_attempts\n                (id, dispatch_job_id, attempt_number, status, response_code,\n                 response_body, error_message, error_type, error_stack_trace,\n                 duration_millis, attempted_at, completed_at, created_at, request_info)\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), $13)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Int4",
+        "Varchar",
+        "Int4",
+        "Text",
+        "Text",
+        "Varchar",
+        "Text",
+        "Int8",
+        "Timestamptz",
+        "Timestamptz",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e6007798fa40b5e7744d6fc883e0ab0fd8f1e249ccea82fcf5e054d47e9985b2"
+}

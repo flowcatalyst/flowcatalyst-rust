@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT subscription_id AS \"subscription_id: SubscriptionId\", event_type_id AS \"event_type_id: EventTypeId\", event_type_code, spec_version FROM msg_subscription_event_types WHERE subscription_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "subscription_id: SubscriptionId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "event_type_id: EventTypeId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "event_type_code",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "spec_version",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "7509c087cf1106429fbed9362ca34017a665c2949a907cca610518015f2da493"
+}

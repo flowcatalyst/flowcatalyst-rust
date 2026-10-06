@@ -68,24 +68,24 @@ impl ProcessRepository {
 
     pub async fn insert(&self, p: &Process) -> Result<()> {
         let now = Utc::now();
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO msg_processes (id, code, name, description, status, source, application, subdomain, process_name, body, diagram_type, tags, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+            &p.id as &ProcessId,
+            &p.code,
+            &p.name,
+            p.description.as_ref(),
+            p.status as ProcessStatus,
+            p.source as ProcessSource,
+            &p.application,
+            &p.subdomain,
+            &p.process_name,
+            &p.body,
+            &p.diagram_type,
+            &p.tags,
+            now,
+            now
         )
-        .bind(&p.id)
-        .bind(&p.code)
-        .bind(&p.name)
-        .bind(&p.description)
-        .bind(p.status)
-        .bind(p.source)
-        .bind(&p.application)
-        .bind(&p.subdomain)
-        .bind(&p.process_name)
-        .bind(&p.body)
-        .bind(&p.diagram_type)
-        .bind(&p.tags)
-        .bind(now)
-        .bind(now)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -93,67 +93,92 @@ impl ProcessRepository {
 
     pub async fn update(&self, p: &Process) -> Result<()> {
         let now = Utc::now();
-        sqlx::query(
+        sqlx::query!(
             "UPDATE msg_processes SET
                 code = $2, name = $3, description = $4, status = $5, source = $6,
                 application = $7, subdomain = $8, process_name = $9, body = $10,
                 diagram_type = $11, tags = $12, updated_at = $13
              WHERE id = $1",
+            &p.id as &ProcessId,
+            &p.code,
+            &p.name,
+            p.description.as_ref(),
+            p.status as ProcessStatus,
+            p.source as ProcessSource,
+            &p.application,
+            &p.subdomain,
+            &p.process_name,
+            &p.body,
+            &p.diagram_type,
+            &p.tags,
+            now
         )
-        .bind(&p.id)
-        .bind(&p.code)
-        .bind(&p.name)
-        .bind(&p.description)
-        .bind(p.status)
-        .bind(p.source)
-        .bind(&p.application)
-        .bind(&p.subdomain)
-        .bind(&p.process_name)
-        .bind(&p.body)
-        .bind(&p.diagram_type)
-        .bind(&p.tags)
-        .bind(now)
         .execute(&self.pool)
         .await?;
         Ok(())
     }
 
     pub async fn delete(&self, id: &ProcessId) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM msg_processes WHERE id = $1")
-            .bind(id)
+        let result = sqlx::query!("DELETE FROM msg_processes WHERE id = $1", id as &ProcessId)
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected() > 0)
     }
 
     pub async fn find_by_id(&self, id: &ProcessId) -> Result<Option<Process>> {
-        let row = sqlx::query_as::<_, ProcessRow>("SELECT * FROM msg_processes WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query_as!(
+            ProcessRow,
+            "SELECT id, code, name, description, \
+                    status AS \"status: Stored<ProcessStatus>\", \
+                    source AS \"source: Stored<ProcessSource>\", application, subdomain, \
+                    process_name, body, diagram_type, tags, created_at, updated_at \
+                    FROM msg_processes WHERE id = $1",
+            id as &ProcessId
+        )
+        .fetch_optional(&self.pool)
+        .await?;
         row.map(Process::try_from).transpose()
     }
 
     pub async fn find_by_code(&self, code: &str) -> Result<Option<Process>> {
-        let row = sqlx::query_as::<_, ProcessRow>("SELECT * FROM msg_processes WHERE code = $1")
-            .bind(code)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query_as!(
+            ProcessRow,
+            "SELECT id, code, name, description, \
+                    status AS \"status: Stored<ProcessStatus>\", \
+                    source AS \"source: Stored<ProcessSource>\", application, subdomain, \
+                    process_name, body, diagram_type, tags, created_at, updated_at \
+                    FROM msg_processes WHERE code = $1",
+            code
+        )
+        .fetch_optional(&self.pool)
+        .await?;
         row.map(Process::try_from).transpose()
     }
 
     pub async fn find_all(&self) -> Result<Vec<Process>> {
-        let rows = sqlx::query_as::<_, ProcessRow>("SELECT * FROM msg_processes ORDER BY code ASC")
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sqlx::query_as!(
+            ProcessRow,
+            "SELECT id, code, name, description, \
+                    status AS \"status: Stored<ProcessStatus>\", \
+                    source AS \"source: Stored<ProcessSource>\", application, subdomain, \
+                    process_name, body, diagram_type, tags, created_at, updated_at \
+                    FROM msg_processes ORDER BY code ASC"
+        )
+        .fetch_all(&self.pool)
+        .await?;
         rows.into_iter().map(Process::try_from).collect()
     }
 
     pub async fn find_by_application(&self, application: &str) -> Result<Vec<Process>> {
-        let rows = sqlx::query_as::<_, ProcessRow>(
-            "SELECT * FROM msg_processes WHERE application = $1 ORDER BY code ASC",
+        let rows = sqlx::query_as!(
+            ProcessRow,
+            "SELECT id, code, name, description, \
+                    status AS \"status: Stored<ProcessStatus>\", \
+                    source AS \"source: Stored<ProcessSource>\", application, subdomain, \
+                    process_name, body, diagram_type, tags, created_at, updated_at \
+                    FROM msg_processes WHERE application = $1 ORDER BY code ASC",
+            application
         )
-        .bind(application)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(Process::try_from).collect()
@@ -201,11 +226,13 @@ impl ProcessRepository {
     }
 
     pub async fn exists_by_code(&self, code: &str) -> Result<bool> {
-        let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM msg_processes WHERE code = $1")
-            .bind(code)
-            .fetch_one(&self.pool)
-            .await?;
-        Ok(row.0 > 0)
+        let row = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM msg_processes WHERE code = $1",
+            code
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row > 0)
     }
 }
 
@@ -218,7 +245,7 @@ impl HasId for Process {
 impl Persist<Process> for ProcessRepository {
     async fn persist(&self, p: &Process, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO msg_processes (id, code, name, description, status, source, application, subdomain, process_name, body, diagram_type, tags, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
              ON CONFLICT (id) DO UPDATE SET
@@ -233,32 +260,34 @@ impl Persist<Process> for ProcessRepository {
                 body = EXCLUDED.body,
                 diagram_type = EXCLUDED.diagram_type,
                 tags = EXCLUDED.tags,
-                updated_at = EXCLUDED.updated_at"
+                updated_at = EXCLUDED.updated_at",
+            &p.id as &ProcessId,
+            &p.code,
+            &p.name,
+            p.description.as_ref(),
+            p.status as ProcessStatus,
+            p.source as ProcessSource,
+            &p.application,
+            &p.subdomain,
+            &p.process_name,
+            &p.body,
+            &p.diagram_type,
+            &p.tags,
+            now,
+            now
         )
-        .bind(&p.id)
-        .bind(&p.code)
-        .bind(&p.name)
-        .bind(&p.description)
-        .bind(p.status)
-        .bind(p.source)
-        .bind(&p.application)
-        .bind(&p.subdomain)
-        .bind(&p.process_name)
-        .bind(&p.body)
-        .bind(&p.diagram_type)
-        .bind(&p.tags)
-        .bind(now)
-        .bind(now)
         .execute(&mut **tx.inner)
         .await?;
         Ok(())
     }
 
     async fn delete(&self, p: &Process, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query("DELETE FROM msg_processes WHERE id = $1")
-            .bind(&p.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM msg_processes WHERE id = $1",
+            &p.id as &ProcessId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         Ok(())
     }
 }

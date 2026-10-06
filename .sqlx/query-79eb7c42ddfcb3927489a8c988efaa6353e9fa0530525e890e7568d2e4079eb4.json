@@ -1,0 +1,101 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, spec_version, type AS event_type, source, subject, time, data AS \"data: serde_json::Value\", correlation_id, causation_id, deduplication_id, message_group, client_id, context_data AS \"context_data: serde_json::Value\", created_at FROM msg_events WHERE type = $1 ORDER BY time DESC LIMIT $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "spec_version",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "event_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "source",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "subject",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "time",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "data: serde_json::Value",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 7,
+        "name": "correlation_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "causation_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "deduplication_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 10,
+        "name": "message_group",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 11,
+        "name": "client_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 12,
+        "name": "context_data: serde_json::Value",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 13,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "79eb7c42ddfcb3927489a8c988efaa6353e9fa0530525e890e7568d2e4079eb4"
+}

@@ -68,7 +68,6 @@ impl TryFrom<EventTypeRow> for EventType {
 }
 
 /// Row mapping for msg_event_type_spec_versions table
-#[derive(sqlx::FromRow)]
 struct SpecVersionRow {
     id: String,
     event_type_id: EventTypeId,
@@ -124,20 +123,27 @@ impl EventTypeRepository {
 
         // One read for the ids already present and one for the types that
         // already carry a 1.0 schema.
-        let existing: Vec<(String, String)> =
-            sqlx::query_as("SELECT code, id FROM msg_event_types WHERE code = ANY($1)")
-                .bind(&codes)
-                .fetch_all(&self.pool)
-                .await?;
+        let existing: Vec<(String, String)> = sqlx::query!(
+            "SELECT code, id FROM msg_event_types WHERE code = ANY($1)",
+            &codes
+        )
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(|r| (r.code, r.id))
+        .collect();
         let mut ids: HashMap<String, String> = existing.into_iter().collect();
-        let versioned: Vec<(String,)> = sqlx::query_as(
+        let versioned: Vec<(String,)> = sqlx::query!(
             "SELECT DISTINCT et.code FROM msg_event_type_spec_versions sv \
              JOIN msg_event_types et ON et.id = sv.event_type_id \
              WHERE et.code = ANY($1) AND sv.version IN ('1.0', 'v1')",
+            &codes
         )
-        .bind(&codes)
         .fetch_all(&self.pool)
-        .await?;
+        .await?
+        .into_iter()
+        .map(|r| (r.code,))
+        .collect();
         let versioned: HashSet<String> = versioned.into_iter().map(|(c,)| c).collect();
 
         let now = chrono::Utc::now();
@@ -171,8 +177,8 @@ impl EventTypeRepository {
         }
 
         if !new_codes.is_empty() {
-            sqlx::query(
-                "INSERT INTO msg_event_types \
+            sqlx::query!(
+            "INSERT INTO msg_event_types \
                      (id, code, name, description, status, source, client_scoped, \
                       application, subdomain, aggregate, created_at, updated_at) \
                  SELECT id, code, name, NULL, $8, $9, false, application, subdomain, \
@@ -180,35 +186,39 @@ impl EventTypeRepository {
                  FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[]) \
                       AS t(id, code, name, application, subdomain, aggregate) \
                  ON CONFLICT (code) DO NOTHING",
-            )
-            .bind(&new_ids)
-            .bind(&new_codes)
-            .bind(&new_names)
-            .bind(&applications)
-            .bind(&subdomains)
-            .bind(&aggregates)
-            .bind(now)
-            .bind(EventTypeStatus::Current)
-            .bind(EventTypeSource::Ui)
+            &new_ids as &[EventTypeId],
+            &new_codes,
+            &new_names,
+            &applications,
+            &subdomains,
+            &aggregates,
+            now,
+            EventTypeStatus::Current as EventTypeStatus,
+            EventTypeSource::Ui as EventTypeSource
+        )
             .execute(&self.pool)
             .await?;
             // A concurrent seeder may have won a code: re-read the real ids.
-            let inserted: Vec<(String, String)> =
-                sqlx::query_as("SELECT code, id FROM msg_event_types WHERE code = ANY($1)")
-                    .bind(&new_codes)
-                    .fetch_all(&self.pool)
-                    .await?;
+            let inserted: Vec<(String, String)> = sqlx::query!(
+                "SELECT code, id FROM msg_event_types WHERE code = ANY($1)",
+                &new_codes
+            )
+            .fetch_all(&self.pool)
+            .await?
+            .into_iter()
+            .map(|r| (r.code, r.id))
+            .collect();
             ids.extend(inserted);
         }
 
         if !renamed_ids.is_empty() {
-            sqlx::query(
+            sqlx::query!(
                 "UPDATE msg_event_types AS t SET name = v.name, updated_at = $3 \
                  FROM UNNEST($1::text[], $2::text[]) AS v(id, name) WHERE t.id = v.id",
+                &renamed_ids,
+                &renamed_names,
+                now
             )
-            .bind(&renamed_ids)
-            .bind(&renamed_names)
-            .bind(now)
             .execute(&self.pool)
             .await?;
         }
@@ -228,7 +238,7 @@ impl EventTypeRepository {
             sv_schemas.push(schema.clone());
         }
         if !sv_ids.is_empty() {
-            sqlx::query(
+            sqlx::query!(
                 "INSERT INTO msg_event_type_spec_versions \
                      (id, event_type_id, version, mime_type, schema_content, schema_type, \
                       status, created_at, updated_at) \
@@ -237,13 +247,13 @@ impl EventTypeRepository {
                  FROM UNNEST($1::text[], $2::text[], $3::jsonb[]) \
                       AS v(id, event_type_id, schema_content) \
                  ON CONFLICT (event_type_id, version) DO NOTHING",
+                &sv_ids as &[SpecVersionId],
+                &sv_types,
+                &sv_schemas,
+                now,
+                SchemaType::JsonSchema as SchemaType,
+                SpecVersionStatus::Current as SpecVersionStatus
             )
-            .bind(&sv_ids)
-            .bind(&sv_types)
-            .bind(&sv_schemas)
-            .bind(now)
-            .bind(SchemaType::JsonSchema)
-            .bind(SpecVersionStatus::Current)
             .execute(&self.pool)
             .await?;
         }
@@ -255,11 +265,17 @@ impl EventTypeRepository {
     }
 
     async fn load_spec_versions(&self, event_type_id: &EventTypeId) -> Result<Vec<SpecVersion>> {
-        let rows = sqlx::query_as::<_, SpecVersionRow>(
-            "SELECT id, event_type_id, version, mime_type, schema_content, schema_type, status, created_at, updated_at \
-             FROM msg_event_type_spec_versions WHERE event_type_id = $1 ORDER BY version ASC"
+        let rows = sqlx::query_as!(
+            SpecVersionRow,
+            "SELECT id, event_type_id AS \"event_type_id: EventTypeId\", version, \
+                    mime_type, schema_content AS \"schema_content: serde_json::Value\", \
+                    schema_type AS \"schema_type: Stored<SchemaType>\", \
+                    status AS \"status: Stored<SpecVersionStatus>\", created_at, \
+                    updated_at \
+                    \
+             FROM msg_event_type_spec_versions WHERE event_type_id = $1 ORDER BY version ASC",
+            event_type_id as &EventTypeId
         )
-        .bind(event_type_id)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(SpecVersion::try_from).collect()
@@ -277,11 +293,17 @@ impl EventTypeRepository {
         }
 
         let ids: Vec<String> = rows.iter().map(|m| m.id.clone()).collect();
-        let all_specs = sqlx::query_as::<_, SpecVersionRow>(
-            "SELECT id, event_type_id, version, mime_type, schema_content, schema_type, status, created_at, updated_at \
-             FROM msg_event_type_spec_versions WHERE event_type_id = ANY($1) ORDER BY version ASC"
+        let all_specs = sqlx::query_as!(
+            SpecVersionRow,
+            "SELECT id, event_type_id AS \"event_type_id: EventTypeId\", version, \
+                    mime_type, schema_content AS \"schema_content: serde_json::Value\", \
+                    schema_type AS \"schema_type: Stored<SchemaType>\", \
+                    status AS \"status: Stored<SpecVersionStatus>\", created_at, \
+                    updated_at \
+                    \
+             FROM msg_event_type_spec_versions WHERE event_type_id = ANY($1) ORDER BY version ASC",
+            &ids
         )
-        .bind(&ids)
         .fetch_all(&self.pool)
         .await?;
 
@@ -307,23 +329,23 @@ impl EventTypeRepository {
 
     pub async fn insert(&self, et: &EventType) -> Result<()> {
         let now = Utc::now();
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO msg_event_types (id, code, name, description, status, source, client_scoped, application, subdomain, aggregate, created_at, updated_at, created_by)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)"
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+            &et.id as &EventTypeId,
+            &et.code,
+            &et.name,
+            et.description.as_ref(),
+            et.status as EventTypeStatus,
+            et.source as EventTypeSource,
+            et.client_scoped,
+            &et.application,
+            &et.subdomain,
+            &et.aggregate,
+            now,
+            now,
+            et.created_by.as_ref()
         )
-        .bind(&et.id)
-        .bind(&et.code)
-        .bind(&et.name)
-        .bind(&et.description)
-        .bind(et.status)
-        .bind(et.source)
-        .bind(et.client_scoped)
-        .bind(&et.application)
-        .bind(&et.subdomain)
-        .bind(&et.aggregate)
-        .bind(now)
-        .bind(now)
-        .bind(&et.created_by)
         .execute(&self.pool)
         .await?;
 
@@ -335,29 +357,37 @@ impl EventTypeRepository {
 
     pub async fn insert_spec_version(&self, sv: &SpecVersion) -> Result<()> {
         let now = Utc::now();
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO msg_event_type_spec_versions (id, event_type_id, version, mime_type, schema_content, schema_type, status, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            &sv.id as &SpecVersionId,
+            &sv.event_type_id as &EventTypeId,
+            &sv.version,
+            &sv.mime_type,
+            sv.schema_content.as_ref(),
+            sv.schema_type as SchemaType,
+            sv.status as SpecVersionStatus,
+            now,
+            now
         )
-        .bind(&sv.id)
-        .bind(&sv.event_type_id)
-        .bind(&sv.version)
-        .bind(&sv.mime_type)
-        .bind(&sv.schema_content)
-        .bind(sv.schema_type)
-        .bind(sv.status)
-        .bind(now)
-        .bind(now)
         .execute(&self.pool)
         .await?;
         Ok(())
     }
 
     pub async fn find_by_id(&self, id: &EventTypeId) -> Result<Option<EventType>> {
-        let row = sqlx::query_as::<_, EventTypeRow>("SELECT * FROM msg_event_types WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query_as!(
+            EventTypeRow,
+            "SELECT id, code, name, description, \
+                    status AS \"status: Stored<EventTypeStatus>\", \
+                    source AS \"source: Stored<EventTypeSource>\", client_scoped, \
+                    application, subdomain, aggregate, created_by, created_at, \
+                    updated_at \
+                    FROM msg_event_types WHERE id = $1",
+            id as &EventTypeId
+        )
+        .fetch_optional(&self.pool)
+        .await?;
         match row {
             Some(r) => Ok(Some(self.hydrate(EventType::try_from(r)?).await?)),
             None => Ok(None),
@@ -365,11 +395,18 @@ impl EventTypeRepository {
     }
 
     pub async fn find_by_code(&self, code: &str) -> Result<Option<EventType>> {
-        let row =
-            sqlx::query_as::<_, EventTypeRow>("SELECT * FROM msg_event_types WHERE code = $1")
-                .bind(code)
-                .fetch_optional(&self.pool)
-                .await?;
+        let row = sqlx::query_as!(
+            EventTypeRow,
+            "SELECT id, code, name, description, \
+                    status AS \"status: Stored<EventTypeStatus>\", \
+                    source AS \"source: Stored<EventTypeSource>\", client_scoped, \
+                    application, subdomain, aggregate, created_by, created_at, \
+                    updated_at \
+                    FROM msg_event_types WHERE code = $1",
+            code
+        )
+        .fetch_optional(&self.pool)
+        .await?;
         match row {
             Some(r) => Ok(Some(self.hydrate(EventType::try_from(r)?).await?)),
             None => Ok(None),
@@ -377,28 +414,47 @@ impl EventTypeRepository {
     }
 
     pub async fn find_all(&self) -> Result<Vec<EventType>> {
-        let rows =
-            sqlx::query_as::<_, EventTypeRow>("SELECT * FROM msg_event_types ORDER BY code ASC")
-                .fetch_all(&self.pool)
-                .await?;
+        let rows = sqlx::query_as!(
+            EventTypeRow,
+            "SELECT id, code, name, description, \
+                    status AS \"status: Stored<EventTypeStatus>\", \
+                    source AS \"source: Stored<EventTypeSource>\", client_scoped, \
+                    application, subdomain, aggregate, created_by, created_at, \
+                    updated_at \
+                    FROM msg_event_types ORDER BY code ASC"
+        )
+        .fetch_all(&self.pool)
+        .await?;
         self.hydrate_all(rows).await
     }
 
     pub async fn find_by_application(&self, application: &str) -> Result<Vec<EventType>> {
-        let rows = sqlx::query_as::<_, EventTypeRow>(
-            "SELECT * FROM msg_event_types WHERE application = $1",
+        let rows = sqlx::query_as!(
+            EventTypeRow,
+            "SELECT id, code, name, description, \
+                    status AS \"status: Stored<EventTypeStatus>\", \
+                    source AS \"source: Stored<EventTypeSource>\", client_scoped, \
+                    application, subdomain, aggregate, created_by, created_at, \
+                    updated_at \
+                    FROM msg_event_types WHERE application = $1",
+            application
         )
-        .bind(application)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_all(rows).await
     }
 
     pub async fn find_by_status(&self, status: EventTypeStatus) -> Result<Vec<EventType>> {
-        let rows = sqlx::query_as::<_, EventTypeRow>(
-            "SELECT * FROM msg_event_types WHERE status = $1 ORDER BY code ASC",
+        let rows = sqlx::query_as!(
+            EventTypeRow,
+            "SELECT id, code, name, description, \
+                    status AS \"status: Stored<EventTypeStatus>\", \
+                    source AS \"source: Stored<EventTypeSource>\", client_scoped, \
+                    application, subdomain, aggregate, created_by, created_at, \
+                    updated_at \
+                    FROM msg_event_types WHERE status = $1 ORDER BY code ASC",
+            status as EventTypeStatus
         )
-        .bind(status)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_all(rows).await
@@ -407,10 +463,16 @@ impl EventTypeRepository {
     /// Search event types by code or name (case-insensitive partial match)
     pub async fn search(&self, term: &str) -> Result<Vec<EventType>> {
         let pattern = format!("%{}%", term);
-        let rows = sqlx::query_as::<_, EventTypeRow>(
-            "SELECT * FROM msg_event_types WHERE code ILIKE $1 OR name ILIKE $1",
+        let rows = sqlx::query_as!(
+            EventTypeRow,
+            "SELECT id, code, name, description, \
+                    status AS \"status: Stored<EventTypeStatus>\", \
+                    source AS \"source: Stored<EventTypeSource>\", client_scoped, \
+                    application, subdomain, aggregate, created_by, created_at, \
+                    updated_at \
+                    FROM msg_event_types WHERE code ILIKE $1 OR name ILIKE $1",
+            &pattern
         )
-        .bind(&pattern)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_all(rows).await
@@ -461,10 +523,16 @@ impl EventTypeRepository {
     }
 
     pub async fn find_active(&self) -> Result<Vec<EventType>> {
-        let rows = sqlx::query_as::<_, EventTypeRow>(
-            "SELECT * FROM msg_event_types WHERE status = $1 ORDER BY code ASC",
+        let rows = sqlx::query_as!(
+            EventTypeRow,
+            "SELECT id, code, name, description, \
+                    status AS \"status: Stored<EventTypeStatus>\", \
+                    source AS \"source: Stored<EventTypeSource>\", client_scoped, \
+                    application, subdomain, aggregate, created_by, created_at, \
+                    updated_at \
+                    FROM msg_event_types WHERE status = $1 ORDER BY code ASC",
+            EventTypeStatus::Current as EventTypeStatus
         )
-        .bind(EventTypeStatus::Current)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_all(rows).await
@@ -472,10 +540,16 @@ impl EventTypeRepository {
 
     /// Find active event types without loading spec versions (for filter endpoints)
     pub async fn find_active_shallow(&self) -> Result<Vec<EventType>> {
-        let rows = sqlx::query_as::<_, EventTypeRow>(
-            "SELECT * FROM msg_event_types WHERE status = $1 ORDER BY code ASC",
+        let rows = sqlx::query_as!(
+            EventTypeRow,
+            "SELECT id, code, name, description, \
+                    status AS \"status: Stored<EventTypeStatus>\", \
+                    source AS \"source: Stored<EventTypeSource>\", client_scoped, \
+                    application, subdomain, aggregate, created_by, created_at, \
+                    updated_at \
+                    FROM msg_event_types WHERE status = $1 ORDER BY code ASC",
+            EventTypeStatus::Current as EventTypeStatus
         )
-        .bind(EventTypeStatus::Current)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(EventType::try_from).collect()
@@ -491,10 +565,12 @@ impl EventTypeRepository {
             return Ok(HashMap::new());
         }
         let rows: Vec<(String, String, Stored<EventTypeStatus>)> =
-            sqlx::query_as("SELECT id, code, status FROM msg_event_types WHERE code = ANY($1)")
-                .bind(codes)
+            sqlx::query!(
+            "SELECT id, code, status AS \"status: Stored<EventTypeStatus>\" FROM msg_event_types WHERE code = ANY($1)",
+            codes
+        )
                 .fetch_all(&self.pool)
-                .await?;
+                .await?.into_iter().map(|r| (r.id, r.code, r.status)).collect();
         rows.into_iter()
             .map(|(id, code, status)| {
                 let status = status.decode("msg_event_types", "status", &id)?;
@@ -513,12 +589,12 @@ impl EventTypeRepository {
         if codes.is_empty() {
             return Ok(HashMap::new());
         }
-        let rows: Vec<(String, String, String, Stored<EventTypeStatus>)> = sqlx::query_as(
-            "SELECT id, code, application, status FROM msg_event_types WHERE code = ANY($1)",
+        let rows: Vec<(String, String, String, Stored<EventTypeStatus>)> = sqlx::query!(
+            "SELECT id, code, application, status AS \"status: Stored<EventTypeStatus>\" FROM msg_event_types WHERE code = ANY($1)",
+            codes
         )
-        .bind(codes)
         .fetch_all(&self.pool)
-        .await?;
+        .await?.into_iter().map(|r| (r.id, r.code, r.application, r.status)).collect();
         rows.into_iter()
             .map(|(id, code, application, status)| {
                 let status = status.decode("msg_event_types", "status", &id)?;
@@ -528,33 +604,35 @@ impl EventTypeRepository {
     }
 
     pub async fn exists_by_code(&self, code: &str) -> Result<bool> {
-        let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM msg_event_types WHERE code = $1")
-            .bind(code)
-            .fetch_one(&self.pool)
-            .await?;
-        Ok(row.0 > 0)
+        let row = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM msg_event_types WHERE code = $1",
+            code
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row > 0)
     }
 
     pub async fn update(&self, et: &EventType) -> Result<()> {
         let now = Utc::now();
-        sqlx::query(
+        sqlx::query!(
             "UPDATE msg_event_types SET
                 code = $2, name = $3, description = $4, status = $5, source = $6,
                 client_scoped = $7, application = $8, subdomain = $9, aggregate = $10,
                 updated_at = $11
              WHERE id = $1",
+            &et.id as &EventTypeId,
+            &et.code,
+            &et.name,
+            et.description.as_ref(),
+            et.status as EventTypeStatus,
+            et.source as EventTypeSource,
+            et.client_scoped,
+            &et.application,
+            &et.subdomain,
+            &et.aggregate,
+            now
         )
-        .bind(&et.id)
-        .bind(&et.code)
-        .bind(&et.name)
-        .bind(&et.description)
-        .bind(et.status)
-        .bind(et.source)
-        .bind(et.client_scoped)
-        .bind(&et.application)
-        .bind(&et.subdomain)
-        .bind(&et.aggregate)
-        .bind(now)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -562,18 +640,18 @@ impl EventTypeRepository {
 
     pub async fn update_spec_version(&self, sv: &SpecVersion) -> Result<()> {
         let now = Utc::now();
-        sqlx::query(
+        sqlx::query!(
             "UPDATE msg_event_type_spec_versions SET
                 mime_type = $2, schema_content = $3, schema_type = $4, status = $5,
                 updated_at = $6
              WHERE id = $1",
+            &sv.id as &SpecVersionId,
+            &sv.mime_type,
+            sv.schema_content.as_ref(),
+            sv.schema_type as SchemaType,
+            sv.status as SpecVersionStatus,
+            now
         )
-        .bind(&sv.id)
-        .bind(&sv.mime_type)
-        .bind(&sv.schema_content)
-        .bind(sv.schema_type)
-        .bind(sv.status)
-        .bind(now)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -581,14 +659,18 @@ impl EventTypeRepository {
 
     pub async fn delete(&self, id: &EventTypeId) -> Result<bool> {
         // Delete spec versions first
-        sqlx::query("DELETE FROM msg_event_type_spec_versions WHERE event_type_id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-        let result = sqlx::query("DELETE FROM msg_event_types WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM msg_event_type_spec_versions WHERE event_type_id = $1",
+            id as &EventTypeId
+        )
+        .execute(&self.pool)
+        .await?;
+        let result = sqlx::query!(
+            "DELETE FROM msg_event_types WHERE id = $1",
+            id as &EventTypeId
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(result.rows_affected() > 0)
     }
 }
@@ -605,7 +687,7 @@ impl Persist<EventType> for EventTypeRepository {
     async fn persist(&self, et: &EventType, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
 
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO msg_event_types (id, code, name, description, status, source, client_scoped, application, subdomain, aggregate, created_at, updated_at, created_by)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
              ON CONFLICT (id) DO UPDATE SET
@@ -614,42 +696,44 @@ impl Persist<EventType> for EventTypeRepository {
                 status = EXCLUDED.status,
                 source = EXCLUDED.source,
                 client_scoped = EXCLUDED.client_scoped,
-                updated_at = EXCLUDED.updated_at"
+                updated_at = EXCLUDED.updated_at",
+            &et.id as &EventTypeId,
+            &et.code,
+            &et.name,
+            et.description.as_ref(),
+            et.status as EventTypeStatus,
+            et.source as EventTypeSource,
+            et.client_scoped,
+            &et.application,
+            &et.subdomain,
+            &et.aggregate,
+            now,
+            now,
+            et.created_by.as_ref()
         )
-        .bind(&et.id)
-        .bind(&et.code)
-        .bind(&et.name)
-        .bind(&et.description)
-        .bind(et.status)
-        .bind(et.source)
-        .bind(et.client_scoped)
-        .bind(&et.application)
-        .bind(&et.subdomain)
-        .bind(&et.aggregate)
-        .bind(now)
-        .bind(now)
-        .bind(&et.created_by)
         .execute(&mut **tx.inner).await?;
 
-        sqlx::query("DELETE FROM msg_event_type_spec_versions WHERE event_type_id = $1")
-            .bind(&et.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM msg_event_type_spec_versions WHERE event_type_id = $1",
+            &et.id as &EventTypeId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
 
         for sv in &et.spec_versions {
-            sqlx::query(
-                "INSERT INTO msg_event_type_spec_versions (id, event_type_id, version, mime_type, schema_content, schema_type, status, created_at, updated_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
-            )
-            .bind(&sv.id)
-            .bind(&sv.event_type_id)
-            .bind(&sv.version)
-            .bind(&sv.mime_type)
-            .bind(&sv.schema_content)
-            .bind(sv.schema_type)
-            .bind(sv.status)
-            .bind(sv.created_at)
-            .bind(sv.updated_at)
+            sqlx::query!(
+            "INSERT INTO msg_event_type_spec_versions (id, event_type_id, version, mime_type, schema_content, schema_type, status, created_at, updated_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            &sv.id as &SpecVersionId,
+            &sv.event_type_id as &EventTypeId,
+            &sv.version,
+            &sv.mime_type,
+            sv.schema_content.as_ref(),
+            sv.schema_type as SchemaType,
+            sv.status as SpecVersionStatus,
+            sv.created_at,
+            sv.updated_at
+        )
             .execute(&mut **tx.inner).await?;
         }
 
@@ -657,14 +741,18 @@ impl Persist<EventType> for EventTypeRepository {
     }
 
     async fn delete(&self, et: &EventType, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query("DELETE FROM msg_event_type_spec_versions WHERE event_type_id = $1")
-            .bind(&et.id)
-            .execute(&mut **tx.inner)
-            .await?;
-        sqlx::query("DELETE FROM msg_event_types WHERE id = $1")
-            .bind(&et.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM msg_event_type_spec_versions WHERE event_type_id = $1",
+            &et.id as &EventTypeId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
+        sqlx::query!(
+            "DELETE FROM msg_event_types WHERE id = $1",
+            &et.id as &EventTypeId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         Ok(())
     }
 }

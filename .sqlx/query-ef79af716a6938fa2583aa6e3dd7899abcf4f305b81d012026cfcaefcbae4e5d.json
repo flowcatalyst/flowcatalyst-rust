@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE msg_event_type_spec_versions SET\n                mime_type = $2, schema_content = $3, schema_type = $4, status = $5,\n                updated_at = $6\n             WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Varchar",
+        "Jsonb",
+        "Varchar",
+        "Varchar",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ef79af716a6938fa2583aa6e3dd7899abcf4f305b81d012026cfcaefcbae4e5d"
+}

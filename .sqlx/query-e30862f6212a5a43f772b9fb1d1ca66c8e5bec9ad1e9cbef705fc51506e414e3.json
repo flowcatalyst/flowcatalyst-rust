@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE msg_connections SET\n                code = $2,\n                name = $3,\n                description = $4,\n                external_id = $5,\n                status = $6,\n                service_account_id = $7,\n                client_id = $8,\n                client_identifier = $9,\n                updated_at = $10\n             WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e30862f6212a5a43f772b9fb1d1ca66c8e5bec9ad1e9cbef705fc51506e414e3"
+}

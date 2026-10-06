@@ -309,13 +309,18 @@ impl PoolCodeResolver {
 
     async fn refresh(&self) -> Result<(), sqlx::Error> {
         let pools: Vec<(String, String, Option<String>)> =
-            sqlx::query_as("SELECT id, code, client_identifier FROM msg_dispatch_pools")
+            sqlx::query!("SELECT id, code, client_identifier FROM msg_dispatch_pools")
                 .fetch_all(&self.pool)
-                .await?;
-        let clients: Vec<(String, String)> =
-            sqlx::query_as("SELECT id, identifier FROM tnt_clients")
-                .fetch_all(&self.pool)
-                .await?;
+                .await?
+                .into_iter()
+                .map(|r| (r.id, r.code, r.client_identifier))
+                .collect();
+        let clients: Vec<(String, String)> = sqlx::query!("SELECT id, identifier FROM tnt_clients")
+            .fetch_all(&self.pool)
+            .await?
+            .into_iter()
+            .map(|r| (r.id, r.identifier))
+            .collect();
         let mut snap = self.snapshot.write();
         snap.pools = pools
             .into_iter()
@@ -416,15 +421,13 @@ impl SubscriptionPriorityCache {
         if !self.is_fresh() {
             let _guard = self.refresh_lock.lock().await;
             if !self.is_fresh() {
-                match sqlx::query_as::<_, (String, Option<String>)>(
-                    "SELECT id, queue FROM msg_subscriptions",
-                )
-                .fetch_all(&self.pool)
-                .await
+                match sqlx::query!("SELECT id, queue FROM msg_subscriptions")
+                    .fetch_all(&self.pool)
+                    .await
                 {
                     Ok(rows) => {
                         let mut snap = self.snapshot.write();
-                        snap.stored = rows.into_iter().collect();
+                        snap.stored = rows.into_iter().map(|r| (r.id, r.queue)).collect();
                         snap.refreshed = Some(Instant::now());
                     }
                     Err(e) => warn!(error = %e,

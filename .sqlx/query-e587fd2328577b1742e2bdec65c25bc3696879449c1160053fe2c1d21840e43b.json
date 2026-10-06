@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO msg_connections (id, code, name, description, external_id, status, service_account_id, client_id, client_identifier, created_at, updated_at, application_code, source) SELECT u.id, u.code, u.name, u.description, u.external_id, u.status, u.sa, u.client_id, u.identifier, u.created_at, $11, $12, u.source FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[], $10::timestamptz[], $13::text[]) AS u(id, code, name, description, external_id, status, sa, client_id, identifier, created_at, source) ON CONFLICT (id) DO UPDATE SET code = EXCLUDED.code, name = EXCLUDED.name, description = EXCLUDED.description, external_id = EXCLUDED.external_id, status = EXCLUDED.status, service_account_id = EXCLUDED.service_account_id, client_id = EXCLUDED.client_id, client_identifier = EXCLUDED.client_identifier, updated_at = EXCLUDED.updated_at, application_code = EXCLUDED.application_code, source = EXCLUDED.source",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "TextArray",
+        "TextArray",
+        "TextArray",
+        "TextArray",
+        "TextArray",
+        "TextArray",
+        "TextArray",
+        "TextArray",
+        "TimestamptzArray",
+        "Timestamptz",
+        "Varchar",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e587fd2328577b1742e2bdec65c25bc3696879449c1160053fe2c1d21840e43b"
+}

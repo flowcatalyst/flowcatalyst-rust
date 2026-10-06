@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO msg_events\n                (id, spec_version, type, source, subject, time, data,\n                 correlation_id, causation_id, deduplication_id,\n                 message_group, client_id, context_data, created_at)\n            SELECT * FROM UNNEST(\n                $1::varchar[], $2::varchar[], $3::varchar[], $4::varchar[],\n                $5::varchar[], $6::timestamptz[], $7::jsonb[],\n                $8::varchar[], $9::varchar[], $10::varchar[],\n                $11::varchar[], $12::varchar[], $13::jsonb[], $14::timestamptz[]\n            )\n            ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "VarcharArray",
+        "VarcharArray",
+        "VarcharArray",
+        "VarcharArray",
+        "VarcharArray",
+        "TimestamptzArray",
+        "JsonbArray",
+        "VarcharArray",
+        "VarcharArray",
+        "VarcharArray",
+        "VarcharArray",
+        "VarcharArray",
+        "JsonbArray",
+        "TimestamptzArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ca90af398c0f37864b541433b88f82944d6375a42a24d93b4daab5b4128c908e"
+}

@@ -13,11 +13,9 @@ use std::collections::HashSet;
 use std::slice;
 
 /// Row mapping for msg_events table
-#[derive(sqlx::FromRow)]
 struct EventRow {
     id: String,
     spec_version: Option<String>,
-    #[sqlx(rename = "type")]
     event_type: String,
     source: String,
     subject: Option<String>,
@@ -102,11 +100,10 @@ impl From<EventReadRow> for EventRead {
 /// (event/repository.go), for `GET /api/events/{id}`, plus the event's
 /// context data from its `msg_events` row (the projection has no column for
 /// it; Go documents `contextData` on this read but never fills it).
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone)]
 pub struct EventReadDetail {
     pub id: String,
     pub spec_version: Option<String>,
-    #[sqlx(rename = "type")]
     pub event_type: String,
     pub source: String,
     pub subject: Option<String>,
@@ -251,7 +248,7 @@ impl EventRepository {
             });
         }
 
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"INSERT INTO msg_events
                 (id, spec_version, type, source, subject, time, data,
                  correlation_id, causation_id, deduplication_id,
@@ -263,21 +260,21 @@ impl EventRepository {
                 $11::varchar[], $12::varchar[], $13::jsonb[], $14::timestamptz[]
             )
             ON CONFLICT DO NOTHING"#,
+            &ids as &[&str],
+            &spec_versions as &[&str],
+            &types as &[&str],
+            &sources as &[&str],
+            &&subjects as &[Option<String>] as &[Option<String>],
+            &times,
+            &datas,
+            &&correlation_ids as &[Option<String>] as &[Option<String>],
+            &&causation_ids as &[Option<String>] as &[Option<String>],
+            &&deduplication_ids as &[Option<String>] as &[Option<String>],
+            &&message_groups as &[Option<String>] as &[Option<String>],
+            &&client_ids as &[Option<String>] as &[Option<String>],
+            &context_datas as &[Option<serde_json::Value>],
+            &created_ats
         )
-        .bind(&ids)
-        .bind(&spec_versions)
-        .bind(&types)
-        .bind(&sources)
-        .bind(&subjects as &[Option<String>])
-        .bind(&times)
-        .bind(&datas)
-        .bind(&correlation_ids as &[Option<String>])
-        .bind(&causation_ids as &[Option<String>])
-        .bind(&deduplication_ids as &[Option<String>])
-        .bind(&message_groups as &[Option<String>])
-        .bind(&client_ids as &[Option<String>])
-        .bind(&context_datas as &[Option<serde_json::Value>])
-        .bind(&created_ats)
         .execute(&self.pool)
         .await?;
 
@@ -296,14 +293,15 @@ impl EventRepository {
         let stored: HashSet<String> = if dedup_ids.is_empty() {
             HashSet::new()
         } else {
-            sqlx::query_as::<_, (String,)>(
+            // The column is nullable; `= ANY($1)` never matches a NULL.
+            sqlx::query!(
                 "SELECT DISTINCT deduplication_id FROM msg_events WHERE deduplication_id = ANY($1)",
+                &dedup_ids as &[&str]
             )
-            .bind(&dedup_ids)
             .fetch_all(&self.pool)
             .await?
             .into_iter()
-            .map(|(d,)| d)
+            .filter_map(|r| r.deduplication_id)
             .collect()
         };
         let mut seen = HashSet::new();
@@ -325,29 +323,39 @@ impl EventRepository {
         if ids.is_empty() {
             return Ok(HashSet::new());
         }
-        let rows =
-            sqlx::query_as::<_, (String,)>("SELECT DISTINCT id FROM msg_events WHERE id = ANY($1)")
-                .bind(ids)
-                .fetch_all(&self.pool)
-                .await?;
-        Ok(rows.into_iter().map(|(id,)| id).collect())
+        let rows = sqlx::query!("SELECT DISTINCT id FROM msg_events WHERE id = ANY($1)", ids)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows.into_iter().map(|r| r.id).collect())
     }
 
     pub async fn find_by_id(&self, id: &str) -> Result<Option<Event>> {
-        let row = sqlx::query_as::<_, EventRow>("SELECT * FROM msg_events WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query_as!(
+            EventRow,
+            "SELECT id, spec_version, type AS event_type, source, subject, time, \
+                    data AS \"data: serde_json::Value\", correlation_id, causation_id, \
+                    deduplication_id, message_group, client_id, \
+                    context_data AS \"context_data: serde_json::Value\", created_at \
+                    FROM msg_events WHERE id = $1",
+            id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
 
         Ok(row.map(Event::from))
     }
 
     pub async fn find_by_type(&self, event_type: &str, limit: i64) -> Result<Vec<Event>> {
-        let rows = sqlx::query_as::<_, EventRow>(
-            "SELECT * FROM msg_events WHERE type = $1 ORDER BY time DESC LIMIT $2",
+        let rows = sqlx::query_as!(
+            EventRow,
+            "SELECT id, spec_version, type AS event_type, source, subject, time, \
+                    data AS \"data: serde_json::Value\", correlation_id, causation_id, \
+                    deduplication_id, message_group, client_id, \
+                    context_data AS \"context_data: serde_json::Value\", created_at \
+                    FROM msg_events WHERE type = $1 ORDER BY time DESC LIMIT $2",
+            event_type,
+            limit
         )
-        .bind(event_type)
-        .bind(limit)
         .fetch_all(&self.pool)
         .await?;
 
@@ -355,11 +363,16 @@ impl EventRepository {
     }
 
     pub async fn find_by_client(&self, client_id: &str, limit: i64) -> Result<Vec<Event>> {
-        let rows = sqlx::query_as::<_, EventRow>(
-            "SELECT * FROM msg_events WHERE client_id = $1 ORDER BY time DESC LIMIT $2",
+        let rows = sqlx::query_as!(
+            EventRow,
+            "SELECT id, spec_version, type AS event_type, source, subject, time, \
+                    data AS \"data: serde_json::Value\", correlation_id, causation_id, \
+                    deduplication_id, message_group, client_id, \
+                    context_data AS \"context_data: serde_json::Value\", created_at \
+                    FROM msg_events WHERE client_id = $1 ORDER BY time DESC LIMIT $2",
+            client_id,
+            limit
         )
-        .bind(client_id)
-        .bind(limit)
         .fetch_all(&self.pool)
         .await?;
 
@@ -367,10 +380,15 @@ impl EventRepository {
     }
 
     pub async fn find_by_correlation_id(&self, correlation_id: &str) -> Result<Vec<Event>> {
-        let rows = sqlx::query_as::<_, EventRow>(
-            "SELECT * FROM msg_events WHERE correlation_id = $1 ORDER BY time DESC",
+        let rows = sqlx::query_as!(
+            EventRow,
+            "SELECT id, spec_version, type AS event_type, source, subject, time, \
+                    data AS \"data: serde_json::Value\", correlation_id, causation_id, \
+                    deduplication_id, message_group, client_id, \
+                    context_data AS \"context_data: serde_json::Value\", created_at \
+                    FROM msg_events WHERE correlation_id = $1 ORDER BY time DESC",
+            correlation_id
         )
-        .bind(correlation_id)
         .fetch_all(&self.pool)
         .await?;
 
@@ -386,21 +404,32 @@ impl EventRepository {
         if deduplication_ids.is_empty() {
             return Ok(vec![]);
         }
-        let rows = sqlx::query_as::<_, EventRow>(
-            "SELECT * FROM msg_events WHERE deduplication_id = ANY($1)",
+        let rows = sqlx::query_as!(
+            EventRow,
+            "SELECT id, spec_version, type AS event_type, source, subject, time, \
+                    data AS \"data: serde_json::Value\", correlation_id, causation_id, \
+                    deduplication_id, message_group, client_id, \
+                    context_data AS \"context_data: serde_json::Value\", created_at \
+                    FROM msg_events WHERE deduplication_id = ANY($1)",
+            deduplication_ids
         )
-        .bind(deduplication_ids)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(Event::from).collect())
     }
 
     pub async fn find_by_deduplication_id(&self, deduplication_id: &str) -> Result<Option<Event>> {
-        let row =
-            sqlx::query_as::<_, EventRow>("SELECT * FROM msg_events WHERE deduplication_id = $1")
-                .bind(deduplication_id)
-                .fetch_optional(&self.pool)
-                .await?;
+        let row = sqlx::query_as!(
+            EventRow,
+            "SELECT id, spec_version, type AS event_type, source, subject, time, \
+                    data AS \"data: serde_json::Value\", correlation_id, causation_id, \
+                    deduplication_id, message_group, client_id, \
+                    context_data AS \"context_data: serde_json::Value\", created_at \
+                    FROM msg_events WHERE deduplication_id = $1",
+            deduplication_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
 
         Ok(row.map(Event::from))
     }
@@ -414,21 +443,31 @@ impl EventRepository {
         fetch_limit: i64,
     ) -> Result<Vec<Event>> {
         let rows = if let Some(c) = cursor {
-            sqlx::query_as::<_, EventRow>(
-                "SELECT * FROM msg_events \
+            sqlx::query_as!(
+                EventRow,
+                "SELECT id, spec_version, type AS event_type, source, subject, time, \
+                    data AS \"data: serde_json::Value\", correlation_id, causation_id, \
+                    deduplication_id, message_group, client_id, \
+                    context_data AS \"context_data: serde_json::Value\", created_at \
+                    FROM msg_events \
                  WHERE (created_at, id) < ($1, $2) \
                  ORDER BY created_at DESC, id DESC LIMIT $3",
+                c.created_at,
+                &c.id,
+                fetch_limit
             )
-            .bind(c.created_at)
-            .bind(&c.id)
-            .bind(fetch_limit)
             .fetch_all(&self.pool)
             .await?
         } else {
-            sqlx::query_as::<_, EventRow>(
-                "SELECT * FROM msg_events ORDER BY created_at DESC, id DESC LIMIT $1",
+            sqlx::query_as!(
+                EventRow,
+                "SELECT id, spec_version, type AS event_type, source, subject, time, \
+                    data AS \"data: serde_json::Value\", correlation_id, causation_id, \
+                    deduplication_id, message_group, client_id, \
+                    context_data AS \"context_data: serde_json::Value\", created_at \
+                    FROM msg_events ORDER BY created_at DESC, id DESC LIMIT $1",
+                fetch_limit
             )
-            .bind(fetch_limit)
             .fetch_all(&self.pool)
             .await?
         };
@@ -436,22 +475,25 @@ impl EventRepository {
     }
 
     pub async fn count_all(&self) -> Result<u64> {
-        let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM msg_events")
+        let row = sqlx::query_scalar!("SELECT COUNT(*) AS \"count!\" FROM msg_events")
             .fetch_one(&self.pool)
             .await?;
 
-        Ok(row.0 as u64)
+        Ok(row as u64)
     }
 
     // ── Read projection methods ──────────────────────────────────────────
 
     pub async fn find_read_by_id(&self, id: &str) -> Result<Option<EventRead>> {
-        let row = sqlx::query_as::<_, EventReadRow>(
-            "SELECT id, type, source, subject, time, application, subdomain, \
-             aggregate, message_group, correlation_id, client_id, projected_at \
+        let row = sqlx::query_as!(
+            EventReadRow,
+            "SELECT id, type AS event_type, source, subject, time, application, \
+                    subdomain, aggregate, message_group, correlation_id, client_id, \
+                    projected_at \
+                    \
              FROM msg_events_read WHERE id = $1",
+            id
         )
-        .bind(id)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -462,16 +504,19 @@ impl EventRepository {
     pub async fn find_read_detail_by_id(&self, id: &str) -> Result<Option<EventReadDetail>> {
         // The projection keeps the source row's `created_at` (its partition
         // key), so the join reaches one partition of `msg_events`.
-        Ok(sqlx::query_as::<_, EventReadDetail>(
-            "SELECT r.id, r.spec_version, r.type, r.source, r.subject, r.time, r.data, \
-             r.deduplication_id, r.client_id, r.message_group, r.correlation_id, \
-             r.causation_id, r.created_at, r.application, r.subdomain, r.aggregate, \
-             r.projected_at, e.context_data \
+        Ok(sqlx::query_as!(
+            EventReadDetail,
+            "SELECT r.id, r.spec_version, r.type AS event_type, r.source, r.subject, \
+                    r.time, r.data, r.deduplication_id, r.client_id, r.message_group, \
+                    r.correlation_id, r.causation_id, r.created_at, r.application, \
+                    r.subdomain, r.aggregate, r.projected_at, \
+                    e.context_data AS \"context_data: serde_json::Value\" \
+                    \
              FROM msg_events_read r \
              LEFT JOIN msg_events e ON e.id = r.id AND e.created_at = r.created_at \
              WHERE r.id = $1",
+            id
         )
-        .bind(id)
         .fetch_optional(&self.pool)
         .await?)
     }
@@ -633,23 +678,24 @@ impl EventRepository {
 
     /// Get distinct filter option values from the read model.
     pub async fn read_filter_options(&self) -> Result<EventFilterOptions> {
-        let applications = sqlx::query_scalar::<_, String>(
-            "SELECT DISTINCT application FROM msg_events_read WHERE application IS NOT NULL ORDER BY application"
+        // `application!`: the WHERE excludes NULLs of this nullable column.
+        let applications = sqlx::query_scalar!(
+            "SELECT DISTINCT application AS \"application!\" FROM msg_events_read WHERE application IS NOT NULL ORDER BY application"
         ).fetch_all(&self.pool).await?;
 
-        let subdomains = sqlx::query_scalar::<_, String>(
-            "SELECT DISTINCT subdomain FROM msg_events_read WHERE subdomain IS NOT NULL ORDER BY subdomain"
+        // `subdomain!`: the WHERE excludes NULLs of this nullable column.
+        let subdomains = sqlx::query_scalar!(
+            "SELECT DISTINCT subdomain AS \"subdomain!\" FROM msg_events_read WHERE subdomain IS NOT NULL ORDER BY subdomain"
         ).fetch_all(&self.pool).await?;
 
-        let aggregates = sqlx::query_scalar::<_, String>(
-            "SELECT DISTINCT aggregate FROM msg_events_read WHERE aggregate IS NOT NULL ORDER BY aggregate"
+        // `aggregate!`: the WHERE excludes NULLs of this nullable column.
+        let aggregates = sqlx::query_scalar!(
+            "SELECT DISTINCT aggregate AS \"aggregate!\" FROM msg_events_read WHERE aggregate IS NOT NULL ORDER BY aggregate"
         ).fetch_all(&self.pool).await?;
 
-        let types = sqlx::query_scalar::<_, String>(
-            "SELECT DISTINCT type FROM msg_events_read ORDER BY type",
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        let types = sqlx::query_scalar!("SELECT DISTINCT type FROM msg_events_read ORDER BY type")
+            .fetch_all(&self.pool)
+            .await?;
 
         Ok(EventFilterOptions {
             applications,
@@ -660,23 +706,23 @@ impl EventRepository {
     }
 
     pub async fn insert_read_projection(&self, p: &EventRead) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO msg_events_read
                 (id, type, source, subject, time, application, subdomain,
                  aggregate, message_group, correlation_id, client_id, projected_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())"#,
+            &p.id,
+            &p.event_type,
+            &p.source,
+            p.subject.as_ref(),
+            p.time,
+            p.application.as_ref(),
+            p.subdomain.as_ref(),
+            p.aggregate.as_ref(),
+            p.message_group.as_ref(),
+            p.correlation_id.as_ref(),
+            p.client_id.as_ref()
         )
-        .bind(&p.id)
-        .bind(&p.event_type)
-        .bind(&p.source)
-        .bind(&p.subject)
-        .bind(p.time)
-        .bind(&p.application)
-        .bind(&p.subdomain)
-        .bind(&p.aggregate)
-        .bind(&p.message_group)
-        .bind(&p.correlation_id)
-        .bind(&p.client_id)
         .execute(&self.pool)
         .await?;
 
@@ -684,25 +730,25 @@ impl EventRepository {
     }
 
     pub async fn update_read_projection(&self, p: &EventRead) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"UPDATE msg_events_read SET
                 type = $2, source = $3, subject = $4, time = $5,
                 application = $6, subdomain = $7, aggregate = $8,
                 message_group = $9, correlation_id = $10, client_id = $11,
                 projected_at = NOW()
             WHERE id = $1"#,
+            &p.id,
+            &p.event_type,
+            &p.source,
+            p.subject.as_ref(),
+            p.time,
+            p.application.as_ref(),
+            p.subdomain.as_ref(),
+            p.aggregate.as_ref(),
+            p.message_group.as_ref(),
+            p.correlation_id.as_ref(),
+            p.client_id.as_ref()
         )
-        .bind(&p.id)
-        .bind(&p.event_type)
-        .bind(&p.source)
-        .bind(&p.subject)
-        .bind(p.time)
-        .bind(&p.application)
-        .bind(&p.subdomain)
-        .bind(&p.aggregate)
-        .bind(&p.message_group)
-        .bind(&p.correlation_id)
-        .bind(&p.client_id)
         .execute(&self.pool)
         .await?;
 

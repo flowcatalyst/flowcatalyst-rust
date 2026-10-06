@@ -15,7 +15,6 @@ use fc_platform_core::usecase::DbTx;
 use fc_platform_core::usecase::Persist;
 
 /// Row mapping for msg_dispatch_pools table
-#[derive(sqlx::FromRow)]
 struct DispatchPoolRow {
     id: String,
     code: String,
@@ -68,32 +67,37 @@ impl DispatchPoolRepository {
 
     pub async fn insert(&self, pool: &DispatchPool) -> Result<()> {
         let now = Utc::now();
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO msg_dispatch_pools (id, code, name, description, rate_limit, concurrency, client_id, client_identifier, status, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+            &pool.id as &DispatchPoolId,
+            &pool.code,
+            &pool.name,
+            pool.description.as_ref(),
+            pool.rate_limit,
+            pool.concurrency,
+            &pool.client_id as &Option<ClientId>,
+            pool.client_identifier.as_ref(),
+            pool.status as DispatchPoolStatus,
+            now,
+            now
         )
-        .bind(&pool.id)
-        .bind(&pool.code)
-        .bind(&pool.name)
-        .bind(&pool.description)
-        .bind(pool.rate_limit)
-        .bind(pool.concurrency)
-        .bind(&pool.client_id)
-        .bind(&pool.client_identifier)
-        .bind(pool.status)
-        .bind(now)
-        .bind(now)
         .execute(&self.pool)
         .await?;
         Ok(())
     }
 
     pub async fn find_by_id(&self, id: &DispatchPoolId) -> Result<Option<DispatchPool>> {
-        let row =
-            sqlx::query_as::<_, DispatchPoolRow>("SELECT * FROM msg_dispatch_pools WHERE id = $1")
-                .bind(id)
-                .fetch_optional(&self.pool)
-                .await?;
+        let row = sqlx::query_as!(
+            DispatchPoolRow,
+            "SELECT id, code, name, description, rate_limit, concurrency, client_id, \
+                    client_identifier, status AS \"status: Stored<DispatchPoolStatus>\", \
+                    created_at, updated_at \
+                    FROM msg_dispatch_pools WHERE id = $1",
+            id as &DispatchPoolId
+        )
+        .fetch_optional(&self.pool)
+        .await?;
         row.map(DispatchPool::try_from).transpose()
     }
 
@@ -102,10 +106,14 @@ impl DispatchPoolRepository {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        let rows = sqlx::query_as::<_, DispatchPoolRow>(
-            "SELECT * FROM msg_dispatch_pools WHERE id = ANY($1)",
+        let rows = sqlx::query_as!(
+            DispatchPoolRow,
+            "SELECT id, code, name, description, rate_limit, concurrency, client_id, \
+                    client_identifier, status AS \"status: Stored<DispatchPoolStatus>\", \
+                    created_at, updated_at \
+                    FROM msg_dispatch_pools WHERE id = ANY($1)",
+            ids as &[DispatchPoolId]
         )
-        .bind(ids)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(DispatchPool::try_from).collect()
@@ -117,18 +125,26 @@ impl DispatchPoolRepository {
         client_id: Option<&ClientId>,
     ) -> Result<Option<DispatchPool>> {
         let row = if let Some(cid) = client_id {
-            sqlx::query_as::<_, DispatchPoolRow>(
-                "SELECT * FROM msg_dispatch_pools WHERE code = $1 AND client_id = $2",
+            sqlx::query_as!(
+                DispatchPoolRow,
+                "SELECT id, code, name, description, rate_limit, concurrency, client_id, \
+                    client_identifier, status AS \"status: Stored<DispatchPoolStatus>\", \
+                    created_at, updated_at \
+                    FROM msg_dispatch_pools WHERE code = $1 AND client_id = $2",
+                code,
+                cid as &ClientId
             )
-            .bind(code)
-            .bind(cid)
             .fetch_optional(&self.pool)
             .await?
         } else {
-            sqlx::query_as::<_, DispatchPoolRow>(
-                "SELECT * FROM msg_dispatch_pools WHERE code = $1 AND client_id IS NULL",
+            sqlx::query_as!(
+                DispatchPoolRow,
+                "SELECT id, code, name, description, rate_limit, concurrency, client_id, \
+                    client_identifier, status AS \"status: Stored<DispatchPoolStatus>\", \
+                    created_at, updated_at \
+                    FROM msg_dispatch_pools WHERE code = $1 AND client_id IS NULL",
+                code
             )
-            .bind(code)
             .fetch_optional(&self.pool)
             .await?
         };
@@ -142,18 +158,26 @@ impl DispatchPoolRepository {
         if codes.is_empty() {
             return Ok(Vec::new());
         }
-        let rows = sqlx::query_as::<_, DispatchPoolRow>(
-            "SELECT * FROM msg_dispatch_pools WHERE code = ANY($1) AND client_id IS NULL",
+        let rows = sqlx::query_as!(
+            DispatchPoolRow,
+            "SELECT id, code, name, description, rate_limit, concurrency, client_id, \
+                    client_identifier, status AS \"status: Stored<DispatchPoolStatus>\", \
+                    created_at, updated_at \
+                    FROM msg_dispatch_pools WHERE code = ANY($1) AND client_id IS NULL",
+            codes
         )
-        .bind(codes)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(DispatchPool::try_from).collect()
     }
 
     pub async fn find_all(&self) -> Result<Vec<DispatchPool>> {
-        let rows = sqlx::query_as::<_, DispatchPoolRow>(
-            "SELECT * FROM msg_dispatch_pools ORDER BY code ASC",
+        let rows = sqlx::query_as!(
+            DispatchPoolRow,
+            "SELECT id, code, name, description, rate_limit, concurrency, client_id, \
+                    client_identifier, status AS \"status: Stored<DispatchPoolStatus>\", \
+                    created_at, updated_at \
+                    FROM msg_dispatch_pools ORDER BY code ASC"
         )
         .fetch_all(&self.pool)
         .await?;
@@ -161,10 +185,14 @@ impl DispatchPoolRepository {
     }
 
     pub async fn find_by_status(&self, status: DispatchPoolStatus) -> Result<Vec<DispatchPool>> {
-        let rows = sqlx::query_as::<_, DispatchPoolRow>(
-            "SELECT * FROM msg_dispatch_pools WHERE status = $1 ORDER BY code ASC",
+        let rows = sqlx::query_as!(
+            DispatchPoolRow,
+            "SELECT id, code, name, description, rate_limit, concurrency, client_id, \
+                    client_identifier, status AS \"status: Stored<DispatchPoolStatus>\", \
+                    created_at, updated_at \
+                    FROM msg_dispatch_pools WHERE status = $1 ORDER BY code ASC",
+            status as DispatchPoolStatus
         )
-        .bind(status)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(DispatchPool::try_from).collect()
@@ -177,14 +205,18 @@ impl DispatchPoolRepository {
         status: Option<DispatchPoolStatus>,
         client_id: Option<&ClientId>,
     ) -> Result<Vec<DispatchPool>> {
-        let rows = sqlx::query_as::<_, DispatchPoolRow>(
-            "SELECT * FROM msg_dispatch_pools \
+        let rows = sqlx::query_as!(
+            DispatchPoolRow,
+            "SELECT id, code, name, description, rate_limit, concurrency, client_id, \
+                    client_identifier, status AS \"status: Stored<DispatchPoolStatus>\", \
+                    created_at, updated_at \
+                    FROM msg_dispatch_pools \
              WHERE ($1::text IS NULL OR status = $1) \
                AND ($2::text IS NULL OR client_id = $2) \
              ORDER BY code",
+            status as Option<DispatchPoolStatus>,
+            client_id as Option<&ClientId>
         )
-        .bind(status)
-        .bind(client_id)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(DispatchPool::try_from).collect()
@@ -193,20 +225,28 @@ impl DispatchPoolRepository {
     /// Search dispatch pools by code or name (case-insensitive partial match)
     pub async fn search(&self, term: &str) -> Result<Vec<DispatchPool>> {
         let pattern = format!("%{}%", term);
-        let rows = sqlx::query_as::<_, DispatchPoolRow>(
-            "SELECT * FROM msg_dispatch_pools WHERE code ILIKE $1 OR name ILIKE $1",
+        let rows = sqlx::query_as!(
+            DispatchPoolRow,
+            "SELECT id, code, name, description, rate_limit, concurrency, client_id, \
+                    client_identifier, status AS \"status: Stored<DispatchPoolStatus>\", \
+                    created_at, updated_at \
+                    FROM msg_dispatch_pools WHERE code ILIKE $1 OR name ILIKE $1",
+            &pattern
         )
-        .bind(&pattern)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(DispatchPool::try_from).collect()
     }
 
     pub async fn find_active(&self) -> Result<Vec<DispatchPool>> {
-        let rows = sqlx::query_as::<_, DispatchPoolRow>(
-            "SELECT * FROM msg_dispatch_pools WHERE status = $1",
+        let rows = sqlx::query_as!(
+            DispatchPoolRow,
+            "SELECT id, code, name, description, rate_limit, concurrency, client_id, \
+                    client_identifier, status AS \"status: Stored<DispatchPoolStatus>\", \
+                    created_at, updated_at \
+                    FROM msg_dispatch_pools WHERE status = $1",
+            DispatchPoolStatus::Active as DispatchPoolStatus
         )
-        .bind(DispatchPoolStatus::Active)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(DispatchPool::try_from).collect()
@@ -214,15 +254,23 @@ impl DispatchPoolRepository {
 
     pub async fn find_by_client(&self, client_id: Option<&ClientId>) -> Result<Vec<DispatchPool>> {
         let rows = if let Some(cid) = client_id {
-            sqlx::query_as::<_, DispatchPoolRow>(
-                "SELECT * FROM msg_dispatch_pools WHERE client_id = $1 OR client_id IS NULL",
+            sqlx::query_as!(
+                DispatchPoolRow,
+                "SELECT id, code, name, description, rate_limit, concurrency, client_id, \
+                    client_identifier, status AS \"status: Stored<DispatchPoolStatus>\", \
+                    created_at, updated_at \
+                    FROM msg_dispatch_pools WHERE client_id = $1 OR client_id IS NULL",
+                cid as &ClientId
             )
-            .bind(cid)
             .fetch_all(&self.pool)
             .await?
         } else {
-            sqlx::query_as::<_, DispatchPoolRow>(
-                "SELECT * FROM msg_dispatch_pools WHERE client_id IS NULL",
+            sqlx::query_as!(
+                DispatchPoolRow,
+                "SELECT id, code, name, description, rate_limit, concurrency, client_id, \
+                    client_identifier, status AS \"status: Stored<DispatchPoolStatus>\", \
+                    created_at, updated_at \
+                    FROM msg_dispatch_pools WHERE client_id IS NULL"
             )
             .fetch_all(&self.pool)
             .await?
@@ -231,7 +279,7 @@ impl DispatchPoolRepository {
     }
 
     pub async fn update(&self, pool: &DispatchPool) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "UPDATE msg_dispatch_pools SET
                 code = $2,
                 name = $3,
@@ -243,27 +291,29 @@ impl DispatchPoolRepository {
                 status = $9,
                 updated_at = $10
              WHERE id = $1",
+            &pool.id as &DispatchPoolId,
+            &pool.code,
+            &pool.name,
+            pool.description.as_ref(),
+            pool.rate_limit,
+            pool.concurrency,
+            &pool.client_id as &Option<ClientId>,
+            pool.client_identifier.as_ref(),
+            pool.status as DispatchPoolStatus,
+            Utc::now()
         )
-        .bind(&pool.id)
-        .bind(&pool.code)
-        .bind(&pool.name)
-        .bind(&pool.description)
-        .bind(pool.rate_limit)
-        .bind(pool.concurrency)
-        .bind(&pool.client_id)
-        .bind(&pool.client_identifier)
-        .bind(pool.status)
-        .bind(Utc::now())
         .execute(&self.pool)
         .await?;
         Ok(())
     }
 
     pub async fn delete(&self, id: &DispatchPoolId) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM msg_dispatch_pools WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        let result = sqlx::query!(
+            "DELETE FROM msg_dispatch_pools WHERE id = $1",
+            id as &DispatchPoolId
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(result.rows_affected() > 0)
     }
 }
@@ -279,7 +329,7 @@ impl HasId for DispatchPool {
 impl Persist<DispatchPool> for DispatchPoolRepository {
     async fn persist(&self, p: &DispatchPool, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO msg_dispatch_pools (id, code, name, description, rate_limit, concurrency, client_id, client_identifier, status, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
              ON CONFLICT (id) DO UPDATE SET
@@ -291,29 +341,31 @@ impl Persist<DispatchPool> for DispatchPoolRepository {
                 client_id = EXCLUDED.client_id,
                 client_identifier = EXCLUDED.client_identifier,
                 status = EXCLUDED.status,
-                updated_at = EXCLUDED.updated_at"
+                updated_at = EXCLUDED.updated_at",
+            &p.id as &DispatchPoolId,
+            &p.code,
+            &p.name,
+            p.description.as_ref(),
+            p.rate_limit,
+            p.concurrency,
+            &p.client_id as &Option<ClientId>,
+            p.client_identifier.as_ref(),
+            p.status as DispatchPoolStatus,
+            now,
+            now
         )
-        .bind(&p.id)
-        .bind(&p.code)
-        .bind(&p.name)
-        .bind(&p.description)
-        .bind(p.rate_limit)
-        .bind(p.concurrency)
-        .bind(&p.client_id)
-        .bind(&p.client_identifier)
-        .bind(p.status)
-        .bind(now)
-        .bind(now)
         .execute(&mut **tx.inner)
         .await?;
         Ok(())
     }
 
     async fn delete(&self, p: &DispatchPool, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query("DELETE FROM msg_dispatch_pools WHERE id = $1")
-            .bind(&p.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM msg_dispatch_pools WHERE id = $1",
+            &p.id as &DispatchPoolId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         Ok(())
     }
 }

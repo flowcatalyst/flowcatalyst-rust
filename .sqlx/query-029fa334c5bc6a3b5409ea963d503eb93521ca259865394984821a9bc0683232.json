@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.id FROM msg_subscriptions s JOIN msg_connections c ON c.id = s.connection_id WHERE c.status = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "029fa334c5bc6a3b5409ea963d503eb93521ca259865394984821a9bc0683232"
+}

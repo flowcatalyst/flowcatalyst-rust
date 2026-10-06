@@ -1,0 +1,70 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, event_type_id AS \"event_type_id: EventTypeId\", version, mime_type, schema_content AS \"schema_content: serde_json::Value\", schema_type AS \"schema_type: Stored<SchemaType>\", status AS \"status: Stored<SpecVersionStatus>\", created_at, updated_at FROM msg_event_type_spec_versions WHERE event_type_id = ANY($1) ORDER BY version ASC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "event_type_id: EventTypeId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "version",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "mime_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "schema_content: serde_json::Value",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 5,
+        "name": "schema_type: Stored<SchemaType>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "status: Stored<SpecVersionStatus>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "44197342a77020e1421f235a0c0e4410fc51d293ac2e6d5a2227a9e1bf00f283"
+}

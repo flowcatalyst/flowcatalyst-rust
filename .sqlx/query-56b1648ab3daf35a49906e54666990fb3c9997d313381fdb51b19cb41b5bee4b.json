@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO msg_connections (id, code, name, description, external_id, status, service_account_id, client_id, client_identifier, created_at, updated_at, application_code, source)\n             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)\n             ON CONFLICT (id) DO UPDATE SET\n                code = EXCLUDED.code,\n                name = EXCLUDED.name,\n                description = EXCLUDED.description,\n                external_id = EXCLUDED.external_id,\n                status = EXCLUDED.status,\n                service_account_id = EXCLUDED.service_account_id,\n                client_id = EXCLUDED.client_id,\n                client_identifier = EXCLUDED.client_identifier,\n                updated_at = EXCLUDED.updated_at,\n                application_code = EXCLUDED.application_code,\n                source = EXCLUDED.source",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Timestamptz",
+        "Timestamptz",
+        "Varchar",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "56b1648ab3daf35a49906e54666990fb3c9997d313381fdb51b19cb41b5bee4b"
+}

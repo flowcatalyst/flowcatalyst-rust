@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO msg_subscription_custom_configs (subscription_id, config_key, config_value)\n                 VALUES ($1, $2, $3)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3638d0dc675ea4451a57c61c90dfbf3e601cd247dac39cf7b449698e89f2df55"
+}

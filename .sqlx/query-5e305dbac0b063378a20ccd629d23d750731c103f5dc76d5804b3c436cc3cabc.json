@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE msg_event_types AS t SET name = v.name, updated_at = $3 FROM UNNEST($1::text[], $2::text[]) AS v(id, name) WHERE t.id = v.id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "TextArray",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5e305dbac0b063378a20ccd629d23d750731c103f5dc76d5804b3c436cc3cabc"
+}

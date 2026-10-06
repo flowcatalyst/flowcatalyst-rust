@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT subdomain AS \"subdomain!\" FROM msg_dispatch_jobs_read WHERE subdomain IS NOT NULL AND subdomain != '' ORDER BY subdomain",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "subdomain!",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "ed6f00adfc3af8d50ce82f5de4daa3454d711f00b5e98dc2b85cc68cc5c0f092"
+}

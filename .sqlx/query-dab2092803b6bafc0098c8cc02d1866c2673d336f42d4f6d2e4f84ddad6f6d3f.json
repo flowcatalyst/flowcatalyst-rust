@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT aggregate AS \"aggregate!\" FROM msg_dispatch_jobs_read WHERE aggregate IS NOT NULL AND aggregate != '' ORDER BY aggregate",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "aggregate!",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "dab2092803b6bafc0098c8cc02d1866c2673d336f42d4f6d2e4f84ddad6f6d3f"
+}

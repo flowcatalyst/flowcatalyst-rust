@@ -1,0 +1,256 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, external_id, source, kind AS \"kind: Stored<DispatchKind>\", code, subject, event_id, correlation_id, target_url, protocol AS \"protocol: Stored<DispatchProtocol>\", client_id, subscription_id, service_account_id, dispatch_pool_id, message_group, mode, sequence, status, attempt_count, max_retries, last_error, timeout_seconds, retry_strategy AS \"retry_strategy: Stored<RetryStrategy>\", application, subdomain, aggregate, created_at, updated_at, scheduled_for, expires_at, completed_at, last_attempt_at, duration_millis, idempotency_key, descriptor, metadata AS \"metadata: serde_json::Value\", queue, is_completed, is_terminal, projected_at FROM msg_dispatch_jobs_read WHERE event_id = $1 ORDER BY created_at DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "external_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "source",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "kind: Stored<DispatchKind>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "code",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "subject",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "event_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "correlation_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "target_url",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "protocol: Stored<DispatchProtocol>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 10,
+        "name": "client_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 11,
+        "name": "subscription_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 12,
+        "name": "service_account_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 13,
+        "name": "dispatch_pool_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 14,
+        "name": "message_group",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 15,
+        "name": "mode",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 16,
+        "name": "sequence",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 17,
+        "name": "status",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 18,
+        "name": "attempt_count",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 19,
+        "name": "max_retries",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 20,
+        "name": "last_error",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 21,
+        "name": "timeout_seconds",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 22,
+        "name": "retry_strategy: Stored<RetryStrategy>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 23,
+        "name": "application",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 24,
+        "name": "subdomain",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 25,
+        "name": "aggregate",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 26,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 27,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 28,
+        "name": "scheduled_for",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 29,
+        "name": "expires_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 30,
+        "name": "completed_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 31,
+        "name": "last_attempt_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 32,
+        "name": "duration_millis",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 33,
+        "name": "idempotency_key",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 34,
+        "name": "descriptor",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 35,
+        "name": "metadata: serde_json::Value",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 36,
+        "name": "queue",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 37,
+        "name": "is_completed",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 38,
+        "name": "is_terminal",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 39,
+        "name": "projected_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "2142b7eadd4cd44a4dc85bd529ad415fabfdc801cc33e64fd6bb63cbda69c9b2"
+}

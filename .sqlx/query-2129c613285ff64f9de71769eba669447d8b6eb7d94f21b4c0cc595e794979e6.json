@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO msg_subscription_custom_configs\n                    (subscription_id, config_key, config_value)\n                 SELECT * FROM UNNEST($1::varchar[], $2::varchar[], $3::varchar[])",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "VarcharArray",
+        "VarcharArray",
+        "VarcharArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2129c613285ff64f9de71769eba669447d8b6eb7d94f21b4c0cc595e794979e6"
+}

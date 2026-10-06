@@ -140,7 +140,7 @@ repository at a time; a crate is done when it has no runtime `sqlx::query*`
 call left except the exceptions below.
 
 Done (every static query checked; only `QueryBuilder` queries stay runtime):
-`fc-platform-scheduled-jobs`, `fc-platform-auth`, `fc-platform-functions`. Partly done: `fc-platform-iam` (`application_openapi_spec`).
+`fc-platform-scheduled-jobs`, `fc-platform-auth`, `fc-platform-functions`, `fc-platform-messaging` (its dispatch-job, event and projection writes are macros only where the SQL text is byte-identical to the tuned runtime text; the claim/mark lifecycle lives in `fc-common`, still runtime). Partly done: `fc-platform-iam` (`application_openapi_spec`).
 Everything else is still runtime SQL (`sqlx::query_as::<_, FooRow>("SELECT ...")`)
 and is converted the next time the work resumes; convert a repository you are
 editing if it is not done (one repository per commit, with its `.sqlx/` files).

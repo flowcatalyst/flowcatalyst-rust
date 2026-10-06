@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT application AS \"application!\" FROM msg_dispatch_jobs_read WHERE application IS NOT NULL AND application != '' ORDER BY application",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "application!",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "6956e0caccd9f4a44222eba1265eeb3f1d808b86c9f6b28fc6cd11f15f5cb0d3"
+}

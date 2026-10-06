@@ -1,0 +1,100 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, code, name, description, status AS \"status: Stored<ProcessStatus>\", source AS \"source: Stored<ProcessSource>\", application, subdomain, process_name, body, diagram_type, tags, created_at, updated_at FROM msg_processes WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "code",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "status: Stored<ProcessStatus>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "source: Stored<ProcessSource>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "application",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "subdomain",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "process_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "body",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "diagram_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 11,
+        "name": "tags",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 12,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "7e4fe33f90e4986c3e7151766faf6ae1e2a7cf23f260b48e6c284f9b7a2324a5"
+}

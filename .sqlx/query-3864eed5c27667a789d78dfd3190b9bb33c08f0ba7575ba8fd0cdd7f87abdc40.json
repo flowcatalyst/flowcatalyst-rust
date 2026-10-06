@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT et.code FROM msg_event_type_spec_versions sv JOIN msg_event_types et ON et.id = sv.event_type_id WHERE et.code = ANY($1) AND sv.version IN ('1.0', 'v1')",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "code",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3864eed5c27667a789d78dfd3190b9bb33c08f0ba7575ba8fd0cdd7f87abdc40"
+}

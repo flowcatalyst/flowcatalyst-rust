@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO msg_processes (id, code, name, description, status, source, application, subdomain, process_name, body, diagram_type, tags, created_at, updated_at)\n             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)\n             ON CONFLICT (id) DO UPDATE SET\n                code = EXCLUDED.code,\n                name = EXCLUDED.name,\n                description = EXCLUDED.description,\n                status = EXCLUDED.status,\n                source = EXCLUDED.source,\n                application = EXCLUDED.application,\n                subdomain = EXCLUDED.subdomain,\n                process_name = EXCLUDED.process_name,\n                body = EXCLUDED.body,\n                diagram_type = EXCLUDED.diagram_type,\n                tags = EXCLUDED.tags,\n                updated_at = EXCLUDED.updated_at",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "TextArray",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4195f494394ab4a8e748053b09aaa705be2c796c2cdefd849473f81a18008b79"
+}

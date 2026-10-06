@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT code, client_identifier, concurrency, rate_limit FROM msg_dispatch_pools ORDER BY code",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "code",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "client_identifier",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "concurrency",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "rate_limit",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "ba10c833c60b3b974ac6f77deebf2d5bef1a954614f1b582d7c39e996e2f498c"
+}

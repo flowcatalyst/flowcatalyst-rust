@@ -1,0 +1,94 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, code, name, description, external_id, status AS \"status: Stored<ConnectionStatus>\", service_account_id, client_id, client_identifier, created_at, updated_at, application_code, source FROM msg_connections WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "code",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "description",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "external_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "status: Stored<ConnectionStatus>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "service_account_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "client_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "client_identifier",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "application_code",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 12,
+        "name": "source",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "0f28bbb8540b85d8d9f0ff593cd7c51b8882bbec6ac0ddf8866e14ef8dbcb62b"
+}

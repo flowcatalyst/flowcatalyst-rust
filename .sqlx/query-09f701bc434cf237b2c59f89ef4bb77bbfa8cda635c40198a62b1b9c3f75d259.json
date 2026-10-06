@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM msg_event_type_spec_versions WHERE event_type_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "09f701bc434cf237b2c59f89ef4bb77bbfa8cda635c40198a62b1b9c3f75d259"
+}

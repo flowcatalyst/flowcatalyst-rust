@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE msg_events_read SET\n                type = $2, source = $3, subject = $4, time = $5,\n                application = $6, subdomain = $7, aggregate = $8,\n                message_group = $9, correlation_id = $10, client_id = $11,\n                projected_at = NOW()\n            WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Timestamptz",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "248b6119269038629e202257aaf63415eded145f80c5206b9b77e2051098d23a"
+}

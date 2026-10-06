@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT client_id AS \"client_id!\" FROM msg_dispatch_jobs_read WHERE client_id IS NOT NULL AND client_id != '' ORDER BY client_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "client_id!",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "6f57de654baddc394de87a2521dea8c716eb0decb623ba05a53ec4367954dcad"
+}

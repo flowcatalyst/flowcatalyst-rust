@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT subscription_id AS \"subscription_id!\" FROM msg_dispatch_jobs WHERE subscription_id IS NOT NULL ORDER BY subscription_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "subscription_id!",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "df8e35b7244d75880127c5ab86145fdef21b4024f1ca0e670dc9451fb7775e8e"
+}

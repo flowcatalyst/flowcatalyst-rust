@@ -10,6 +10,7 @@ use crate::dispatch_job::entity::{parse_dispatch_mode, parse_dispatch_status};
 use crate::dispatch_job::entity::{DispatchJob, DispatchJobRead, DispatchStatus};
 use crate::dispatch_job::lifecycle;
 use chrono::{DateTime, Utc};
+use fc_common::DispatchMode;
 use fc_platform_core::shared::api_common::DecodedCursor;
 use fc_platform_core::shared::enum_str::{corrupt_value, Stored};
 use fc_platform_core::shared::error::{PlatformError, Result};
@@ -45,7 +46,7 @@ struct DispatchJobRow {
     schema_id: Option<String>,
     status: String,
     max_retries: i32,
-    retry_strategy: Stored<RetryStrategy>,
+    retry_strategy: Option<Stored<RetryStrategy>>,
     scheduled_for: Option<DateTime<Utc>>,
     expires_at: Option<DateTime<Utc>>,
     attempt_count: i32,
@@ -60,15 +61,26 @@ struct DispatchJobRow {
     updated_at: DateTime<Utc>,
 }
 
+/// A column the schema allows to be NULL (the partitioned tables of migration
+/// 019 declare them so) that a job row has always required: a NULL stays an
+/// error, now one that names the row.
+fn required<T>(value: Option<T>, table: &str, column: &str, row_id: &str) -> Result<T> {
+    value.ok_or_else(|| corrupt_value(table, column, "NULL", row_id))
+}
+
 impl TryFrom<DispatchJobRow> for DispatchJob {
     type Error = PlatformError;
     fn try_from(r: DispatchJobRow) -> Result<Self> {
         let kind = r.kind.decode("msg_dispatch_jobs", "kind", &r.id)?;
         let protocol = r.protocol.decode("msg_dispatch_jobs", "protocol", &r.id)?;
         let mode = parse_dispatch_mode(Some(&r.mode));
-        let retry_strategy =
-            r.retry_strategy
-                .decode("msg_dispatch_jobs", "retry_strategy", &r.id)?;
+        let retry_strategy = required(
+            r.retry_strategy,
+            "msg_dispatch_jobs",
+            "retry_strategy",
+            &r.id,
+        )?
+        .decode("msg_dispatch_jobs", "retry_strategy", &r.id)?;
         let status = parse_dispatch_status(&r.status)
             .map_err(|_| corrupt_value("msg_dispatch_jobs", "status", &r.status, &r.id))?;
         let metadata: Vec<DispatchMetadata> =
@@ -135,13 +147,13 @@ struct DispatchJobReadRow {
     dispatch_pool_id: Option<String>,
     message_group: Option<String>,
     mode: String,
-    sequence: i32,
+    sequence: Option<i32>,
     status: String,
     attempt_count: i32,
     max_retries: i32,
     last_error: Option<String>,
-    timeout_seconds: i32,
-    retry_strategy: Stored<RetryStrategy>,
+    timeout_seconds: Option<i32>,
+    retry_strategy: Option<Stored<RetryStrategy>>,
     application: Option<String>,
     subdomain: Option<String>,
     aggregate: Option<String>,
@@ -171,9 +183,20 @@ impl TryFrom<DispatchJobReadRow> for DispatchJobRead {
         let mode = parse_dispatch_mode(Some(&r.mode));
         let status = parse_dispatch_status(&r.status)
             .map_err(|_| corrupt_value("msg_dispatch_jobs_read", "status", &r.status, &r.id))?;
-        let retry_strategy =
-            r.retry_strategy
-                .decode("msg_dispatch_jobs_read", "retry_strategy", &r.id)?;
+        let retry_strategy = required(
+            r.retry_strategy,
+            "msg_dispatch_jobs_read",
+            "retry_strategy",
+            &r.id,
+        )?
+        .decode("msg_dispatch_jobs_read", "retry_strategy", &r.id)?;
+        let sequence = required(r.sequence, "msg_dispatch_jobs_read", "sequence", &r.id)?;
+        let timeout_seconds = required(
+            r.timeout_seconds,
+            "msg_dispatch_jobs_read",
+            "timeout_seconds",
+            &r.id,
+        )?;
         Ok(Self {
             id: r.id,
             external_id: r.external_id,
@@ -191,12 +214,12 @@ impl TryFrom<DispatchJobReadRow> for DispatchJobRead {
             dispatch_pool_id: r.dispatch_pool_id,
             message_group: r.message_group,
             mode,
-            sequence: r.sequence,
+            sequence,
             status,
             attempt_count: r.attempt_count as u32,
             max_retries: r.max_retries as u32,
             last_error: r.last_error,
-            timeout_seconds: r.timeout_seconds as u32,
+            timeout_seconds: timeout_seconds as u32,
             retry_strategy,
             application: r.application,
             subdomain: r.subdomain,
@@ -232,7 +255,6 @@ pub struct RecordedAttempt {
     pub request_info: Option<serde_json::Value>,
 }
 
-#[derive(sqlx::FromRow)]
 struct AttemptRow {
     attempt_number: Option<i32>,
     status: Option<Stored<DispatchAttemptStatus>>,
@@ -352,20 +374,45 @@ impl DispatchJobRepository {
     }
 
     pub async fn find_by_id(&self, id: &str) -> Result<Option<DispatchJob>> {
-        let row =
-            sqlx::query_as::<_, DispatchJobRow>("SELECT * FROM msg_dispatch_jobs WHERE id = $1")
-                .bind(id)
-                .fetch_optional(&self.pool)
-                .await?;
+        let row = sqlx::query_as!(
+            DispatchJobRow,
+            "SELECT id, external_id, source, kind AS \"kind: Stored<DispatchKind>\", \
+                    code, subject, event_id, correlation_id, \
+                    metadata AS \"metadata: serde_json::Value\", target_url, \
+                    protocol AS \"protocol: Stored<DispatchProtocol>\", payload, \
+                    payload_content_type, data_only, service_account_id, client_id, \
+                    subscription_id, mode, dispatch_pool_id, message_group, sequence, \
+                    timeout_seconds, schema_id, status, max_retries, \
+                    retry_strategy AS \"retry_strategy: Stored<RetryStrategy>\", \
+                    scheduled_for, expires_at, attempt_count, last_attempt_at, \
+                    completed_at, duration_millis, last_error, idempotency_key, \
+                    descriptor, queue, created_at, updated_at \
+                    FROM msg_dispatch_jobs WHERE id = $1",
+            id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
 
         row.map(DispatchJob::try_from).transpose()
     }
 
     pub async fn find_by_event_id(&self, event_id: &str) -> Result<Vec<DispatchJob>> {
-        let rows = sqlx::query_as::<_, DispatchJobRow>(
-            "SELECT * FROM msg_dispatch_jobs WHERE event_id = $1",
+        let rows = sqlx::query_as!(
+            DispatchJobRow,
+            "SELECT id, external_id, source, kind AS \"kind: Stored<DispatchKind>\", \
+                    code, subject, event_id, correlation_id, \
+                    metadata AS \"metadata: serde_json::Value\", target_url, \
+                    protocol AS \"protocol: Stored<DispatchProtocol>\", payload, \
+                    payload_content_type, data_only, service_account_id, client_id, \
+                    subscription_id, mode, dispatch_pool_id, message_group, sequence, \
+                    timeout_seconds, schema_id, status, max_retries, \
+                    retry_strategy AS \"retry_strategy: Stored<RetryStrategy>\", \
+                    scheduled_for, expires_at, attempt_count, last_attempt_at, \
+                    completed_at, duration_millis, last_error, idempotency_key, \
+                    descriptor, queue, created_at, updated_at \
+                    FROM msg_dispatch_jobs WHERE event_id = $1",
+            event_id
         )
-        .bind(event_id)
         .fetch_all(&self.pool)
         .await?;
 
@@ -378,19 +425,43 @@ impl DispatchJobRepository {
         limit: i64,
     ) -> Result<Vec<DispatchJob>> {
         if limit > 0 {
-            let rows = sqlx::query_as::<_, DispatchJobRow>(
-                "SELECT * FROM msg_dispatch_jobs WHERE subscription_id = $1 LIMIT $2",
+            let rows = sqlx::query_as!(
+                DispatchJobRow,
+                "SELECT id, external_id, source, kind AS \"kind: Stored<DispatchKind>\", \
+                    code, subject, event_id, correlation_id, \
+                    metadata AS \"metadata: serde_json::Value\", target_url, \
+                    protocol AS \"protocol: Stored<DispatchProtocol>\", payload, \
+                    payload_content_type, data_only, service_account_id, client_id, \
+                    subscription_id, mode, dispatch_pool_id, message_group, sequence, \
+                    timeout_seconds, schema_id, status, max_retries, \
+                    retry_strategy AS \"retry_strategy: Stored<RetryStrategy>\", \
+                    scheduled_for, expires_at, attempt_count, last_attempt_at, \
+                    completed_at, duration_millis, last_error, idempotency_key, \
+                    descriptor, queue, created_at, updated_at \
+                    FROM msg_dispatch_jobs WHERE subscription_id = $1 LIMIT $2",
+                subscription_id,
+                limit
             )
-            .bind(subscription_id)
-            .bind(limit)
             .fetch_all(&self.pool)
             .await?;
             rows.into_iter().map(DispatchJob::try_from).collect()
         } else {
-            let rows = sqlx::query_as::<_, DispatchJobRow>(
-                "SELECT * FROM msg_dispatch_jobs WHERE subscription_id = $1",
+            let rows = sqlx::query_as!(
+                DispatchJobRow,
+                "SELECT id, external_id, source, kind AS \"kind: Stored<DispatchKind>\", \
+                    code, subject, event_id, correlation_id, \
+                    metadata AS \"metadata: serde_json::Value\", target_url, \
+                    protocol AS \"protocol: Stored<DispatchProtocol>\", payload, \
+                    payload_content_type, data_only, service_account_id, client_id, \
+                    subscription_id, mode, dispatch_pool_id, message_group, sequence, \
+                    timeout_seconds, schema_id, status, max_retries, \
+                    retry_strategy AS \"retry_strategy: Stored<RetryStrategy>\", \
+                    scheduled_for, expires_at, attempt_count, last_attempt_at, \
+                    completed_at, duration_millis, last_error, idempotency_key, \
+                    descriptor, queue, created_at, updated_at \
+                    FROM msg_dispatch_jobs WHERE subscription_id = $1",
+                subscription_id
             )
-            .bind(subscription_id)
             .fetch_all(&self.pool)
             .await?;
             rows.into_iter().map(DispatchJob::try_from).collect()
@@ -403,19 +474,43 @@ impl DispatchJobRepository {
         limit: i64,
     ) -> Result<Vec<DispatchJob>> {
         if limit > 0 {
-            let rows = sqlx::query_as::<_, DispatchJobRow>(
-                "SELECT * FROM msg_dispatch_jobs WHERE status = $1 LIMIT $2",
+            let rows = sqlx::query_as!(
+                DispatchJobRow,
+                "SELECT id, external_id, source, kind AS \"kind: Stored<DispatchKind>\", \
+                    code, subject, event_id, correlation_id, \
+                    metadata AS \"metadata: serde_json::Value\", target_url, \
+                    protocol AS \"protocol: Stored<DispatchProtocol>\", payload, \
+                    payload_content_type, data_only, service_account_id, client_id, \
+                    subscription_id, mode, dispatch_pool_id, message_group, sequence, \
+                    timeout_seconds, schema_id, status, max_retries, \
+                    retry_strategy AS \"retry_strategy: Stored<RetryStrategy>\", \
+                    scheduled_for, expires_at, attempt_count, last_attempt_at, \
+                    completed_at, duration_millis, last_error, idempotency_key, \
+                    descriptor, queue, created_at, updated_at \
+                    FROM msg_dispatch_jobs WHERE status = $1 LIMIT $2",
+                status as DispatchStatus,
+                limit
             )
-            .bind(status)
-            .bind(limit)
             .fetch_all(&self.pool)
             .await?;
             rows.into_iter().map(DispatchJob::try_from).collect()
         } else {
-            let rows = sqlx::query_as::<_, DispatchJobRow>(
-                "SELECT * FROM msg_dispatch_jobs WHERE status = $1",
+            let rows = sqlx::query_as!(
+                DispatchJobRow,
+                "SELECT id, external_id, source, kind AS \"kind: Stored<DispatchKind>\", \
+                    code, subject, event_id, correlation_id, \
+                    metadata AS \"metadata: serde_json::Value\", target_url, \
+                    protocol AS \"protocol: Stored<DispatchProtocol>\", payload, \
+                    payload_content_type, data_only, service_account_id, client_id, \
+                    subscription_id, mode, dispatch_pool_id, message_group, sequence, \
+                    timeout_seconds, schema_id, status, max_retries, \
+                    retry_strategy AS \"retry_strategy: Stored<RetryStrategy>\", \
+                    scheduled_for, expires_at, attempt_count, last_attempt_at, \
+                    completed_at, duration_millis, last_error, idempotency_key, \
+                    descriptor, queue, created_at, updated_at \
+                    FROM msg_dispatch_jobs WHERE status = $1",
+                status as DispatchStatus
             )
-            .bind(status)
             .fetch_all(&self.pool)
             .await?;
             rows.into_iter().map(DispatchJob::try_from).collect()
@@ -427,19 +522,48 @@ impl DispatchJobRepository {
     /// `lifecycle::claim`.
     pub async fn find_pending_for_dispatch(&self, limit: i64) -> Result<Vec<DispatchJob>> {
         let now = Utc::now();
-        let sql = "SELECT * FROM msg_dispatch_jobs \
-                   WHERE status = 'PENDING' AND (scheduled_for IS NULL OR scheduled_for <= $1)";
         let rows = if limit > 0 {
-            sqlx::query_as::<_, DispatchJobRow>(&format!("{sql} LIMIT $2"))
-                .bind(now)
-                .bind(limit)
-                .fetch_all(&self.pool)
-                .await?
+            sqlx::query_as!(
+                DispatchJobRow,
+                "SELECT id, external_id, source, kind AS \"kind: Stored<DispatchKind>\", \
+                    code, subject, event_id, correlation_id, \
+                    metadata AS \"metadata: serde_json::Value\", target_url, \
+                    protocol AS \"protocol: Stored<DispatchProtocol>\", payload, \
+                    payload_content_type, data_only, service_account_id, client_id, \
+                    subscription_id, mode, dispatch_pool_id, message_group, sequence, \
+                    timeout_seconds, schema_id, status, max_retries, \
+                    retry_strategy AS \"retry_strategy: Stored<RetryStrategy>\", \
+                    scheduled_for, expires_at, attempt_count, last_attempt_at, \
+                    completed_at, duration_millis, last_error, idempotency_key, \
+                    descriptor, queue, created_at, updated_at \
+                    FROM msg_dispatch_jobs \
+                    WHERE status = 'PENDING' AND (scheduled_for IS NULL OR scheduled_for <= $1) \
+                    LIMIT $2",
+                now,
+                limit
+            )
+            .fetch_all(&self.pool)
+            .await?
         } else {
-            sqlx::query_as::<_, DispatchJobRow>(sql)
-                .bind(now)
-                .fetch_all(&self.pool)
-                .await?
+            sqlx::query_as!(
+                DispatchJobRow,
+                "SELECT id, external_id, source, kind AS \"kind: Stored<DispatchKind>\", \
+                    code, subject, event_id, correlation_id, \
+                    metadata AS \"metadata: serde_json::Value\", target_url, \
+                    protocol AS \"protocol: Stored<DispatchProtocol>\", payload, \
+                    payload_content_type, data_only, service_account_id, client_id, \
+                    subscription_id, mode, dispatch_pool_id, message_group, sequence, \
+                    timeout_seconds, schema_id, status, max_retries, \
+                    retry_strategy AS \"retry_strategy: Stored<RetryStrategy>\", \
+                    scheduled_for, expires_at, attempt_count, last_attempt_at, \
+                    completed_at, duration_millis, last_error, idempotency_key, \
+                    descriptor, queue, created_at, updated_at \
+                    FROM msg_dispatch_jobs \
+                    WHERE status = 'PENDING' AND (scheduled_for IS NULL OR scheduled_for <= $1)",
+                now
+            )
+            .fetch_all(&self.pool)
+            .await?
         };
         rows.into_iter().map(DispatchJob::try_from).collect()
     }
@@ -450,22 +574,46 @@ impl DispatchJobRepository {
         limit: i64,
     ) -> Result<Vec<DispatchJob>> {
         if limit > 0 {
-            let rows = sqlx::query_as::<_, DispatchJobRow>(
-                "SELECT * FROM msg_dispatch_jobs \
+            let rows = sqlx::query_as!(
+                DispatchJobRow,
+                "SELECT id, external_id, source, kind AS \"kind: Stored<DispatchKind>\", \
+                    code, subject, event_id, correlation_id, \
+                    metadata AS \"metadata: serde_json::Value\", target_url, \
+                    protocol AS \"protocol: Stored<DispatchProtocol>\", payload, \
+                    payload_content_type, data_only, service_account_id, client_id, \
+                    subscription_id, mode, dispatch_pool_id, message_group, sequence, \
+                    timeout_seconds, schema_id, status, max_retries, \
+                    retry_strategy AS \"retry_strategy: Stored<RetryStrategy>\", \
+                    scheduled_for, expires_at, attempt_count, last_attempt_at, \
+                    completed_at, duration_millis, last_error, idempotency_key, \
+                    descriptor, queue, created_at, updated_at \
+                    FROM msg_dispatch_jobs \
                  WHERE status = 'PROCESSING' AND updated_at < $1 \
                  LIMIT $2",
+                stale_threshold,
+                limit
             )
-            .bind(stale_threshold)
-            .bind(limit)
             .fetch_all(&self.pool)
             .await?;
             rows.into_iter().map(DispatchJob::try_from).collect()
         } else {
-            let rows = sqlx::query_as::<_, DispatchJobRow>(
-                "SELECT * FROM msg_dispatch_jobs \
+            let rows = sqlx::query_as!(
+                DispatchJobRow,
+                "SELECT id, external_id, source, kind AS \"kind: Stored<DispatchKind>\", \
+                    code, subject, event_id, correlation_id, \
+                    metadata AS \"metadata: serde_json::Value\", target_url, \
+                    protocol AS \"protocol: Stored<DispatchProtocol>\", payload, \
+                    payload_content_type, data_only, service_account_id, client_id, \
+                    subscription_id, mode, dispatch_pool_id, message_group, sequence, \
+                    timeout_seconds, schema_id, status, max_retries, \
+                    retry_strategy AS \"retry_strategy: Stored<RetryStrategy>\", \
+                    scheduled_for, expires_at, attempt_count, last_attempt_at, \
+                    completed_at, duration_millis, last_error, idempotency_key, \
+                    descriptor, queue, created_at, updated_at \
+                    FROM msg_dispatch_jobs \
                  WHERE status = 'PROCESSING' AND updated_at < $1",
+                stale_threshold
             )
-            .bind(stale_threshold)
             .fetch_all(&self.pool)
             .await?;
             rows.into_iter().map(DispatchJob::try_from).collect()
@@ -474,19 +622,43 @@ impl DispatchJobRepository {
 
     pub async fn find_by_client(&self, client_id: &str, limit: i64) -> Result<Vec<DispatchJob>> {
         if limit > 0 {
-            let rows = sqlx::query_as::<_, DispatchJobRow>(
-                "SELECT * FROM msg_dispatch_jobs WHERE client_id = $1 LIMIT $2",
+            let rows = sqlx::query_as!(
+                DispatchJobRow,
+                "SELECT id, external_id, source, kind AS \"kind: Stored<DispatchKind>\", \
+                    code, subject, event_id, correlation_id, \
+                    metadata AS \"metadata: serde_json::Value\", target_url, \
+                    protocol AS \"protocol: Stored<DispatchProtocol>\", payload, \
+                    payload_content_type, data_only, service_account_id, client_id, \
+                    subscription_id, mode, dispatch_pool_id, message_group, sequence, \
+                    timeout_seconds, schema_id, status, max_retries, \
+                    retry_strategy AS \"retry_strategy: Stored<RetryStrategy>\", \
+                    scheduled_for, expires_at, attempt_count, last_attempt_at, \
+                    completed_at, duration_millis, last_error, idempotency_key, \
+                    descriptor, queue, created_at, updated_at \
+                    FROM msg_dispatch_jobs WHERE client_id = $1 LIMIT $2",
+                client_id,
+                limit
             )
-            .bind(client_id)
-            .bind(limit)
             .fetch_all(&self.pool)
             .await?;
             rows.into_iter().map(DispatchJob::try_from).collect()
         } else {
-            let rows = sqlx::query_as::<_, DispatchJobRow>(
-                "SELECT * FROM msg_dispatch_jobs WHERE client_id = $1",
+            let rows = sqlx::query_as!(
+                DispatchJobRow,
+                "SELECT id, external_id, source, kind AS \"kind: Stored<DispatchKind>\", \
+                    code, subject, event_id, correlation_id, \
+                    metadata AS \"metadata: serde_json::Value\", target_url, \
+                    protocol AS \"protocol: Stored<DispatchProtocol>\", payload, \
+                    payload_content_type, data_only, service_account_id, client_id, \
+                    subscription_id, mode, dispatch_pool_id, message_group, sequence, \
+                    timeout_seconds, schema_id, status, max_retries, \
+                    retry_strategy AS \"retry_strategy: Stored<RetryStrategy>\", \
+                    scheduled_for, expires_at, attempt_count, last_attempt_at, \
+                    completed_at, duration_millis, last_error, idempotency_key, \
+                    descriptor, queue, created_at, updated_at \
+                    FROM msg_dispatch_jobs WHERE client_id = $1",
+                client_id
             )
-            .bind(client_id)
             .fetch_all(&self.pool)
             .await?;
             rows.into_iter().map(DispatchJob::try_from).collect()
@@ -494,10 +666,22 @@ impl DispatchJobRepository {
     }
 
     pub async fn find_by_correlation_id(&self, correlation_id: &str) -> Result<Vec<DispatchJob>> {
-        let rows = sqlx::query_as::<_, DispatchJobRow>(
-            "SELECT * FROM msg_dispatch_jobs WHERE correlation_id = $1",
+        let rows = sqlx::query_as!(
+            DispatchJobRow,
+            "SELECT id, external_id, source, kind AS \"kind: Stored<DispatchKind>\", \
+                    code, subject, event_id, correlation_id, \
+                    metadata AS \"metadata: serde_json::Value\", target_url, \
+                    protocol AS \"protocol: Stored<DispatchProtocol>\", payload, \
+                    payload_content_type, data_only, service_account_id, client_id, \
+                    subscription_id, mode, dispatch_pool_id, message_group, sequence, \
+                    timeout_seconds, schema_id, status, max_retries, \
+                    retry_strategy AS \"retry_strategy: Stored<RetryStrategy>\", \
+                    scheduled_for, expires_at, attempt_count, last_attempt_at, \
+                    completed_at, duration_millis, last_error, idempotency_key, \
+                    descriptor, queue, created_at, updated_at \
+                    FROM msg_dispatch_jobs WHERE correlation_id = $1",
+            correlation_id
         )
-        .bind(correlation_id)
         .fetch_all(&self.pool)
         .await?;
 
@@ -593,22 +777,22 @@ impl DispatchJobRepository {
             return Ok(Vec::new());
         }
         let mut tx = self.pool.begin().await?;
-        sqlx::query(
+        sqlx::query!(
             "SELECT pg_advisory_xact_lock($1, k) \
              FROM (SELECT DISTINCT hashtext(x) AS k FROM unnest($2::text[]) AS x) s ORDER BY k",
+            Self::SUPPLIED_ID_LOCK_CLASS,
+            supplied_ids
         )
-        .bind(Self::SUPPLIED_ID_LOCK_CLASS)
-        .bind(supplied_ids)
         .execute(&mut *tx)
         .await?;
-        let taken: Vec<String> = sqlx::query_as::<_, (String,)>(
+        let taken: Vec<String> = sqlx::query!(
             "SELECT DISTINCT id FROM msg_dispatch_jobs WHERE id = ANY($1) ORDER BY id",
+            supplied_ids
         )
-        .bind(supplied_ids)
         .fetch_all(&mut *tx)
         .await?
         .into_iter()
-        .map(|(id,)| id)
+        .map(|r| r.id)
         .collect();
         if !taken.is_empty() {
             tx.rollback().await?;
@@ -642,10 +826,23 @@ impl DispatchJobRepository {
     // ── Read projection methods ──────────────────────────────────────────
 
     pub async fn find_read_by_id(&self, id: &str) -> Result<Option<DispatchJobRead>> {
-        let row = sqlx::query_as::<_, DispatchJobReadRow>(
-            "SELECT * FROM msg_dispatch_jobs_read WHERE id = $1",
+        let row = sqlx::query_as!(
+            DispatchJobReadRow,
+            "SELECT id, external_id, source, kind AS \"kind: Stored<DispatchKind>\", \
+                    code, subject, event_id, correlation_id, target_url, \
+                    protocol AS \"protocol: Stored<DispatchProtocol>\", client_id, \
+                    subscription_id, service_account_id, dispatch_pool_id, message_group, \
+                    mode, sequence, status, attempt_count, max_retries, last_error, \
+                    timeout_seconds, \
+                    retry_strategy AS \"retry_strategy: Stored<RetryStrategy>\", \
+                    application, subdomain, aggregate, created_at, updated_at, \
+                    scheduled_for, expires_at, completed_at, last_attempt_at, \
+                    duration_millis, idempotency_key, descriptor, \
+                    metadata AS \"metadata: serde_json::Value\", queue, is_completed, \
+                    is_terminal, projected_at \
+                    FROM msg_dispatch_jobs_read WHERE id = $1",
+            id
         )
-        .bind(id)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -711,10 +908,23 @@ impl DispatchJobRepository {
     /// An event's jobs from the read projection, newest first (Go
     /// `FindByEventID`).
     pub async fn find_read_by_event_id(&self, event_id: &str) -> Result<Vec<DispatchJobRead>> {
-        let rows = sqlx::query_as::<_, DispatchJobReadRow>(
-            "SELECT * FROM msg_dispatch_jobs_read WHERE event_id = $1 ORDER BY created_at DESC",
+        let rows = sqlx::query_as!(
+            DispatchJobReadRow,
+            "SELECT id, external_id, source, kind AS \"kind: Stored<DispatchKind>\", \
+                    code, subject, event_id, correlation_id, target_url, \
+                    protocol AS \"protocol: Stored<DispatchProtocol>\", client_id, \
+                    subscription_id, service_account_id, dispatch_pool_id, message_group, \
+                    mode, sequence, status, attempt_count, max_retries, last_error, \
+                    timeout_seconds, \
+                    retry_strategy AS \"retry_strategy: Stored<RetryStrategy>\", \
+                    application, subdomain, aggregate, created_at, updated_at, \
+                    scheduled_for, expires_at, completed_at, last_attempt_at, \
+                    duration_millis, idempotency_key, descriptor, \
+                    metadata AS \"metadata: serde_json::Value\", queue, is_completed, \
+                    is_terminal, projected_at \
+                    FROM msg_dispatch_jobs_read WHERE event_id = $1 ORDER BY created_at DESC",
+            event_id
         )
-        .bind(event_id)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(DispatchJobRead::try_from).collect()
@@ -827,7 +1037,7 @@ impl DispatchJobRepository {
     }
 
     pub async fn insert_read_projection(&self, p: &DispatchJobRead) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO msg_dispatch_jobs_read
                 (id, external_id, source, kind, code, subject, event_id, correlation_id,
                  target_url, protocol, client_id, subscription_id, service_account_id,
@@ -839,47 +1049,47 @@ impl DispatchJobRepository {
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
                     $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26,
                     $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40)"#,
+            &p.id,
+            p.external_id.as_ref(),
+            p.source.as_ref(),
+            p.kind as DispatchKind,
+            &p.code,
+            p.subject.as_ref(),
+            p.event_id.as_ref(),
+            p.correlation_id.as_ref(),
+            &p.target_url,
+            p.protocol as DispatchProtocol,
+            p.client_id.as_ref(),
+            p.subscription_id.as_ref(),
+            p.service_account_id.as_ref(),
+            p.dispatch_pool_id.as_ref(),
+            p.message_group.as_ref(),
+            p.mode as DispatchMode,
+            p.sequence,
+            p.status as DispatchStatus,
+            p.attempt_count as i32,
+            p.max_retries as i32,
+            p.last_error.as_ref(),
+            p.timeout_seconds as i32,
+            p.retry_strategy as RetryStrategy,
+            p.application.as_ref(),
+            p.subdomain.as_ref(),
+            p.aggregate.as_ref(),
+            p.created_at,
+            p.updated_at,
+            p.scheduled_for,
+            p.expires_at,
+            p.completed_at,
+            p.last_attempt_at,
+            p.duration_millis,
+            p.idempotency_key.as_ref(),
+            p.is_completed,
+            p.is_terminal,
+            p.projected_at,
+            p.descriptor.as_ref(),
+            serde_json::to_value(&p.metadata).unwrap_or_else(|_| serde_json::json!([])),
+            p.queue.as_ref()
         )
-        .bind(&p.id)
-        .bind(&p.external_id)
-        .bind(&p.source)
-        .bind(p.kind)
-        .bind(&p.code)
-        .bind(&p.subject)
-        .bind(&p.event_id)
-        .bind(&p.correlation_id)
-        .bind(&p.target_url)
-        .bind(p.protocol)
-        .bind(&p.client_id)
-        .bind(&p.subscription_id)
-        .bind(&p.service_account_id)
-        .bind(&p.dispatch_pool_id)
-        .bind(&p.message_group)
-        .bind(p.mode)
-        .bind(p.sequence)
-        .bind(p.status)
-        .bind(p.attempt_count as i32)
-        .bind(p.max_retries as i32)
-        .bind(&p.last_error)
-        .bind(p.timeout_seconds as i32)
-        .bind(p.retry_strategy)
-        .bind(&p.application)
-        .bind(&p.subdomain)
-        .bind(&p.aggregate)
-        .bind(p.created_at)
-        .bind(p.updated_at)
-        .bind(p.scheduled_for)
-        .bind(p.expires_at)
-        .bind(p.completed_at)
-        .bind(p.last_attempt_at)
-        .bind(p.duration_millis)
-        .bind(&p.idempotency_key)
-        .bind(p.is_completed)
-        .bind(p.is_terminal)
-        .bind(p.projected_at)
-        .bind(&p.descriptor)
-        .bind(serde_json::to_value(&p.metadata).unwrap_or_else(|_| serde_json::json!([])))
-        .bind(&p.queue)
         .execute(&self.pool)
         .await?;
 
@@ -887,7 +1097,7 @@ impl DispatchJobRepository {
     }
 
     pub async fn update_read_projection(&self, p: &DispatchJobRead) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO msg_dispatch_jobs_read
                 (id, external_id, source, kind, code, subject, event_id, correlation_id,
                  target_url, protocol, client_id, subscription_id, service_account_id,
@@ -910,47 +1120,47 @@ impl DispatchJobRepository {
                 is_completed = EXCLUDED.is_completed,
                 is_terminal = EXCLUDED.is_terminal,
                 projected_at = EXCLUDED.projected_at"#,
+            &p.id,
+            p.external_id.as_ref(),
+            p.source.as_ref(),
+            p.kind as DispatchKind,
+            &p.code,
+            p.subject.as_ref(),
+            p.event_id.as_ref(),
+            p.correlation_id.as_ref(),
+            &p.target_url,
+            p.protocol as DispatchProtocol,
+            p.client_id.as_ref(),
+            p.subscription_id.as_ref(),
+            p.service_account_id.as_ref(),
+            p.dispatch_pool_id.as_ref(),
+            p.message_group.as_ref(),
+            p.mode as DispatchMode,
+            p.sequence,
+            p.status as DispatchStatus,
+            p.attempt_count as i32,
+            p.max_retries as i32,
+            p.last_error.as_ref(),
+            p.timeout_seconds as i32,
+            p.retry_strategy as RetryStrategy,
+            p.application.as_ref(),
+            p.subdomain.as_ref(),
+            p.aggregate.as_ref(),
+            p.created_at,
+            p.updated_at,
+            p.scheduled_for,
+            p.expires_at,
+            p.completed_at,
+            p.last_attempt_at,
+            p.duration_millis,
+            p.idempotency_key.as_ref(),
+            p.is_completed,
+            p.is_terminal,
+            p.projected_at,
+            p.descriptor.as_ref(),
+            serde_json::to_value(&p.metadata).unwrap_or_else(|_| serde_json::json!([])),
+            p.queue.as_ref()
         )
-        .bind(&p.id)
-        .bind(&p.external_id)
-        .bind(&p.source)
-        .bind(p.kind)
-        .bind(&p.code)
-        .bind(&p.subject)
-        .bind(&p.event_id)
-        .bind(&p.correlation_id)
-        .bind(&p.target_url)
-        .bind(p.protocol)
-        .bind(&p.client_id)
-        .bind(&p.subscription_id)
-        .bind(&p.service_account_id)
-        .bind(&p.dispatch_pool_id)
-        .bind(&p.message_group)
-        .bind(p.mode)
-        .bind(p.sequence)
-        .bind(p.status)
-        .bind(p.attempt_count as i32)
-        .bind(p.max_retries as i32)
-        .bind(&p.last_error)
-        .bind(p.timeout_seconds as i32)
-        .bind(p.retry_strategy)
-        .bind(&p.application)
-        .bind(&p.subdomain)
-        .bind(&p.aggregate)
-        .bind(p.created_at)
-        .bind(p.updated_at)
-        .bind(p.scheduled_for)
-        .bind(p.expires_at)
-        .bind(p.completed_at)
-        .bind(p.last_attempt_at)
-        .bind(p.duration_millis)
-        .bind(&p.idempotency_key)
-        .bind(p.is_completed)
-        .bind(p.is_terminal)
-        .bind(p.projected_at)
-        .bind(&p.descriptor)
-        .bind(serde_json::to_value(&p.metadata).unwrap_or_else(|_| serde_json::json!([])))
-        .bind(&p.queue)
         .execute(&self.pool)
         .await?;
 
@@ -960,17 +1170,18 @@ impl DispatchJobRepository {
     // ── Counts ───────────────────────────────────────────────────────────
 
     pub async fn count_by_status(&self, status: DispatchStatus) -> Result<u64> {
-        let (count,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM msg_dispatch_jobs WHERE status = $1")
-                .bind(status)
-                .fetch_one(&self.pool)
-                .await?;
+        let count = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM msg_dispatch_jobs WHERE status = $1",
+            status as DispatchStatus
+        )
+        .fetch_one(&self.pool)
+        .await?;
 
         Ok(count as u64)
     }
 
     pub async fn count_all(&self) -> Result<u64> {
-        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM msg_dispatch_jobs")
+        let count = sqlx::query_scalar!("SELECT COUNT(*) AS \"count!\" FROM msg_dispatch_jobs")
             .fetch_one(&self.pool)
             .await?;
 
@@ -980,9 +1191,10 @@ impl DispatchJobRepository {
     // ── Distinct filter values ───────────────────────────────────────────
 
     pub async fn find_distinct_subscription_ids(&self) -> Result<Vec<String>> {
-        let rows = sqlx::query_scalar::<_, String>(
-            "SELECT DISTINCT subscription_id FROM msg_dispatch_jobs \
-             WHERE subscription_id IS NOT NULL ORDER BY subscription_id",
+        // `subscription_id!`: the WHERE excludes NULLs of this nullable column.
+        let rows = sqlx::query_scalar!(
+            "SELECT DISTINCT subscription_id AS \"subscription_id!\" FROM msg_dispatch_jobs \
+             WHERE subscription_id IS NOT NULL ORDER BY subscription_id"
         )
         .fetch_all(&self.pool)
         .await?;
@@ -991,9 +1203,10 @@ impl DispatchJobRepository {
     }
 
     pub async fn find_distinct_event_type_codes(&self) -> Result<Vec<String>> {
-        let rows = sqlx::query_scalar::<_, String>(
-            "SELECT DISTINCT code FROM msg_dispatch_jobs \
-             WHERE code IS NOT NULL AND code != '' ORDER BY code",
+        // `code!`: the WHERE excludes NULLs of this nullable column.
+        let rows = sqlx::query_scalar!(
+            "SELECT DISTINCT code AS \"code!\" FROM msg_dispatch_jobs \
+             WHERE code IS NOT NULL AND code != '' ORDER BY code"
         )
         .fetch_all(&self.pool)
         .await?;
@@ -1004,9 +1217,10 @@ impl DispatchJobRepository {
     // ── Read projection filter queries ──────────────────────────────────
 
     pub async fn find_distinct_applications(&self) -> Result<Vec<String>> {
-        let rows = sqlx::query_scalar::<_, String>(
-            "SELECT DISTINCT application FROM msg_dispatch_jobs_read \
-             WHERE application IS NOT NULL AND application != '' ORDER BY application",
+        // `application!`: the WHERE excludes NULLs of this nullable column.
+        let rows = sqlx::query_scalar!(
+            "SELECT DISTINCT application AS \"application!\" FROM msg_dispatch_jobs_read \
+             WHERE application IS NOT NULL AND application != '' ORDER BY application"
         )
         .fetch_all(&self.pool)
         .await?;
@@ -1015,9 +1229,10 @@ impl DispatchJobRepository {
     }
 
     pub async fn find_distinct_subdomains(&self) -> Result<Vec<String>> {
-        let rows = sqlx::query_scalar::<_, String>(
-            "SELECT DISTINCT subdomain FROM msg_dispatch_jobs_read \
-             WHERE subdomain IS NOT NULL AND subdomain != '' ORDER BY subdomain",
+        // `subdomain!`: the WHERE excludes NULLs of this nullable column.
+        let rows = sqlx::query_scalar!(
+            "SELECT DISTINCT subdomain AS \"subdomain!\" FROM msg_dispatch_jobs_read \
+             WHERE subdomain IS NOT NULL AND subdomain != '' ORDER BY subdomain"
         )
         .fetch_all(&self.pool)
         .await?;
@@ -1026,9 +1241,10 @@ impl DispatchJobRepository {
     }
 
     pub async fn find_distinct_aggregates(&self) -> Result<Vec<String>> {
-        let rows = sqlx::query_scalar::<_, String>(
-            "SELECT DISTINCT aggregate FROM msg_dispatch_jobs_read \
-             WHERE aggregate IS NOT NULL AND aggregate != '' ORDER BY aggregate",
+        // `aggregate!`: the WHERE excludes NULLs of this nullable column.
+        let rows = sqlx::query_scalar!(
+            "SELECT DISTINCT aggregate AS \"aggregate!\" FROM msg_dispatch_jobs_read \
+             WHERE aggregate IS NOT NULL AND aggregate != '' ORDER BY aggregate"
         )
         .fetch_all(&self.pool)
         .await?;
@@ -1037,9 +1253,10 @@ impl DispatchJobRepository {
     }
 
     pub async fn find_distinct_codes(&self) -> Result<Vec<String>> {
-        let rows = sqlx::query_scalar::<_, String>(
-            "SELECT DISTINCT code FROM msg_dispatch_jobs_read \
-             WHERE code IS NOT NULL AND code != '' ORDER BY code",
+        // `code!`: the WHERE excludes NULLs of this nullable column.
+        let rows = sqlx::query_scalar!(
+            "SELECT DISTINCT code AS \"code!\" FROM msg_dispatch_jobs_read \
+             WHERE code IS NOT NULL AND code != '' ORDER BY code"
         )
         .fetch_all(&self.pool)
         .await?;
@@ -1048,9 +1265,10 @@ impl DispatchJobRepository {
     }
 
     pub async fn find_distinct_statuses(&self) -> Result<Vec<String>> {
-        let rows = sqlx::query_scalar::<_, String>(
-            "SELECT DISTINCT status FROM msg_dispatch_jobs_read \
-             WHERE status IS NOT NULL AND status != '' ORDER BY status",
+        // `status!`: the WHERE excludes NULLs of this nullable column.
+        let rows = sqlx::query_scalar!(
+            "SELECT DISTINCT status AS \"status!\" FROM msg_dispatch_jobs_read \
+             WHERE status IS NOT NULL AND status != '' ORDER BY status"
         )
         .fetch_all(&self.pool)
         .await?;
@@ -1059,9 +1277,10 @@ impl DispatchJobRepository {
     }
 
     pub async fn find_distinct_client_ids(&self) -> Result<Vec<String>> {
-        let rows = sqlx::query_scalar::<_, String>(
-            "SELECT DISTINCT client_id FROM msg_dispatch_jobs_read \
-             WHERE client_id IS NOT NULL AND client_id != '' ORDER BY client_id",
+        // `client_id!`: the WHERE excludes NULLs of this nullable column.
+        let rows = sqlx::query_scalar!(
+            "SELECT DISTINCT client_id AS \"client_id!\" FROM msg_dispatch_jobs_read \
+             WHERE client_id IS NOT NULL AND client_id != '' ORDER BY client_id"
         )
         .fetch_all(&self.pool)
         .await?;
@@ -1078,21 +1297,45 @@ impl DispatchJobRepository {
         fetch_limit: i64,
     ) -> Result<Vec<DispatchJob>> {
         let rows = if let Some(c) = cursor {
-            sqlx::query_as::<_, DispatchJobRow>(
-                "SELECT * FROM msg_dispatch_jobs \
+            sqlx::query_as!(
+                DispatchJobRow,
+                "SELECT id, external_id, source, kind AS \"kind: Stored<DispatchKind>\", \
+                    code, subject, event_id, correlation_id, \
+                    metadata AS \"metadata: serde_json::Value\", target_url, \
+                    protocol AS \"protocol: Stored<DispatchProtocol>\", payload, \
+                    payload_content_type, data_only, service_account_id, client_id, \
+                    subscription_id, mode, dispatch_pool_id, message_group, sequence, \
+                    timeout_seconds, schema_id, status, max_retries, \
+                    retry_strategy AS \"retry_strategy: Stored<RetryStrategy>\", \
+                    scheduled_for, expires_at, attempt_count, last_attempt_at, \
+                    completed_at, duration_millis, last_error, idempotency_key, \
+                    descriptor, queue, created_at, updated_at \
+                    FROM msg_dispatch_jobs \
                  WHERE (created_at, id) < ($1, $2) \
                  ORDER BY created_at DESC, id DESC LIMIT $3",
+                c.created_at,
+                &c.id,
+                fetch_limit
             )
-            .bind(c.created_at)
-            .bind(&c.id)
-            .bind(fetch_limit)
             .fetch_all(&self.pool)
             .await?
         } else {
-            sqlx::query_as::<_, DispatchJobRow>(
-                "SELECT * FROM msg_dispatch_jobs ORDER BY created_at DESC, id DESC LIMIT $1",
+            sqlx::query_as!(
+                DispatchJobRow,
+                "SELECT id, external_id, source, kind AS \"kind: Stored<DispatchKind>\", \
+                    code, subject, event_id, correlation_id, \
+                    metadata AS \"metadata: serde_json::Value\", target_url, \
+                    protocol AS \"protocol: Stored<DispatchProtocol>\", payload, \
+                    payload_content_type, data_only, service_account_id, client_id, \
+                    subscription_id, mode, dispatch_pool_id, message_group, sequence, \
+                    timeout_seconds, schema_id, status, max_retries, \
+                    retry_strategy AS \"retry_strategy: Stored<RetryStrategy>\", \
+                    scheduled_for, expires_at, attempt_count, last_attempt_at, \
+                    completed_at, duration_millis, last_error, idempotency_key, \
+                    descriptor, queue, created_at, updated_at \
+                    FROM msg_dispatch_jobs ORDER BY created_at DESC, id DESC LIMIT $1",
+                fetch_limit
             )
-            .bind(fetch_limit)
             .fetch_all(&self.pool)
             .await?
         };
@@ -1105,13 +1348,18 @@ impl DispatchJobRepository {
     /// sent (`request_info`, Go's `RequestSummary`). The job row itself
     /// carries none: `find_by_id` leaves `DispatchJob::attempts` empty.
     pub async fn find_attempts(&self, dispatch_job_id: &str) -> Result<Vec<RecordedAttempt>> {
-        let rows = sqlx::query_as::<_, AttemptRow>(
-            "SELECT attempt_number, status, response_code, response_body, error_message, \
-             error_type, duration_millis, attempted_at, completed_at, created_at, request_info \
+        let rows = sqlx::query_as!(
+            AttemptRow,
+            "SELECT attempt_number, status AS \"status: Stored<DispatchAttemptStatus>\", \
+                    response_code, response_body, error_message, \
+                    error_type AS \"error_type: Stored<ErrorType>\", duration_millis, \
+                    attempted_at, completed_at, created_at, \
+                    request_info AS \"request_info: serde_json::Value\" \
+                    \
              FROM msg_dispatch_job_attempts WHERE dispatch_job_id = $1 \
              ORDER BY created_at, attempt_number",
+            dispatch_job_id
         )
-        .bind(dispatch_job_id)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(RecordedAttempt::from).collect())
@@ -1136,26 +1384,26 @@ impl DispatchJobRepository {
         } = *attempt;
         let id = tsid::generate_untyped();
 
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO msg_dispatch_job_attempts
                 (id, dispatch_job_id, attempt_number, status, response_code,
                  response_body, error_message, error_type, error_stack_trace,
                  duration_millis, attempted_at, completed_at, created_at, request_info)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), $13)"#,
+            &id,
+            dispatch_job_id,
+            attempt_number as i32,
+            status as DispatchAttemptStatus,
+            response_code.map(|c| c as i32),
+            response_body,
+            error_message,
+            error_type as Option<ErrorType>,
+            error_stack_trace,
+            duration_millis,
+            attempted_at,
+            completed_at,
+            request_info
         )
-        .bind(&id)
-        .bind(dispatch_job_id)
-        .bind(attempt_number as i32)
-        .bind(status)
-        .bind(response_code.map(|c| c as i32))
-        .bind(response_body)
-        .bind(error_message)
-        .bind(error_type)
-        .bind(error_stack_trace)
-        .bind(duration_millis)
-        .bind(attempted_at)
-        .bind(completed_at)
-        .bind(request_info)
         .execute(&self.pool)
         .await?;
 

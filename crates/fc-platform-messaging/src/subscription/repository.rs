@@ -11,11 +11,13 @@ use sqlx::PgPool;
 
 use super::entity::{ConfigEntry, EventTypeBinding, Subscription};
 use crate::dispatch_job::entity::parse_dispatch_mode;
+use fc_common::DispatchMode;
 use fc_platform_core::shared::enum_str::Stored;
 use fc_platform_core::shared::error;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::shared::id::decode_id;
 use fc_platform_core::shared::id::decode_id_opt;
+use fc_platform_core::shared::id::DispatchPoolId;
 use fc_platform_core::usecase::unit_of_work::HasId;
 use fc_platform_core::usecase::DbTx;
 use fc_platform_core::usecase::Persist;
@@ -23,7 +25,6 @@ use std::collections::HashMap;
 
 // ── Row types ────────────────────────────────────────────────────────────────
 
-#[derive(sqlx::FromRow)]
 struct SubscriptionRow {
     id: String,
     code: String,
@@ -107,7 +108,6 @@ impl TryFrom<SubscriptionRow> for Subscription {
     }
 }
 
-#[derive(sqlx::FromRow)]
 struct SubscriptionEventTypeRow {
     subscription_id: SubscriptionId,
     event_type_id: Option<EventTypeId>,
@@ -115,7 +115,6 @@ struct SubscriptionEventTypeRow {
     spec_version: Option<String>,
 }
 
-#[derive(sqlx::FromRow)]
 struct SubscriptionCustomConfigRow {
     subscription_id: SubscriptionId,
     config_key: String,
@@ -137,11 +136,14 @@ impl SubscriptionRepository {
         &self,
         subscription_id: &SubscriptionId,
     ) -> Result<Vec<EventTypeBinding>> {
-        let rows = sqlx::query_as::<_, SubscriptionEventTypeRow>(
-            "SELECT subscription_id, event_type_id, event_type_code, spec_version
-             FROM msg_subscription_event_types WHERE subscription_id = $1",
+        let rows = sqlx::query_as!(
+            SubscriptionEventTypeRow,
+            "SELECT subscription_id AS \"subscription_id: SubscriptionId\", \
+                    event_type_id AS \"event_type_id: EventTypeId\", event_type_code, \
+                    spec_version \
+                    FROM msg_subscription_event_types WHERE subscription_id = $1",
+            subscription_id as &SubscriptionId
         )
-        .bind(subscription_id)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
@@ -159,11 +161,13 @@ impl SubscriptionRepository {
         &self,
         subscription_id: &SubscriptionId,
     ) -> Result<Vec<ConfigEntry>> {
-        let rows = sqlx::query_as::<_, SubscriptionCustomConfigRow>(
-            "SELECT subscription_id, config_key, config_value
-             FROM msg_subscription_custom_configs WHERE subscription_id = $1",
+        let rows = sqlx::query_as!(
+            SubscriptionCustomConfigRow,
+            "SELECT subscription_id AS \"subscription_id: SubscriptionId\", config_key, \
+                    config_value \
+                    FROM msg_subscription_custom_configs WHERE subscription_id = $1",
+            subscription_id as &SubscriptionId
         )
-        .bind(subscription_id)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
@@ -190,11 +194,14 @@ impl SubscriptionRepository {
         let ids: Vec<String> = rows.iter().map(|m| m.id.clone()).collect();
 
         // Batch-load event type bindings
-        let all_et = sqlx::query_as::<_, SubscriptionEventTypeRow>(
-            "SELECT subscription_id, event_type_id, event_type_code, spec_version
-             FROM msg_subscription_event_types WHERE subscription_id = ANY($1)",
+        let all_et = sqlx::query_as!(
+            SubscriptionEventTypeRow,
+            "SELECT subscription_id AS \"subscription_id: SubscriptionId\", \
+                    event_type_id AS \"event_type_id: EventTypeId\", event_type_code, \
+                    spec_version \
+                    FROM msg_subscription_event_types WHERE subscription_id = ANY($1)",
+            &ids
         )
-        .bind(&ids)
         .fetch_all(&self.pool)
         .await?;
         let mut et_map: HashMap<SubscriptionId, Vec<EventTypeBinding>> = HashMap::new();
@@ -211,11 +218,13 @@ impl SubscriptionRepository {
         }
 
         // Batch-load custom configs
-        let all_cfg = sqlx::query_as::<_, SubscriptionCustomConfigRow>(
-            "SELECT subscription_id, config_key, config_value
-             FROM msg_subscription_custom_configs WHERE subscription_id = ANY($1)",
+        let all_cfg = sqlx::query_as!(
+            SubscriptionCustomConfigRow,
+            "SELECT subscription_id AS \"subscription_id: SubscriptionId\", config_key, \
+                    config_value \
+                    FROM msg_subscription_custom_configs WHERE subscription_id = ANY($1)",
+            &ids
         )
-        .bind(&ids)
         .fetch_all(&self.pool)
         .await?;
         let mut cfg_map: HashMap<SubscriptionId, Vec<ConfigEntry>> = HashMap::new();
@@ -245,41 +254,41 @@ impl SubscriptionRepository {
 
     pub async fn insert(&self, sub: &Subscription) -> Result<()> {
         let now = Utc::now();
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO msg_subscriptions
                 (id, code, application_code, name, description, client_id, client_identifier,
                  client_scoped, connection_id, target, queue, source, status, max_age_seconds,
                  dispatch_pool_id, dispatch_pool_code, delay_seconds, sequence, mode,
                  timeout_seconds, max_retries, service_account_id, data_only, created_at, updated_at,
                  created_by)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)"
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)",
+            &sub.id as &SubscriptionId,
+            &sub.code,
+            sub.application_code.as_ref(),
+            &sub.name,
+            sub.description.as_ref(),
+            &sub.client_id as &Option<ClientId>,
+            sub.client_identifier.as_ref(),
+            sub.client_scoped,
+            &sub.connection_id as &Option<ConnectionId>,
+            &sub.endpoint,
+            sub.queue.as_ref(),
+            sub.source as SubscriptionSource,
+            sub.status as SubscriptionStatus,
+            sub.max_age_seconds,
+            &sub.dispatch_pool_id as &Option<DispatchPoolId>,
+            sub.dispatch_pool_code.as_ref(),
+            sub.delay_seconds,
+            sub.sequence,
+            sub.mode as DispatchMode,
+            sub.timeout_seconds,
+            sub.max_retries,
+            sub.service_account_id.as_ref(),
+            sub.data_only,
+            now,
+            now,
+            sub.created_by.as_ref()
         )
-        .bind(&sub.id)
-        .bind(&sub.code)
-        .bind(&sub.application_code)
-        .bind(&sub.name)
-        .bind(&sub.description)
-        .bind(&sub.client_id)
-        .bind(&sub.client_identifier)
-        .bind(sub.client_scoped)
-        .bind(&sub.connection_id)
-        .bind(&sub.endpoint)
-        .bind(&sub.queue)
-        .bind(sub.source)
-        .bind(sub.status)
-        .bind(sub.max_age_seconds)
-        .bind(&sub.dispatch_pool_id)
-        .bind(&sub.dispatch_pool_code)
-        .bind(sub.delay_seconds)
-        .bind(sub.sequence)
-        .bind(sub.mode)
-        .bind(sub.timeout_seconds)
-        .bind(sub.max_retries)
-        .bind(&sub.service_account_id)
-        .bind(sub.data_only)
-        .bind(now)
-        .bind(now)
-        .bind(&sub.created_by)
         .execute(&self.pool)
         .await?;
         self.save_event_types(&sub.id, &sub.event_types).await?;
@@ -293,10 +302,12 @@ impl SubscriptionRepository {
         event_types: &[EventTypeBinding],
     ) -> Result<()> {
         // Delete existing then re-insert via UNNEST
-        sqlx::query("DELETE FROM msg_subscription_event_types WHERE subscription_id = $1")
-            .bind(subscription_id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM msg_subscription_event_types WHERE subscription_id = $1",
+            subscription_id as &SubscriptionId
+        )
+        .execute(&self.pool)
+        .await?;
 
         if !event_types.is_empty() {
             let mut sub_ids: Vec<SubscriptionId> = Vec::with_capacity(event_types.len());
@@ -309,15 +320,15 @@ impl SubscriptionRepository {
                 et_codes.push(et.event_type_code.clone());
                 spec_versions.push(et.spec_version.clone());
             }
-            sqlx::query(
+            sqlx::query!(
                 "INSERT INTO msg_subscription_event_types
                     (subscription_id, event_type_id, event_type_code, spec_version)
                  SELECT * FROM UNNEST($1::varchar[], $2::varchar[], $3::varchar[], $4::varchar[])",
+                &sub_ids as &[SubscriptionId],
+                &et_ids as &[Option<EventTypeId>],
+                &et_codes,
+                &spec_versions as &[Option<String>]
             )
-            .bind(&sub_ids)
-            .bind(&et_ids as &[Option<EventTypeId>])
-            .bind(&et_codes)
-            .bind(&spec_versions as &[Option<String>])
             .execute(&self.pool)
             .await?;
         }
@@ -329,10 +340,12 @@ impl SubscriptionRepository {
         subscription_id: &SubscriptionId,
         config: &[ConfigEntry],
     ) -> Result<()> {
-        sqlx::query("DELETE FROM msg_subscription_custom_configs WHERE subscription_id = $1")
-            .bind(subscription_id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM msg_subscription_custom_configs WHERE subscription_id = $1",
+            subscription_id as &SubscriptionId
+        )
+        .execute(&self.pool)
+        .await?;
 
         if !config.is_empty() {
             let mut sub_ids: Vec<String> = Vec::with_capacity(config.len());
@@ -343,14 +356,14 @@ impl SubscriptionRepository {
                 keys.push(entry.key.clone());
                 values.push(entry.value.clone());
             }
-            sqlx::query(
+            sqlx::query!(
                 "INSERT INTO msg_subscription_custom_configs
                     (subscription_id, config_key, config_value)
                  SELECT * FROM UNNEST($1::varchar[], $2::varchar[], $3::varchar[])",
+                &sub_ids,
+                &keys,
+                &values
             )
-            .bind(&sub_ids)
-            .bind(&keys)
-            .bind(&values)
             .execute(&self.pool)
             .await?;
         }
@@ -358,11 +371,20 @@ impl SubscriptionRepository {
     }
 
     pub async fn find_by_id(&self, id: &SubscriptionId) -> Result<Option<Subscription>> {
-        let row =
-            sqlx::query_as::<_, SubscriptionRow>("SELECT * FROM msg_subscriptions WHERE id = $1")
-                .bind(id)
-                .fetch_optional(&self.pool)
-                .await?;
+        let row = sqlx::query_as!(
+            SubscriptionRow,
+            "SELECT id, code, application_code, name, description, client_id, \
+                    client_identifier, client_scoped, connection_id, target, queue, \
+                    source AS \"source: Stored<SubscriptionSource>\", \
+                    status AS \"status: Stored<SubscriptionStatus>\", max_age_seconds, \
+                    dispatch_pool_id, dispatch_pool_code, delay_seconds, sequence, mode, \
+                    timeout_seconds, max_retries, service_account_id, data_only, \
+                    created_by, created_at, updated_at \
+                    FROM msg_subscriptions WHERE id = $1",
+            id as &SubscriptionId
+        )
+        .fetch_optional(&self.pool)
+        .await?;
         match row {
             Some(r) => Ok(Some(self.hydrate(Subscription::try_from(r)?).await?)),
             None => Ok(None),
@@ -375,18 +397,34 @@ impl SubscriptionRepository {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        let rows = sqlx::query_as::<_, SubscriptionRow>(
-            "SELECT * FROM msg_subscriptions WHERE id = ANY($1)",
+        let rows = sqlx::query_as!(
+            SubscriptionRow,
+            "SELECT id, code, application_code, name, description, client_id, \
+                    client_identifier, client_scoped, connection_id, target, queue, \
+                    source AS \"source: Stored<SubscriptionSource>\", \
+                    status AS \"status: Stored<SubscriptionStatus>\", max_age_seconds, \
+                    dispatch_pool_id, dispatch_pool_code, delay_seconds, sequence, mode, \
+                    timeout_seconds, max_retries, service_account_id, data_only, \
+                    created_by, created_at, updated_at \
+                    FROM msg_subscriptions WHERE id = ANY($1)",
+            ids as &[SubscriptionId]
         )
-        .bind(ids)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_all(rows).await
     }
 
     pub async fn find_all(&self) -> Result<Vec<Subscription>> {
-        let rows = sqlx::query_as::<_, SubscriptionRow>(
-            "SELECT * FROM msg_subscriptions ORDER BY code ASC",
+        let rows = sqlx::query_as!(
+            SubscriptionRow,
+            "SELECT id, code, application_code, name, description, client_id, \
+                    client_identifier, client_scoped, connection_id, target, queue, \
+                    source AS \"source: Stored<SubscriptionSource>\", \
+                    status AS \"status: Stored<SubscriptionStatus>\", max_age_seconds, \
+                    dispatch_pool_id, dispatch_pool_code, delay_seconds, sequence, mode, \
+                    timeout_seconds, max_retries, service_account_id, data_only, \
+                    created_by, created_at, updated_at \
+                    FROM msg_subscriptions ORDER BY code ASC"
         )
         .fetch_all(&self.pool)
         .await?;
@@ -395,15 +433,31 @@ impl SubscriptionRepository {
 
     pub async fn find_by_client(&self, client_id: Option<&ClientId>) -> Result<Vec<Subscription>> {
         let rows = if let Some(cid) = client_id {
-            sqlx::query_as::<_, SubscriptionRow>(
-                "SELECT * FROM msg_subscriptions WHERE client_id = $1 OR client_scoped = false",
+            sqlx::query_as!(
+                SubscriptionRow,
+                "SELECT id, code, application_code, name, description, client_id, \
+                    client_identifier, client_scoped, connection_id, target, queue, \
+                    source AS \"source: Stored<SubscriptionSource>\", \
+                    status AS \"status: Stored<SubscriptionStatus>\", max_age_seconds, \
+                    dispatch_pool_id, dispatch_pool_code, delay_seconds, sequence, mode, \
+                    timeout_seconds, max_retries, service_account_id, data_only, \
+                    created_by, created_at, updated_at \
+                    FROM msg_subscriptions WHERE client_id = $1 OR client_scoped = false",
+                cid as &ClientId
             )
-            .bind(cid)
             .fetch_all(&self.pool)
             .await?
         } else {
-            sqlx::query_as::<_, SubscriptionRow>(
-                "SELECT * FROM msg_subscriptions WHERE client_scoped = false",
+            sqlx::query_as!(
+                SubscriptionRow,
+                "SELECT id, code, application_code, name, description, client_id, \
+                    client_identifier, client_scoped, connection_id, target, queue, \
+                    source AS \"source: Stored<SubscriptionSource>\", \
+                    status AS \"status: Stored<SubscriptionStatus>\", max_age_seconds, \
+                    dispatch_pool_id, dispatch_pool_code, delay_seconds, sequence, mode, \
+                    timeout_seconds, max_retries, service_account_id, data_only, \
+                    created_by, created_at, updated_at \
+                    FROM msg_subscriptions WHERE client_scoped = false"
             )
             .fetch_all(&self.pool)
             .await?
@@ -417,10 +471,10 @@ impl SubscriptionRepository {
         client_id: Option<&ClientId>,
     ) -> Result<Vec<Subscription>> {
         // Find subscription IDs that have a matching event type binding
-        let sub_ids: Vec<String> = sqlx::query_scalar(
+        let sub_ids: Vec<String> = sqlx::query_scalar!(
             "SELECT subscription_id FROM msg_subscription_event_types WHERE event_type_code = $1",
+            event_type_code
         )
-        .bind(event_type_code)
         .fetch_all(&self.pool)
         .await?;
 
@@ -429,23 +483,39 @@ impl SubscriptionRepository {
         }
 
         let rows = if let Some(cid) = client_id {
-            sqlx::query_as::<_, SubscriptionRow>(
-                "SELECT * FROM msg_subscriptions
+            sqlx::query_as!(
+                SubscriptionRow,
+                "SELECT id, code, application_code, name, description, client_id, \
+                    client_identifier, client_scoped, connection_id, target, queue, \
+                    source AS \"source: Stored<SubscriptionSource>\", \
+                    status AS \"status: Stored<SubscriptionStatus>\", max_age_seconds, \
+                    dispatch_pool_id, dispatch_pool_code, delay_seconds, sequence, mode, \
+                    timeout_seconds, max_retries, service_account_id, data_only, \
+                    created_by, created_at, updated_at \
+                    FROM msg_subscriptions
                  WHERE id = ANY($1) AND status = $3
                    AND (client_id = $2 OR client_scoped = false)",
+                &sub_ids,
+                cid as &ClientId,
+                SubscriptionStatus::Active as SubscriptionStatus
             )
-            .bind(&sub_ids)
-            .bind(cid)
-            .bind(SubscriptionStatus::Active)
             .fetch_all(&self.pool)
             .await?
         } else {
-            sqlx::query_as::<_, SubscriptionRow>(
-                "SELECT * FROM msg_subscriptions
+            sqlx::query_as!(
+                SubscriptionRow,
+                "SELECT id, code, application_code, name, description, client_id, \
+                    client_identifier, client_scoped, connection_id, target, queue, \
+                    source AS \"source: Stored<SubscriptionSource>\", \
+                    status AS \"status: Stored<SubscriptionStatus>\", max_age_seconds, \
+                    dispatch_pool_id, dispatch_pool_code, delay_seconds, sequence, mode, \
+                    timeout_seconds, max_retries, service_account_id, data_only, \
+                    created_by, created_at, updated_at \
+                    FROM msg_subscriptions
                  WHERE id = ANY($1) AND status = $2",
+                &sub_ids,
+                SubscriptionStatus::Active as SubscriptionStatus
             )
-            .bind(&sub_ids)
-            .bind(SubscriptionStatus::Active)
             .fetch_all(&self.pool)
             .await?
         };
@@ -454,7 +524,7 @@ impl SubscriptionRepository {
 
     pub async fn update(&self, sub: &Subscription) -> Result<()> {
         let now = Utc::now();
-        sqlx::query(
+        sqlx::query!(
             "UPDATE msg_subscriptions SET
                 code = $2, application_code = $3, name = $4, description = $5,
                 client_id = $6, client_identifier = $7, client_scoped = $8,
@@ -463,31 +533,31 @@ impl SubscriptionRepository {
                 delay_seconds = $17, sequence = $18, mode = $19, timeout_seconds = $20,
                 max_retries = $21, service_account_id = $22, data_only = $23, updated_at = $24
              WHERE id = $1",
+            &sub.id as &SubscriptionId,
+            &sub.code,
+            sub.application_code.as_ref(),
+            &sub.name,
+            sub.description.as_ref(),
+            &sub.client_id as &Option<ClientId>,
+            sub.client_identifier.as_ref(),
+            sub.client_scoped,
+            &sub.connection_id as &Option<ConnectionId>,
+            &sub.endpoint,
+            sub.queue.as_ref(),
+            sub.source as SubscriptionSource,
+            sub.status as SubscriptionStatus,
+            sub.max_age_seconds,
+            &sub.dispatch_pool_id as &Option<DispatchPoolId>,
+            sub.dispatch_pool_code.as_ref(),
+            sub.delay_seconds,
+            sub.sequence,
+            sub.mode as DispatchMode,
+            sub.timeout_seconds,
+            sub.max_retries,
+            sub.service_account_id.as_ref(),
+            sub.data_only,
+            now
         )
-        .bind(&sub.id)
-        .bind(&sub.code)
-        .bind(&sub.application_code)
-        .bind(&sub.name)
-        .bind(&sub.description)
-        .bind(&sub.client_id)
-        .bind(&sub.client_identifier)
-        .bind(sub.client_scoped)
-        .bind(&sub.connection_id)
-        .bind(&sub.endpoint)
-        .bind(&sub.queue)
-        .bind(sub.source)
-        .bind(sub.status)
-        .bind(sub.max_age_seconds)
-        .bind(&sub.dispatch_pool_id)
-        .bind(&sub.dispatch_pool_code)
-        .bind(sub.delay_seconds)
-        .bind(sub.sequence)
-        .bind(sub.mode)
-        .bind(sub.timeout_seconds)
-        .bind(sub.max_retries)
-        .bind(&sub.service_account_id)
-        .bind(sub.data_only)
-        .bind(now)
         .execute(&self.pool)
         .await?;
         self.save_event_types(&sub.id, &sub.event_types).await?;
@@ -496,11 +566,20 @@ impl SubscriptionRepository {
     }
 
     pub async fn find_by_code(&self, code: &str) -> Result<Option<Subscription>> {
-        let row =
-            sqlx::query_as::<_, SubscriptionRow>("SELECT * FROM msg_subscriptions WHERE code = $1")
-                .bind(code)
-                .fetch_optional(&self.pool)
-                .await?;
+        let row = sqlx::query_as!(
+            SubscriptionRow,
+            "SELECT id, code, application_code, name, description, client_id, \
+                    client_identifier, client_scoped, connection_id, target, queue, \
+                    source AS \"source: Stored<SubscriptionSource>\", \
+                    status AS \"status: Stored<SubscriptionStatus>\", max_age_seconds, \
+                    dispatch_pool_id, dispatch_pool_code, delay_seconds, sequence, mode, \
+                    timeout_seconds, max_retries, service_account_id, data_only, \
+                    created_by, created_at, updated_at \
+                    FROM msg_subscriptions WHERE code = $1",
+            code
+        )
+        .fetch_optional(&self.pool)
+        .await?;
         match row {
             Some(r) => Ok(Some(self.hydrate(Subscription::try_from(r)?).await?)),
             None => Ok(None),
@@ -513,18 +592,34 @@ impl SubscriptionRepository {
         client_id: Option<&ClientId>,
     ) -> Result<Option<Subscription>> {
         let row = if let Some(cid) = client_id {
-            sqlx::query_as::<_, SubscriptionRow>(
-                "SELECT * FROM msg_subscriptions WHERE code = $1 AND client_id = $2",
+            sqlx::query_as!(
+                SubscriptionRow,
+                "SELECT id, code, application_code, name, description, client_id, \
+                    client_identifier, client_scoped, connection_id, target, queue, \
+                    source AS \"source: Stored<SubscriptionSource>\", \
+                    status AS \"status: Stored<SubscriptionStatus>\", max_age_seconds, \
+                    dispatch_pool_id, dispatch_pool_code, delay_seconds, sequence, mode, \
+                    timeout_seconds, max_retries, service_account_id, data_only, \
+                    created_by, created_at, updated_at \
+                    FROM msg_subscriptions WHERE code = $1 AND client_id = $2",
+                code,
+                cid as &ClientId
             )
-            .bind(code)
-            .bind(cid)
             .fetch_optional(&self.pool)
             .await?
         } else {
-            sqlx::query_as::<_, SubscriptionRow>(
-                "SELECT * FROM msg_subscriptions WHERE code = $1 AND client_id IS NULL",
+            sqlx::query_as!(
+                SubscriptionRow,
+                "SELECT id, code, application_code, name, description, client_id, \
+                    client_identifier, client_scoped, connection_id, target, queue, \
+                    source AS \"source: Stored<SubscriptionSource>\", \
+                    status AS \"status: Stored<SubscriptionStatus>\", max_age_seconds, \
+                    dispatch_pool_id, dispatch_pool_code, delay_seconds, sequence, mode, \
+                    timeout_seconds, max_retries, service_account_id, data_only, \
+                    created_by, created_at, updated_at \
+                    FROM msg_subscriptions WHERE code = $1 AND client_id IS NULL",
+                code
             )
-            .bind(code)
             .fetch_optional(&self.pool)
             .await?
         };
@@ -543,14 +638,22 @@ impl SubscriptionRepository {
         application_code: Option<&str>,
         client_id: Option<&ClientId>,
     ) -> Result<Option<Subscription>> {
-        let row = sqlx::query_as::<_, SubscriptionRow>(
-            "SELECT * FROM msg_subscriptions WHERE code = $1 \
+        let row = sqlx::query_as!(
+            SubscriptionRow,
+            "SELECT id, code, application_code, name, description, client_id, \
+                    client_identifier, client_scoped, connection_id, target, queue, \
+                    source AS \"source: Stored<SubscriptionSource>\", \
+                    status AS \"status: Stored<SubscriptionStatus>\", max_age_seconds, \
+                    dispatch_pool_id, dispatch_pool_code, delay_seconds, sequence, mode, \
+                    timeout_seconds, max_retries, service_account_id, data_only, \
+                    created_by, created_at, updated_at \
+                    FROM msg_subscriptions WHERE code = $1 \
              AND application_code IS NOT DISTINCT FROM $2 \
              AND client_id IS NOT DISTINCT FROM $3",
+            code,
+            application_code,
+            client_id as Option<&ClientId>
         )
-        .bind(code)
-        .bind(application_code)
-        .bind(client_id)
         .fetch_optional(&self.pool)
         .await?;
         match row {
@@ -566,14 +669,22 @@ impl SubscriptionRepository {
         status: Option<&str>,
         client_id: Option<&ClientId>,
     ) -> Result<Vec<Subscription>> {
-        let rows = sqlx::query_as::<_, SubscriptionRow>(
-            "SELECT * FROM msg_subscriptions \
+        let rows = sqlx::query_as!(
+            SubscriptionRow,
+            "SELECT id, code, application_code, name, description, client_id, \
+                    client_identifier, client_scoped, connection_id, target, queue, \
+                    source AS \"source: Stored<SubscriptionSource>\", \
+                    status AS \"status: Stored<SubscriptionStatus>\", max_age_seconds, \
+                    dispatch_pool_id, dispatch_pool_code, delay_seconds, sequence, mode, \
+                    timeout_seconds, max_retries, service_account_id, data_only, \
+                    created_by, created_at, updated_at \
+                    FROM msg_subscriptions \
              WHERE ($1::text IS NULL OR status = $1) \
                AND ($2::text IS NULL OR client_id = $2) \
              ORDER BY code",
+            status,
+            client_id as Option<&ClientId>
         )
-        .bind(status)
-        .bind(client_id)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_all(rows).await
@@ -588,13 +699,21 @@ impl SubscriptionRepository {
         application_code: &str,
         client_id: Option<&ClientId>,
     ) -> Result<Vec<Subscription>> {
-        let rows = sqlx::query_as::<_, SubscriptionRow>(
-            "SELECT * FROM msg_subscriptions \
+        let rows = sqlx::query_as!(
+            SubscriptionRow,
+            "SELECT id, code, application_code, name, description, client_id, \
+                    client_identifier, client_scoped, connection_id, target, queue, \
+                    source AS \"source: Stored<SubscriptionSource>\", \
+                    status AS \"status: Stored<SubscriptionStatus>\", max_age_seconds, \
+                    dispatch_pool_id, dispatch_pool_code, delay_seconds, sequence, mode, \
+                    timeout_seconds, max_retries, service_account_id, data_only, \
+                    created_by, created_at, updated_at \
+                    FROM msg_subscriptions \
              WHERE application_code = $1 AND client_id IS NOT DISTINCT FROM $2 \
              ORDER BY code",
+            application_code,
+            client_id as Option<&ClientId>
         )
-        .bind(application_code)
-        .bind(client_id)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_all(rows).await
@@ -602,22 +721,31 @@ impl SubscriptionRepository {
 
     /// Check if any subscriptions reference a given connection ID
     pub async fn exists_by_connection_id(&self, connection_id: &ConnectionId) -> Result<bool> {
-        let row: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM msg_subscriptions WHERE connection_id = $1")
-                .bind(connection_id)
-                .fetch_one(&self.pool)
-                .await?;
-        Ok(row.0 > 0)
+        let row = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM msg_subscriptions WHERE connection_id = $1",
+            connection_id as &ConnectionId
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row > 0)
     }
 
     pub async fn find_by_application_code(
         &self,
         application_code: &str,
     ) -> Result<Vec<Subscription>> {
-        let rows = sqlx::query_as::<_, SubscriptionRow>(
-            "SELECT * FROM msg_subscriptions WHERE application_code = $1 ORDER BY code ASC",
+        let rows = sqlx::query_as!(
+            SubscriptionRow,
+            "SELECT id, code, application_code, name, description, client_id, \
+                    client_identifier, client_scoped, connection_id, target, queue, \
+                    source AS \"source: Stored<SubscriptionSource>\", \
+                    status AS \"status: Stored<SubscriptionStatus>\", max_age_seconds, \
+                    dispatch_pool_id, dispatch_pool_code, delay_seconds, sequence, mode, \
+                    timeout_seconds, max_retries, service_account_id, data_only, \
+                    created_by, created_at, updated_at \
+                    FROM msg_subscriptions WHERE application_code = $1 ORDER BY code ASC",
+            application_code
         )
-        .bind(application_code)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_all(rows).await
@@ -627,48 +755,78 @@ impl SubscriptionRepository {
         &self,
         connection_id: &ConnectionId,
     ) -> Result<Vec<Subscription>> {
-        let rows = sqlx::query_as::<_, SubscriptionRow>(
-            "SELECT * FROM msg_subscriptions WHERE connection_id = $1 ORDER BY code ASC",
+        let rows = sqlx::query_as!(
+            SubscriptionRow,
+            "SELECT id, code, application_code, name, description, client_id, \
+                    client_identifier, client_scoped, connection_id, target, queue, \
+                    source AS \"source: Stored<SubscriptionSource>\", \
+                    status AS \"status: Stored<SubscriptionStatus>\", max_age_seconds, \
+                    dispatch_pool_id, dispatch_pool_code, delay_seconds, sequence, mode, \
+                    timeout_seconds, max_retries, service_account_id, data_only, \
+                    created_by, created_at, updated_at \
+                    FROM msg_subscriptions WHERE connection_id = $1 ORDER BY code ASC",
+            connection_id as &ConnectionId
         )
-        .bind(connection_id)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_all(rows).await
     }
 
     pub async fn find_by_status(&self, status: &str) -> Result<Vec<Subscription>> {
-        let rows = sqlx::query_as::<_, SubscriptionRow>(
-            "SELECT * FROM msg_subscriptions WHERE status = $1 ORDER BY code ASC",
+        let rows = sqlx::query_as!(
+            SubscriptionRow,
+            "SELECT id, code, application_code, name, description, client_id, \
+                    client_identifier, client_scoped, connection_id, target, queue, \
+                    source AS \"source: Stored<SubscriptionSource>\", \
+                    status AS \"status: Stored<SubscriptionStatus>\", max_age_seconds, \
+                    dispatch_pool_id, dispatch_pool_code, delay_seconds, sequence, mode, \
+                    timeout_seconds, max_retries, service_account_id, data_only, \
+                    created_by, created_at, updated_at \
+                    FROM msg_subscriptions WHERE status = $1 ORDER BY code ASC",
+            status
         )
-        .bind(status)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_all(rows).await
     }
 
     pub async fn find_active(&self) -> Result<Vec<Subscription>> {
-        let rows = sqlx::query_as::<_, SubscriptionRow>(
-            "SELECT * FROM msg_subscriptions WHERE status = $1 ORDER BY code ASC",
+        let rows = sqlx::query_as!(
+            SubscriptionRow,
+            "SELECT id, code, application_code, name, description, client_id, \
+                    client_identifier, client_scoped, connection_id, target, queue, \
+                    source AS \"source: Stored<SubscriptionSource>\", \
+                    status AS \"status: Stored<SubscriptionStatus>\", max_age_seconds, \
+                    dispatch_pool_id, dispatch_pool_code, delay_seconds, sequence, mode, \
+                    timeout_seconds, max_retries, service_account_id, data_only, \
+                    created_by, created_at, updated_at \
+                    FROM msg_subscriptions WHERE status = $1 ORDER BY code ASC",
+            SubscriptionStatus::Active as SubscriptionStatus
         )
-        .bind(SubscriptionStatus::Active)
         .fetch_all(&self.pool)
         .await?;
         self.hydrate_all(rows).await
     }
 
     pub async fn delete(&self, id: &SubscriptionId) -> Result<bool> {
-        sqlx::query("DELETE FROM msg_subscription_event_types WHERE subscription_id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-        sqlx::query("DELETE FROM msg_subscription_custom_configs WHERE subscription_id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-        let result = sqlx::query("DELETE FROM msg_subscriptions WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM msg_subscription_event_types WHERE subscription_id = $1",
+            id as &SubscriptionId
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query!(
+            "DELETE FROM msg_subscription_custom_configs WHERE subscription_id = $1",
+            id as &SubscriptionId
+        )
+        .execute(&self.pool)
+        .await?;
+        let result = sqlx::query!(
+            "DELETE FROM msg_subscriptions WHERE id = $1",
+            id as &SubscriptionId
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(result.rows_affected() > 0)
     }
 }
@@ -686,7 +844,7 @@ impl Persist<Subscription> for SubscriptionRepository {
         let now = Utc::now();
 
         // 1. Upsert main row
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO msg_subscriptions (id, code, application_code, name, description, client_id, client_identifier, client_scoped, connection_id, target, queue, source, status, max_age_seconds, dispatch_pool_id, dispatch_pool_code, delay_seconds, sequence, mode, timeout_seconds, max_retries, service_account_id, data_only, created_at, updated_at, created_by)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
              ON CONFLICT (id) DO UPDATE SET
@@ -713,83 +871,94 @@ impl Persist<Subscription> for SubscriptionRepository {
                 service_account_id = EXCLUDED.service_account_id,
                 data_only = EXCLUDED.data_only,
                 updated_at = EXCLUDED.updated_at,
-                created_by = COALESCE(msg_subscriptions.created_by, EXCLUDED.created_by)"
+                created_by = COALESCE(msg_subscriptions.created_by, EXCLUDED.created_by)",
+            &s.id as &SubscriptionId,
+            &s.code,
+            s.application_code.as_ref(),
+            &s.name,
+            s.description.as_ref(),
+            &s.client_id as &Option<ClientId>,
+            s.client_identifier.as_ref(),
+            s.client_scoped,
+            &s.connection_id as &Option<ConnectionId>,
+            &s.endpoint,
+            s.queue.as_ref(),
+            s.source as SubscriptionSource,
+            s.status as SubscriptionStatus,
+            s.max_age_seconds,
+            &s.dispatch_pool_id as &Option<DispatchPoolId>,
+            s.dispatch_pool_code.as_ref(),
+            s.delay_seconds,
+            s.sequence,
+            s.mode as DispatchMode,
+            s.timeout_seconds,
+            s.max_retries,
+            s.service_account_id.as_ref(),
+            s.data_only,
+            now,
+            now,
+            s.created_by.as_ref()
         )
-        .bind(&s.id)
-        .bind(&s.code)
-        .bind(&s.application_code)
-        .bind(&s.name)
-        .bind(&s.description)
-        .bind(&s.client_id)
-        .bind(&s.client_identifier)
-        .bind(s.client_scoped)
-        .bind(&s.connection_id)
-        .bind(&s.endpoint)
-        .bind(&s.queue)
-        .bind(s.source)
-        .bind(s.status)
-        .bind(s.max_age_seconds)
-        .bind(&s.dispatch_pool_id)
-        .bind(&s.dispatch_pool_code)
-        .bind(s.delay_seconds)
-        .bind(s.sequence)
-        .bind(s.mode)
-        .bind(s.timeout_seconds)
-        .bind(s.max_retries)
-        .bind(&s.service_account_id)
-        .bind(s.data_only)
-        .bind(now)
-        .bind(now)
-        .bind(&s.created_by)
         .execute(&mut **tx.inner).await?;
 
-        sqlx::query("DELETE FROM msg_subscription_event_types WHERE subscription_id = $1")
-            .bind(&s.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM msg_subscription_event_types WHERE subscription_id = $1",
+            &s.id as &SubscriptionId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         for et in &s.event_types {
-            sqlx::query(
-                "INSERT INTO msg_subscription_event_types (subscription_id, event_type_id, event_type_code, spec_version)
-                 VALUES ($1, $2, $3, $4)"
-            )
-            .bind(&s.id)
-            .bind(&et.event_type_id)
-            .bind(&et.event_type_code)
-            .bind(&et.spec_version)
+            sqlx::query!(
+            "INSERT INTO msg_subscription_event_types (subscription_id, event_type_id, event_type_code, spec_version)
+                 VALUES ($1, $2, $3, $4)",
+            &s.id as &SubscriptionId,
+            &et.event_type_id as &Option<EventTypeId>,
+            &et.event_type_code,
+            et.spec_version.as_ref()
+        )
             .execute(&mut **tx.inner).await?;
         }
 
-        sqlx::query("DELETE FROM msg_subscription_custom_configs WHERE subscription_id = $1")
-            .bind(&s.id)
+        sqlx::query!(
+            "DELETE FROM msg_subscription_custom_configs WHERE subscription_id = $1",
+            &s.id as &SubscriptionId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
+        for entry in &s.custom_config {
+            sqlx::query!(
+            "INSERT INTO msg_subscription_custom_configs (subscription_id, config_key, config_value)
+                 VALUES ($1, $2, $3)",
+            &s.id as &SubscriptionId,
+            &entry.key,
+            &entry.value
+        )
             .execute(&mut **tx.inner)
             .await?;
-        for entry in &s.custom_config {
-            sqlx::query(
-                "INSERT INTO msg_subscription_custom_configs (subscription_id, config_key, config_value)
-                 VALUES ($1, $2, $3)"
-            )
-            .bind(&s.id)
-            .bind(&entry.key)
-            .bind(&entry.value)
-            .execute(&mut **tx.inner).await?;
         }
 
         Ok(())
     }
 
     async fn delete(&self, s: &Subscription, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query("DELETE FROM msg_subscription_event_types WHERE subscription_id = $1")
-            .bind(&s.id)
-            .execute(&mut **tx.inner)
-            .await?;
-        sqlx::query("DELETE FROM msg_subscription_custom_configs WHERE subscription_id = $1")
-            .bind(&s.id)
-            .execute(&mut **tx.inner)
-            .await?;
-        sqlx::query("DELETE FROM msg_subscriptions WHERE id = $1")
-            .bind(&s.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM msg_subscription_event_types WHERE subscription_id = $1",
+            &s.id as &SubscriptionId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
+        sqlx::query!(
+            "DELETE FROM msg_subscription_custom_configs WHERE subscription_id = $1",
+            &s.id as &SubscriptionId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
+        sqlx::query!(
+            "DELETE FROM msg_subscriptions WHERE id = $1",
+            &s.id as &SubscriptionId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         Ok(())
     }
 }
@@ -804,12 +973,18 @@ impl SubscriptionRepository {
         if connection_ids.is_empty() {
             return Ok(Vec::new());
         }
-        Ok(sqlx::query_as(
-            "SELECT connection_id, code FROM msg_subscriptions \
+        // `connection_id!`: the column is nullable, but `= ANY($1)` never
+        // matches a NULL.
+        let rows = sqlx::query!(
+            "SELECT connection_id AS \"connection_id!\", code FROM msg_subscriptions \
              WHERE connection_id = ANY($1) ORDER BY code",
+            connection_ids
         )
-        .bind(connection_ids)
         .fetch_all(&self.pool)
-        .await?)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| (r.connection_id, r.code))
+            .collect())
     }
 }

@@ -1,0 +1,244 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, external_id, source, kind AS \"kind: Stored<DispatchKind>\", code, subject, event_id, correlation_id, metadata AS \"metadata: serde_json::Value\", target_url, protocol AS \"protocol: Stored<DispatchProtocol>\", payload, payload_content_type, data_only, service_account_id, client_id, subscription_id, mode, dispatch_pool_id, message_group, sequence, timeout_seconds, schema_id, status, max_retries, retry_strategy AS \"retry_strategy: Stored<RetryStrategy>\", scheduled_for, expires_at, attempt_count, last_attempt_at, completed_at, duration_millis, last_error, idempotency_key, descriptor, queue, created_at, updated_at FROM msg_dispatch_jobs WHERE client_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "external_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "source",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "kind: Stored<DispatchKind>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "code",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "subject",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "event_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "correlation_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "metadata: serde_json::Value",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 9,
+        "name": "target_url",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 10,
+        "name": "protocol: Stored<DispatchProtocol>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 11,
+        "name": "payload",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "payload_content_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 13,
+        "name": "data_only",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 14,
+        "name": "service_account_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 15,
+        "name": "client_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 16,
+        "name": "subscription_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 17,
+        "name": "mode",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 18,
+        "name": "dispatch_pool_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 19,
+        "name": "message_group",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 20,
+        "name": "sequence",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 21,
+        "name": "timeout_seconds",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 22,
+        "name": "schema_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 23,
+        "name": "status",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 24,
+        "name": "max_retries",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 25,
+        "name": "retry_strategy: Stored<RetryStrategy>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 26,
+        "name": "scheduled_for",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 27,
+        "name": "expires_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 28,
+        "name": "attempt_count",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 29,
+        "name": "last_attempt_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 30,
+        "name": "completed_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 31,
+        "name": "duration_millis",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 32,
+        "name": "last_error",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 33,
+        "name": "idempotency_key",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 34,
+        "name": "descriptor",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 35,
+        "name": "queue",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 36,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 37,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "10f5d0c9f9bd42fc91c6303a05cb99079bd87a06c7e7d3ecfc9df2b1b77a7a17"
+}

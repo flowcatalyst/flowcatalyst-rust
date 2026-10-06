@@ -1,0 +1,88 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, type AS event_type, source, subject, time, application, subdomain, aggregate, message_group, correlation_id, client_id, projected_at FROM msg_events_read WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "event_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "source",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "subject",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "time",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "application",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "subdomain",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "aggregate",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "message_group",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "correlation_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 10,
+        "name": "client_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 11,
+        "name": "projected_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "fe54146b0d64a7da5b0d8b7418004605bd2572a512ecd243b7764c872c532c12"
+}

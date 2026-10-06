@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT subdomain AS \"subdomain!\" FROM msg_events_read WHERE subdomain IS NOT NULL ORDER BY subdomain",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "subdomain!",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "cb1caef574a4697a852dda0039ae89a7152edd3ea91e8599fc10981e76fd15ab"
+}

@@ -1,0 +1,82 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, code, name, description, rate_limit, concurrency, client_id, client_identifier, status AS \"status: Stored<DispatchPoolStatus>\", created_at, updated_at FROM msg_dispatch_pools WHERE status = $1 ORDER BY code ASC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "code",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "description",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "rate_limit",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "concurrency",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "client_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "client_identifier",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "status: Stored<DispatchPoolStatus>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "584a2d0675bb602b87a4d3247f1ff4df2cebfa9db468981718bd17ae030bdfe8"
+}

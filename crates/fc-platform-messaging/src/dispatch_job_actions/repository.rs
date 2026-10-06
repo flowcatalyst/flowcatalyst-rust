@@ -14,7 +14,7 @@ use fc_platform_core::usecase::DbTx;
 use fc_platform_core::usecase::Persist;
 
 /// The facts an action decides on.
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone)]
 pub struct JobHead {
     pub id: String,
     pub client_id: Option<String>,
@@ -63,10 +63,12 @@ impl DispatchJobActionsRepository {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        Ok(sqlx::query_as::<_, JobHead>(
-            "SELECT id, client_id, status, created_at FROM msg_dispatch_jobs WHERE id = ANY($1)",
+        Ok(sqlx::query_as!(
+            JobHead,
+            "SELECT id, client_id, status, created_at \
+                    FROM msg_dispatch_jobs WHERE id = ANY($1)",
+            ids
         )
-        .bind(ids)
         .fetch_all(&self.pool)
         .await?)
     }

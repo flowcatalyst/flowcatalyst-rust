@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT subscription_id AS \"subscription_id: SubscriptionId\", config_key, config_value FROM msg_subscription_custom_configs WHERE subscription_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "subscription_id: SubscriptionId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "config_key",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "config_value",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "3e5d0f050abe093b5279674a2923671aa55094191169327a225d42ab05614594"
+}
