@@ -5,3 +5,4 @@
 mod enum_str;
 mod event_persistence_snapshot;
 mod function_documents;
+mod sql_literals;

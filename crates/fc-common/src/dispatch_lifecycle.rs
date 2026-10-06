@@ -69,7 +69,7 @@ use sqlx::{Error, Executor, FromRow, Postgres, QueryBuilder};
 use std::collections::HashMap;
 use tracing::{debug, warn};
 
-use crate::DispatchStatus;
+use crate::{DispatchMode, DispatchStatus};
 
 /// The live statuses: a job in one of these is still in play.
 const LIVE: &[DispatchStatus] = &[
@@ -1285,7 +1285,7 @@ pub async fn claim(
 pub async fn held_among(pool: &sqlx::PgPool, claims: &[ClaimRow]) -> Result<Vec<String>, Error> {
     let candidates: Vec<&ClaimRow> = claims
         .iter()
-        .filter(|c| c.mode == "BLOCK_ON_ERROR")
+        .filter(|c| c.mode == DispatchMode::BlockOnError.as_str())
         .collect();
     if candidates.is_empty() {
         return Ok(Vec::new());

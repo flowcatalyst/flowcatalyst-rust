@@ -721,7 +721,9 @@ pub(super) async fn notify_new_user(
     invite_redirect: Option<String>,
 ) -> Option<String> {
     let identity = p.user_identity.as_ref()?;
-    if p.external_identity.is_some() || identity.provider.as_deref() == Some("OIDC") {
+    if p.external_identity.is_some()
+        || identity.provider.as_deref() == Some(IdentityProviderType::Oidc.as_str())
+    {
         return None;
     }
     let email = identity.email.trim();
@@ -1019,7 +1021,7 @@ pub async fn create_principal(
         });
     }
 
-    let idp_type = if req.idp_type.as_deref() == Some("OIDC") {
+    let idp_type = if req.idp_type.as_deref() == Some(IdentityProviderType::Oidc.as_str()) {
         IdentityProviderType::Oidc
     } else {
         IdentityProviderType::Internal

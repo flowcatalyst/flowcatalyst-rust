@@ -60,7 +60,7 @@ use fc_platform::email_domain_mapping::entity::{EmailDomainMapping, ScopeType};
 use fc_platform::email_domain_mapping::repository::EmailDomainMappingRepository;
 use fc_platform::identity_provider::entity::{IdentityProvider, IdentityProviderType};
 use fc_platform::identity_provider::repository::IdentityProviderRepository;
-use fc_platform::principal::entity::{Principal, UserScope};
+use fc_platform::principal::entity::{Principal, PrincipalType, UserScope};
 use fc_platform::principal::repository::PrincipalRepository;
 use fc_platform::service_account::entity::{ServiceAccount, WebhookCredentials};
 use fc_platform::service_account::repository::ServiceAccountRepository;
@@ -207,8 +207,10 @@ pub async fn run(args: InitArgs) -> Result<()> {
 
     // ── 1. Admin user ────────────────────────────────────────────────
     let any_anchor: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM iam_principals WHERE type = 'USER' AND scope = 'ANCHOR')",
+        "SELECT EXISTS(SELECT 1 FROM iam_principals WHERE type = $1 AND scope = $2)",
     )
+    .bind(PrincipalType::User)
+    .bind(UserScope::Anchor)
     .fetch_one(&pool)
     .await
     .context("check for existing anchor user")?;

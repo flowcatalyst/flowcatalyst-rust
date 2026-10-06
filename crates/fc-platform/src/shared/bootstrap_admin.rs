@@ -23,7 +23,7 @@ use crate::email_domain_mapping::entity::{EmailDomainMapping, ScopeType};
 use crate::email_domain_mapping::repository::EmailDomainMappingRepository;
 use crate::identity_provider::entity::{IdentityProvider, IdentityProviderType};
 use crate::identity_provider::repository::IdentityProviderRepository;
-use crate::principal::entity::{Principal, UserScope};
+use crate::principal::entity::{Principal, PrincipalType, UserScope};
 use crate::principal::repository::PrincipalRepository;
 use crate::service_account::entity::AssignmentSource;
 use crate::shared::error::Result;
@@ -40,11 +40,12 @@ const ROLE_SOURCE: AssignmentSource = AssignmentSource::Bootstrap;
 pub async fn bootstrap_admin_user(pool: &PgPool) -> Result<()> {
     // Cheap existence check: any anchor USER already present means we're
     // not on a freshly-deployed environment.
-    let existing: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM iam_principals WHERE type = 'USER' AND scope = 'ANCHOR'",
-    )
-    .fetch_one(pool)
-    .await?;
+    let existing: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM iam_principals WHERE type = $1 AND scope = $2")
+            .bind(PrincipalType::User)
+            .bind(UserScope::Anchor)
+            .fetch_one(pool)
+            .await?;
 
     if existing.0 > 0 {
         return Ok(());

@@ -20,6 +20,7 @@ use sqlx::PgPool;
 use utoipa::ToSchema;
 
 use crate::checks;
+use crate::principal::entity::PrincipalType;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 use std::collections::HashMap;
@@ -91,7 +92,8 @@ pub async fn get_dashboard_stats(
         .await
         .map_err(|e| PlatformError::internal(format!("count clients: {}", e)))?;
     let (active_users,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM iam_principals WHERE type = 'USER' AND active = TRUE")
+        sqlx::query_as("SELECT COUNT(*) FROM iam_principals WHERE type = $1 AND active = TRUE")
+            .bind(PrincipalType::User)
             .fetch_one(&state.pool)
             .await
             .map_err(|e| PlatformError::internal(format!("count users: {}", e)))?;

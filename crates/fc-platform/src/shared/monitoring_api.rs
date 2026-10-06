@@ -83,6 +83,17 @@ pub struct SystemHealth {
     pub cpu_usage_percent: f32,
 }
 
+/// A breaker's position: the Resilience4j state names, which is what the
+/// document has always said (`string`, no enumeration: the schema override
+/// keeps it so).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum BreakerPosition {
+    Closed,
+    Open,
+    HalfOpen,
+}
+
 /// Circuit breaker state
 #[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -90,7 +101,8 @@ pub struct CircuitBreakerState {
     /// Target identifier
     pub target: String,
     /// Current state (CLOSED, OPEN, HALF_OPEN)
-    pub state: String,
+    #[schema(value_type = String)]
+    pub state: BreakerPosition,
     /// Failure count
     pub failure_count: u32,
     /// Success count since last failure
@@ -335,9 +347,10 @@ pub async fn get_circuit_breakers(
 
     let breakers = state.circuit_breakers.get_all().await;
 
-    let total_open = breakers.iter().filter(|b| b.state == "OPEN").count();
-    let total_half_open = breakers.iter().filter(|b| b.state == "HALF_OPEN").count();
-    let total_closed = breakers.iter().filter(|b| b.state == "CLOSED").count();
+    let count = |position| breakers.iter().filter(|b| b.state == position).count();
+    let total_open = count(BreakerPosition::Open);
+    let total_half_open = count(BreakerPosition::HalfOpen);
+    let total_closed = count(BreakerPosition::Closed);
 
     Ok(Json(CircuitBreakersResponse {
         breakers,

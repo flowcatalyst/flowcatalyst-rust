@@ -45,6 +45,16 @@ pub enum AuthMode {
     OidcFlow,
 }
 
+impl AuthMode {
+    /// `AUTH_MODE` as written: its spelling is the wire spelling (`NONE`,
+    /// `BASIC`, `OIDC`, `OIDC_FLOW`), read trimmed and case-insensitively as
+    /// Go's `resolveRouterAuth` reads it; `None` for anything else.
+    fn from_env_value(text: &str) -> Option<Self> {
+        let quoted = serde_json::Value::String(text.trim().to_uppercase());
+        serde_json::from_value(quoted).ok()
+    }
+}
+
 /// Authentication configuration
 #[derive(Debug, Clone)]
 pub struct AuthConfig {
@@ -128,14 +138,10 @@ impl AuthConfig {
         // Trimmed and case-insensitive, as Go's `resolveRouterAuth` reads it.
         let mode = match env::var("AUTH_MODE")
             .ok()
-            .as_deref()
-            .map(|m| m.trim().to_uppercase())
+            .and_then(|m| AuthMode::from_env_value(&m))
         {
-            Some(ref m) if m == "NONE" => AuthMode::None,
-            Some(ref m) if m == "BASIC" => AuthMode::Basic,
-            Some(ref m) if m == "OIDC" => AuthMode::Oidc,
-            Some(ref m) if m == "OIDC_FLOW" => AuthMode::OidcFlow,
-            _ => {
+            Some(mode) => mode,
+            None => {
                 // AUTH_MODE unset or unrecognized: infer Basic when credentials
                 // are present (Go-dialect drop-in), else stay fully open.
                 if basic_username.as_deref().is_some_and(|u| !u.is_empty()) {
@@ -912,6 +918,21 @@ pub fn is_public_path(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auth_mode_env_value_is_trimmed_and_case_insensitive() {
+        for (text, want) in [
+            ("NONE", Some(AuthMode::None)),
+            (" basic ", Some(AuthMode::Basic)),
+            ("Oidc", Some(AuthMode::Oidc)),
+            ("oidc_flow", Some(AuthMode::OidcFlow)),
+            ("OIDCFLOW", None),
+            ("", None),
+            ("bearer", None),
+        ] {
+            assert_eq!(AuthMode::from_env_value(text), want, "{text:?}");
+        }
+    }
 
     #[test]
     fn test_auth_mode_default() {

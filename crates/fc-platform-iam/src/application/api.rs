@@ -1195,7 +1195,8 @@ pub async fn provision_application_login_client<U: UnitOfWork>(
 
     // Go: `CONFIDENTIAL` asks for a confidential client, anything else is
     // PUBLIC.
-    let client_type = if req.client_type.as_deref() == Some("CONFIDENTIAL") {
+    let client_type = if req.client_type.as_deref() == Some(OAuthClientType::Confidential.as_str())
+    {
         OAuthClientType::Confidential
     } else {
         OAuthClientType::Public
