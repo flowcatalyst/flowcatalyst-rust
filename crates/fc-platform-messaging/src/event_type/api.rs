@@ -2,6 +2,7 @@
 //!
 //! REST endpoints for event type management.
 
+use fc_platform_core::shared::id::EventTypeId;
 use std::sync::Arc;
 
 use axum::{
@@ -254,13 +255,14 @@ pub async fn get_event_type(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<EventTypeResponse>, PlatformError> {
+    let id = EventTypeId::from_wire(id);
     checks::can_read_event_types(&auth.0)?;
 
     let event_type = state
         .event_type_repo
         .find_by_id(&id)
         .await?
-        .or_not_found("EventType", &id)?;
+        .or_not_found("EventType", id.as_str())?;
 
     // Check client access
     if let Some(ref cid) = event_type.client_id {
@@ -392,6 +394,7 @@ pub async fn update_event_type(
     Path(id): Path<String>,
     Json(req): Json<UpdateEventTypeRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = EventTypeId::from_wire(id);
     use crate::event_type::operations::UpdateEventTypeCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
@@ -442,6 +445,7 @@ pub async fn add_schema_version(
     Path(id): Path<String>,
     Json(req): Json<AddEventTypeSchemaRequest>,
 ) -> Result<Json<EventTypeResponse>, PlatformError> {
+    let id = EventTypeId::from_wire(id);
     checks::can_write_event_types(&auth.0)?;
     // Go registers one handler for `/versions` and `/schemas`: the version
     // is the caller's, and a repeat is 409 `VERSION_EXISTS`.
@@ -449,7 +453,7 @@ pub async fn add_schema_version(
         &state.event_type_repo,
         &state.add_schema_use_case,
         &auth,
-        id,
+        id.into_string(),
         req,
     )
     .await
@@ -475,6 +479,7 @@ pub async fn delete_event_type(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = EventTypeId::from_wire(id);
     use crate::event_type::operations::DeleteEventTypeCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
@@ -539,12 +544,13 @@ pub async fn add_event_type_schema(
     Path(id): Path<String>,
     Json(req): Json<AddEventTypeSchemaRequest>,
 ) -> Result<Json<EventTypeResponse>, PlatformError> {
+    let id = EventTypeId::from_wire(id);
     checks::can_write_event_types(&auth.0)?;
     add_schema(
         &state.event_type_repo,
         &state.add_schema_use_case,
         &auth,
-        id,
+        id.into_string(),
         req,
     )
     .await
@@ -561,6 +567,7 @@ pub(crate) async fn add_schema(
     id: String,
     req: AddEventTypeSchemaRequest,
 ) -> Result<Json<EventTypeResponse>, PlatformError> {
+    let id = EventTypeId::from_wire(id);
     if req.version.trim().is_empty() {
         return Err(PlatformError::bad_request_code(
             "VERSION_REQUIRED",

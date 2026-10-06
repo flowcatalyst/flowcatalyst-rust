@@ -1,6 +1,7 @@
 //! Pause ScheduledJob — stops further cron firings until resumed. In-flight
 //! instances are NOT cancelled; the SDK is responsible for its own runtime.
 
+use fc_platform_core::shared::id::ScheduledJobId;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -18,7 +19,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PauseScheduledJobCommand {
-    pub scheduled_job_id: String,
+    pub scheduled_job_id: ScheduledJobId,
 }
 
 impl AuditMasked for PauseScheduledJobCommand {}
@@ -40,7 +41,7 @@ impl<U: UnitOfWork> UseCase for PauseScheduledJobUseCase<U> {
     type Event = ScheduledJobPaused;
 
     async fn validate(&self, cmd: &Self::Command) -> Result<(), UseCaseError> {
-        if cmd.scheduled_job_id.trim().is_empty() {
+        if cmd.scheduled_job_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation("ID_REQUIRED", "ID required"));
         }
         Ok(())
@@ -77,7 +78,7 @@ impl<U: UnitOfWork> UseCase for PauseScheduledJobUseCase<U> {
         // Go's `PauseScheduledJob` flips the status unconditionally: a
         // repeat is a 204 no-op, not a conflict.
         job.pause();
-        let event = ScheduledJobPaused::new(&ctx, job.id.as_str(), &job.code);
+        let event = ScheduledJobPaused::new(&ctx, &job.id, &job.code);
 
         self.unit_of_work
             .commit(&job, &*self.repo, event, &cmd)

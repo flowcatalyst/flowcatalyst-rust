@@ -1,6 +1,9 @@
 //! Create Subscription Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ConnectionId;
+use fc_platform_core::shared::id::DispatchPoolId;
+use fc_platform_core::shared::id::EventTypeId;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -61,7 +64,7 @@ pub struct EventTypeBindingInput {
 
     /// The event type's id, when the caller knows it (the SPA sends it).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub event_type_id: Option<String>,
+    pub event_type_id: Option<EventTypeId>,
 
     /// The spec version bound to (the SPA sends the current one).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -105,14 +108,14 @@ pub struct CreateSubscriptionCommand {
 
     /// Connection ID (references msg_connections, optional)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub connection_id: Option<String>,
+    pub connection_id: Option<ConnectionId>,
 
     /// Event types to subscribe to
     pub event_types: Vec<EventTypeBindingInput>,
 
     /// Dispatch pool ID (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub dispatch_pool_id: Option<String>,
+    pub dispatch_pool_id: Option<DispatchPoolId>,
 
     /// Service account ID for authentication (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -235,7 +238,7 @@ impl<U: UnitOfWork> UseCase for CreateSubscriptionUseCase<U> {
             &self.connection_repo,
             command.service_account_id.as_deref(),
             true,
-            command.connection_id.as_deref(),
+            command.connection_id.as_ref(),
             true,
         )
         .await
@@ -301,7 +304,7 @@ impl<U: UnitOfWork> UseCase for CreateSubscriptionUseCase<U> {
         // Create domain event
         let event = SubscriptionCreated::new(
             &ctx,
-            subscription.id.as_str(),
+            &subscription.id,
             &subscription.code,
             &subscription.name,
         );
@@ -326,7 +329,7 @@ mod tests {
             description: Some("Receives order events".to_string()),
             client_id: Some("client-123".to_string()),
             endpoint: "https://example.com/webhook".to_string(),
-            connection_id: Some("conn-123".to_string()),
+            connection_id: Some(ConnectionId::from_wire("conn-123")),
             event_types: vec![EventTypeBindingInput {
                 event_type_code: "orders:*:*:*".to_string(),
                 filter: None,

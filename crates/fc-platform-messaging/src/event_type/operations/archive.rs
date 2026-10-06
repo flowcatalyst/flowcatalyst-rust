@@ -1,6 +1,7 @@
 //! Archive Event Type Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::EventTypeId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -18,7 +19,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct ArchiveEventTypeCommand {
     /// Event type ID to archive
-    pub event_type_id: String,
+    pub event_type_id: EventTypeId,
 }
 
 impl AuditMasked for ArchiveEventTypeCommand {}
@@ -44,7 +45,7 @@ impl<U: UnitOfWork> UseCase for ArchiveEventTypeUseCase<U> {
     type Event = EventTypeArchived;
 
     async fn validate(&self, command: &ArchiveEventTypeCommand) -> Result<(), UseCaseError> {
-        if command.event_type_id.trim().is_empty() {
+        if command.event_type_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "EVENT_TYPE_ID_REQUIRED",
                 "Event type ID is required",
@@ -99,7 +100,7 @@ impl<U: UnitOfWork> UseCase for ArchiveEventTypeUseCase<U> {
         event_type.archive();
 
         // Create domain event
-        let event = EventTypeArchived::new(&ctx, event_type.id.as_str(), &event_type.code);
+        let event = EventTypeArchived::new(&ctx, &event_type.id, &event_type.code);
 
         // Atomic commit
         self.unit_of_work
@@ -115,7 +116,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = ArchiveEventTypeCommand {
-            event_type_id: "et-123".to_string(),
+            event_type_id: EventTypeId::from_wire("et-123"),
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

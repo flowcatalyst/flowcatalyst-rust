@@ -1,6 +1,7 @@
 //! Update Event Type Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::EventTypeId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -17,7 +18,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct UpdateEventTypeCommand {
     /// Event type ID to update
-    pub event_type_id: String,
+    pub event_type_id: EventTypeId,
 
     /// New name (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -56,7 +57,7 @@ impl<U: UnitOfWork> UseCase for UpdateEventTypeUseCase<U> {
     type Event = EventTypeUpdated;
 
     async fn validate(&self, command: &UpdateEventTypeCommand) -> Result<(), UseCaseError> {
-        if command.event_type_id.trim().is_empty() {
+        if command.event_type_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "EVENT_TYPE_ID_REQUIRED",
                 "Event type ID is required",
@@ -126,7 +127,7 @@ impl<U: UnitOfWork> UseCase for UpdateEventTypeUseCase<U> {
         // Create domain event
         let event = EventTypeUpdated::new(
             &ctx,
-            event_type.id.as_str(),
+            &event_type.id,
             &event_type.name,
             event_type.description.as_deref(),
         );
@@ -145,7 +146,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = UpdateEventTypeCommand {
-            event_type_id: "et-123".to_string(),
+            event_type_id: EventTypeId::from_wire("et-123"),
             name: Some("New Name".to_string()),
             description: Some("New Description".to_string()),
             client_scoped: None,

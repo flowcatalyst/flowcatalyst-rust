@@ -7,6 +7,7 @@
 //! payload carries exactly Go's `ToDataJSON` fields (the id is `poolId`).
 
 use fc_platform_core::impl_domain_event;
+use fc_platform_core::shared::id::DispatchPoolId;
 use fc_platform_core::usecase::domain_event::EventMetadata;
 use fc_platform_core::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
@@ -14,7 +15,7 @@ use serde::{Deserialize, Serialize};
 const SPEC_VERSION: &str = "1.0";
 const SOURCE: &str = "platform:admin";
 
-fn metadata(ctx: &ExecutionContext, event_type: &str, pool_id: &str) -> EventMetadata {
+fn metadata(ctx: &ExecutionContext, event_type: &str, pool_id: &DispatchPoolId) -> EventMetadata {
     EventMetadata::from_ctx(
         ctx,
         event_type,
@@ -31,7 +32,7 @@ fn metadata(ctx: &ExecutionContext, event_type: &str, pool_id: &str) -> EventMet
 pub struct DispatchPoolCreated {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub pool_id: String,
+    pub pool_id: DispatchPoolId,
     pub code: String,
     pub name: String,
 }
@@ -41,10 +42,10 @@ impl_domain_event!(DispatchPoolCreated);
 impl DispatchPoolCreated {
     pub const EVENT_TYPE: &'static str = "platform:admin:dispatch-pool:created";
 
-    pub fn new(ctx: &ExecutionContext, pool_id: &str, code: &str, name: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, pool_id: &DispatchPoolId, code: &str, name: &str) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, pool_id),
-            pool_id: pool_id.to_string(),
+            pool_id: pool_id.clone(),
             code: code.to_string(),
             name: name.to_string(),
         }
@@ -57,7 +58,7 @@ impl DispatchPoolCreated {
 pub struct DispatchPoolUpdated {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub pool_id: String,
+    pub pool_id: DispatchPoolId,
     pub name: String,
 }
 
@@ -66,10 +67,10 @@ impl_domain_event!(DispatchPoolUpdated);
 impl DispatchPoolUpdated {
     pub const EVENT_TYPE: &'static str = "platform:admin:dispatch-pool:updated";
 
-    pub fn new(ctx: &ExecutionContext, pool_id: &str, name: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, pool_id: &DispatchPoolId, name: &str) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, pool_id),
-            pool_id: pool_id.to_string(),
+            pool_id: pool_id.clone(),
             name: name.to_string(),
         }
     }
@@ -83,7 +84,7 @@ macro_rules! pool_code_event {
         pub struct $name {
             #[serde(skip)]
             pub metadata: EventMetadata,
-            pub pool_id: String,
+            pub pool_id: DispatchPoolId,
             pub code: String,
         }
 
@@ -92,10 +93,10 @@ macro_rules! pool_code_event {
         impl $name {
             pub const EVENT_TYPE: &'static str = $event_type;
 
-            pub fn new(ctx: &ExecutionContext, pool_id: &str, code: &str) -> Self {
+            pub fn new(ctx: &ExecutionContext, pool_id: &DispatchPoolId, code: &str) -> Self {
                 Self {
                     metadata: metadata(ctx, Self::EVENT_TYPE, pool_id),
-                    pool_id: pool_id.to_string(),
+                    pool_id: pool_id.clone(),
                     code: code.to_string(),
                 }
             }
@@ -171,7 +172,12 @@ mod tests {
     #[test]
     fn test_dispatch_pool_created_event() {
         let ctx = ExecutionContext::system("admin-123");
-        let event = DispatchPoolCreated::new(&ctx, "dp-1", "main-pool", "Main Pool");
+        let event = DispatchPoolCreated::new(
+            &ctx,
+            &DispatchPoolId::from_wire("dp-1"),
+            "main-pool",
+            "Main Pool",
+        );
 
         assert_eq!(
             event.metadata.event_type,
@@ -186,7 +192,8 @@ mod tests {
     #[test]
     fn test_dispatch_pool_archived_event() {
         let ctx = ExecutionContext::system("admin-123");
-        let event = DispatchPoolArchived::new(&ctx, "dp-1", "main-pool");
+        let event =
+            DispatchPoolArchived::new(&ctx, &DispatchPoolId::from_wire("dp-1"), "main-pool");
 
         assert_eq!(
             event.metadata.event_type,

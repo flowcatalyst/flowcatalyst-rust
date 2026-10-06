@@ -1,6 +1,7 @@
 //! EventType Repository — PostgreSQL via SQLx
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::EventTypeId;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{EventType, EventTypeStatus, SpecVersion};
@@ -65,7 +66,7 @@ impl TryFrom<EventTypeRow> for EventType {
 #[derive(sqlx::FromRow)]
 struct SpecVersionRow {
     id: String,
-    event_type_id: String,
+    event_type_id: EventTypeId,
     version: String,
     mime_type: String,
     schema_content: Option<serde_json::Value>,
@@ -246,7 +247,7 @@ impl EventTypeRepository {
         Self { pool: pool.clone() }
     }
 
-    async fn load_spec_versions(&self, event_type_id: &str) -> Result<Vec<SpecVersion>> {
+    async fn load_spec_versions(&self, event_type_id: &EventTypeId) -> Result<Vec<SpecVersion>> {
         let rows = sqlx::query_as::<_, SpecVersionRow>(
             "SELECT id, event_type_id, version, mime_type, schema_content, schema_type, status, created_at, updated_at \
              FROM msg_event_type_spec_versions WHERE event_type_id = $1 ORDER BY version ASC"
@@ -258,7 +259,7 @@ impl EventTypeRepository {
     }
 
     async fn hydrate(&self, mut et: EventType) -> Result<EventType> {
-        et.spec_versions = self.load_spec_versions(et.id.as_str()).await?;
+        et.spec_versions = self.load_spec_versions(&et.id).await?;
         Ok(et)
     }
 
@@ -277,7 +278,7 @@ impl EventTypeRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        let mut spec_map: HashMap<String, Vec<SpecVersion>> = HashMap::new();
+        let mut spec_map: HashMap<EventTypeId, Vec<SpecVersion>> = HashMap::new();
         for row in all_specs {
             let event_type_id = row.event_type_id.clone();
             spec_map
@@ -288,9 +289,8 @@ impl EventTypeRepository {
 
         rows.into_iter()
             .map(|row| {
-                let id = row.id.clone();
                 let mut et = EventType::try_from(row)?;
-                if let Some(specs) = spec_map.remove(&id) {
+                if let Some(specs) = spec_map.remove(&et.id) {
                     et.spec_versions = specs;
                 }
                 Ok(et)
@@ -346,7 +346,7 @@ impl EventTypeRepository {
         Ok(())
     }
 
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<EventType>> {
+    pub async fn find_by_id(&self, id: &EventTypeId) -> Result<Option<EventType>> {
         let row = sqlx::query_as::<_, EventTypeRow>("SELECT * FROM msg_event_types WHERE id = $1")
             .bind(id)
             .fetch_optional(&self.pool)
@@ -570,7 +570,7 @@ impl EventTypeRepository {
         Ok(())
     }
 
-    pub async fn delete(&self, id: &str) -> Result<bool> {
+    pub async fn delete(&self, id: &EventTypeId) -> Result<bool> {
         // Delete spec versions first
         sqlx::query("DELETE FROM msg_event_type_spec_versions WHERE event_type_id = $1")
             .bind(id)

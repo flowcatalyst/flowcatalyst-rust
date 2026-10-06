@@ -1,6 +1,9 @@
 //! Subscription Repository — PostgreSQL via SQLx
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ConnectionId;
+use fc_platform_core::shared::id::EventTypeId;
+use fc_platform_core::shared::id::SubscriptionId;
 use sqlx::PgPool;
 
 use super::entity::{ConfigEntry, EventTypeBinding, Subscription};
@@ -57,6 +60,12 @@ impl TryFrom<SubscriptionRow> for Subscription {
             "client_id",
             &r.id,
         )?;
+        let dispatch_pool_id = decode_id_opt(
+            r.dispatch_pool_id.as_deref(),
+            "msg_subscriptions",
+            "dispatch_pool_id",
+            &r.id,
+        )?;
         let source = decode(&r.source, "msg_subscriptions", "source", &r.id)?;
         let status = decode(&r.status, "msg_subscriptions", "status", &r.id)?;
         let mode = parse_dispatch_mode(Some(&r.mode));
@@ -70,14 +79,16 @@ impl TryFrom<SubscriptionRow> for Subscription {
             client_identifier: r.client_identifier,
             client_scoped: r.client_scoped,
             event_types: vec![], // loaded separately
-            connection_id: r.connection_id,
+            // Read as stored: a blank is a subscription with no connection
+            // (`non_blank` at the signing checks), as it always was.
+            connection_id: r.connection_id.map(ConnectionId::from_wire),
             endpoint: r.target,
             queue: r.queue,
             custom_config: vec![], // loaded separately
             source,
             status,
             max_age_seconds: r.max_age_seconds,
-            dispatch_pool_id: r.dispatch_pool_id,
+            dispatch_pool_id,
             dispatch_pool_code: r.dispatch_pool_code,
             delay_seconds: r.delay_seconds,
             sequence: r.sequence,
@@ -95,15 +106,15 @@ impl TryFrom<SubscriptionRow> for Subscription {
 
 #[derive(sqlx::FromRow)]
 struct SubscriptionEventTypeRow {
-    subscription_id: String,
-    event_type_id: Option<String>,
+    subscription_id: SubscriptionId,
+    event_type_id: Option<EventTypeId>,
     event_type_code: String,
     spec_version: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
 struct SubscriptionCustomConfigRow {
-    subscription_id: String,
+    subscription_id: SubscriptionId,
     config_key: String,
     config_value: String,
 }
@@ -119,7 +130,10 @@ impl SubscriptionRepository {
         Self { pool: pool.clone() }
     }
 
-    async fn load_event_types(&self, subscription_id: &str) -> Result<Vec<EventTypeBinding>> {
+    async fn load_event_types(
+        &self,
+        subscription_id: &SubscriptionId,
+    ) -> Result<Vec<EventTypeBinding>> {
         let rows = sqlx::query_as::<_, SubscriptionEventTypeRow>(
             "SELECT subscription_id, event_type_id, event_type_code, spec_version
              FROM msg_subscription_event_types WHERE subscription_id = $1",
@@ -138,7 +152,10 @@ impl SubscriptionRepository {
             .collect())
     }
 
-    async fn load_custom_config(&self, subscription_id: &str) -> Result<Vec<ConfigEntry>> {
+    async fn load_custom_config(
+        &self,
+        subscription_id: &SubscriptionId,
+    ) -> Result<Vec<ConfigEntry>> {
         let rows = sqlx::query_as::<_, SubscriptionCustomConfigRow>(
             "SELECT subscription_id, config_key, config_value
              FROM msg_subscription_custom_configs WHERE subscription_id = $1",
@@ -156,8 +173,8 @@ impl SubscriptionRepository {
     }
 
     async fn hydrate(&self, mut sub: Subscription) -> Result<Subscription> {
-        sub.event_types = self.load_event_types(sub.id.as_str()).await?;
-        sub.custom_config = self.load_custom_config(sub.id.as_str()).await?;
+        sub.event_types = self.load_event_types(&sub.id).await?;
+        sub.custom_config = self.load_custom_config(&sub.id).await?;
         Ok(sub)
     }
 
@@ -177,7 +194,7 @@ impl SubscriptionRepository {
         .bind(&ids)
         .fetch_all(&self.pool)
         .await?;
-        let mut et_map: HashMap<String, Vec<EventTypeBinding>> = HashMap::new();
+        let mut et_map: HashMap<SubscriptionId, Vec<EventTypeBinding>> = HashMap::new();
         for r in all_et {
             et_map
                 .entry(r.subscription_id.clone())
@@ -198,7 +215,7 @@ impl SubscriptionRepository {
         .bind(&ids)
         .fetch_all(&self.pool)
         .await?;
-        let mut cfg_map: HashMap<String, Vec<ConfigEntry>> = HashMap::new();
+        let mut cfg_map: HashMap<SubscriptionId, Vec<ConfigEntry>> = HashMap::new();
         for r in all_cfg {
             cfg_map
                 .entry(r.subscription_id.clone())
@@ -211,12 +228,11 @@ impl SubscriptionRepository {
 
         rows.into_iter()
             .map(|r| {
-                let id = r.id.clone();
                 let mut sub = Subscription::try_from(r)?;
-                if let Some(ets) = et_map.remove(&id) {
+                if let Some(ets) = et_map.remove(&sub.id) {
                     sub.event_types = ets;
                 }
-                if let Some(cfgs) = cfg_map.remove(&id) {
+                if let Some(cfgs) = cfg_map.remove(&sub.id) {
                     sub.custom_config = cfgs;
                 }
                 Ok(sub)
@@ -263,16 +279,14 @@ impl SubscriptionRepository {
         .bind(&sub.created_by)
         .execute(&self.pool)
         .await?;
-        self.save_event_types(sub.id.as_str(), &sub.event_types)
-            .await?;
-        self.save_custom_config(sub.id.as_str(), &sub.custom_config)
-            .await?;
+        self.save_event_types(&sub.id, &sub.event_types).await?;
+        self.save_custom_config(&sub.id, &sub.custom_config).await?;
         Ok(())
     }
 
     async fn save_event_types(
         &self,
-        subscription_id: &str,
+        subscription_id: &SubscriptionId,
         event_types: &[EventTypeBinding],
     ) -> Result<()> {
         // Delete existing then re-insert via UNNEST
@@ -282,12 +296,12 @@ impl SubscriptionRepository {
             .await?;
 
         if !event_types.is_empty() {
-            let mut sub_ids: Vec<String> = Vec::with_capacity(event_types.len());
-            let mut et_ids: Vec<Option<String>> = Vec::with_capacity(event_types.len());
+            let mut sub_ids: Vec<SubscriptionId> = Vec::with_capacity(event_types.len());
+            let mut et_ids: Vec<Option<EventTypeId>> = Vec::with_capacity(event_types.len());
             let mut et_codes: Vec<String> = Vec::with_capacity(event_types.len());
             let mut spec_versions: Vec<Option<String>> = Vec::with_capacity(event_types.len());
             for et in event_types {
-                sub_ids.push(subscription_id.to_string());
+                sub_ids.push(subscription_id.clone());
                 et_ids.push(et.event_type_id.clone());
                 et_codes.push(et.event_type_code.clone());
                 spec_versions.push(et.spec_version.clone());
@@ -298,7 +312,7 @@ impl SubscriptionRepository {
                  SELECT * FROM UNNEST($1::varchar[], $2::varchar[], $3::varchar[], $4::varchar[])",
             )
             .bind(&sub_ids)
-            .bind(&et_ids as &[Option<String>])
+            .bind(&et_ids as &[Option<EventTypeId>])
             .bind(&et_codes)
             .bind(&spec_versions as &[Option<String>])
             .execute(&self.pool)
@@ -309,7 +323,7 @@ impl SubscriptionRepository {
 
     async fn save_custom_config(
         &self,
-        subscription_id: &str,
+        subscription_id: &SubscriptionId,
         config: &[ConfigEntry],
     ) -> Result<()> {
         sqlx::query("DELETE FROM msg_subscription_custom_configs WHERE subscription_id = $1")
@@ -340,7 +354,7 @@ impl SubscriptionRepository {
         Ok(())
     }
 
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<Subscription>> {
+    pub async fn find_by_id(&self, id: &SubscriptionId) -> Result<Option<Subscription>> {
         let row =
             sqlx::query_as::<_, SubscriptionRow>("SELECT * FROM msg_subscriptions WHERE id = $1")
                 .bind(id)
@@ -354,7 +368,7 @@ impl SubscriptionRepository {
 
     /// Every subscription named by `ids`, hydrated in one pass; an id with
     /// no row is simply absent.
-    pub async fn find_by_ids(&self, ids: &[String]) -> Result<Vec<Subscription>> {
+    pub async fn find_by_ids(&self, ids: &[SubscriptionId]) -> Result<Vec<Subscription>> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -471,10 +485,8 @@ impl SubscriptionRepository {
         .bind(now)
         .execute(&self.pool)
         .await?;
-        self.save_event_types(sub.id.as_str(), &sub.event_types)
-            .await?;
-        self.save_custom_config(sub.id.as_str(), &sub.custom_config)
-            .await?;
+        self.save_event_types(&sub.id, &sub.event_types).await?;
+        self.save_custom_config(&sub.id, &sub.custom_config).await?;
         Ok(())
     }
 
@@ -584,7 +596,7 @@ impl SubscriptionRepository {
     }
 
     /// Check if any subscriptions reference a given connection ID
-    pub async fn exists_by_connection_id(&self, connection_id: &str) -> Result<bool> {
+    pub async fn exists_by_connection_id(&self, connection_id: &ConnectionId) -> Result<bool> {
         let row: (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM msg_subscriptions WHERE connection_id = $1")
                 .bind(connection_id)
@@ -606,7 +618,10 @@ impl SubscriptionRepository {
         self.hydrate_all(rows).await
     }
 
-    pub async fn find_by_connection_id(&self, connection_id: &str) -> Result<Vec<Subscription>> {
+    pub async fn find_by_connection_id(
+        &self,
+        connection_id: &ConnectionId,
+    ) -> Result<Vec<Subscription>> {
         let rows = sqlx::query_as::<_, SubscriptionRow>(
             "SELECT * FROM msg_subscriptions WHERE connection_id = $1 ORDER BY code ASC",
         )
@@ -635,7 +650,7 @@ impl SubscriptionRepository {
         self.hydrate_all(rows).await
     }
 
-    pub async fn delete(&self, id: &str) -> Result<bool> {
+    pub async fn delete(&self, id: &SubscriptionId) -> Result<bool> {
         sqlx::query("DELETE FROM msg_subscription_event_types WHERE subscription_id = $1")
             .bind(id)
             .execute(&self.pool)

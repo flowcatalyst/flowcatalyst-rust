@@ -9,6 +9,8 @@ use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::ScheduledJobId;
+use fc_platform_core::shared::id::ScheduledJobInstanceId;
+use fc_platform_core::shared::id::ScheduledJobInstanceLogId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -354,8 +356,8 @@ fc_platform_core::shared::enum_str::str_enum!(LogLevel, "log level", {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScheduledJobInstance {
-    pub id: String,
-    pub scheduled_job_id: String,
+    pub id: ScheduledJobInstanceId,
+    pub scheduled_job_id: ScheduledJobId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
     pub job_code: String,
@@ -385,10 +387,10 @@ pub struct ScheduledJobInstance {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScheduledJobInstanceLog {
-    pub id: String,
-    pub instance_id: String,
+    pub id: ScheduledJobInstanceLogId,
+    pub instance_id: ScheduledJobInstanceId,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub scheduled_job_id: Option<String>,
+    pub scheduled_job_id: Option<ScheduledJobId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
     pub level: LogLevel,

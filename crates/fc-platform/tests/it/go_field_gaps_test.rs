@@ -6,6 +6,7 @@
 //!   cargo test -p fc-platform --test it go_field_gaps_test:: -- --ignored
 
 use crate::support;
+use fc_platform::shared::id::EventTypeId;
 
 use axum::http::StatusCode;
 use serde_json::{json, Value};
@@ -187,7 +188,7 @@ async fn event_type_client_scoped_is_stored_on_create_and_update() {
     let stored = |id: String| {
         let repo = app.repos.event_type_repo.clone();
         async move {
-            repo.find_by_id(&id)
+            repo.find_by_id(&EventTypeId::from_wire(id.as_str()))
                 .await
                 .unwrap()
                 .expect("event type")

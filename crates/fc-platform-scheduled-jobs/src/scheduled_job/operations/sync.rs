@@ -223,9 +223,7 @@ impl<U: UnitOfWork> UseCase for SyncScheduledJobsUseCase<U> {
                         job.record_update(Some(ctx.principal_id.clone()));
                         updated.push(job.id.to_string());
                         rows.push(RecordedEvent::of(&ScheduledJobUpdated::new(
-                            &ctx,
-                            job.id.as_str(),
-                            &job.code,
+                            &ctx, &job.id, &job.code,
                         ))?);
                         to_persist.push(job);
                     }
@@ -254,9 +252,7 @@ impl<U: UnitOfWork> UseCase for SyncScheduledJobsUseCase<U> {
                     }
                     created.push(job.id.to_string());
                     rows.push(RecordedEvent::of(&ScheduledJobCreated::new(
-                        &ctx,
-                        job.id.as_str(),
-                        &job.code,
+                        &ctx, &job.id, &job.code,
                     ))?);
                     to_persist.push(job);
                 }
@@ -272,9 +268,7 @@ impl<U: UnitOfWork> UseCase for SyncScheduledJobsUseCase<U> {
                     job.archive();
                     archived.push(job.id.to_string());
                     rows.push(RecordedEvent::of(&ScheduledJobArchived::new(
-                        &ctx,
-                        job.id.as_str(),
-                        &job.code,
+                        &ctx, &job.id, &job.code,
                     ))?);
                     to_persist.push(job);
                 }

@@ -17,6 +17,10 @@ use chrono::{DateTime, TimeZone, Utc};
 use fc_platform_core::shared::id::AppClientConfigId;
 use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::shared::id::ApplicationOpenApiSpecId;
+use fc_platform_core::shared::id::ConnectionId;
+use fc_platform_core::shared::id::ProcessId;
+use fc_platform_core::shared::id::ScheduledJobId;
+use fc_platform_core::shared::id::SubscriptionId;
 use serde::Serialize;
 
 use fc_platform_core::shared::id::{EventTypeId, PrincipalId, ServiceAccountId};
@@ -245,7 +249,7 @@ fn client_created() {
 fn connection_created() {
     let e = fixed!(ConnectionCreated::new(
         &ctx(),
-        "con_1",
+        &ConnectionId::parse("con_1").unwrap(),
         "orders-hook",
         "Orders hook"
     ));
@@ -429,7 +433,7 @@ fn roles_assigned() {
 fn process_created() {
     let e = fixed!(ProcessCreated::new(
         &ctx(),
-        "prc_1",
+        &ProcessId::parse("prc_1").unwrap(),
         "orders:fulfillment:ship",
         "Ship"
     ));
@@ -438,7 +442,11 @@ fn process_created() {
 
 #[test]
 fn process_updated() {
-    let e = fixed!(ProcessUpdated::new(&ctx(), "prc_1", "Ship v2"));
+    let e = fixed!(ProcessUpdated::new(
+        &ctx(),
+        &ProcessId::parse("prc_1").unwrap(),
+        "Ship v2"
+    ));
     check(&e, EXPECTED_PROCESS_UPDATED);
 }
 
@@ -454,7 +462,11 @@ fn role_created() {
 
 #[test]
 fn scheduled_job_created() {
-    let e = fixed!(ScheduledJobCreated::new(&ctx(), "sjb_1", "nightly"));
+    let e = fixed!(ScheduledJobCreated::new(
+        &ctx(),
+        &ScheduledJobId::parse("sjb_1").unwrap(),
+        "nightly"
+    ));
     check(&e, EXPECTED_SCHEDULED_JOB_CREATED);
 }
 
@@ -564,7 +576,7 @@ fn service_account_secret_regenerated() {
 fn subscription_created() {
     let e = fixed!(SubscriptionCreated::new(
         &ctx(),
-        "sub_1",
+        &SubscriptionId::parse("sub_1").unwrap(),
         "orders-shipped",
         "Orders shipped"
     ));

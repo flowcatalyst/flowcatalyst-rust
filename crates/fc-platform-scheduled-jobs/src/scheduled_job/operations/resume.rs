@@ -1,5 +1,6 @@
 //! Resume ScheduledJob — flips PAUSED back to ACTIVE.
 
+use fc_platform_core::shared::id::ScheduledJobId;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -17,7 +18,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResumeScheduledJobCommand {
-    pub scheduled_job_id: String,
+    pub scheduled_job_id: ScheduledJobId,
 }
 
 impl AuditMasked for ResumeScheduledJobCommand {}
@@ -39,7 +40,7 @@ impl<U: UnitOfWork> UseCase for ResumeScheduledJobUseCase<U> {
     type Event = ScheduledJobResumed;
 
     async fn validate(&self, cmd: &Self::Command) -> Result<(), UseCaseError> {
-        if cmd.scheduled_job_id.trim().is_empty() {
+        if cmd.scheduled_job_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation("ID_REQUIRED", "ID required"));
         }
         Ok(())
@@ -75,7 +76,7 @@ impl<U: UnitOfWork> UseCase for ResumeScheduledJobUseCase<U> {
 
         // Go's `ResumeScheduledJob` flips the status unconditionally.
         job.resume();
-        let event = ScheduledJobResumed::new(&ctx, job.id.as_str(), &job.code);
+        let event = ScheduledJobResumed::new(&ctx, &job.id, &job.code);
 
         self.unit_of_work
             .commit(&job, &*self.repo, event, &cmd)

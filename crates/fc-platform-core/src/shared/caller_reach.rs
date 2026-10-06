@@ -5,6 +5,7 @@
 use crate::permissions;
 use crate::shared::authorization_service::Authority;
 use crate::shared::error::{PlatformError, Result};
+use crate::shared::id::Id;
 use crate::usecase::UseCaseError;
 use std::result;
 
@@ -37,6 +38,11 @@ pub fn reaches_scope(ctx: &impl Authority, client_id: Option<&str>) -> bool {
 /// A blank client reference is no reference.
 pub fn non_blank(value: Option<String>) -> Option<String> {
     value.filter(|v| !v.trim().is_empty())
+}
+
+/// [`non_blank`] for an id a client may have sent blank.
+pub fn non_blank_id<K>(value: Option<Id<K>>) -> Option<Id<K>> {
+    value.filter(|v| !v.as_str().trim().is_empty())
 }
 
 /// The client an ingested row is written under (Java

@@ -1,6 +1,7 @@
 //! Delete Process Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ProcessId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -16,7 +17,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteProcessCommand {
-    pub process_id: String,
+    pub process_id: ProcessId,
 }
 
 impl AuditMasked for DeleteProcessCommand {}
@@ -41,7 +42,7 @@ impl<U: UnitOfWork> UseCase for DeleteProcessUseCase<U> {
     type Event = ProcessDeleted;
 
     async fn validate(&self, command: &DeleteProcessCommand) -> Result<(), UseCaseError> {
-        if command.process_id.trim().is_empty() {
+        if command.process_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "PROCESS_ID_REQUIRED",
                 "Process ID is required",
@@ -82,7 +83,7 @@ impl<U: UnitOfWork> UseCase for DeleteProcessUseCase<U> {
             ));
         }
 
-        let event = ProcessDeleted::new(&ctx, process.id.as_str(), &process.code);
+        let event = ProcessDeleted::new(&ctx, &process.id, &process.code);
 
         self.unit_of_work
             .commit_delete(&process, &*self.process_repo, event, &command)

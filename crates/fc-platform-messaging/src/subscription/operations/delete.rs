@@ -1,6 +1,7 @@
 //! Delete Subscription Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::SubscriptionId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -18,7 +19,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct DeleteSubscriptionCommand {
     /// Subscription ID to delete
-    pub subscription_id: String,
+    pub subscription_id: SubscriptionId,
 }
 
 impl AuditMasked for DeleteSubscriptionCommand {}
@@ -44,7 +45,7 @@ impl<U: UnitOfWork> UseCase for DeleteSubscriptionUseCase<U> {
     type Event = SubscriptionDeleted;
 
     async fn validate(&self, command: &DeleteSubscriptionCommand) -> Result<(), UseCaseError> {
-        if command.subscription_id.trim().is_empty() {
+        if command.subscription_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "SUBSCRIPTION_ID_REQUIRED",
                 "Subscription ID is required",
@@ -90,7 +91,7 @@ impl<U: UnitOfWork> UseCase for DeleteSubscriptionUseCase<U> {
             )?;
 
         // Create domain event
-        let event = SubscriptionDeleted::new(&ctx, subscription.id.as_str(), &subscription.code);
+        let event = SubscriptionDeleted::new(&ctx, &subscription.id, &subscription.code);
 
         // Atomic commit with delete
         self.unit_of_work
@@ -106,7 +107,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = DeleteSubscriptionCommand {
-            subscription_id: "sub-123".to_string(),
+            subscription_id: SubscriptionId::from_wire("sub-123"),
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

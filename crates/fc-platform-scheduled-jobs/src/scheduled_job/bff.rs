@@ -10,6 +10,8 @@
 //! totalPages}`.
 
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ScheduledJobId;
+use fc_platform_core::shared::id::ScheduledJobInstanceId;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -117,8 +119,8 @@ pub struct BffScheduledJobInstanceResponse {
 impl From<ScheduledJobInstance> for BffScheduledJobInstanceResponse {
     fn from(i: ScheduledJobInstance) -> Self {
         Self {
-            id: i.id,
-            scheduled_job_id: i.scheduled_job_id,
+            id: i.id.into_string(),
+            scheduled_job_id: i.scheduled_job_id.into_string(),
             job_code: i.job_code,
             client_id: i.client_id,
             trigger_kind: i.trigger_kind.as_str().into(),
@@ -153,8 +155,8 @@ pub struct BffInstanceLogResponse {
 impl From<ScheduledJobInstanceLog> for BffInstanceLogResponse {
     fn from(l: ScheduledJobInstanceLog) -> Self {
         Self {
-            id: l.id,
-            instance_id: l.instance_id,
+            id: l.id.into_string(),
+            instance_id: l.instance_id.into_string(),
             level: l.level.as_str().into(),
             message: l.message,
             metadata: l.metadata.filter(|v| !v.is_null()),
@@ -314,7 +316,7 @@ fn to_bff_job(
 async fn visible_job(
     state: &BffScheduledJobsState,
     auth: &AuthContext,
-    id: &str,
+    id: &ScheduledJobId,
 ) -> Result<ScheduledJob, PlatformError> {
     state
         .repo
@@ -327,7 +329,7 @@ async fn visible_job(
 async fn visible_instance(
     state: &BffScheduledJobsState,
     auth: &AuthContext,
-    id: &str,
+    id: &ScheduledJobInstanceId,
 ) -> Result<ScheduledJobInstance, PlatformError> {
     state
         .instance_repo
@@ -409,6 +411,7 @@ pub async fn get_job(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<BffScheduledJobResponse>, PlatformError> {
+    let id = ScheduledJobId::from_wire(id);
     checks::can_read_scheduled_jobs(&auth.0)?;
     let j = visible_job(&state, &auth.0, &id).await?;
     let keys = [(j.id.to_string(), j.tracks_completion)];
@@ -425,6 +428,7 @@ pub async fn list_instances(
     Path(id): Path<String>,
     Query(q): Query<RawQuery>,
 ) -> Result<Json<BffPage<BffScheduledJobInstanceResponse>>, PlatformError> {
+    let id = ScheduledJobId::from_wire(id);
     checks::can_read_scheduled_jobs(&auth.0)?;
     visible_job(&state, &auth.0, &id).await?;
     let page = pagination(&q);
@@ -449,7 +453,7 @@ pub async fn list_instances(
         None => None,
     };
     let filters = InstanceListFilters {
-        scheduled_job_id: Some(&id),
+        scheduled_job_id: Some(id.as_str()),
         client_id: None,
         status,
         trigger_kind,
@@ -479,6 +483,7 @@ pub async fn get_instance(
     auth: Authenticated,
     Path(instance_id): Path<String>,
 ) -> Result<Json<BffScheduledJobInstanceResponse>, PlatformError> {
+    let instance_id = ScheduledJobInstanceId::from_wire(instance_id);
     checks::can_read_scheduled_jobs(&auth.0)?;
     let inst = visible_instance(&state, &auth.0, &instance_id).await?;
     Ok(Json(inst.into()))
@@ -491,6 +496,7 @@ pub async fn list_instance_logs(
     Path(instance_id): Path<String>,
     Query(q): Query<RawQuery>,
 ) -> Result<Json<Vec<BffInstanceLogResponse>>, PlatformError> {
+    let instance_id = ScheduledJobInstanceId::from_wire(instance_id);
     checks::can_read_scheduled_jobs(&auth.0)?;
     visible_instance(&state, &auth.0, &instance_id).await?;
     let limit = q

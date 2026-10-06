@@ -5,6 +5,7 @@
 //! key would break consumer SDK handlers, and re-scoping a job to a different
 //! tenant changes its security boundary. To rename, archive + recreate.
 
+use fc_platform_core::shared::id::ScheduledJobId;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -22,7 +23,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateScheduledJobCommand {
-    pub scheduled_job_id: String,
+    pub scheduled_job_id: ScheduledJobId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -64,7 +65,7 @@ impl<U: UnitOfWork> UseCase for UpdateScheduledJobUseCase<U> {
     type Event = ScheduledJobUpdated;
 
     async fn validate(&self, cmd: &Self::Command) -> Result<(), UseCaseError> {
-        if cmd.scheduled_job_id.trim().is_empty() {
+        if cmd.scheduled_job_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation("ID_REQUIRED", "ID is required"));
         }
         // Go `UpdateScheduledJob.Validate` (scheduledjob/operations/ops.go).
@@ -197,7 +198,7 @@ impl<U: UnitOfWork> UseCase for UpdateScheduledJobUseCase<U> {
 
         job.record_update(Some(ctx.principal_id.clone()));
 
-        let event = ScheduledJobUpdated::new(&ctx, job.id.as_str(), &job.code);
+        let event = ScheduledJobUpdated::new(&ctx, &job.id, &job.code);
 
         self.unit_of_work
             .commit(&job, &*self.repo, event, &cmd)

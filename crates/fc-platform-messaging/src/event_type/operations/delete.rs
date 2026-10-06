@@ -1,6 +1,7 @@
 //! Delete Event Type Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::EventTypeId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -19,7 +20,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct DeleteEventTypeCommand {
     /// Event type ID to delete
-    pub event_type_id: String,
+    pub event_type_id: EventTypeId,
 }
 
 impl AuditMasked for DeleteEventTypeCommand {}
@@ -49,7 +50,7 @@ impl<U: UnitOfWork> UseCase for DeleteEventTypeUseCase<U> {
     type Event = EventTypeDeleted;
 
     async fn validate(&self, command: &DeleteEventTypeCommand) -> Result<(), UseCaseError> {
-        if command.event_type_id.trim().is_empty() {
+        if command.event_type_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "EVENT_TYPE_ID_REQUIRED",
                 "Event type ID is required",
@@ -104,7 +105,7 @@ impl<U: UnitOfWork> UseCase for DeleteEventTypeUseCase<U> {
             ));
         }
 
-        let event = EventTypeDeleted::new(&ctx, event_type.id.as_str(), &event_type.code);
+        let event = EventTypeDeleted::new(&ctx, &event_type.id, &event_type.code);
 
         self.unit_of_work
             .commit_delete(&event_type, &*self.event_type_repo, event, &command)
@@ -119,7 +120,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = DeleteEventTypeCommand {
-            event_type_id: "et-123".to_string(),
+            event_type_id: EventTypeId::from_wire("et-123"),
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("eventTypeId"));

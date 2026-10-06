@@ -8,6 +8,7 @@ use axum::{
     extract::{Path, Query, State},
     Json,
 };
+use fc_platform_core::shared::id::ConnectionId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
@@ -547,7 +548,7 @@ pub(super) async fn sync_subscriptions(
                 name: s.name,
                 description: s.description,
                 target: s.target,
-                connection_id: s.connection_id,
+                connection_id: s.connection_id.map(ConnectionId::from_wire),
                 connection_code: s.connection_code,
                 shared_connection: s.shared_connection,
                 event_types: s

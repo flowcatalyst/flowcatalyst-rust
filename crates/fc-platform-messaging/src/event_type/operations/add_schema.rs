@@ -1,6 +1,7 @@
 //! Add Schema (Spec Version) Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::EventTypeId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -19,7 +20,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct AddSchemaCommand {
     /// Event type ID
-    pub event_type_id: String,
+    pub event_type_id: EventTypeId,
 
     /// Schema version (MAJOR.MINOR format, e.g. "1.0")
     pub version: String,
@@ -64,7 +65,7 @@ impl<U: UnitOfWork> UseCase for AddSchemaUseCase<U> {
     type Event = SchemaAdded;
 
     async fn validate(&self, command: &AddSchemaCommand) -> Result<(), UseCaseError> {
-        if command.event_type_id.trim().is_empty() {
+        if command.event_type_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "EVENT_TYPE_ID_REQUIRED",
                 "Event type ID is required",
@@ -149,8 +150,11 @@ impl<U: UnitOfWork> UseCase for AddSchemaUseCase<U> {
         }
 
         // Create spec version
-        let mut spec_version =
-            SpecVersion::new(&event_type.id, version, command.schema_content.clone());
+        let mut spec_version = SpecVersion::new(
+            event_type.id.clone(),
+            version,
+            command.schema_content.clone(),
+        );
         spec_version.mime_type = command.mime_type.clone();
         if let Some(st) = command.schema_type {
             spec_version.schema_type = st;
@@ -160,7 +164,7 @@ impl<U: UnitOfWork> UseCase for AddSchemaUseCase<U> {
         event_type.add_schema_version(spec_version);
 
         // Create domain event
-        let event = SchemaAdded::new(&ctx, event_type.id.as_str(), version);
+        let event = SchemaAdded::new(&ctx, &event_type.id, version);
 
         self.unit_of_work
             .commit(&event_type, &*self.event_type_repo, event, &command)
@@ -175,7 +179,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = AddSchemaCommand {
-            event_type_id: "et-123".to_string(),
+            event_type_id: EventTypeId::from_wire("et-123"),
             version: "1.0".to_string(),
             mime_type: "application/schema+json".to_string(),
             schema_content: Some(serde_json::json!({"type": "object"})),

@@ -12,6 +12,7 @@
 //! manual fire).
 
 use fc_platform_core::impl_domain_event;
+use fc_platform_core::shared::id::ScheduledJobId;
 use fc_platform_core::usecase::domain_event::{null_if_empty, EventMetadata};
 use fc_platform_core::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
@@ -19,7 +20,7 @@ use serde::{Deserialize, Serialize};
 const SPEC: &str = "1.0";
 const SOURCE: &str = "platform:admin";
 
-fn meta(ctx: &ExecutionContext, event_type: &str, id: &str) -> EventMetadata {
+fn meta(ctx: &ExecutionContext, event_type: &str, id: &ScheduledJobId) -> EventMetadata {
     EventMetadata::from_ctx(
         ctx,
         event_type,
@@ -38,7 +39,7 @@ macro_rules! job_event {
         pub struct $name {
             #[serde(skip)]
             pub metadata: EventMetadata,
-            pub scheduled_job_id: String,
+            pub scheduled_job_id: ScheduledJobId,
             pub code: String,
         }
 
@@ -47,10 +48,10 @@ macro_rules! job_event {
         impl $name {
             pub const EVENT_TYPE: &'static str = $event_type;
 
-            pub fn new(ctx: &ExecutionContext, scheduled_job_id: &str, code: &str) -> Self {
+            pub fn new(ctx: &ExecutionContext, scheduled_job_id: &ScheduledJobId, code: &str) -> Self {
                 Self {
                     metadata: meta(ctx, Self::EVENT_TYPE, scheduled_job_id),
-                    scheduled_job_id: scheduled_job_id.into(),
+                    scheduled_job_id: scheduled_job_id.clone(),
                     code: code.into(),
                 }
             }
@@ -96,7 +97,7 @@ job_event!(
 pub struct ScheduledJobFiredManually {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub scheduled_job_id: String,
+    pub scheduled_job_id: ScheduledJobId,
     pub code: String,
     pub instance_id: String,
 }
@@ -108,13 +109,13 @@ impl ScheduledJobFiredManually {
 
     pub fn new(
         ctx: &ExecutionContext,
-        scheduled_job_id: &str,
+        scheduled_job_id: &ScheduledJobId,
         code: &str,
         instance_id: &str,
     ) -> Self {
         Self {
             metadata: meta(ctx, Self::EVENT_TYPE, scheduled_job_id),
-            scheduled_job_id: scheduled_job_id.into(),
+            scheduled_job_id: scheduled_job_id.clone(),
             code: code.into(),
             instance_id: instance_id.into(),
         }
@@ -180,7 +181,12 @@ mod tests {
     #[test]
     fn scheduled_job_events_are_go_shaped() {
         let ctx = ExecutionContext::system("prn_1");
-        let e = ScheduledJobFiredManually::new(&ctx, "sjb_1", "nightly", "sji_1");
+        let e = ScheduledJobFiredManually::new(
+            &ctx,
+            &ScheduledJobId::parse("sjb_1").unwrap(),
+            "nightly",
+            "sji_1",
+        );
         assert_eq!(
             e.metadata.event_type,
             "platform:admin:scheduled-job:fired-manually"

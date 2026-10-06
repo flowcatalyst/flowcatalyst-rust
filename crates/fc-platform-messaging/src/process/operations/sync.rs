@@ -131,9 +131,7 @@ impl<U: UnitOfWork> UseCase for SyncProcessesUseCase<U> {
                         up.tags = input.tags.clone();
                         up.updated_at = chrono::Utc::now();
                         rows.push(RecordedEvent::of(&ProcessUpdated::new(
-                            &ctx,
-                            up.id.as_str(),
-                            &up.name,
+                            &ctx, &up.id, &up.name,
                         ))?);
                         saves.push(up);
                         updated += 1;
@@ -152,10 +150,7 @@ impl<U: UnitOfWork> UseCase for SyncProcessesUseCase<U> {
                     }
                     p.tags = input.tags.clone();
                     rows.push(RecordedEvent::of(&ProcessCreated::new(
-                        &ctx,
-                        p.id.as_str(),
-                        &p.code,
-                        &p.name,
+                        &ctx, &p.id, &p.code, &p.name,
                     ))?);
                     saves.push(p);
                     created += 1;
@@ -169,9 +164,7 @@ impl<U: UnitOfWork> UseCase for SyncProcessesUseCase<U> {
                     && !synced_codes.contains(&p.code)
                 {
                     rows.push(RecordedEvent::of(&ProcessDeleted::new(
-                        &ctx,
-                        p.id.as_str(),
-                        &p.code,
+                        &ctx, &p.id, &p.code,
                     ))?);
                     deletes.push(p.clone());
                     deleted += 1;

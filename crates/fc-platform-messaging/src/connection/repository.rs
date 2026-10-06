@@ -1,6 +1,7 @@
 //! Connection Repository — PostgreSQL via SQLx
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ConnectionId;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{Connection, ConnectionStatus};
@@ -102,7 +103,7 @@ impl ConnectionRepository {
         Ok(())
     }
 
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<Connection>> {
+    pub async fn find_by_id(&self, id: &ConnectionId) -> Result<Option<Connection>> {
         let row = sqlx::query_as::<_, ConnectionRow>("SELECT * FROM msg_connections WHERE id = $1")
             .bind(id)
             .fetch_optional(&self.pool)
@@ -111,7 +112,7 @@ impl ConnectionRepository {
     }
 
     /// The connections `ids` name (one query); an id naming none is absent.
-    pub async fn find_by_ids(&self, ids: &[String]) -> Result<Vec<Connection>> {
+    pub async fn find_by_ids(&self, ids: &[ConnectionId]) -> Result<Vec<Connection>> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -248,7 +249,7 @@ impl ConnectionRepository {
         Ok(())
     }
 
-    pub async fn delete(&self, id: &str) -> Result<bool> {
+    pub async fn delete(&self, id: &ConnectionId) -> Result<bool> {
         let result = sqlx::query("DELETE FROM msg_connections WHERE id = $1")
             .bind(id)
             .execute(&self.pool)

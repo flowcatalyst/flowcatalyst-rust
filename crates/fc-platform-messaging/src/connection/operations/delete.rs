@@ -1,6 +1,7 @@
 //! Delete Connection Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ConnectionId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -18,7 +19,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteConnectionCommand {
-    pub connection_id: String,
+    pub connection_id: ConnectionId,
 }
 
 impl AuditMasked for DeleteConnectionCommand {}
@@ -49,7 +50,7 @@ impl<U: UnitOfWork> UseCase for DeleteConnectionUseCase<U> {
     type Event = ConnectionDeleted;
 
     async fn validate(&self, command: &DeleteConnectionCommand) -> Result<(), UseCaseError> {
-        if command.connection_id.trim().is_empty() {
+        if command.connection_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "CONNECTION_ID_REQUIRED",
                 "Connection ID is required",
@@ -93,7 +94,7 @@ impl<U: UnitOfWork> UseCase for DeleteConnectionUseCase<U> {
         // Business rule: cannot delete if subscriptions reference this connection
         if self
             .subscription_repo
-            .exists_by_connection_id(connection.id.as_str())
+            .exists_by_connection_id(&connection.id)
             .await?
         {
             return Err(UseCaseError::business_rule(
@@ -102,7 +103,7 @@ impl<U: UnitOfWork> UseCase for DeleteConnectionUseCase<U> {
             ));
         }
 
-        let event = ConnectionDeleted::new(&ctx, connection.id.as_str(), &connection.code);
+        let event = ConnectionDeleted::new(&ctx, &connection.id, &connection.code);
 
         self.unit_of_work
             .commit_delete(&connection, &*self.connection_repo, event, &command)
@@ -117,7 +118,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = DeleteConnectionCommand {
-            connection_id: "conn-123".to_string(),
+            connection_id: ConnectionId::from_wire("conn-123"),
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("connectionId"));

@@ -171,12 +171,8 @@ impl<U: UnitOfWork> UseCase for CreateConnectionUseCase<U> {
             connection.external_id = Some(ext_id.clone());
         }
 
-        let event = ConnectionCreated::new(
-            &ctx,
-            connection.id.as_str(),
-            &connection.code,
-            &connection.name,
-        );
+        let event =
+            ConnectionCreated::new(&ctx, &connection.id, &connection.code, &connection.name);
 
         self.unit_of_work
             .commit(&connection, &*self.connection_repo, event, &command)

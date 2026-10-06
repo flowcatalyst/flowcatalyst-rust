@@ -78,7 +78,7 @@ fc_platform_core::shared::enum_str::str_enum!(SchemaType, "schema type", {
 #[serde(rename_all = "camelCase")]
 pub struct SpecVersion {
     pub id: String,
-    pub event_type_id: String,
+    pub event_type_id: EventTypeId,
     pub version: String,
     pub mime_type: String,
     pub schema_content: Option<serde_json::Value>,
@@ -90,14 +90,14 @@ pub struct SpecVersion {
 
 impl SpecVersion {
     pub fn new(
-        event_type_id: impl Into<String>,
+        event_type_id: EventTypeId,
         version: impl Into<String>,
         schema_content: Option<serde_json::Value>,
     ) -> Self {
         let now = Utc::now();
         Self {
             id: tsid::generate(EntityType::Schema),
-            event_type_id: event_type_id.into(),
+            event_type_id,
             version: version.into(),
             mime_type: "application/schema+json".to_string(),
             schema_content,
@@ -405,7 +405,7 @@ mod tests {
         let mut et = EventType::new(code("a:b:c:d"), "Name");
         let before = et.updated_at;
         thread::sleep(Duration::from_millis(2));
-        let sv = SpecVersion::new(&et.id, "1.0.0", None);
+        let sv = SpecVersion::new(et.id.clone(), "1.0.0", None);
         et.add_schema_version(sv);
         assert_eq!(et.spec_versions.len(), 1);
         assert_eq!(et.spec_versions[0].version, "1.0.0");
@@ -416,7 +416,7 @@ mod tests {
 
     #[test]
     fn spec_version_status_helpers() {
-        let mut sv = SpecVersion::new("et_1", "1.0", None);
+        let mut sv = SpecVersion::new(EventTypeId::from_wire("et_1"), "1.0", None);
         assert!(!sv.is_current());
         assert!(!sv.is_deprecated());
         sv.status = SpecVersionStatus::Current;

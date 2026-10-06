@@ -8,6 +8,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use fc_platform_core::shared::id::ProcessId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
@@ -185,12 +186,13 @@ pub async fn get_process(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ProcessResponse>, PlatformError> {
+    let id = ProcessId::from_wire(id);
     checks::can_read_processes(&auth.0)?;
     let process = state
         .process_repo
         .find_by_id(&id)
         .await?
-        .or_not_found("Process", &id)?;
+        .or_not_found("Process", id.as_str())?;
     Ok(Json(process.into()))
 }
 
@@ -282,6 +284,7 @@ pub async fn update_process(
     Path(id): Path<String>,
     Json(req): Json<UpdateProcessRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = ProcessId::from_wire(id);
     checks::can_update_processes(&auth.0)?;
 
     // Ensure the process exists (gives a clean 404 before the use case runs).
@@ -289,7 +292,7 @@ pub async fn update_process(
         .process_repo
         .find_by_id(&id)
         .await?
-        .or_not_found("Process", &id)?;
+        .or_not_found("Process", id.as_str())?;
 
     let cmd = UpdateProcessCommand {
         process_id: id,
@@ -321,13 +324,14 @@ pub async fn archive_process(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = ProcessId::from_wire(id);
     checks::can_write_processes(&auth.0)?;
 
     let _existing = state
         .process_repo
         .find_by_id(&id)
         .await?
-        .or_not_found("Process", &id)?;
+        .or_not_found("Process", id.as_str())?;
 
     let cmd = ArchiveProcessCommand { process_id: id };
     let ctx = ExecutionContext::from_auth(&auth.0);
@@ -352,13 +356,14 @@ pub async fn delete_process(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = ProcessId::from_wire(id);
     checks::can_delete_processes(&auth.0)?;
 
     let _existing = state
         .process_repo
         .find_by_id(&id)
         .await?
-        .or_not_found("Process", &id)?;
+        .or_not_found("Process", id.as_str())?;
 
     let cmd = DeleteProcessCommand { process_id: id };
     let ctx = ExecutionContext::from_auth(&auth.0);

@@ -9,6 +9,8 @@
 //! The actual webhook delivery happens asynchronously via the existing
 //! cron-poller's queue path — the use case only enqueues; it does not call out.
 
+use fc_platform_core::shared::id::ScheduledJobId;
+use fc_platform_core::shared::id::ScheduledJobInstanceId;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -22,8 +24,6 @@ use crate::scheduled_job::entity::{
 use crate::scheduled_job::{ScheduledJobInstanceRepository, ScheduledJobRepository};
 use fc_platform_core::shared::caller_reach;
 use fc_platform_core::shared::id::OptionIdExt;
-use fc_platform_core::shared::tsid;
-use fc_platform_core::shared::tsid::EntityType;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
@@ -32,7 +32,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FireScheduledJobCommand {
-    pub scheduled_job_id: String,
+    pub scheduled_job_id: ScheduledJobId,
     /// Optional correlation id stamped on the resulting instance for tracing
     /// across the pipeline.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -67,7 +67,7 @@ impl<U: UnitOfWork> UseCase for FireScheduledJobUseCase<U> {
     type Event = ScheduledJobFiredManually;
 
     async fn validate(&self, cmd: &Self::Command) -> Result<(), UseCaseError> {
-        if cmd.scheduled_job_id.trim().is_empty() {
+        if cmd.scheduled_job_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation("ID_REQUIRED", "ID required"));
         }
         Ok(())
@@ -112,8 +112,8 @@ impl<U: UnitOfWork> UseCase for FireScheduledJobUseCase<U> {
 
         let now = Utc::now();
         let instance = ScheduledJobInstance {
-            id: tsid::generate(EntityType::ScheduledJobInstance),
-            scheduled_job_id: job.id.to_string(),
+            id: ScheduledJobInstanceId::generate(),
+            scheduled_job_id: job.id.clone(),
             client_id: job.client_id.as_id_str().map(String::from),
             job_code: job.code.clone(),
             trigger_kind: TriggerKind::Manual,
@@ -137,7 +137,7 @@ impl<U: UnitOfWork> UseCase for FireScheduledJobUseCase<U> {
             )));
         }
 
-        let event = ScheduledJobFiredManually::new(&ctx, job.id.as_str(), &job.code, &instance.id);
+        let event = ScheduledJobFiredManually::new(&ctx, &job.id, &job.code, instance.id.as_str());
 
         self.unit_of_work.emit_event(event, &cmd).await
     }

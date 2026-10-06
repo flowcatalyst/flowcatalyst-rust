@@ -11,6 +11,7 @@
 
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ScheduledJobId;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{ScheduledJob, ScheduledJobStatus};
@@ -101,7 +102,7 @@ impl ScheduledJobRepository {
 
     // ── Reads ────────────────────────────────────────────────────────────────
 
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<ScheduledJob>> {
+    pub async fn find_by_id(&self, id: &ScheduledJobId) -> Result<Option<ScheduledJob>> {
         let row = sqlx::query_as::<_, ScheduledJobRow>(&format!(
             "SELECT {SELECT_COLS} FROM msg_scheduled_jobs WHERE id = $1"
         ))
@@ -112,7 +113,7 @@ impl ScheduledJobRepository {
     }
 
     /// Every job named by `ids`; an id with no row is simply absent.
-    pub async fn find_by_ids(&self, ids: &[String]) -> Result<Vec<ScheduledJob>> {
+    pub async fn find_by_ids(&self, ids: &[ScheduledJobId]) -> Result<Vec<ScheduledJob>> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -337,7 +338,7 @@ impl ScheduledJobRepository {
     /// Mark a slot as fired. Idempotent against re-runs of the same poller
     /// tick. Only updates `last_fired_at` — does not touch any other field
     /// or bump `version`. Bypasses UoW intentionally (infrastructure path).
-    pub async fn mark_fired(&self, id: &str, slot: DateTime<Utc>) -> Result<()> {
+    pub async fn mark_fired(&self, id: &ScheduledJobId, slot: DateTime<Utc>) -> Result<()> {
         sqlx::query(
             "UPDATE msg_scheduled_jobs \
              SET last_fired_at = GREATEST(last_fired_at, $2) \

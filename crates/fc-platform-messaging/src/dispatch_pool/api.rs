@@ -7,6 +7,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use fc_platform_core::shared::id::DispatchPoolId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
@@ -216,6 +217,7 @@ pub async fn get_dispatch_pool<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<DispatchPoolResponse>, PlatformError> {
+    let id = DispatchPoolId::from_wire(id);
     checks::can_read_dispatch_pools(&auth.0)?;
 
     let pool = state
@@ -304,6 +306,7 @@ pub async fn update_dispatch_pool<U: UnitOfWork>(
     Path(id): Path<String>,
     Json(req): Json<UpdateDispatchPoolRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = DispatchPoolId::from_wire(id);
     // Go `CanWriteDispatchPools` (dispatchpool/api/api.go): a pool
     // permission first; client reach is checked below.
     checks::can_write_dispatch_pools(&auth.0)?;
@@ -346,6 +349,7 @@ pub async fn archive_dispatch_pool<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = DispatchPoolId::from_wire(id);
     // Go `CanWriteDispatchPools` (dispatchpool/api/api.go): a pool
     // permission first; client reach is checked below.
     checks::can_write_dispatch_pools(&auth.0)?;
@@ -383,6 +387,7 @@ pub async fn suspend_dispatch_pool<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = DispatchPoolId::from_wire(id);
     // Go `CanWriteDispatchPools` (dispatchpool/api/api.go): a pool
     // permission first; client reach is checked below.
     checks::can_write_dispatch_pools(&auth.0)?;
@@ -422,6 +427,7 @@ pub async fn activate_dispatch_pool<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = DispatchPoolId::from_wire(id);
     // Go `CanWriteDispatchPools` (dispatchpool/api/api.go): a pool
     // permission first; client reach is checked below.
     checks::can_write_dispatch_pools(&auth.0)?;
@@ -465,6 +471,7 @@ pub async fn delete_dispatch_pool<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = DispatchPoolId::from_wire(id);
     checks::can_delete_dispatch_pools(&auth.0)?;
 
     // The use case answers 404 for a missing pool, then checks the caller's

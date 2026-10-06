@@ -1757,7 +1757,7 @@ mod auto_sync_tests {
         let code = EventTypeCode::parse(code).expect("valid code");
         let mut et = EventType::new(code, name);
         if schema.is_some() {
-            et.spec_versions = vec![SpecVersion::new(&et.id, "1.0", schema)];
+            et.spec_versions = vec![SpecVersion::new(et.id.clone(), "1.0", schema)];
         }
         et
     }

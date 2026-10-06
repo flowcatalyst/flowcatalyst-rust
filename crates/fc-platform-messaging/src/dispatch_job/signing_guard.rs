@@ -32,6 +32,8 @@
 //! Every lookup is batched: a batch of a thousand jobs costs a fixed handful
 //! of queries.
 
+use fc_platform_core::shared::id::ConnectionId;
+use fc_platform_core::shared::id::SubscriptionId;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
@@ -132,10 +134,10 @@ impl SigningGuard {
             return Ok(());
         }
 
-        let subscription_ids: Vec<String> = distinct(
+        let subscription_ids = SubscriptionId::from_wire_all(distinct(
             jobs.iter()
                 .filter_map(|j| non_blank(j.subscription_id.as_deref())),
-        );
+        ));
         let subscriptions: HashMap<String, Subscription> = self
             .subscriptions
             .find_by_ids(&subscription_ids)
@@ -164,8 +166,12 @@ impl SigningGuard {
         }
 
         // 2. The identity each job would be signed with.
-        let connection_ids: Vec<String> =
-            distinct(subscriptions.values().filter_map(connection_to_load));
+        let connection_ids = ConnectionId::from_wire_all(distinct(
+            subscriptions
+                .values()
+                .filter_map(connection_to_load)
+                .map(ConnectionId::as_str),
+        ));
         let connections: HashMap<String, Connection> = self
             .connections
             .find_by_ids(&connection_ids)
@@ -179,7 +185,7 @@ impl SigningGuard {
                 let sub = subscription_of(job);
                 let connection = sub
                     .and_then(connection_to_load)
-                    .and_then(|id| connections.get(id));
+                    .and_then(|id| connections.get(id.as_str()));
                 signer_of(&job.code, sub, connection)
             })
             .collect();

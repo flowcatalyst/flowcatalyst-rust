@@ -3,6 +3,7 @@
 //! Bulk creates/updates/deletes anchor-level subscriptions from an application SDK.
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ConnectionId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -40,7 +41,7 @@ pub struct SyncSubscriptionInput {
     pub description: Option<String>,
     pub target: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub connection_id: Option<String>,
+    pub connection_id: Option<ConnectionId>,
     /// The connection by code, stable across environments (Go
     /// `SyncSubscriptionInput.ConnectionCode`): by default one this
     /// application owns; with `shared_connection`, an application-less one.
@@ -256,13 +257,13 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
                         }
                         // Pool codes were all resolved above.
                         if let Some(pool) = requested_pool_code(input).and_then(|c| pools.get(c)) {
-                            updated.dispatch_pool_id = Some(pool.id.to_string());
+                            updated.dispatch_pool_id = Some(pool.id.clone());
                             updated.dispatch_pool_code = Some(pool.code.clone());
                         }
                         updated.updated_at = chrono::Utc::now();
                         rows.push(RecordedEvent::of(&SubscriptionUpdated::new(
                             &ctx,
-                            updated.id.as_str(),
+                            &updated.id,
                             &updated.name,
                         ))?);
                         saves.push(updated);
@@ -290,14 +291,11 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
                         // subscription's mode is left alone on update, as
                         // before.
                         .mode(entity::parse_dispatch_mode(input.mode.as_deref()))
-                        .maybe_dispatch_pool_id(pool.map(|p| p.id.to_string()))
+                        .maybe_dispatch_pool_id(pool.map(|p| p.id.clone()))
                         .maybe_dispatch_pool_code(pool.map(|p| p.code.clone()))
                         .build();
                     rows.push(RecordedEvent::of(&SubscriptionCreated::new(
-                        &ctx,
-                        sub.id.as_str(),
-                        &sub.code,
-                        &sub.name,
+                        &ctx, &sub.id, &sub.code, &sub.name,
                     ))?);
                     saves.push(sub);
                     created_count += 1;
@@ -312,9 +310,7 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
                     && !synced_codes.contains(&sub.code)
                 {
                     rows.push(RecordedEvent::of(&SubscriptionDeleted::new(
-                        &ctx,
-                        sub.id.as_str(),
-                        &sub.code,
+                        &ctx, &sub.id, &sub.code,
                     ))?);
                     deletes.push(sub.clone());
                     deleted_count += 1;
@@ -358,7 +354,7 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
     async fn resolve_connections(
         &self,
         command: &SyncSubscriptionsCommand,
-    ) -> Result<Vec<Option<String>>, UseCaseError> {
+    ) -> Result<Vec<Option<ConnectionId>>, UseCaseError> {
         let app = command.application_code.as_str();
         let client = command.client_id.as_deref();
         let code_of = |i: &SyncSubscriptionInput| {
@@ -369,7 +365,7 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
                 .map(String::from)
         };
         let codes: Vec<String> = command.subscriptions.iter().filter_map(code_of).collect();
-        let ids: Vec<String> = command
+        let ids: Vec<ConnectionId> = command
             .subscriptions
             .iter()
             .filter(|i| code_of(i).is_none())
@@ -380,8 +376,8 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
                 .find_by_codes_for_application(&codes, app),
             self.connection_repo.find_by_ids(&ids),
         )?;
-        let by_id: HashMap<String, Connection> =
-            by_id.into_iter().map(|c| (c.id.to_string(), c)).collect();
+        let by_id: HashMap<ConnectionId, Connection> =
+            by_id.into_iter().map(|c| (c.id.clone(), c)).collect();
 
         let mut resolved = Vec::with_capacity(command.subscriptions.len());
         for input in &command.subscriptions {
@@ -405,7 +401,7 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
                     })?;
                 if input
                     .connection_id
-                    .as_deref()
+                    .as_id_str()
                     .is_some_and(|id| id != found.id.as_str())
                 {
                     return Err(UseCaseError::validation(
@@ -416,7 +412,7 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
                         ),
                     ));
                 }
-                resolved.push(Some(found.id.to_string()));
+                resolved.push(Some(found.id.clone()));
                 continue;
             }
             let Some(ref conn_id) = input.connection_id else {
@@ -457,7 +453,7 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
                     ),
                 ));
             }
-            resolved.push(Some(conn_id.to_string()));
+            resolved.push(Some(conn_id.clone()));
         }
         Ok(resolved)
     }

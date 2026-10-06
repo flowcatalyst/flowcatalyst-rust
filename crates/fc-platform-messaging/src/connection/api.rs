@@ -4,6 +4,7 @@ use axum::{
     extract::{Path, Query, State},
     Json,
 };
+use fc_platform_core::shared::id::ConnectionId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
@@ -180,7 +181,7 @@ pub async fn create_connection(
         .connection_repo
         .find_by_id(&event.connection_id)
         .await?
-        .or_not_found("Connection", &event.connection_id)?;
+        .or_not_found("Connection", event.connection_id.as_str())?;
     Ok((StatusCode::CREATED, Json(conn.into())))
 }
 
@@ -248,13 +249,14 @@ pub async fn get_connection(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ConnectionResponse>, PlatformError> {
+    let id = ConnectionId::from_wire(id);
     checks::can_read_connections(&auth.0)?;
 
     let conn = state
         .connection_repo
         .find_by_id(&id)
         .await?
-        .or_not_found("Connection", &id)?;
+        .or_not_found("Connection", id.as_str())?;
     super::access::ensure_visible(&auth.0, &conn)?;
     Ok(Json(conn.into()))
 }
@@ -281,6 +283,7 @@ pub async fn update_connection(
     Path(id): Path<String>,
     Json(req): Json<UpdateConnectionRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = ConnectionId::from_wire(id);
     use crate::connection::operations::UpdateConnectionCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
@@ -344,6 +347,7 @@ pub async fn delete_connection(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = ConnectionId::from_wire(id);
     use crate::connection::operations::DeleteConnectionCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
@@ -378,6 +382,7 @@ pub async fn pause_connection(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ConnectionResponse>, PlatformError> {
+    let id = ConnectionId::from_wire(id);
     use crate::connection::operations::UpdateConnectionCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
@@ -400,7 +405,7 @@ pub async fn pause_connection(
         .connection_repo
         .find_by_id(&id)
         .await?
-        .or_not_found("Connection", &id)?;
+        .or_not_found("Connection", id.as_str())?;
     Ok(Json(conn.into()))
 }
 
@@ -424,6 +429,7 @@ pub async fn activate_connection(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ConnectionResponse>, PlatformError> {
+    let id = ConnectionId::from_wire(id);
     use crate::connection::operations::UpdateConnectionCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
@@ -446,6 +452,6 @@ pub async fn activate_connection(
         .connection_repo
         .find_by_id(&id)
         .await?
-        .or_not_found("Connection", &id)?;
+        .or_not_found("Connection", id.as_str())?;
     Ok(Json(conn.into()))
 }

@@ -12,6 +12,9 @@
 //!     layer (see CLAUDE.md infrastructure-processing exemption).
 
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ScheduledJobId;
+use fc_platform_core::shared::id::ScheduledJobInstanceId;
+use fc_platform_core::shared::id::ScheduledJobInstanceLogId;
 use std::sync::Arc;
 
 use axum::{
@@ -45,8 +48,6 @@ use fc_platform_core::shared::error::{NotFoundExt, PlatformError};
 use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::shared::middleware::Authenticated;
-use fc_platform_core::shared::tsid;
-use fc_platform_core::shared::tsid::EntityType;
 use fc_platform_core::usecase::{ExecutionContext, PgUnitOfWork, UseCase};
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -384,8 +385,8 @@ pub struct ScheduledJobInstanceResponse {
 impl From<ScheduledJobInstance> for ScheduledJobInstanceResponse {
     fn from(i: ScheduledJobInstance) -> Self {
         Self {
-            id: i.id,
-            scheduled_job_id: i.scheduled_job_id,
+            id: i.id.into_string(),
+            scheduled_job_id: i.scheduled_job_id.into_string(),
             client_id: i.client_id,
             job_code: i.job_code,
             trigger_kind: i.trigger_kind.as_str().into(),
@@ -425,9 +426,9 @@ pub struct InstanceLogResponse {
 impl From<ScheduledJobInstanceLog> for InstanceLogResponse {
     fn from(l: ScheduledJobInstanceLog) -> Self {
         Self {
-            id: l.id,
-            instance_id: l.instance_id,
-            scheduled_job_id: l.scheduled_job_id,
+            id: l.id.into_string(),
+            instance_id: l.instance_id.into_string(),
+            scheduled_job_id: l.scheduled_job_id.map(ScheduledJobId::into_string),
             client_id: l.client_id,
             level: l.level.as_str().into(),
             message: l.message,
@@ -596,13 +597,14 @@ pub async fn get_scheduled_job(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ScheduledJobResponse>, PlatformError> {
+    let id = ScheduledJobId::from_wire(id);
     checks::can_read_scheduled_jobs(&auth.0)?;
 
     let job = state
         .repo
         .find_by_id(&id)
         .await?
-        .or_not_found("ScheduledJob", &id)?;
+        .or_not_found("ScheduledJob", id.as_str())?;
     check_read_access(
         &auth,
         job.client_id.as_id_str(),
@@ -610,7 +612,7 @@ pub async fn get_scheduled_job(
     )?;
     let active = state
         .instance_repo
-        .has_active_instance_for(job.id.as_str(), job.tracks_completion)
+        .has_active_instance_for(&job.id, job.tracks_completion)
         .await
         .unwrap_or(false);
     Ok(Json(ScheduledJobResponse::from(job, active)))
@@ -647,7 +649,7 @@ pub async fn get_scheduled_job_by_code(
     )?;
     let active = state
         .instance_repo
-        .has_active_instance_for(job.id.as_str(), job.tracks_completion)
+        .has_active_instance_for(&job.id, job.tracks_completion)
         .await
         .unwrap_or(false);
     Ok(Json(ScheduledJobResponse::from(job, active)))
@@ -667,6 +669,7 @@ pub async fn update_scheduled_job(
     Path(id): Path<String>,
     Json(req): Json<UpdateScheduledJobRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = ScheduledJobId::from_wire(id);
     checks::can_write_scheduled_jobs(&auth.0)?;
 
     // The use case answers 404 for a missing job, then checks the caller's
@@ -702,6 +705,7 @@ pub async fn pause_scheduled_job(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = ScheduledJobId::from_wire(id);
     checks::can_write_scheduled_jobs(&auth.0)?;
     // The use case answers 404 for a missing job, then checks the caller's
     // scope on it (Go `CheckScopeAccess`, post-load).
@@ -726,6 +730,7 @@ pub async fn resume_scheduled_job(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = ScheduledJobId::from_wire(id);
     checks::can_write_scheduled_jobs(&auth.0)?;
     // The use case answers 404 for a missing job, then checks the caller's
     // scope on it (Go `CheckScopeAccess`, post-load).
@@ -750,6 +755,7 @@ pub async fn archive_scheduled_job(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = ScheduledJobId::from_wire(id);
     checks::can_write_scheduled_jobs(&auth.0)?;
     // The use case answers 404 for a missing job, then checks the caller's
     // scope on it (Go `CheckScopeAccess`, post-load).
@@ -774,6 +780,7 @@ pub async fn delete_scheduled_job(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = ScheduledJobId::from_wire(id);
     checks::can_delete_scheduled_jobs(&auth.0)?;
     // The use case answers 404 for a missing job, then checks the caller's
     // scope on it (Go `CheckScopeAccess`, post-load).
@@ -802,6 +809,7 @@ pub async fn fire_scheduled_job(
     // Content-Type) is a fire with no correlation id.
     req: Option<Json<FireRequest>>,
 ) -> Result<(StatusCode, Json<FireNowResponse>), PlatformError> {
+    let id = ScheduledJobId::from_wire(id);
     let req = req.map(|Json(r)| r).unwrap_or_default();
     checks::can_fire_scheduled_jobs(&auth.0)?;
     // The use case answers 404 for a missing job, then checks the caller's
@@ -817,7 +825,7 @@ pub async fn fire_scheduled_job(
         StatusCode::ACCEPTED,
         Json(FireNowResponse {
             id: event.instance_id.clone(),
-            scheduled_job_id: event.scheduled_job_id,
+            scheduled_job_id: event.scheduled_job_id.into_string(),
             instance_id: event.instance_id,
         }),
     ))
@@ -846,6 +854,7 @@ pub async fn list_instances_for_job(
     Path(id): Path<String>,
     Query(q): Query<ListInstancesQuery>,
 ) -> Result<Json<PaginatedResponse<ScheduledJobInstanceResponse>>, PlatformError> {
+    let id = ScheduledJobId::from_wire(id);
     checks::can_read_scheduled_job_instances(&auth.0)?;
     // Go lists by job id without loading the job (an unknown id is an empty
     // page); a job the caller cannot read stays refused.
@@ -860,7 +869,7 @@ pub async fn list_instances_for_job(
     let status = enum_str::parse_opt::<InstanceStatus>(q.status.as_deref())?;
     let trigger = enum_str::parse_opt::<TriggerKind>(q.trigger_kind.as_deref())?;
     let filters = InstanceListFilters {
-        scheduled_job_id: Some(&id),
+        scheduled_job_id: Some(id.as_str()),
         client_id: None,
         status,
         trigger_kind: trigger,
@@ -897,12 +906,13 @@ pub async fn get_instance(
     auth: Authenticated,
     Path(instance_id): Path<String>,
 ) -> Result<Json<ScheduledJobInstanceResponse>, PlatformError> {
+    let instance_id = ScheduledJobInstanceId::from_wire(instance_id);
     checks::can_read_scheduled_job_instances(&auth.0)?;
     let inst = state
         .instance_repo
         .find_by_id(&instance_id)
         .await?
-        .or_not_found("ScheduledJobInstance", &instance_id)?;
+        .or_not_found("ScheduledJobInstance", instance_id.as_str())?;
     check_read_access(
         &auth,
         inst.client_id.as_deref(),
@@ -923,6 +933,7 @@ pub async fn list_instance_logs(
     auth: Authenticated,
     Path(instance_id): Path<String>,
 ) -> Result<Json<Vec<InstanceLogResponse>>, PlatformError> {
+    let instance_id = ScheduledJobInstanceId::from_wire(instance_id);
     checks::can_read_scheduled_job_instances(&auth.0)?;
     // Go answers an unknown instance's logs with an empty array, not 404.
     let Some(inst) = state.instance_repo.find_by_id(&instance_id).await? else {
@@ -956,16 +967,17 @@ pub async fn post_instance_log(
     Path(instance_id): Path<String>,
     Json(req): Json<InstanceLogRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    let instance_id = ScheduledJobInstanceId::from_wire(instance_id);
     checks::can_write_scheduled_job_instance(&auth.0)?;
     let inst = state
         .instance_repo
         .find_by_id(&instance_id)
         .await?
-        .or_not_found("ScheduledJobInstance", &instance_id)?;
+        .or_not_found("ScheduledJobInstance", instance_id.as_str())?;
     check_scope_access(&auth, inst.client_id.as_deref())?;
 
     let log = ScheduledJobInstanceLog {
-        id: tsid::generate(EntityType::ScheduledJobInstanceLog),
+        id: ScheduledJobInstanceLogId::generate(),
         instance_id: inst.id.clone(),
         scheduled_job_id: Some(inst.scheduled_job_id.clone()),
         client_id: inst.client_id.clone(),
@@ -992,12 +1004,13 @@ pub async fn post_instance_complete(
     Path(instance_id): Path<String>,
     Json(req): Json<InstanceCompleteRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    let instance_id = ScheduledJobInstanceId::from_wire(instance_id);
     checks::can_write_scheduled_job_instance(&auth.0)?;
     let inst = state
         .instance_repo
         .find_by_id(&instance_id)
         .await?
-        .or_not_found("ScheduledJobInstance", &instance_id)?;
+        .or_not_found("ScheduledJobInstance", instance_id.as_str())?;
     check_scope_access(&auth, inst.client_id.as_deref())?;
 
     let (status, completion) =

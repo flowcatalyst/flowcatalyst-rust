@@ -7,6 +7,7 @@
 //! carries exactly Go's `ToDataJSON` fields.
 
 use fc_platform_core::impl_domain_event;
+use fc_platform_core::shared::id::ProcessId;
 use fc_platform_core::usecase::domain_event::EventMetadata;
 use fc_platform_core::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
@@ -14,7 +15,7 @@ use serde::{Deserialize, Serialize};
 const SPEC_VERSION: &str = "1.0";
 const SOURCE: &str = "platform:admin";
 
-fn metadata(ctx: &ExecutionContext, event_type: &str, process_id: &str) -> EventMetadata {
+fn metadata(ctx: &ExecutionContext, event_type: &str, process_id: &ProcessId) -> EventMetadata {
     EventMetadata::from_ctx(
         ctx,
         event_type,
@@ -31,7 +32,7 @@ fn metadata(ctx: &ExecutionContext, event_type: &str, process_id: &str) -> Event
 pub struct ProcessCreated {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub process_id: String,
+    pub process_id: ProcessId,
     pub code: String,
     pub name: String,
 }
@@ -41,10 +42,10 @@ impl_domain_event!(ProcessCreated);
 impl ProcessCreated {
     pub const EVENT_TYPE: &'static str = "platform:admin:process:created";
 
-    pub fn new(ctx: &ExecutionContext, process_id: &str, code: &str, name: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, process_id: &ProcessId, code: &str, name: &str) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, process_id),
-            process_id: process_id.to_string(),
+            process_id: process_id.clone(),
             code: code.to_string(),
             name: name.to_string(),
         }
@@ -57,7 +58,7 @@ impl ProcessCreated {
 pub struct ProcessUpdated {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub process_id: String,
+    pub process_id: ProcessId,
     pub name: String,
 }
 
@@ -66,10 +67,10 @@ impl_domain_event!(ProcessUpdated);
 impl ProcessUpdated {
     pub const EVENT_TYPE: &'static str = "platform:admin:process:updated";
 
-    pub fn new(ctx: &ExecutionContext, process_id: &str, name: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, process_id: &ProcessId, name: &str) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, process_id),
-            process_id: process_id.to_string(),
+            process_id: process_id.clone(),
             name: name.to_string(),
         }
     }
@@ -83,7 +84,7 @@ macro_rules! process_code_event {
         pub struct $name {
             #[serde(skip)]
             pub metadata: EventMetadata,
-            pub process_id: String,
+            pub process_id: ProcessId,
             pub code: String,
         }
 
@@ -92,10 +93,10 @@ macro_rules! process_code_event {
         impl $name {
             pub const EVENT_TYPE: &'static str = $event_type;
 
-            pub fn new(ctx: &ExecutionContext, process_id: &str, code: &str) -> Self {
+            pub fn new(ctx: &ExecutionContext, process_id: &ProcessId, code: &str) -> Self {
                 Self {
                     metadata: metadata(ctx, Self::EVENT_TYPE, process_id),
-                    process_id: process_id.to_string(),
+                    process_id: process_id.clone(),
                     code: code.to_string(),
                 }
             }
@@ -161,7 +162,7 @@ mod tests {
     #[test]
     fn process_events_are_go_shaped() {
         let ctx = ExecutionContext::system("prn_1");
-        let e = ProcessUpdated::new(&ctx, "prc_1", "Order flow");
+        let e = ProcessUpdated::new(&ctx, &ProcessId::parse("prc_1").unwrap(), "Order flow");
         assert_eq!(e.metadata.event_type, "platform:admin:process:updated");
         assert_eq!(e.metadata.subject, "platform.process.prc_1");
         assert_eq!(

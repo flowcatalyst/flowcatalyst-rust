@@ -277,7 +277,7 @@ async fn test_event_type_crud() {
         .expect("Failed to insert event type");
 
     let found = repo
-        .find_by_id(event_type.id.as_str())
+        .find_by_id(&event_type.id)
         .await
         .expect("Failed to find event type");
     assert!(found.is_some());
@@ -672,7 +672,7 @@ async fn test_dispatch_pool_crud() {
 
     // Find by ID
     let found = repo
-        .find_by_id(pool.id.as_str())
+        .find_by_id(&pool.id)
         .await
         .expect("Failed to find dispatch pool");
     assert!(found.is_some());
@@ -690,7 +690,7 @@ async fn test_dispatch_pool_crud() {
         .await
         .expect("Failed to update dispatch pool");
 
-    let suspended = repo.find_by_id(pool.id.as_str()).await.unwrap().unwrap();
+    let suspended = repo.find_by_id(&pool.id).await.unwrap().unwrap();
     assert_eq!(suspended.status, DispatchPoolStatus::Suspended);
 }
 
@@ -1066,7 +1066,7 @@ async fn test_connection_crud() {
 
     // Find by ID
     let found = conn_repo
-        .find_by_id(conn.id.as_str())
+        .find_by_id(&conn.id)
         .await
         .expect("Failed to find connection");
     assert!(found.is_some());
@@ -1084,11 +1084,7 @@ async fn test_connection_crud() {
         .await
         .expect("Failed to update connection");
 
-    let paused = conn_repo
-        .find_by_id(conn.id.as_str())
-        .await
-        .unwrap()
-        .unwrap();
+    let paused = conn_repo.find_by_id(&conn.id).await.unwrap().unwrap();
     assert_eq!(paused.status, ConnectionStatus::Paused);
 
     // Activate
@@ -1099,11 +1095,7 @@ async fn test_connection_crud() {
         .await
         .expect("Failed to update connection");
 
-    let activated = conn_repo
-        .find_by_id(conn.id.as_str())
-        .await
-        .unwrap()
-        .unwrap();
+    let activated = conn_repo.find_by_id(&conn.id).await.unwrap().unwrap();
     assert_eq!(activated.status, ConnectionStatus::Active);
 }
 
@@ -1123,7 +1115,7 @@ async fn test_subscription_crud() {
 
     // Find by ID
     let found = repo
-        .find_by_id(sub.id.as_str())
+        .find_by_id(&sub.id)
         .await
         .expect("Failed to find subscription");
     assert!(found.is_some());
@@ -1257,7 +1249,7 @@ async fn test_subscription_with_event_types() {
 
     // Find by ID and verify event_types are hydrated
     let found = repo
-        .find_by_id(sub.id.as_str())
+        .find_by_id(&sub.id)
         .await
         .expect("Failed to find subscription");
     assert!(found.is_some());

@@ -1,6 +1,7 @@
 //! DispatchPool Repository — PostgreSQL via SQLx
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::DispatchPoolId;
 use sqlx::PgPool;
 
 use super::entity::{DispatchPool, DispatchPoolStatus};
@@ -86,7 +87,7 @@ impl DispatchPoolRepository {
         Ok(())
     }
 
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<DispatchPool>> {
+    pub async fn find_by_id(&self, id: &DispatchPoolId) -> Result<Option<DispatchPool>> {
         let row =
             sqlx::query_as::<_, DispatchPoolRow>("SELECT * FROM msg_dispatch_pools WHERE id = $1")
                 .bind(id)
@@ -96,7 +97,7 @@ impl DispatchPoolRepository {
     }
 
     /// Every pool named by `ids`; an id with no row is simply absent.
-    pub async fn find_by_ids(&self, ids: &[String]) -> Result<Vec<DispatchPool>> {
+    pub async fn find_by_ids(&self, ids: &[DispatchPoolId]) -> Result<Vec<DispatchPool>> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -256,7 +257,7 @@ impl DispatchPoolRepository {
         Ok(())
     }
 
-    pub async fn delete(&self, id: &str) -> Result<bool> {
+    pub async fn delete(&self, id: &DispatchPoolId) -> Result<bool> {
         let result = sqlx::query("DELETE FROM msg_dispatch_pools WHERE id = $1")
             .bind(id)
             .execute(&self.pool)

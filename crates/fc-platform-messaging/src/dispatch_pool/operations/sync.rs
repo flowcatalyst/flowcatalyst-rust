@@ -179,7 +179,7 @@ impl<U: UnitOfWork> UseCase for SyncDispatchPoolsUseCase<U> {
                     updated.updated_at = chrono::Utc::now();
                     rows.push(RecordedEvent::of(&DispatchPoolUpdated::new(
                         &ctx,
-                        updated.id.as_str(),
+                        &updated.id,
                         &updated.name,
                     ))?);
                     saves.push(updated);
@@ -191,10 +191,7 @@ impl<U: UnitOfWork> UseCase for SyncDispatchPoolsUseCase<U> {
                     pool.rate_limit = input.rate_limit.map(|r| r as i32);
                     pool.concurrency = input.concurrency as i32;
                     rows.push(RecordedEvent::of(&DispatchPoolCreated::new(
-                        &ctx,
-                        pool.id.as_str(),
-                        &pool.code,
-                        &pool.name,
+                        &ctx, &pool.id, &pool.code, &pool.name,
                     ))?);
                     saves.push(pool);
                     created_count += 1;
@@ -213,7 +210,7 @@ impl<U: UnitOfWork> UseCase for SyncDispatchPoolsUseCase<U> {
                     archived.archive();
                     rows.push(RecordedEvent::of(&DispatchPoolArchived::new(
                         &ctx,
-                        archived.id.as_str(),
+                        &archived.id,
                         &archived.code,
                     ))?);
                     saves.push(archived);

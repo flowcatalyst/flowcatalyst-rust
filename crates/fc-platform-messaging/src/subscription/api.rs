@@ -7,6 +7,10 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use fc_platform_core::shared::id::ConnectionId;
+use fc_platform_core::shared::id::DispatchPoolId;
+use fc_platform_core::shared::id::EventTypeId;
+use fc_platform_core::shared::id::SubscriptionId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
@@ -60,7 +64,7 @@ impl EventTypeBindingRequest {
         EventTypeBindingInput {
             event_type_code: self.event_type_code,
             filter: self.filter,
-            event_type_id: self.event_type_id,
+            event_type_id: self.event_type_id.map(EventTypeId::from_wire),
             spec_version: self.spec_version,
         }
     }
@@ -236,7 +240,7 @@ pub struct EventTypeBindingResponse {
 impl From<&EventTypeBinding> for EventTypeBindingResponse {
     fn from(b: &EventTypeBinding) -> Self {
         Self {
-            event_type_id: b.event_type_id.clone(),
+            event_type_id: b.event_type_id.as_ref().map(EventTypeId::to_string),
             event_type_code: b.event_type_code.clone(),
             spec_version: b.spec_version.clone(),
             filter: b.filter.clone(),
@@ -321,14 +325,14 @@ impl From<Subscription> for SubscriptionResponse {
             client_identifier: s.client_identifier,
             client_scoped: s.client_scoped,
             event_types: s.event_types.iter().map(|e| e.into()).collect(),
-            connection_id: s.connection_id,
+            connection_id: s.connection_id.map(ConnectionId::into_string),
             endpoint: s.endpoint,
             queue: s.queue,
             custom_config: s.custom_config.iter().map(|c| c.into()).collect(),
             source: s.source.as_str().to_string(),
             status: s.status.as_str().to_string(),
             max_age_seconds: s.max_age_seconds,
-            dispatch_pool_id: s.dispatch_pool_id,
+            dispatch_pool_id: s.dispatch_pool_id.map(DispatchPoolId::into_string),
             dispatch_pool_code: s.dispatch_pool_code,
             delay_seconds: s.delay_seconds,
             sequence: s.sequence,
@@ -417,13 +421,13 @@ pub async fn create_subscription(
         description: req.description,
         client_id: req.client_id,
         endpoint: req.endpoint,
-        connection_id: req.connection_id,
+        connection_id: req.connection_id.map(ConnectionId::from_wire),
         event_types: req
             .event_types
             .into_iter()
             .map(EventTypeBindingRequest::into_input)
             .collect(),
-        dispatch_pool_id: req.dispatch_pool_id,
+        dispatch_pool_id: req.dispatch_pool_id.map(DispatchPoolId::from_wire),
         service_account_id: req.service_account_id,
         mode,
         max_retries: req.max_retries,
@@ -464,6 +468,7 @@ pub async fn get_subscription(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<SubscriptionResponse>, PlatformError> {
+    let id = SubscriptionId::from_wire(id);
     checks::can_read_subscriptions(&auth.0)?;
 
     let subscription = state
@@ -547,6 +552,7 @@ pub async fn update_subscription(
     Path(id): Path<String>,
     Json(req): Json<UpdateSubscriptionRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = SubscriptionId::from_wire(id);
     use crate::subscription::operations::UpdateSubscriptionCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
@@ -559,13 +565,13 @@ pub async fn update_subscription(
         name: req.name,
         description: req.description,
         endpoint: req.endpoint,
-        connection_id: req.connection_id,
+        connection_id: req.connection_id.map(ConnectionId::from_wire),
         event_types: req.event_types.map(|v| {
             v.into_iter()
                 .map(EventTypeBindingRequest::into_input)
                 .collect()
         }),
-        dispatch_pool_id: req.dispatch_pool_id,
+        dispatch_pool_id: req.dispatch_pool_id.map(DispatchPoolId::from_wire),
         service_account_id: req.service_account_id,
         // X-01: an unknown mode is NEXT_ON_ERROR, never a rejection.
         mode: req
@@ -606,6 +612,7 @@ pub async fn pause_subscription(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = SubscriptionId::from_wire(id);
     use crate::subscription::operations::PauseSubscriptionCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
@@ -644,6 +651,7 @@ pub async fn resume_subscription(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = SubscriptionId::from_wire(id);
     use crate::subscription::operations::ResumeSubscriptionCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
@@ -682,6 +690,7 @@ pub async fn delete_subscription(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = SubscriptionId::from_wire(id);
     use crate::subscription::operations::DeleteSubscriptionCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 

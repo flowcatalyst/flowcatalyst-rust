@@ -2,6 +2,7 @@
 //! remain (history retention is partition-driven). Prefer Archive for normal
 //! lifecycle; Delete is for cleanup of mistakes / abandoned definitions.
 
+use fc_platform_core::shared::id::ScheduledJobId;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -19,7 +20,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteScheduledJobCommand {
-    pub scheduled_job_id: String,
+    pub scheduled_job_id: ScheduledJobId,
 }
 
 impl AuditMasked for DeleteScheduledJobCommand {}
@@ -41,7 +42,7 @@ impl<U: UnitOfWork> UseCase for DeleteScheduledJobUseCase<U> {
     type Event = ScheduledJobDeleted;
 
     async fn validate(&self, cmd: &Self::Command) -> Result<(), UseCaseError> {
-        if cmd.scheduled_job_id.trim().is_empty() {
+        if cmd.scheduled_job_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation("ID_REQUIRED", "ID required"));
         }
         Ok(())
@@ -75,7 +76,7 @@ impl<U: UnitOfWork> UseCase for DeleteScheduledJobUseCase<U> {
                 format!("ScheduledJob '{}' not found", cmd.scheduled_job_id),
             )?;
 
-        let event = ScheduledJobDeleted::new(&ctx, job.id.as_str(), &job.code);
+        let event = ScheduledJobDeleted::new(&ctx, &job.id, &job.code);
 
         self.unit_of_work
             .commit_delete(&job, &*self.repo, event, &cmd)

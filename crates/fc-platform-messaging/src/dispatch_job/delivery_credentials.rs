@@ -18,6 +18,8 @@
 //! application's secret: the one the function host verifies against
 //! (`function-invocation.md` §6).
 
+use fc_platform_core::shared::id::ConnectionId;
+use fc_platform_core::shared::id::SubscriptionId;
 use std::fmt;
 use std::sync::Arc;
 
@@ -113,7 +115,11 @@ impl DeliveryCredentials {
 
     pub async fn resolve(&self, job: &DispatchJob) -> Result<Resolved> {
         let subscription = match job.subscription_id.as_deref() {
-            Some(id) => self.subscriptions.find_by_id(id).await?,
+            Some(id) => {
+                self.subscriptions
+                    .find_by_id(&SubscriptionId::from_wire(id))
+                    .await?
+            }
             None => None,
         };
         let connection = match subscription.as_ref().and_then(connection_to_load) {
@@ -186,11 +192,14 @@ pub enum Signer {
 
 /// The connection whose account step 2 would read: the subscription's, when
 /// the subscription names no account of its own.
-pub fn connection_to_load(subscription: &Subscription) -> Option<&str> {
+pub fn connection_to_load(subscription: &Subscription) -> Option<&ConnectionId> {
     if non_blank(subscription.service_account_id.as_deref()).is_some() {
         return None;
     }
-    non_blank(subscription.connection_id.as_deref())
+    subscription
+        .connection_id
+        .as_ref()
+        .filter(|c| !c.as_str().trim().is_empty())
 }
 
 /// [`Signer`] for a job with code `job_code`, its subscription (if it names
@@ -208,9 +217,7 @@ pub fn signer_of(
                 who: format!("subscription {}", sub.code),
             };
         }
-        if let Some(connection) =
-            connection.filter(|c| connection_to_load(sub) == Some(c.id.as_str()))
-        {
+        if let Some(connection) = connection.filter(|c| connection_to_load(sub) == Some(&c.id)) {
             if let Some(account) = non_blank(Some(&connection.service_account_id)) {
                 return Signer::Named {
                     account_id: account.to_string(),
@@ -262,7 +269,7 @@ mod tests {
     ) -> Subscription {
         let mut s = Subscription::new("sub-a", "Sub A", "https://example.test/hook");
         s.service_account_id = account.map(str::to_string);
-        s.connection_id = connection.map(str::to_string);
+        s.connection_id = connection.map(ConnectionId::from_wire);
         s.application_code = app.map(str::to_string);
         s
     }

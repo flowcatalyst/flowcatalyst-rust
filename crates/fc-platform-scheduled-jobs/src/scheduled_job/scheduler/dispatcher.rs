@@ -17,6 +17,7 @@
 //!
 //! Per CLAUDE.md, all writes here bypass UoW (platform-infrastructure path).
 
+use fc_platform_core::shared::id::ScheduledJobId;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -69,7 +70,7 @@ impl<'a> WebhookEnvelope<'a> {
         Self {
             job_id: job.id.as_str(),
             job_code: &job.code,
-            instance_id: &inst.id,
+            instance_id: inst.id.as_str(),
             scheduled_for: inst.scheduled_for,
             fired_at: inst.fired_at,
             trigger_kind: inst.trigger_kind.as_str(),
@@ -159,7 +160,7 @@ impl ScheduledJobDispatcher {
         );
 
         // Batch-load jobs to avoid N+1.
-        let mut job_cache: HashMap<String, Option<ScheduledJob>> = HashMap::new();
+        let mut job_cache: HashMap<ScheduledJobId, Option<ScheduledJob>> = HashMap::new();
         for inst in &instances {
             if !job_cache.contains_key(&inst.scheduled_job_id) {
                 let job = self.repo.find_by_id(&inst.scheduled_job_id).await?;
@@ -394,12 +395,13 @@ enum DispatchOutcome {
 mod tests {
     use super::*;
     use crate::scheduled_job::entity::TriggerKind;
+    use fc_platform_core::shared::id::ScheduledJobInstanceId;
 
     fn instance(job: &ScheduledJob, kind: TriggerKind) -> ScheduledJobInstance {
         let now = chrono::Utc::now();
         ScheduledJobInstance {
-            id: "sji_1".into(),
-            scheduled_job_id: job.id.to_string(),
+            id: ScheduledJobInstanceId::parse("sji_1").unwrap(),
+            scheduled_job_id: job.id.clone(),
             client_id: None,
             job_code: job.code.clone(),
             trigger_kind: kind,

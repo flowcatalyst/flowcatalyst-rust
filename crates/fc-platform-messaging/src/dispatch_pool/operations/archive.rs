@@ -1,6 +1,7 @@
 //! Archive Dispatch Pool Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::DispatchPoolId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -19,7 +20,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct ArchiveDispatchPoolCommand {
     /// Dispatch pool ID
-    pub id: String,
+    pub id: DispatchPoolId,
 }
 
 impl AuditMasked for ArchiveDispatchPoolCommand {}
@@ -89,7 +90,7 @@ impl<U: UnitOfWork> UseCase for ArchiveDispatchPoolUseCase<U> {
         pool.archive();
 
         // Create domain event
-        let event = DispatchPoolArchived::new(&ctx, pool.id.as_str(), &pool.code);
+        let event = DispatchPoolArchived::new(&ctx, &pool.id, &pool.code);
 
         // Atomic commit
         self.unit_of_work
@@ -105,7 +106,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = ArchiveDispatchPoolCommand {
-            id: "dp-123".to_string(),
+            id: DispatchPoolId::from_wire("dp-123"),
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

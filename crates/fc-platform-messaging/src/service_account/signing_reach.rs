@@ -30,6 +30,7 @@
 //! signs with.
 
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ConnectionId;
 use std::fmt;
 
 use crate::connection::repository::ConnectionRepository;
@@ -206,11 +207,11 @@ pub async fn require_usable_signers(
     connections: &ConnectionRepository,
     service_account_id: Option<&str>,
     account_must_exist: bool,
-    connection_id: Option<&str>,
+    connection_id: Option<&ConnectionId>,
     connection_must_exist: bool,
 ) -> result::Result<(), UseCaseError> {
     let service_account_id = service_account_id.filter(|v| !v.trim().is_empty());
-    let connection_id = connection_id.filter(|v| !v.trim().is_empty());
+    let connection_id = connection_id.filter(|v| !v.as_str().trim().is_empty());
     if service_account_id.is_none() && connection_id.is_none() {
         return Ok(());
     }

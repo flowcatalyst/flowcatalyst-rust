@@ -1,6 +1,7 @@
 //! Update Connection Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ConnectionId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -18,7 +19,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateConnectionCommand {
-    pub connection_id: String,
+    pub connection_id: ConnectionId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -61,7 +62,7 @@ impl<U: UnitOfWork> UseCase for UpdateConnectionUseCase<U> {
     type Event = ConnectionUpdated;
 
     async fn validate(&self, command: &UpdateConnectionCommand) -> Result<(), UseCaseError> {
-        if command.connection_id.trim().is_empty() {
+        if command.connection_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation("ID_REQUIRED", "id is required"));
         }
         if command.replace_details && command.name.as_deref().is_none_or(|n| n.trim().is_empty()) {
@@ -148,7 +149,7 @@ impl<U: UnitOfWork> UseCase for UpdateConnectionUseCase<U> {
         }
         connection.updated_at = chrono::Utc::now();
 
-        let event = ConnectionUpdated::new(&ctx, connection.id.as_str(), &connection.name);
+        let event = ConnectionUpdated::new(&ctx, &connection.id, &connection.name);
 
         self.unit_of_work
             .commit(&connection, &*self.connection_repo, event, &command)
@@ -163,7 +164,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = UpdateConnectionCommand {
-            connection_id: "conn-123".to_string(),
+            connection_id: ConnectionId::from_wire("conn-123"),
             name: Some("Updated Name".to_string()),
             description: None,
             external_id: None,

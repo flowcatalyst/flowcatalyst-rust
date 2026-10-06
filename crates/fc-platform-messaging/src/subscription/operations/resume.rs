@@ -1,6 +1,7 @@
 //! Resume Subscription Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::SubscriptionId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -18,7 +19,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct ResumeSubscriptionCommand {
     /// Subscription ID to resume
-    pub subscription_id: String,
+    pub subscription_id: SubscriptionId,
 }
 
 impl AuditMasked for ResumeSubscriptionCommand {}
@@ -44,7 +45,7 @@ impl<U: UnitOfWork> UseCase for ResumeSubscriptionUseCase<U> {
     type Event = SubscriptionResumed;
 
     async fn validate(&self, command: &ResumeSubscriptionCommand) -> Result<(), UseCaseError> {
-        if command.subscription_id.trim().is_empty() {
+        if command.subscription_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "SUBSCRIPTION_ID_REQUIRED",
                 "Subscription ID is required",
@@ -96,7 +97,7 @@ impl<U: UnitOfWork> UseCase for ResumeSubscriptionUseCase<U> {
         subscription.resume();
 
         // Create domain event
-        let event = SubscriptionResumed::new(&ctx, subscription.id.as_str());
+        let event = SubscriptionResumed::new(&ctx, &subscription.id);
 
         // Atomic commit
         self.unit_of_work
@@ -112,7 +113,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = ResumeSubscriptionCommand {
-            subscription_id: "sub-123".to_string(),
+            subscription_id: SubscriptionId::from_wire("sub-123"),
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

@@ -7,6 +7,7 @@
 //! each payload carries exactly Go's `ToDataJSON` fields.
 
 use fc_platform_core::impl_domain_event;
+use fc_platform_core::shared::id::SubscriptionId;
 use fc_platform_core::usecase::domain_event::EventMetadata;
 use fc_platform_core::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
@@ -14,7 +15,11 @@ use serde::{Deserialize, Serialize};
 const SPEC_VERSION: &str = "1.0";
 const SOURCE: &str = "platform:admin";
 
-fn metadata(ctx: &ExecutionContext, event_type: &str, subscription_id: &str) -> EventMetadata {
+fn metadata(
+    ctx: &ExecutionContext,
+    event_type: &str,
+    subscription_id: &SubscriptionId,
+) -> EventMetadata {
     EventMetadata::from_ctx(
         ctx,
         event_type,
@@ -31,7 +36,7 @@ fn metadata(ctx: &ExecutionContext, event_type: &str, subscription_id: &str) -> 
 pub struct SubscriptionCreated {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub subscription_id: String,
+    pub subscription_id: SubscriptionId,
     pub code: String,
     pub name: String,
 }
@@ -41,10 +46,15 @@ impl_domain_event!(SubscriptionCreated);
 impl SubscriptionCreated {
     pub const EVENT_TYPE: &'static str = "platform:admin:subscription:created";
 
-    pub fn new(ctx: &ExecutionContext, subscription_id: &str, code: &str, name: &str) -> Self {
+    pub fn new(
+        ctx: &ExecutionContext,
+        subscription_id: &SubscriptionId,
+        code: &str,
+        name: &str,
+    ) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, subscription_id),
-            subscription_id: subscription_id.to_string(),
+            subscription_id: subscription_id.clone(),
             code: code.to_string(),
             name: name.to_string(),
         }
@@ -57,7 +67,7 @@ impl SubscriptionCreated {
 pub struct SubscriptionUpdated {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub subscription_id: String,
+    pub subscription_id: SubscriptionId,
     pub name: String,
 }
 
@@ -66,10 +76,10 @@ impl_domain_event!(SubscriptionUpdated);
 impl SubscriptionUpdated {
     pub const EVENT_TYPE: &'static str = "platform:admin:subscription:updated";
 
-    pub fn new(ctx: &ExecutionContext, subscription_id: &str, name: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, subscription_id: &SubscriptionId, name: &str) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, subscription_id),
-            subscription_id: subscription_id.to_string(),
+            subscription_id: subscription_id.clone(),
             name: name.to_string(),
         }
     }
@@ -83,7 +93,7 @@ macro_rules! id_only_event {
         pub struct $name {
             #[serde(skip)]
             pub metadata: EventMetadata,
-            pub subscription_id: String,
+            pub subscription_id: SubscriptionId,
         }
 
         impl_domain_event!($name);
@@ -91,10 +101,10 @@ macro_rules! id_only_event {
         impl $name {
             pub const EVENT_TYPE: &'static str = $event_type;
 
-            pub fn new(ctx: &ExecutionContext, subscription_id: &str) -> Self {
+            pub fn new(ctx: &ExecutionContext, subscription_id: &SubscriptionId) -> Self {
                 Self {
                     metadata: metadata(ctx, Self::EVENT_TYPE, subscription_id),
-                    subscription_id: subscription_id.to_string(),
+                    subscription_id: subscription_id.clone(),
                 }
             }
         }
@@ -118,7 +128,7 @@ id_only_event!(
 pub struct SubscriptionDeleted {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub subscription_id: String,
+    pub subscription_id: SubscriptionId,
     pub code: String,
 }
 
@@ -127,10 +137,10 @@ impl_domain_event!(SubscriptionDeleted);
 impl SubscriptionDeleted {
     pub const EVENT_TYPE: &'static str = "platform:admin:subscription:deleted";
 
-    pub fn new(ctx: &ExecutionContext, subscription_id: &str, code: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, subscription_id: &SubscriptionId, code: &str) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, subscription_id),
-            subscription_id: subscription_id.to_string(),
+            subscription_id: subscription_id.clone(),
             code: code.to_string(),
         }
     }
@@ -186,7 +196,7 @@ mod tests {
     #[test]
     fn subscription_events_are_go_shaped() {
         let ctx = ExecutionContext::system("prn_1");
-        let e = SubscriptionPaused::new(&ctx, "sub-1");
+        let e = SubscriptionPaused::new(&ctx, &SubscriptionId::from_wire("sub-1"));
         assert_eq!(e.metadata.event_type, "platform:admin:subscription:paused");
         assert_eq!(e.metadata.message_group, "platform:subscription:sub-1");
         assert_eq!(

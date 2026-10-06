@@ -157,3 +157,17 @@ impl IdKind for IdpRoleMappingKind {
     const ENTITY: EntityType = EntityType::IdpRoleMapping;
 }
 pub type IdpRoleMappingId = Id<IdpRoleMappingKind>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum ScheduledJobInstanceKind {}
+impl IdKind for ScheduledJobInstanceKind {
+    const ENTITY: EntityType = EntityType::ScheduledJobInstance;
+}
+pub type ScheduledJobInstanceId = Id<ScheduledJobInstanceKind>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum ScheduledJobInstanceLogKind {}
+impl IdKind for ScheduledJobInstanceLogKind {
+    const ENTITY: EntityType = EntityType::ScheduledJobInstanceLog;
+}
+pub type ScheduledJobInstanceLogId = Id<ScheduledJobInstanceLogKind>;

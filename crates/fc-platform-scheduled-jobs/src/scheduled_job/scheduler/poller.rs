@@ -16,6 +16,7 @@
 //! ([`crate::scheduled_job::cron`]): a cron that does not parse is skipped
 //! and an unknown zone is UTC, as Go's `LatestSlotInWindow` does.
 
+use fc_platform_core::shared::id::ScheduledJobInstanceId;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -30,8 +31,6 @@ use crate::scheduled_job::scheduler::config::ScheduledJobSchedulerConfig;
 use crate::scheduled_job::{ScheduledJobInstanceRepository, ScheduledJobRepository};
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::id::OptionIdExt;
-use fc_platform_core::shared::tsid;
-use fc_platform_core::shared::tsid::EntityType;
 use tokio::time;
 use tokio::time::MissedTickBehavior;
 
@@ -118,8 +117,8 @@ impl ScheduledJobPoller {
         };
 
         let instance = ScheduledJobInstance {
-            id: tsid::generate(EntityType::ScheduledJobInstance),
-            scheduled_job_id: job.id.to_string(),
+            id: ScheduledJobInstanceId::generate(),
+            scheduled_job_id: job.id.clone(),
             client_id: job.client_id.as_id_str().map(String::from),
             job_code: job.code.clone(),
             trigger_kind: TriggerKind::Cron,
@@ -137,7 +136,7 @@ impl ScheduledJobPoller {
         };
 
         self.instance_repo.insert(&instance).await?;
-        self.repo.mark_fired(job.id.as_str(), slot).await?;
+        self.repo.mark_fired(&job.id, slot).await?;
         debug!(job_id = %job.id, slot = %slot, instance_id = %instance.id, "Cron-fired scheduled job");
         Ok(true)
     }

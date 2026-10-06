@@ -161,7 +161,7 @@ impl<U: UnitOfWork> UseCase for CreateDispatchPoolUseCase<U> {
         }
 
         // Create domain event
-        let event = DispatchPoolCreated::new(&ctx, pool.id.as_str(), &pool.code, &pool.name);
+        let event = DispatchPoolCreated::new(&ctx, &pool.id, &pool.code, &pool.name);
 
         // Atomic commit
         self.unit_of_work

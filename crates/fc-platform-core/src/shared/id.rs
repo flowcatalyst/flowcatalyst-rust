@@ -3,8 +3,10 @@
 //!
 //! An id is the string it always was, on the wire (`serde` transparent), in
 //! the database (`text`/`varchar`, arrays included) and in the OpenAPI
-//! document (`string`). What changes is that the only ways to get one are
-//! [`Id::generate`] and [`Id::parse`], and `parse` checks the TSID prefix.
+//! document (`string`). What changes is the kind: an id of one entity does not
+//! pass for another's. [`Id::generate`] and [`Id::parse`] (which checks the
+//! TSID prefix) make one, and so does a database column (decoding checks the
+//! prefix); [`Id::from_wire`] wraps what a client sent as it is.
 
 use std::cmp::Ordering;
 use std::error::Error;

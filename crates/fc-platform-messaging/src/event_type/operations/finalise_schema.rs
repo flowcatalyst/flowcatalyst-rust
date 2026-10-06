@@ -1,6 +1,7 @@
 //! Finalise Schema Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::EventTypeId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -18,7 +19,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct FinaliseSchemaCommand {
     /// Event type ID
-    pub event_type_id: String,
+    pub event_type_id: EventTypeId,
 
     /// Version to finalise (e.g. "1.0")
     pub version: String,
@@ -47,7 +48,7 @@ impl<U: UnitOfWork> UseCase for FinaliseSchemaUseCase<U> {
     type Event = SchemaFinalised;
 
     async fn validate(&self, command: &FinaliseSchemaCommand) -> Result<(), UseCaseError> {
-        if command.event_type_id.trim().is_empty() {
+        if command.event_type_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "EVENT_TYPE_ID_REQUIRED",
                 "Event type ID is required",
@@ -148,7 +149,7 @@ impl<U: UnitOfWork> UseCase for FinaliseSchemaUseCase<U> {
 
         let event = SchemaFinalised::new(
             &ctx,
-            event_type.id.as_str(),
+            &event_type.id,
             &command.version,
             deprecated_version.as_deref(),
         );
@@ -166,7 +167,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = FinaliseSchemaCommand {
-            event_type_id: "et-123".to_string(),
+            event_type_id: EventTypeId::from_wire("et-123"),
             version: "1.0".to_string(),
         };
         let json = serde_json::to_string(&cmd).unwrap();

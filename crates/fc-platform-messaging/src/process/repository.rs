@@ -1,6 +1,7 @@
 //! Process Repository — PostgreSQL via SQLx
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ProcessId;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{Process, ProcessStatus};
@@ -116,7 +117,7 @@ impl ProcessRepository {
         Ok(())
     }
 
-    pub async fn delete(&self, id: &str) -> Result<bool> {
+    pub async fn delete(&self, id: &ProcessId) -> Result<bool> {
         let result = sqlx::query("DELETE FROM msg_processes WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
@@ -124,7 +125,7 @@ impl ProcessRepository {
         Ok(result.rows_affected() > 0)
     }
 
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<Process>> {
+    pub async fn find_by_id(&self, id: &ProcessId) -> Result<Option<Process>> {
         let row = sqlx::query_as::<_, ProcessRow>("SELECT * FROM msg_processes WHERE id = $1")
             .bind(id)
             .fetch_optional(&self.pool)

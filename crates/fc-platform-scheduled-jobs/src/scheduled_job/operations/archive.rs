@@ -1,6 +1,7 @@
 //! Archive ScheduledJob — terminal soft-delete; the job stays in the DB for
 //! audit/history but is excluded from the poller.
 
+use fc_platform_core::shared::id::ScheduledJobId;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -18,7 +19,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ArchiveScheduledJobCommand {
-    pub scheduled_job_id: String,
+    pub scheduled_job_id: ScheduledJobId,
 }
 
 impl AuditMasked for ArchiveScheduledJobCommand {}
@@ -40,7 +41,7 @@ impl<U: UnitOfWork> UseCase for ArchiveScheduledJobUseCase<U> {
     type Event = ScheduledJobArchived;
 
     async fn validate(&self, cmd: &Self::Command) -> Result<(), UseCaseError> {
-        if cmd.scheduled_job_id.trim().is_empty() {
+        if cmd.scheduled_job_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation("ID_REQUIRED", "ID required"));
         }
         Ok(())
@@ -76,7 +77,7 @@ impl<U: UnitOfWork> UseCase for ArchiveScheduledJobUseCase<U> {
 
         // Go's `ArchiveScheduledJob` flips the status unconditionally.
         job.archive();
-        let event = ScheduledJobArchived::new(&ctx, job.id.as_str(), &job.code);
+        let event = ScheduledJobArchived::new(&ctx, &job.id, &job.code);
 
         self.unit_of_work
             .commit(&job, &*self.repo, event, &cmd)

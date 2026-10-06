@@ -10,6 +10,9 @@
 //! `/instances/:id/complete`) are enforced at the handler layer.
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ScheduledJobId;
+use fc_platform_core::shared::id::ScheduledJobInstanceId;
+use fc_platform_core::shared::id::ScheduledJobInstanceLogId;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{
@@ -21,8 +24,8 @@ use std::collections::HashSet;
 
 #[derive(sqlx::FromRow)]
 struct InstanceRow {
-    id: String,
-    scheduled_job_id: String,
+    id: ScheduledJobInstanceId,
+    scheduled_job_id: ScheduledJobId,
     client_id: Option<String>,
     job_code: String,
     trigger_kind: String,
@@ -46,14 +49,19 @@ impl TryFrom<InstanceRow> for ScheduledJobInstance {
             &r.trigger_kind,
             "msg_scheduled_job_instances",
             "trigger_kind",
-            &r.id,
+            r.id.as_str(),
         )?;
-        let status = decode(&r.status, "msg_scheduled_job_instances", "status", &r.id)?;
+        let status = decode(
+            &r.status,
+            "msg_scheduled_job_instances",
+            "status",
+            r.id.as_str(),
+        )?;
         let completion_status = decode_opt(
             r.completion_status.as_deref(),
             "msg_scheduled_job_instances",
             "completion_status",
-            &r.id,
+            r.id.as_str(),
         )?;
         Ok(Self {
             id: r.id,
@@ -78,9 +86,9 @@ impl TryFrom<InstanceRow> for ScheduledJobInstance {
 
 #[derive(sqlx::FromRow)]
 struct LogRow {
-    id: String,
-    instance_id: String,
-    scheduled_job_id: Option<String>,
+    id: ScheduledJobInstanceLogId,
+    instance_id: ScheduledJobInstanceId,
+    scheduled_job_id: Option<ScheduledJobId>,
     client_id: Option<String>,
     level: String,
     message: String,
@@ -91,7 +99,12 @@ struct LogRow {
 impl TryFrom<LogRow> for ScheduledJobInstanceLog {
     type Error = PlatformError;
     fn try_from(r: LogRow) -> Result<Self> {
-        let level = decode(&r.level, "msg_scheduled_job_instance_logs", "level", &r.id)?;
+        let level = decode(
+            &r.level,
+            "msg_scheduled_job_instance_logs",
+            "level",
+            r.id.as_str(),
+        )?;
         Ok(Self {
             id: r.id,
             instance_id: r.instance_id,
@@ -164,7 +177,11 @@ impl ScheduledJobInstanceRepository {
 
     /// Mark an instance as IN_FLIGHT and bump delivery_attempts. Used by the
     /// dispatcher just before issuing the HTTP POST.
-    pub async fn mark_in_flight(&self, id: &str, created_at: DateTime<Utc>) -> Result<()> {
+    pub async fn mark_in_flight(
+        &self,
+        id: &ScheduledJobInstanceId,
+        created_at: DateTime<Utc>,
+    ) -> Result<()> {
         sqlx::query(
             "UPDATE msg_scheduled_job_instances \
              SET status = 'IN_FLIGHT', delivery_attempts = delivery_attempts + 1 \
@@ -179,7 +196,11 @@ impl ScheduledJobInstanceRepository {
 
     /// Successful 202 ACK from the SDK. Sets DELIVERED + delivered_at. If the
     /// job has tracks_completion = false, this is the terminal state.
-    pub async fn mark_delivered(&self, id: &str, created_at: DateTime<Utc>) -> Result<()> {
+    pub async fn mark_delivered(
+        &self,
+        id: &ScheduledJobInstanceId,
+        created_at: DateTime<Utc>,
+    ) -> Result<()> {
         sqlx::query(
             "UPDATE msg_scheduled_job_instances \
              SET status = 'DELIVERED', delivered_at = NOW() \
@@ -196,7 +217,7 @@ impl ScheduledJobInstanceRepository {
     /// decides terminal vs. retryable based on `delivery_max_attempts`.
     pub async fn mark_delivery_failed(
         &self,
-        id: &str,
+        id: &ScheduledJobInstanceId,
         created_at: DateTime<Utc>,
         error: &str,
         terminal: bool,
@@ -225,7 +246,7 @@ impl ScheduledJobInstanceRepository {
     /// terminal at DELIVERED and this is a stale callback.
     pub async fn record_completion(
         &self,
-        id: &str,
+        id: &ScheduledJobInstanceId,
         created_at: DateTime<Utc>,
         status: InstanceStatus,
         completion_status: Option<CompletionStatus>,
@@ -254,7 +275,10 @@ impl ScheduledJobInstanceRepository {
     /// Fetch by id. Partitioned-table reads need either a created_at hint or
     /// a full scan across partitions; we accept the scan since UI lookups are
     /// rare and the partial index on (status) handles the hot path elsewhere.
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<ScheduledJobInstance>> {
+    pub async fn find_by_id(
+        &self,
+        id: &ScheduledJobInstanceId,
+    ) -> Result<Option<ScheduledJobInstance>> {
         let row = sqlx::query_as::<_, InstanceRow>(&format!(
             "SELECT {INSTANCE_COLS} FROM msg_scheduled_job_instances WHERE id = $1"
         ))
@@ -290,7 +314,7 @@ impl ScheduledJobInstanceRepository {
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
-    pub async fn has_active_instance(&self, scheduled_job_id: &str) -> Result<bool> {
+    pub async fn has_active_instance(&self, scheduled_job_id: &ScheduledJobId) -> Result<bool> {
         let row: (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM msg_scheduled_job_instances \
              WHERE scheduled_job_id = $1 \
@@ -307,7 +331,7 @@ impl ScheduledJobInstanceRepository {
     /// tracks completion.
     pub async fn has_active_instance_for(
         &self,
-        scheduled_job_id: &str,
+        scheduled_job_id: &ScheduledJobId,
         tracks_completion: bool,
     ) -> Result<bool> {
         let row: (bool,) = sqlx::query_as(
@@ -462,7 +486,7 @@ impl ScheduledJobInstanceRepository {
 
     pub async fn list_logs_for_instance(
         &self,
-        instance_id: &str,
+        instance_id: &ScheduledJobInstanceId,
         limit: Option<i64>,
     ) -> Result<Vec<ScheduledJobInstanceLog>> {
         let limit = limit.unwrap_or(500);

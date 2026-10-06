@@ -1,6 +1,9 @@
 //! Update Subscription Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ConnectionId;
+use fc_platform_core::shared::id::DispatchPoolId;
+use fc_platform_core::shared::id::SubscriptionId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -13,7 +16,7 @@ use crate::{
 };
 use fc_platform_core::directory::ServiceAccountDirectory;
 use fc_platform_core::shared::caller_reach;
-use fc_platform_core::shared::caller_reach::non_blank;
+use fc_platform_core::shared::caller_reach::{non_blank, non_blank_id};
 use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::usecase::validate_delivery_url;
 use fc_platform_core::usecase::AuditMasked;
@@ -26,7 +29,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct UpdateSubscriptionCommand {
     /// Subscription ID to update
-    pub subscription_id: String,
+    pub subscription_id: SubscriptionId,
 
     /// New name (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -42,7 +45,7 @@ pub struct UpdateSubscriptionCommand {
 
     /// New connection ID (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub connection_id: Option<String>,
+    pub connection_id: Option<ConnectionId>,
 
     /// New event types (replaces existing if provided)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -50,7 +53,7 @@ pub struct UpdateSubscriptionCommand {
 
     /// New dispatch pool ID (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub dispatch_pool_id: Option<String>,
+    pub dispatch_pool_id: Option<DispatchPoolId>,
 
     /// New service account ID (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -125,7 +128,7 @@ impl<U: UnitOfWork> UseCase for UpdateSubscriptionUseCase<U> {
     /// (an empty update is a no-op write), a name may not be blanked, an
     /// endpoint must be a http(s) URL and a queue a known priority.
     async fn validate(&self, command: &UpdateSubscriptionCommand) -> Result<(), UseCaseError> {
-        if command.subscription_id.trim().is_empty() {
+        if command.subscription_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation("ID_REQUIRED", "id is required"));
         }
         if command.name.as_deref().is_some_and(|n| n.trim().is_empty()) {
@@ -180,7 +183,7 @@ impl<U: UnitOfWork> UseCase for UpdateSubscriptionUseCase<U> {
             )?;
         // Where deliveries go and who signs them, before the update.
         let account_before = non_blank(subscription.service_account_id.clone());
-        let connection_before = non_blank(subscription.connection_id.clone());
+        let connection_before = non_blank_id(subscription.connection_id.clone());
         let endpoint_before = subscription.endpoint.clone();
 
         // Apply updates
@@ -264,7 +267,7 @@ impl<U: UnitOfWork> UseCase for UpdateSubscriptionUseCase<U> {
         // caller's endpoint. Re-sending the current values (the SPA sends
         // the whole form) changes nothing and is not re-checked.
         let account_after = non_blank(subscription.service_account_id.clone());
-        let connection_after = non_blank(subscription.connection_id.clone());
+        let connection_after = non_blank_id(subscription.connection_id.clone());
         let account_changed = account_before != account_after;
         let connection_changed = connection_before != connection_after;
         if account_changed || connection_changed || endpoint_before != subscription.endpoint {
@@ -274,7 +277,7 @@ impl<U: UnitOfWork> UseCase for UpdateSubscriptionUseCase<U> {
                 &self.connection_repo,
                 account_after.as_deref(),
                 account_changed,
-                connection_after.as_deref(),
+                connection_after.as_ref(),
                 connection_changed,
             )
             .await?;
@@ -283,7 +286,7 @@ impl<U: UnitOfWork> UseCase for UpdateSubscriptionUseCase<U> {
         subscription.updated_at = chrono::Utc::now();
 
         // Create domain event
-        let event = SubscriptionUpdated::new(&ctx, subscription.id.as_str(), &subscription.name);
+        let event = SubscriptionUpdated::new(&ctx, &subscription.id, &subscription.name);
 
         // Atomic commit
         self.unit_of_work
@@ -299,7 +302,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = UpdateSubscriptionCommand {
-            subscription_id: "sub-123".to_string(),
+            subscription_id: SubscriptionId::from_wire("sub-123"),
             name: Some("New Name".to_string()),
             description: None,
             endpoint: None,

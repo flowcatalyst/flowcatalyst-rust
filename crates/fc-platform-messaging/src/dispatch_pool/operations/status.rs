@@ -7,6 +7,7 @@
 //! reach over the pool is checked by the handler, which loads it first.
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::DispatchPoolId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -23,7 +24,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SuspendDispatchPoolCommand {
-    pub id: String,
+    pub id: DispatchPoolId,
 }
 
 impl AuditMasked for SuspendDispatchPoolCommand {}
@@ -32,13 +33,13 @@ impl AuditMasked for SuspendDispatchPoolCommand {}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivateDispatchPoolCommand {
-    pub id: String,
+    pub id: DispatchPoolId,
 }
 
 impl AuditMasked for ActivateDispatchPoolCommand {}
 
-fn require_id(id: &str) -> Result<(), UseCaseError> {
-    if id.trim().is_empty() {
+fn require_id(id: &DispatchPoolId) -> Result<(), UseCaseError> {
+    if id.as_str().trim().is_empty() {
         return Err(UseCaseError::validation("ID_REQUIRED", "id is required"));
     }
     Ok(())
@@ -99,7 +100,7 @@ impl<U: UnitOfWork> UseCase for SuspendDispatchPoolUseCase<U> {
             Err(e) => return Err(e),
         };
         pool.suspend();
-        let event = DispatchPoolSuspended::new(&ctx, pool.id.as_str(), &pool.code);
+        let event = DispatchPoolSuspended::new(&ctx, &pool.id, &pool.code);
         self.unit_of_work
             .commit(&pool, &*self.dispatch_pool_repo, event, &command)
             .await
@@ -161,7 +162,7 @@ impl<U: UnitOfWork> UseCase for ActivateDispatchPoolUseCase<U> {
             Err(e) => return Err(e),
         };
         pool.activate();
-        let event = DispatchPoolActivated::new(&ctx, pool.id.as_str(), &pool.code);
+        let event = DispatchPoolActivated::new(&ctx, &pool.id, &pool.code);
         self.unit_of_work
             .commit(&pool, &*self.dispatch_pool_repo, event, &command)
             .await
@@ -171,11 +172,12 @@ impl<U: UnitOfWork> UseCase for ActivateDispatchPoolUseCase<U> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fc_platform_core::shared::id::DispatchPoolId;
 
     #[test]
     fn events_are_go_shaped() {
         let ctx = ExecutionContext::system("prn_1");
-        let s = DispatchPoolSuspended::new(&ctx, "dpl_1", "bulk");
+        let s = DispatchPoolSuspended::new(&ctx, &DispatchPoolId::parse("dpl_1").unwrap(), "bulk");
         assert_eq!(
             s.metadata.event_type,
             "platform:admin:dispatch-pool:suspended"
@@ -184,7 +186,7 @@ mod tests {
             serde_json::to_value(&s).unwrap(),
             serde_json::json!({"poolId": "dpl_1", "code": "bulk"})
         );
-        let a = DispatchPoolActivated::new(&ctx, "dpl_1", "bulk");
+        let a = DispatchPoolActivated::new(&ctx, &DispatchPoolId::parse("dpl_1").unwrap(), "bulk");
         assert_eq!(
             a.metadata.event_type,
             "platform:admin:dispatch-pool:activated"

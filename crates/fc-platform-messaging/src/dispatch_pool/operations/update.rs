@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
+use fc_platform_core::shared::id::DispatchPoolId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -19,7 +20,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct UpdateDispatchPoolCommand {
     /// Dispatch pool ID
-    pub id: String,
+    pub id: DispatchPoolId,
 
     /// Updated name
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -62,7 +63,7 @@ impl<U: UnitOfWork> UseCase for UpdateDispatchPoolUseCase<U> {
 
     /// Go `UpdateDispatchPool.Validate`.
     async fn validate(&self, command: &UpdateDispatchPoolCommand) -> Result<(), UseCaseError> {
-        if command.id.trim().is_empty() {
+        if command.id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation("ID_REQUIRED", "id is required"));
         }
         if command.name.as_deref().is_some_and(|n| n.trim().is_empty()) {
@@ -128,7 +129,7 @@ impl<U: UnitOfWork> UseCase for UpdateDispatchPoolUseCase<U> {
         pool.updated_at = Utc::now();
 
         // Create domain event
-        let event = DispatchPoolUpdated::new(&ctx, pool.id.as_str(), &pool.name);
+        let event = DispatchPoolUpdated::new(&ctx, &pool.id, &pool.name);
 
         // Atomic commit
         self.unit_of_work
@@ -144,7 +145,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = UpdateDispatchPoolCommand {
-            id: "dp-123".to_string(),
+            id: DispatchPoolId::from_wire("dp-123"),
             name: Some("Updated Name".to_string()),
             description: None,
             rate_limit: Some(2000),

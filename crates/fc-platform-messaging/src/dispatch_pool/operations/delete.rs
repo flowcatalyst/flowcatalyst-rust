@@ -1,6 +1,7 @@
 //! Delete Dispatch Pool Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::DispatchPoolId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -18,7 +19,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct DeleteDispatchPoolCommand {
     /// Dispatch pool ID
-    pub id: String,
+    pub id: DispatchPoolId,
 }
 
 impl AuditMasked for DeleteDispatchPoolCommand {}
@@ -77,7 +78,7 @@ impl<U: UnitOfWork> UseCase for DeleteDispatchPoolUseCase<U> {
             )?;
 
         // Create domain event
-        let event = DispatchPoolDeleted::new(&ctx, pool.id.as_str(), &pool.code);
+        let event = DispatchPoolDeleted::new(&ctx, &pool.id, &pool.code);
 
         // Atomic commit with delete
         self.unit_of_work
@@ -93,7 +94,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = DeleteDispatchPoolCommand {
-            id: "dp-123".to_string(),
+            id: DispatchPoolId::from_wire("dp-123"),
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

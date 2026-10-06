@@ -3,6 +3,7 @@
 //! Backend-For-Frontend endpoints for event type management.
 //! Provides a UI-friendly view of event types at `/bff/event-types`.
 
+use fc_platform_core::shared::id::EventTypeId;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -368,6 +369,7 @@ pub async fn get_event_type(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<BffEventTypeResponse>, PlatformError> {
+    let id = EventTypeId::from_wire(id);
     checks::can_read_event_types(&auth.0)?;
 
     let event_type = state
@@ -468,6 +470,7 @@ pub async fn update_event_type(
     Path(id): Path<String>,
     Json(req): Json<BffUpdateEventTypeRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = EventTypeId::from_wire(id);
     checks::can_write_event_types(&auth.0)?;
 
     // Fetch to check client access before calling the use case
@@ -515,6 +518,7 @@ pub async fn delete_event_type(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = EventTypeId::from_wire(id);
     checks::can_write_event_types(&auth.0)?;
 
     // Fetch to check client access before calling the use case
@@ -556,6 +560,7 @@ pub async fn archive_event_type(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<BffEventTypeResponse>, PlatformError> {
+    let id = EventTypeId::from_wire(id);
     checks::can_write_event_types(&auth.0)?;
 
     // Fetch to check client access before calling the use case
@@ -609,6 +614,7 @@ pub async fn add_schema(
     Path(id): Path<String>,
     Json(req): Json<BffAddSchemaRequest>,
 ) -> Result<Json<BffEventTypeResponse>, PlatformError> {
+    let id = EventTypeId::from_wire(id);
     checks::can_write_event_types(&auth.0)?;
 
     // Fetch to check client access before calling the use case
@@ -674,6 +680,7 @@ pub async fn finalise_schema(
     auth: Authenticated,
     Path((id, version)): Path<(String, String)>,
 ) -> Result<Json<BffEventTypeResponse>, PlatformError> {
+    let id = EventTypeId::from_wire(id);
     checks::can_write_event_types(&auth.0)?;
 
     // Fetch to check client access before calling the use case
@@ -727,6 +734,7 @@ pub async fn deprecate_schema(
     auth: Authenticated,
     Path((id, version)): Path<(String, String)>,
 ) -> Result<Json<BffEventTypeResponse>, PlatformError> {
+    let id = EventTypeId::from_wire(id);
     checks::can_write_event_types(&auth.0)?;
 
     // Fetch to check client access before calling the use case
@@ -952,8 +960,9 @@ pub async fn bff_put_event_type(
     Path(id): Path<String>,
     Json(req): Json<BffUpdateEventTypeRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = EventTypeId::from_wire(id);
     checks::can_update_event_types(&auth.0)?;
-    bff::update_event_type(State(state.bff), auth, Path(id), Json(req)).await
+    bff::update_event_type(State(state.bff), auth, Path(id.into_string()), Json(req)).await
 }
 
 #[cfg(test)]

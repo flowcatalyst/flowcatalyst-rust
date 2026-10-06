@@ -356,7 +356,7 @@ async fn event_type_writes_check_the_stored_types_scope() {
         use_case
             .run(
                 UpdateEventTypeCommand {
-                    event_type_id: et.id.to_string(),
+                    event_type_id: et.id.clone(),
                     name: Some("Renamed".to_string()),
                     description: None,
                     client_scoped: None,
@@ -401,7 +401,7 @@ async fn dispatch_pool_writes_check_scope_in_the_use_case() {
         )
         .run(
             ArchiveDispatchPoolCommand {
-                id: pool.id.to_string(),
+                id: pool.id.clone(),
             },
             client_admin(),
         )

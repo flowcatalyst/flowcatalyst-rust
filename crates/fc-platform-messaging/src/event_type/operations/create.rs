@@ -163,7 +163,7 @@ impl<U: UnitOfWork> UseCase for CreateEventTypeUseCase<U> {
         }
         event_type.client_scoped = command.client_scoped;
         if let Some(schema) = &command.schema {
-            let spec = SpecVersion::new(&event_type.id, "1.0", Some(schema.clone()));
+            let spec = SpecVersion::new(event_type.id.clone(), "1.0", Some(schema.clone()));
             event_type.add_schema_version(spec);
         }
         event_type.created_by = Some(ctx.principal_id.clone());

@@ -3,6 +3,9 @@
 use chrono::{DateTime, Utc};
 pub use fc_common::DispatchMode;
 use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::ConnectionId;
+use fc_platform_core::shared::id::DispatchPoolId;
+use fc_platform_core::shared::id::EventTypeId;
 use fc_platform_core::shared::id::SubscriptionId;
 use serde::{Deserialize, Serialize};
 
@@ -47,7 +50,7 @@ fc_platform_core::shared::enum_str::str_enum!(SubscriptionSource, "subscription 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EventTypeBinding {
-    pub event_type_id: Option<String>,
+    pub event_type_id: Option<EventTypeId>,
     pub event_type_code: String,
     pub spec_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -104,7 +107,7 @@ pub struct Subscription {
     pub client_scoped: bool,
     pub event_types: Vec<EventTypeBinding>,
     /// Connection ID — references msg_connections (optional, SDK subscriptions may not have one)
-    pub connection_id: Option<String>,
+    pub connection_id: Option<ConnectionId>,
     /// Webhook endpoint URL — the target URL for this subscription
     pub endpoint: String,
     pub queue: Option<String>,
@@ -112,7 +115,7 @@ pub struct Subscription {
     pub source: SubscriptionSource,
     pub status: SubscriptionStatus,
     pub max_age_seconds: i32,
-    pub dispatch_pool_id: Option<String>,
+    pub dispatch_pool_id: Option<DispatchPoolId>,
     pub dispatch_pool_code: Option<String>,
     pub delay_seconds: i32,
     pub sequence: i32,
@@ -146,12 +149,12 @@ impl Subscription {
         description: Option<String>,
         client_id: Option<ClientId>,
         #[builder(default)] event_types: Vec<EventTypeBinding>,
-        connection_id: Option<String>,
+        connection_id: Option<ConnectionId>,
         queue: Option<String>,
         #[builder(default)] custom_config: Vec<ConfigEntry>,
         #[builder(default = SubscriptionSource::Ui)] source: SubscriptionSource,
         #[builder(default = 86400)] max_age_seconds: i32,
-        dispatch_pool_id: Option<String>,
+        dispatch_pool_id: Option<DispatchPoolId>,
         dispatch_pool_code: Option<String>,
         #[builder(default)] delay_seconds: i32,
         #[builder(default)] mode: DispatchMode,
@@ -211,8 +214,8 @@ impl Subscription {
         self.endpoint = ep.into();
         self
     }
-    pub fn with_connection_id(mut self, id: impl Into<String>) -> Self {
-        self.connection_id = Some(id.into());
+    pub fn with_connection_id(mut self, id: ConnectionId) -> Self {
+        self.connection_id = Some(id);
         self
     }
     pub fn with_description(mut self, desc: impl Into<String>) -> Self {
@@ -223,8 +226,8 @@ impl Subscription {
         self.client_id = Some(id);
         self
     }
-    pub fn with_dispatch_pool_id(mut self, id: impl Into<String>) -> Self {
-        self.dispatch_pool_id = Some(id.into());
+    pub fn with_dispatch_pool_id(mut self, id: DispatchPoolId) -> Self {
+        self.dispatch_pool_id = Some(id);
         self
     }
     pub fn with_service_account_id(mut self, id: impl Into<String>) -> Self {
@@ -323,20 +326,23 @@ mod tests {
     fn test_subscription_builder_methods() {
         let sub = Subscription::new("s1", "Sub 1", "https://a.com")
             .with_endpoint("https://b.com")
-            .with_connection_id("conn-1")
+            .with_connection_id(ConnectionId::from_wire("conn-1"))
             .with_description("Test subscription")
             .with_client_id(ClientId::parse("clt_1").unwrap())
-            .with_dispatch_pool_id("pool-1")
+            .with_dispatch_pool_id(DispatchPoolId::from_wire("pool-1"))
             .with_service_account_id("sa-1")
             .with_mode(DispatchMode::BlockOnError)
             .with_data_only(false)
             .with_event_type_binding(EventTypeBinding::new("orders:*:*:*"));
 
         assert_eq!(sub.endpoint, "https://b.com");
-        assert_eq!(sub.connection_id, Some("conn-1".to_string()));
+        assert_eq!(sub.connection_id, Some(ConnectionId::from_wire("conn-1")));
         assert_eq!(sub.description, Some("Test subscription".to_string()));
         assert_eq!(sub.client_id.as_id_str(), Some("clt_1"));
-        assert_eq!(sub.dispatch_pool_id, Some("pool-1".to_string()));
+        assert_eq!(
+            sub.dispatch_pool_id,
+            Some(DispatchPoolId::from_wire("pool-1"))
+        );
         assert_eq!(sub.service_account_id, Some("sa-1".to_string()));
         assert_eq!(sub.mode, DispatchMode::BlockOnError);
         assert!(!sub.data_only);

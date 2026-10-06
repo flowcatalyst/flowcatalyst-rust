@@ -9,6 +9,7 @@
 
 use crate::event_type::entity::EventType;
 use fc_platform_core::impl_domain_event;
+use fc_platform_core::shared::id::EventTypeId;
 use fc_platform_core::usecase::domain_event::EventMetadata;
 use fc_platform_core::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
@@ -17,7 +18,11 @@ const SPEC_VERSION: &str = "1.0";
 const SOURCE: &str = "platform:admin";
 
 /// Metadata on subject `platform.eventtype.{id}` with no message group.
-fn metadata(ctx: &ExecutionContext, event_type: &str, event_type_id: &str) -> EventMetadata {
+fn metadata(
+    ctx: &ExecutionContext,
+    event_type: &str,
+    event_type_id: &EventTypeId,
+) -> EventMetadata {
     EventMetadata::from_ctx(
         ctx,
         event_type,
@@ -35,7 +40,7 @@ fn metadata(ctx: &ExecutionContext, event_type: &str, event_type_id: &str) -> Ev
 pub struct EventTypeCreated {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub event_type_id: String,
+    pub event_type_id: EventTypeId,
     pub code: String,
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -56,8 +61,8 @@ impl EventTypeCreated {
     /// The event for `event_type`, just created inside `ctx`.
     pub fn new(ctx: &ExecutionContext, event_type: &EventType) -> Self {
         Self {
-            metadata: Self::metadata_for(ctx, event_type.id.as_str()),
-            event_type_id: event_type.id.to_string(),
+            metadata: Self::metadata_for(ctx, &event_type.id),
+            event_type_id: event_type.id.clone(),
             code: event_type.code.clone(),
             name: event_type.name.clone(),
             description: event_type.description.clone(),
@@ -70,7 +75,7 @@ impl EventTypeCreated {
     }
 
     /// Metadata for this event, raised inside `ctx`.
-    pub fn metadata_for(ctx: &ExecutionContext, event_type_id: &str) -> EventMetadata {
+    pub fn metadata_for(ctx: &ExecutionContext, event_type_id: &EventTypeId) -> EventMetadata {
         metadata(ctx, Self::EVENT_TYPE, event_type_id)
     }
 }
@@ -82,7 +87,7 @@ impl EventTypeCreated {
 pub struct EventTypeUpdated {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub event_type_id: String,
+    pub event_type_id: EventTypeId,
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -95,13 +100,13 @@ impl EventTypeUpdated {
 
     pub fn new(
         ctx: &ExecutionContext,
-        event_type_id: &str,
+        event_type_id: &EventTypeId,
         name: &str,
         description: Option<&str>,
     ) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, event_type_id),
-            event_type_id: event_type_id.to_string(),
+            event_type_id: event_type_id.clone(),
             name: name.to_string(),
             description: description.map(String::from),
         }
@@ -116,7 +121,7 @@ macro_rules! code_event {
         pub struct $name {
             #[serde(skip)]
             pub metadata: EventMetadata,
-            pub event_type_id: String,
+            pub event_type_id: EventTypeId,
             pub code: String,
         }
 
@@ -125,10 +130,10 @@ macro_rules! code_event {
         impl $name {
             pub const EVENT_TYPE: &'static str = $event_type;
 
-            pub fn new(ctx: &ExecutionContext, event_type_id: &str, code: &str) -> Self {
+            pub fn new(ctx: &ExecutionContext, event_type_id: &EventTypeId, code: &str) -> Self {
                 Self {
                     metadata: metadata(ctx, Self::EVENT_TYPE, event_type_id),
-                    event_type_id: event_type_id.to_string(),
+                    event_type_id: event_type_id.clone(),
                     code: code.to_string(),
                 }
             }
@@ -153,7 +158,7 @@ code_event!(
 pub struct SchemaAdded {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub event_type_id: String,
+    pub event_type_id: EventTypeId,
     #[serde(rename = "specVersion")]
     pub version: String,
 }
@@ -163,10 +168,10 @@ impl_domain_event!(SchemaAdded);
 impl SchemaAdded {
     pub const EVENT_TYPE: &'static str = "platform:admin:eventtype:schema-added";
 
-    pub fn new(ctx: &ExecutionContext, event_type_id: &str, version: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, event_type_id: &EventTypeId, version: &str) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, event_type_id),
-            event_type_id: event_type_id.to_string(),
+            event_type_id: event_type_id.clone(),
             version: version.to_string(),
         }
     }
@@ -179,7 +184,7 @@ impl SchemaAdded {
 pub struct SchemaFinalised {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub event_type_id: String,
+    pub event_type_id: EventTypeId,
     #[serde(rename = "specVersion")]
     pub version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -193,13 +198,13 @@ impl SchemaFinalised {
 
     pub fn new(
         ctx: &ExecutionContext,
-        event_type_id: &str,
+        event_type_id: &EventTypeId,
         version: &str,
         deprecated_version: Option<&str>,
     ) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, event_type_id),
-            event_type_id: event_type_id.to_string(),
+            event_type_id: event_type_id.clone(),
             version: version.to_string(),
             deprecated_version: deprecated_version.map(String::from),
         }
@@ -212,7 +217,7 @@ impl SchemaFinalised {
 pub struct SchemaDeprecated {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub event_type_id: String,
+    pub event_type_id: EventTypeId,
     #[serde(rename = "specVersion")]
     pub version: String,
 }
@@ -222,10 +227,10 @@ impl_domain_event!(SchemaDeprecated);
 impl SchemaDeprecated {
     pub const EVENT_TYPE: &'static str = "platform:admin:eventtype:schema-deprecated";
 
-    pub fn new(ctx: &ExecutionContext, event_type_id: &str, version: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, event_type_id: &EventTypeId, version: &str) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, event_type_id),
-            event_type_id: event_type_id.to_string(),
+            event_type_id: event_type_id.clone(),
             version: version.to_string(),
         }
     }
@@ -280,7 +285,8 @@ mod tests {
     #[test]
     fn test_event_type_created_metadata() {
         let ctx = ExecutionContext::system("user-123");
-        let metadata = EventTypeCreated::metadata_for(&ctx, "0HZXEQ5Y8JY5Z");
+        let metadata =
+            EventTypeCreated::metadata_for(&ctx, &EventTypeId::from_wire("0HZXEQ5Y8JY5Z"));
 
         assert_eq!(metadata.event_type, "platform:admin:eventtype:created");
         assert_eq!(metadata.principal_id, "user-123");
@@ -292,7 +298,12 @@ mod tests {
     #[test]
     fn test_event_type_updated() {
         let ctx = ExecutionContext::system("user-123");
-        let event = EventTypeUpdated::new(&ctx, "et-123", "New Name", Some("New Description"));
+        let event = EventTypeUpdated::new(
+            &ctx,
+            &EventTypeId::from_wire("et-123"),
+            "New Name",
+            Some("New Description"),
+        );
 
         assert_eq!(
             event.metadata.event_type,
@@ -311,7 +322,8 @@ mod tests {
     #[test]
     fn schema_events_carry_spec_version() {
         let ctx = ExecutionContext::system("user-123");
-        let event = SchemaFinalised::new(&ctx, "et-123", "2.0", Some("1.0"));
+        let event =
+            SchemaFinalised::new(&ctx, &EventTypeId::from_wire("et-123"), "2.0", Some("1.0"));
         assert_eq!(
             serde_json::to_value(&event).unwrap(),
             serde_json::json!({
@@ -325,7 +337,11 @@ mod tests {
     #[test]
     fn test_event_type_archived() {
         let ctx = ExecutionContext::system("user-123");
-        let event = EventTypeArchived::new(&ctx, "et-123", "orders:fulfillment:order:created");
+        let event = EventTypeArchived::new(
+            &ctx,
+            &EventTypeId::from_wire("et-123"),
+            "orders:fulfillment:order:created",
+        );
 
         assert_eq!(
             event.metadata.event_type,

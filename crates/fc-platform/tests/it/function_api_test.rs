@@ -1937,7 +1937,7 @@ async fn openapi_document_and_function_subscriptions() {
     let read = app
         .repos
         .subscription_repo
-        .find_by_id(sub.id.as_str())
+        .find_by_id(&sub.id)
         .await
         .expect("strict read")
         .expect("row");
