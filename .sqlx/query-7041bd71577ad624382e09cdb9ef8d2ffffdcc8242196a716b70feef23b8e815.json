@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO fnr_secrets (function_id, key, value_ref, updated_by, updated_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (function_id, key) DO UPDATE SET value_ref = EXCLUDED.value_ref, updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7041bd71577ad624382e09cdb9ef8d2ffffdcc8242196a716b70feef23b8e815"
+}

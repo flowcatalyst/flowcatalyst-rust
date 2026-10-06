@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT v.id AS \"id: FunctionVersionId\", v.function_id AS \"function_id: FunctionId\", v.manifest::text AS \"manifest!\" FROM fnr_versions v JOIN fnr_aliases a ON a.version_id = v.id WHERE a.alias = $1 AND v.function_id <> $2 AND v.manifest -> 'warm' = 'true'::jsonb",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: FunctionVersionId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "function_id: FunctionId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "manifest!",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "76d6895ee0e16a7807e2612ee02f801c4e4b8bf0bc534df4ba5a17a5d821d115"
+}

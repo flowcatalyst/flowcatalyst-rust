@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO fnr_versions (id, function_id, version, artifact_ref, digest, signature_bundle, signature_bundle_ref, signer_issuer, signer_subject, manifest, state, published_by, published_at, ready_at, retired_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text::jsonb, $11, $12, $13, $14, $15) ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state, ready_at = CASE WHEN EXCLUDED.state = $16 THEN EXCLUDED.ready_at ELSE fnr_versions.ready_at END, retired_at = CASE WHEN EXCLUDED.state = $17 THEN EXCLUDED.retired_at ELSE fnr_versions.retired_at END",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Int4",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "Varchar",
+        "Timestamptz",
+        "Timestamptz",
+        "Timestamptz",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "652a42ce9b22c6c21f9a4cb98f48359355acaf8e62a05ce12304045f49046df8"
+}

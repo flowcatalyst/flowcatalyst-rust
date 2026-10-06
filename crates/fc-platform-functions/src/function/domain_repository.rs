@@ -12,7 +12,6 @@ use fc_platform_core::shared::enum_str::corrupt_value;
 use fc_platform_core::shared::error::Result;
 use fc_platform_core::usecase::{DbTx, Persist};
 
-#[derive(sqlx::FromRow)]
 struct DomainRow {
     id: FunctionDomainId,
     client_id: Option<ClientId>,
@@ -30,10 +29,13 @@ impl FunctionDomainRepository {
     }
 
     pub async fn find_by_id(&self, id: &FunctionDomainId) -> Result<Option<FunctionDomain>> {
-        let row = sqlx::query_as::<_, DomainRow>(
-            "SELECT id, client_id, hostname, created_at FROM fnr_domains WHERE id = $1",
+        let row = sqlx::query_as!(
+            DomainRow,
+            "SELECT id AS \"id: FunctionDomainId\", client_id AS \"client_id: ClientId\", \
+                    hostname, created_at \
+                    FROM fnr_domains WHERE id = $1",
+            id as &FunctionDomainId
         )
-        .bind(id)
         .fetch_optional(&self.pool)
         .await?;
         row.map(to_entity).transpose()
@@ -44,10 +46,13 @@ impl FunctionDomainRepository {
     /// One query over every candidate apex; the most specific wins.
     pub async fn covering(&self, hostname: &Hostname) -> Result<Option<FunctionDomain>> {
         let candidates = hostname.zone_candidates();
-        let mut rows = sqlx::query_as::<_, DomainRow>(
-            "SELECT id, client_id, hostname, created_at FROM fnr_domains WHERE hostname = ANY($1)",
+        let mut rows = sqlx::query_as!(
+            DomainRow,
+            "SELECT id AS \"id: FunctionDomainId\", client_id AS \"client_id: ClientId\", \
+                    hostname, created_at \
+                    FROM fnr_domains WHERE hostname = ANY($1)",
+            &candidates
         )
-        .bind(&candidates)
         .fetch_all(&self.pool)
         .await?;
         for candidate in &candidates {
@@ -68,10 +73,13 @@ impl FunctionDomainRepository {
         }
         let candidates: Vec<Vec<String>> = hostnames.iter().map(|h| h.zone_candidates()).collect();
         let all: Vec<&String> = candidates.iter().flatten().collect();
-        let rows = sqlx::query_as::<_, DomainRow>(
-            "SELECT id, client_id, hostname, created_at FROM fnr_domains WHERE hostname = ANY($1)",
+        let rows = sqlx::query_as!(
+            DomainRow,
+            "SELECT id AS \"id: FunctionDomainId\", client_id AS \"client_id: ClientId\", \
+                    hostname, created_at \
+                    FROM fnr_domains WHERE hostname = ANY($1)",
+            &all as &[&String]
         )
-        .bind(&all)
         .fetch_all(&self.pool)
         .await?;
         let claims: Vec<FunctionDomain> = rows.into_iter().map(to_entity).collect::<Result<_>>()?;
@@ -89,10 +97,10 @@ impl FunctionDomainRepository {
     /// `zone` itself).
     pub async fn any_under(&self, zone: &Hostname) -> Result<bool> {
         let suffix = format!(".{}", zone.value());
-        let (exists,): (bool,) = sqlx::query_as(
-            "SELECT EXISTS (SELECT 1 FROM fnr_domains WHERE right(hostname, char_length($1)) = $1)",
+        let exists = sqlx::query_scalar!(
+            "SELECT EXISTS (SELECT 1 FROM fnr_domains WHERE right(hostname, char_length($1)) = $1) AS \"exists!\"",
+            &suffix
         )
-        .bind(&suffix)
         .fetch_one(&self.pool)
         .await?;
         Ok(exists)
@@ -100,11 +108,14 @@ impl FunctionDomainRepository {
 
     /// One owner's claims, by hostname.
     pub async fn list_by_owner(&self, owner: &FunctionOwner) -> Result<Vec<FunctionDomain>> {
-        let rows = sqlx::query_as::<_, DomainRow>(
-            "SELECT id, client_id, hostname, created_at FROM fnr_domains \
+        let rows = sqlx::query_as!(
+            DomainRow,
+            "SELECT id AS \"id: FunctionDomainId\", client_id AS \"client_id: ClientId\", \
+                    hostname, created_at \
+                    FROM fnr_domains \
              WHERE client_id IS NOT DISTINCT FROM $1 ORDER BY hostname ASC",
+            owner.client_id_or_none()
         )
-        .bind(owner.client_id_or_none())
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(to_entity).collect()
@@ -133,24 +144,26 @@ fn to_entity(row: DomainRow) -> Result<FunctionDomain> {
 impl Persist<FunctionDomain> for FunctionDomainRepository {
     /// Insert-only: a claim never changes once made.
     async fn persist(&self, d: &FunctionDomain, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO fnr_domains (id, client_id, hostname, created_at) VALUES ($1, $2, $3, $4) \
              ON CONFLICT (id) DO NOTHING",
+            &d.id as &FunctionDomainId,
+            d.owner.client_id_or_none(),
+            d.hostname.value(),
+            d.created_at
         )
-        .bind(&d.id)
-        .bind(d.owner.client_id_or_none())
-        .bind(d.hostname.value())
-        .bind(d.created_at)
         .execute(&mut **tx.inner)
         .await?;
         Ok(())
     }
 
     async fn delete(&self, d: &FunctionDomain, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query("DELETE FROM fnr_domains WHERE id = $1")
-            .bind(&d.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM fnr_domains WHERE id = $1",
+            &d.id as &FunctionDomainId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         Ok(())
     }
 }

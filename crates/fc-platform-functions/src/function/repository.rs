@@ -33,7 +33,6 @@ struct FunctionRow {
     updated_at: DateTime<Utc>,
 }
 
-#[derive(sqlx::FromRow)]
 struct AliasRow {
     function_id: FunctionId,
     alias: String,
@@ -83,23 +82,35 @@ impl FunctionRepository {
     }
 
     pub async fn find_by_id(&self, id: &FunctionId) -> Result<Option<Function>> {
-        let row = sqlx::query_as::<_, FunctionRow>(&format!(
-            "SELECT {COLUMNS} FROM fnr_functions WHERE id = $1"
-        ))
-        .bind(id)
+        let row = sqlx::query_as!(
+            FunctionRow,
+            "SELECT id AS \"id: FunctionId\", \
+                    application_id AS \"application_id: ApplicationId\", \
+                    application_code, service_name, name, \
+                    client_id AS \"client_id: ClientId\", runtime, description, \
+                    status AS \"status: Stored<FunctionStatus>\", created_at, updated_at \
+                    FROM fnr_functions WHERE id = $1",
+            id as &FunctionId
+        )
         .fetch_optional(&self.pool)
         .await?;
         self.hydrate_one(row).await
     }
 
     pub async fn find_by_address(&self, address: &FunctionAddress) -> Result<Option<Function>> {
-        let row = sqlx::query_as::<_, FunctionRow>(&format!(
-            "SELECT {COLUMNS} FROM fnr_functions \
-             WHERE application_code = $1 AND service_name = $2 AND name = $3"
-        ))
-        .bind(address.application())
-        .bind(address.service())
-        .bind(address.name())
+        let row = sqlx::query_as!(
+            FunctionRow,
+            "SELECT id AS \"id: FunctionId\", \
+                    application_id AS \"application_id: ApplicationId\", \
+                    application_code, service_name, name, \
+                    client_id AS \"client_id: ClientId\", runtime, description, \
+                    status AS \"status: Stored<FunctionStatus>\", created_at, updated_at \
+                    FROM fnr_functions \
+             WHERE application_code = $1 AND service_name = $2 AND name = $3",
+            address.application(),
+            address.service(),
+            address.name()
+        )
         .fetch_optional(&self.pool)
         .await?;
         self.hydrate_one(row).await
@@ -111,10 +122,16 @@ impl FunctionRepository {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        let rows = sqlx::query_as::<_, FunctionRow>(&format!(
-            "SELECT {COLUMNS} FROM fnr_functions WHERE id = ANY($1)"
-        ))
-        .bind(ids)
+        let rows = sqlx::query_as!(
+            FunctionRow,
+            "SELECT id AS \"id: FunctionId\", \
+                    application_id AS \"application_id: ApplicationId\", \
+                    application_code, service_name, name, \
+                    client_id AS \"client_id: ClientId\", runtime, description, \
+                    status AS \"status: Stored<FunctionStatus>\", created_at, updated_at \
+                    FROM fnr_functions WHERE id = ANY($1)",
+            ids as &[FunctionId]
+        )
         .fetch_all(&self.pool)
         .await?;
         self.hydrate(rows).await
@@ -123,11 +140,17 @@ impl FunctionRepository {
     /// Every `ACTIVE` function, by address (Java `list(ListFilter(null,
     /// null, ACTIVE))`): desired state's starting set.
     pub async fn list_active(&self) -> Result<Vec<Function>> {
-        let rows = sqlx::query_as::<_, FunctionRow>(&format!(
-            "SELECT {COLUMNS} FROM fnr_functions WHERE status = $1 \
-             ORDER BY application_code ASC, service_name ASC, name ASC"
-        ))
-        .bind(FunctionStatus::Active)
+        let rows = sqlx::query_as!(
+            FunctionRow,
+            "SELECT id AS \"id: FunctionId\", \
+                    application_id AS \"application_id: ApplicationId\", \
+                    application_code, service_name, name, \
+                    client_id AS \"client_id: ClientId\", runtime, description, \
+                    status AS \"status: Stored<FunctionStatus>\", created_at, updated_at \
+                    FROM fnr_functions WHERE status = $1 \
+             ORDER BY application_code ASC, service_name ASC, name ASC",
+            FunctionStatus::Active as FunctionStatus
+        )
         .fetch_all(&self.pool)
         .await?;
         self.hydrate(rows).await
@@ -142,14 +165,20 @@ impl FunctionRepository {
         let applications: Vec<&str> = addresses.iter().map(|a| a.application()).collect();
         let services: Vec<&str> = addresses.iter().map(|a| a.service()).collect();
         let names: Vec<&str> = addresses.iter().map(|a| a.name()).collect();
-        let rows = sqlx::query_as::<_, FunctionRow>(&format!(
-            "SELECT {COLUMNS} FROM fnr_functions \
+        let rows = sqlx::query_as!(
+            FunctionRow,
+            "SELECT id AS \"id: FunctionId\", \
+                    application_id AS \"application_id: ApplicationId\", \
+                    application_code, service_name, name, \
+                    client_id AS \"client_id: ClientId\", runtime, description, \
+                    status AS \"status: Stored<FunctionStatus>\", created_at, updated_at \
+                    FROM fnr_functions \
              WHERE (application_code, service_name, name) IN \
-                   (SELECT * FROM UNNEST($1::text[], $2::text[], $3::text[]))"
-        ))
-        .bind(&applications)
-        .bind(&services)
-        .bind(&names)
+                   (SELECT * FROM UNNEST($1::text[], $2::text[], $3::text[]))",
+            &applications as &[&str],
+            &services as &[&str],
+            &names as &[&str]
+        )
         .fetch_all(&self.pool)
         .await?;
         self.hydrate(rows).await
@@ -198,11 +227,15 @@ impl FunctionRepository {
             return Ok(Vec::new());
         }
         let ids: Vec<&FunctionId> = rows.iter().map(|r| &r.id).collect();
-        let alias_rows = sqlx::query_as::<_, AliasRow>(
-            "SELECT function_id, alias, version_id, updated_by, updated_at FROM fnr_aliases \
+        let alias_rows = sqlx::query_as!(
+            AliasRow,
+            "SELECT function_id AS \"function_id: FunctionId\", alias, \
+                    version_id AS \"version_id: FunctionVersionId\", updated_by, \
+                    updated_at \
+                    FROM fnr_aliases \
              WHERE function_id = ANY($1) ORDER BY function_id ASC, alias ASC",
+            &ids as &[&FunctionId]
         )
-        .bind(&ids)
         .fetch_all(&self.pool)
         .await?;
         let mut aliases: HashMap<FunctionId, Vec<FunctionAlias>> = HashMap::new();
@@ -326,7 +359,7 @@ impl Persist<Function> for FunctionRepository {
     /// `updated_at` on conflict (nothing moves a function), then replaces
     /// the alias rows: those no longer listed are deleted, the rest upserted.
     async fn persist(&self, f: &Function, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO fnr_functions \
                 (id, application_id, application_code, service_name, name, client_id, \
                  runtime, description, status, created_at, updated_at) \
@@ -335,45 +368,47 @@ impl Persist<Function> for FunctionRepository {
                 description = EXCLUDED.description, \
                 status = EXCLUDED.status, \
                 updated_at = EXCLUDED.updated_at",
+            &f.id as &FunctionId,
+            &f.application_id as &ApplicationId,
+            f.address.application(),
+            f.address.service(),
+            f.address.name(),
+            f.owner.client_id_or_none(),
+            f.runtime.as_str(),
+            f.description.as_ref(),
+            f.status as FunctionStatus,
+            f.created_at,
+            f.updated_at
         )
-        .bind(&f.id)
-        .bind(&f.application_id)
-        .bind(f.address.application())
-        .bind(f.address.service())
-        .bind(f.address.name())
-        .bind(f.owner.client_id_or_none())
-        .bind(f.runtime.as_str())
-        .bind(&f.description)
-        .bind(f.status)
-        .bind(f.created_at)
-        .bind(f.updated_at)
         .execute(&mut **tx.inner)
         .await?;
 
         let aliases: Vec<&str> = f.aliases.iter().map(|a| a.alias.as_str()).collect();
-        sqlx::query("DELETE FROM fnr_aliases WHERE function_id = $1 AND NOT (alias = ANY($2))")
-            .bind(&f.id)
-            .bind(&aliases)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM fnr_aliases WHERE function_id = $1 AND NOT (alias = ANY($2))",
+            &f.id as &FunctionId,
+            &aliases as &[&str]
+        )
+        .execute(&mut **tx.inner)
+        .await?;
 
         if !f.aliases.is_empty() {
             let version_ids: Vec<&str> = f.aliases.iter().map(|a| a.version_id.as_str()).collect();
             let updated_by: Vec<&str> = f.aliases.iter().map(|a| a.updated_by.as_str()).collect();
             let updated_at: Vec<DateTime<Utc>> = f.aliases.iter().map(|a| a.updated_at).collect();
-            sqlx::query(
+            sqlx::query!(
                 "INSERT INTO fnr_aliases (function_id, alias, version_id, updated_by, updated_at) \
                  SELECT $1, * FROM UNNEST($2::text[], $3::text[], $4::text[], $5::timestamptz[]) \
                  ON CONFLICT (function_id, alias) DO UPDATE SET \
                     version_id = EXCLUDED.version_id, \
                     updated_by = EXCLUDED.updated_by, \
                     updated_at = EXCLUDED.updated_at",
+                &f.id as &FunctionId,
+                &aliases as &[&str],
+                &version_ids as &[&str],
+                &updated_by as &[&str],
+                &updated_at
             )
-            .bind(&f.id)
-            .bind(&aliases)
-            .bind(&version_ids)
-            .bind(&updated_by)
-            .bind(&updated_at)
             .execute(&mut **tx.inner)
             .await?;
         }
@@ -383,10 +418,12 @@ impl Persist<Function> for FunctionRepository {
     /// Versions, aliases, routes, config, secrets and trigger-object links
     /// cascade by foreign key.
     async fn delete(&self, f: &Function, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query("DELETE FROM fnr_functions WHERE id = $1")
-            .bind(&f.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM fnr_functions WHERE id = $1",
+            &f.id as &FunctionId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         Ok(())
     }
 }

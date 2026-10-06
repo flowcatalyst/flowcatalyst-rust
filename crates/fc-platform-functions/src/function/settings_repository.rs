@@ -66,11 +66,15 @@ impl FunctionSettingsRepository {
 
     /// Every `(key, value)` of a function's config, in key order.
     pub async fn config_map(&self, function_id: &FunctionId) -> Result<BTreeMap<String, String>> {
-        let rows: Vec<(String, String)> =
-            sqlx::query_as("SELECT key, value FROM fnr_config WHERE function_id = $1")
-                .bind(function_id)
-                .fetch_all(&self.pool)
-                .await?;
+        let rows: Vec<(String, String)> = sqlx::query!(
+            "SELECT key, value FROM fnr_config WHERE function_id = $1",
+            function_id as &FunctionId
+        )
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(|r| (r.key, r.value))
+        .collect();
         Ok(rows.into_iter().collect())
     }
 
@@ -84,12 +88,12 @@ impl FunctionSettingsRepository {
         if function_ids.is_empty() {
             return Ok(out);
         }
-        let rows: Vec<(FunctionId, String, String)> = sqlx::query_as(
-            "SELECT function_id, key, value FROM fnr_config WHERE function_id = ANY($1)",
+        let rows: Vec<(FunctionId, String, String)> = sqlx::query!(
+            "SELECT function_id AS \"function_id: FunctionId\", key, value FROM fnr_config WHERE function_id = ANY($1)",
+            function_ids as &[FunctionId]
         )
-        .bind(function_ids)
         .fetch_all(&self.pool)
-        .await?;
+        .await?.into_iter().map(|r| (r.function_id, r.key, r.value)).collect();
         for (function_id, key, value) in rows {
             out.entry(function_id).or_default().insert(key, value);
         }
@@ -100,13 +104,16 @@ impl FunctionSettingsRepository {
 
     /// Every secret's metadata, in key order. Never a value.
     pub async fn list_secrets(&self, function_id: &FunctionId) -> Result<Vec<SecretInfo>> {
-        let rows: Vec<(String, DateTime<Utc>, String)> = sqlx::query_as(
+        let rows: Vec<(String, DateTime<Utc>, String)> = sqlx::query!(
             "SELECT key, updated_at, updated_by FROM fnr_secrets WHERE function_id = $1 \
              ORDER BY key ASC",
+            function_id as &FunctionId
         )
-        .bind(function_id)
         .fetch_all(&self.pool)
-        .await?;
+        .await?
+        .into_iter()
+        .map(|r| (r.key, r.updated_at, r.updated_by))
+        .collect();
         Ok(rows
             .into_iter()
             .map(|(key, updated_at, updated_by)| SecretInfo {
@@ -119,11 +126,11 @@ impl FunctionSettingsRepository {
 
     /// Whether the function has a secret named `key`.
     pub async fn has_secret(&self, function_id: &FunctionId, key: &str) -> Result<bool> {
-        let (exists,): (bool,) = sqlx::query_as(
-            "SELECT EXISTS (SELECT 1 FROM fnr_secrets WHERE function_id = $1 AND key = $2)",
+        let exists = sqlx::query_scalar!(
+            "SELECT EXISTS (SELECT 1 FROM fnr_secrets WHERE function_id = $1 AND key = $2) AS \"exists!\"",
+            function_id as &FunctionId,
+            key
         )
-        .bind(function_id)
-        .bind(key)
         .fetch_one(&self.pool)
         .await?;
         Ok(exists)
@@ -173,12 +180,12 @@ impl FunctionSettingsRepository {
         if function_ids.is_empty() {
             return Ok(empty());
         }
-        let rows: Vec<(FunctionId, String, String)> = sqlx::query_as(
-            "SELECT function_id, key, value_ref FROM fnr_secrets WHERE function_id = ANY($1)",
+        let rows: Vec<(FunctionId, String, String)> = sqlx::query!(
+            "SELECT function_id AS \"function_id: FunctionId\", key, value_ref FROM fnr_secrets WHERE function_id = ANY($1)",
+            &function_ids as &[&FunctionId]
         )
-        .bind(&function_ids)
         .fetch_all(&self.pool)
-        .await?;
+        .await?.into_iter().map(|r| (r.function_id, r.key, r.value_ref)).collect();
         let mut refs: HashMap<(FunctionId, String), String> = HashMap::new();
         for (function_id, key, value_ref) in rows {
             refs.insert((function_id, key), value_ref);
@@ -237,38 +244,42 @@ impl Persist<FunctionConfig> for FunctionSettingsRepository {
     /// it is upserted.
     async fn persist(&self, config: &FunctionConfig, tx: &mut DbTx<'_>) -> Result<()> {
         let keys: Vec<&str> = config.values.keys().map(String::as_str).collect();
-        sqlx::query("DELETE FROM fnr_config WHERE function_id = $1 AND NOT (key = ANY($2))")
-            .bind(&config.function_id)
-            .bind(&keys)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM fnr_config WHERE function_id = $1 AND NOT (key = ANY($2))",
+            &config.function_id as &FunctionId,
+            &keys as &[&str]
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         if keys.is_empty() {
             return Ok(());
         }
         let values: Vec<&str> = config.values.values().map(String::as_str).collect();
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO fnr_config (function_id, key, value, updated_by, updated_at) \
              SELECT $1, k, v, $4, $5 FROM UNNEST($2::text[], $3::text[]) AS t(k, v) \
              ON CONFLICT (function_id, key) DO UPDATE SET \
                 value = EXCLUDED.value, \
                 updated_by = EXCLUDED.updated_by, \
                 updated_at = EXCLUDED.updated_at",
+            &config.function_id as &FunctionId,
+            &keys as &[&str],
+            &values as &[&str],
+            &config.updated_by,
+            config.updated_at
         )
-        .bind(&config.function_id)
-        .bind(&keys)
-        .bind(&values)
-        .bind(&config.updated_by)
-        .bind(config.updated_at)
         .execute(&mut **tx.inner)
         .await?;
         Ok(())
     }
 
     async fn delete(&self, config: &FunctionConfig, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query("DELETE FROM fnr_config WHERE function_id = $1")
-            .bind(&config.function_id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM fnr_config WHERE function_id = $1",
+            &config.function_id as &FunctionId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         Ok(())
     }
 }
@@ -277,30 +288,32 @@ impl Persist<FunctionSecret> for FunctionSettingsRepository {
     /// Stores the value ([`Self::stored_ref`]) and upserts one row.
     async fn persist(&self, secret: &FunctionSecret, tx: &mut DbTx<'_>) -> Result<()> {
         let value_ref = self.stored_ref(secret.value.expose())?;
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO fnr_secrets (function_id, key, value_ref, updated_by, updated_at) \
              VALUES ($1, $2, $3, $4, $5) \
              ON CONFLICT (function_id, key) DO UPDATE SET \
                 value_ref = EXCLUDED.value_ref, \
                 updated_by = EXCLUDED.updated_by, \
                 updated_at = EXCLUDED.updated_at",
+            &secret.function_id as &FunctionId,
+            &secret.key,
+            &value_ref,
+            &secret.updated_by,
+            secret.updated_at
         )
-        .bind(&secret.function_id)
-        .bind(&secret.key)
-        .bind(&value_ref)
-        .bind(&secret.updated_by)
-        .bind(secret.updated_at)
         .execute(&mut **tx.inner)
         .await?;
         Ok(())
     }
 
     async fn delete(&self, secret: &FunctionSecret, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query("DELETE FROM fnr_secrets WHERE function_id = $1 AND key = $2")
-            .bind(&secret.function_id)
-            .bind(&secret.key)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM fnr_secrets WHERE function_id = $1 AND key = $2",
+            &secret.function_id as &FunctionId,
+            &secret.key
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         Ok(())
     }
 }

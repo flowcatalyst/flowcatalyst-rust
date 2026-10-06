@@ -13,7 +13,6 @@ use fc_platform_core::shared::enum_str::corrupt_value;
 use fc_platform_core::shared::error::Result;
 use fc_platform_core::usecase::{DbTx, Persist};
 
-#[derive(sqlx::FromRow)]
 struct PolicyRow {
     client_id: String,
     signers: Value,
@@ -25,9 +24,6 @@ struct PolicyRow {
     updated_at: DateTime<Utc>,
 }
 
-const COLUMNS: &str = "client_id, signers, max_duration_ms, max_concurrency, max_wasm_memory_mb, \
-                       max_db_pool_size, created_at, updated_at";
-
 pub struct ClientPolicyRepository {
     pool: PgPool,
 }
@@ -38,10 +34,14 @@ impl ClientPolicyRepository {
     }
 
     pub async fn find_by_owner(&self, owner: &FunctionOwner) -> Result<Option<ClientPolicy>> {
-        let row = sqlx::query_as::<_, PolicyRow>(&format!(
-            "SELECT {COLUMNS} FROM fnr_client_policies WHERE client_id = $1"
-        ))
-        .bind(owner.key())
+        let row = sqlx::query_as!(
+            PolicyRow,
+            "SELECT client_id, signers AS \"signers: Value\", max_duration_ms, \
+                    max_concurrency, max_wasm_memory_mb, max_db_pool_size, created_at, \
+                    updated_at \
+                    FROM fnr_client_policies WHERE client_id = $1",
+            owner.key()
+        )
         .fetch_optional(&self.pool)
         .await?;
         row.map(to_entity).transpose()
@@ -49,11 +49,15 @@ impl ClientPolicyRepository {
 
     /// Every stored row: the platform's first, then client ids ascending.
     pub async fn list_all(&self) -> Result<Vec<ClientPolicy>> {
-        let rows = sqlx::query_as::<_, PolicyRow>(&format!(
-            "SELECT {COLUMNS} FROM fnr_client_policies \
-             ORDER BY CASE WHEN client_id = $1 THEN 0 ELSE 1 END, client_id ASC"
-        ))
-        .bind(FunctionOwner::PLATFORM_KEY)
+        let rows = sqlx::query_as!(
+            PolicyRow,
+            "SELECT client_id, signers AS \"signers: Value\", max_duration_ms, \
+                    max_concurrency, max_wasm_memory_mb, max_db_pool_size, created_at, \
+                    updated_at \
+                    FROM fnr_client_policies \
+             ORDER BY CASE WHEN client_id = $1 THEN 0 ELSE 1 END, client_id ASC",
+            FunctionOwner::PLATFORM_KEY
+        )
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(to_entity).collect()
@@ -133,7 +137,7 @@ impl Persist<ClientPolicy> for ClientPolicyRepository {
     /// Upsert by owner key: a full replacement of every column but
     /// `created_at`.
     async fn persist(&self, p: &ClientPolicy, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO fnr_client_policies \
                 (client_id, created_at, signers, max_duration_ms, max_concurrency, \
                  max_wasm_memory_mb, max_db_pool_size, updated_at) \
@@ -145,25 +149,27 @@ impl Persist<ClientPolicy> for ClientPolicyRepository {
                 max_wasm_memory_mb = EXCLUDED.max_wasm_memory_mb, \
                 max_db_pool_size = EXCLUDED.max_db_pool_size, \
                 updated_at = EXCLUDED.updated_at",
+            p.owner.key(),
+            p.created_at,
+            signers_to_json(&p.signers),
+            p.max_duration_ms,
+            p.max_concurrency,
+            p.max_wasm_memory_mb,
+            p.max_db_pool_size,
+            p.updated_at
         )
-        .bind(p.owner.key())
-        .bind(p.created_at)
-        .bind(signers_to_json(&p.signers))
-        .bind(p.max_duration_ms)
-        .bind(p.max_concurrency)
-        .bind(p.max_wasm_memory_mb)
-        .bind(p.max_db_pool_size)
-        .bind(p.updated_at)
         .execute(&mut **tx.inner)
         .await?;
         Ok(())
     }
 
     async fn delete(&self, p: &ClientPolicy, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query("DELETE FROM fnr_client_policies WHERE client_id = $1")
-            .bind(p.owner.key())
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM fnr_client_policies WHERE client_id = $1",
+            p.owner.key()
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         Ok(())
     }
 }

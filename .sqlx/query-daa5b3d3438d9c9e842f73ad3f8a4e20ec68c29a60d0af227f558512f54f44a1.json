@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM fnr_aliases WHERE function_id = $1 AND NOT (alias = ANY($2))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "daa5b3d3438d9c9e842f73ad3f8a4e20ec68c29a60d0af227f558512f54f44a1"
+}

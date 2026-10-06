@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT pool, COUNT(*) AS \"c1!\" FROM fnr_hosts WHERE last_heartbeat >= $1 GROUP BY pool ORDER BY pool ASC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "pool",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "c1!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "e090ab769d923146522f988dc1f38f336a17ad9f419cb613c56527f68aaae2b4"
+}

@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT function_id AS \"function_id: FunctionId\", alias, version_id AS \"version_id: FunctionVersionId\", updated_by, updated_at FROM fnr_aliases WHERE function_id = ANY($1) ORDER BY function_id ASC, alias ASC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "function_id: FunctionId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "alias",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "version_id: FunctionVersionId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "updated_by",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "e06577fc343cc666d3f22cff5fef2b7697eb7c36068413bb1637bd623c408b20"
+}

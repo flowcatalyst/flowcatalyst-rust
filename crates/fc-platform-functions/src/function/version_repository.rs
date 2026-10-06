@@ -95,7 +95,6 @@ impl<K: Eq + Hash> VersionBatch<K> {
     }
 }
 
-#[derive(sqlx::FromRow)]
 struct VersionRow {
     id: FunctionVersionId,
     function_id: FunctionId,
@@ -114,10 +113,6 @@ struct VersionRow {
     retired_at: Option<DateTime<Utc>>,
 }
 
-const COLUMNS: &str = "id, function_id, version, artifact_ref, digest, signature_bundle, \
-                       signature_bundle_ref, signer_issuer, signer_subject, manifest::text AS manifest, \
-                       state, published_by, published_at, ready_at, retired_at";
-
 pub struct FunctionVersionRepository {
     pool: PgPool,
 }
@@ -128,10 +123,17 @@ impl FunctionVersionRepository {
     }
 
     pub async fn find_by_id(&self, id: &FunctionVersionId) -> Result<Option<FunctionVersion>> {
-        let row = sqlx::query_as::<_, VersionRow>(&format!(
-            "SELECT {COLUMNS} FROM fnr_versions WHERE id = $1"
-        ))
-        .bind(id)
+        let row = sqlx::query_as!(
+            VersionRow,
+            "SELECT id AS \"id: FunctionVersionId\", \
+                    function_id AS \"function_id: FunctionId\", version, artifact_ref, \
+                    digest, signature_bundle, signature_bundle_ref, signer_issuer, \
+                    signer_subject, manifest::text AS \"manifest!\", \
+                    state AS \"state: Stored<VersionStateKind>\", published_by, \
+                    published_at, ready_at, retired_at \
+                    FROM fnr_versions WHERE id = $1",
+            id as &FunctionVersionId
+        )
         .fetch_optional(&self.pool)
         .await?;
         row.map(to_entity_or_corrupt).transpose()
@@ -142,11 +144,18 @@ impl FunctionVersionRepository {
         function_id: &FunctionId,
         version: i32,
     ) -> Result<Option<FunctionVersion>> {
-        let row = sqlx::query_as::<_, VersionRow>(&format!(
-            "SELECT {COLUMNS} FROM fnr_versions WHERE function_id = $1 AND version = $2"
-        ))
-        .bind(function_id)
-        .bind(version)
+        let row = sqlx::query_as!(
+            VersionRow,
+            "SELECT id AS \"id: FunctionVersionId\", \
+                    function_id AS \"function_id: FunctionId\", version, artifact_ref, \
+                    digest, signature_bundle, signature_bundle_ref, signer_issuer, \
+                    signer_subject, manifest::text AS \"manifest!\", \
+                    state AS \"state: Stored<VersionStateKind>\", published_by, \
+                    published_at, ready_at, retired_at \
+                    FROM fnr_versions WHERE function_id = $1 AND version = $2",
+            function_id as &FunctionId,
+            version
+        )
         .fetch_optional(&self.pool)
         .await?;
         row.map(to_entity_or_corrupt).transpose()
@@ -158,11 +167,18 @@ impl FunctionVersionRepository {
         function_id: &FunctionId,
         digest: &Digest,
     ) -> Result<Option<FunctionVersion>> {
-        let row = sqlx::query_as::<_, VersionRow>(&format!(
-            "SELECT {COLUMNS} FROM fnr_versions WHERE function_id = $1 AND digest = $2"
-        ))
-        .bind(function_id)
-        .bind(digest.value())
+        let row = sqlx::query_as!(
+            VersionRow,
+            "SELECT id AS \"id: FunctionVersionId\", \
+                    function_id AS \"function_id: FunctionId\", version, artifact_ref, \
+                    digest, signature_bundle, signature_bundle_ref, signer_issuer, \
+                    signer_subject, manifest::text AS \"manifest!\", \
+                    state AS \"state: Stored<VersionStateKind>\", published_by, \
+                    published_at, ready_at, retired_at \
+                    FROM fnr_versions WHERE function_id = $1 AND digest = $2",
+            function_id as &FunctionId,
+            digest.value()
+        )
         .fetch_optional(&self.pool)
         .await?;
         row.map(to_entity_or_corrupt).transpose()
@@ -172,10 +188,12 @@ impl FunctionVersionRepository {
     /// nothing, and may be stale under a concurrent publish (the manifest
     /// check's preview; publish uses [`NextVersionOf`]).
     pub async fn next_version_preview(&self, function_id: &FunctionId) -> Result<i32> {
-        let (next,): (i32,) = sqlx::query_as(
-            "SELECT COALESCE(MAX(version), 0) + 1 FROM fnr_versions WHERE function_id = $1",
+        // COALESCE: never NULL, so `!`.
+        let next = sqlx::query_scalar!(
+            "SELECT COALESCE(MAX(version), 0) + 1 AS \"next!\" FROM fnr_versions \
+             WHERE function_id = $1",
+            function_id as &FunctionId
         )
-        .bind(function_id)
         .fetch_one(&self.pool)
         .await?;
         Ok(next)
@@ -194,15 +212,22 @@ impl FunctionVersionRepository {
     ) -> Result<i32> {
         // A stored manifest is normalised, so `warm` is a JSON boolean; the
         // pool is compared on the decoded manifest, as Java does.
-        let rows: Vec<(FunctionVersionId, FunctionId, String)> = sqlx::query_as(
-            "SELECT v.id, v.function_id, v.manifest::text FROM fnr_versions v \
+        // `manifest!`: the cast keeps jsonb NOT NULL from being inferred.
+        let rows: Vec<(FunctionVersionId, FunctionId, String)> = sqlx::query!(
+            "SELECT v.id AS \"id: FunctionVersionId\", \
+                    v.function_id AS \"function_id: FunctionId\", \
+                    v.manifest::text AS \"manifest!\" \
+             FROM fnr_versions v \
              JOIN fnr_aliases a ON a.version_id = v.id \
              WHERE a.alias = $1 AND v.function_id <> $2 AND v.manifest -> 'warm' = 'true'::jsonb",
+            LIVE_ALIAS,
+            excluding_function_id as &FunctionId
         )
-        .bind(LIVE_ALIAS)
-        .bind(excluding_function_id)
         .fetch_all(&self.pool)
-        .await?;
+        .await?
+        .into_iter()
+        .map(|r| (r.id, r.function_id, r.manifest))
+        .collect();
         let mut count = 0;
         for (version_id, function_id, text) in rows {
             let manifest = JsonNode::parse(&text)
@@ -223,10 +248,17 @@ impl FunctionVersionRepository {
 
     /// Newest first. Scoped to one function, so a corrupt row fails it.
     pub async fn list_by_function(&self, function_id: &FunctionId) -> Result<Vec<FunctionVersion>> {
-        let rows = sqlx::query_as::<_, VersionRow>(&format!(
-            "SELECT {COLUMNS} FROM fnr_versions WHERE function_id = $1 ORDER BY version DESC"
-        ))
-        .bind(function_id)
+        let rows = sqlx::query_as!(
+            VersionRow,
+            "SELECT id AS \"id: FunctionVersionId\", \
+                    function_id AS \"function_id: FunctionId\", version, artifact_ref, \
+                    digest, signature_bundle, signature_bundle_ref, signer_issuer, \
+                    signer_subject, manifest::text AS \"manifest!\", \
+                    state AS \"state: Stored<VersionStateKind>\", published_by, \
+                    published_at, ready_at, retired_at \
+                    FROM fnr_versions WHERE function_id = $1 ORDER BY version DESC",
+            function_id as &FunctionId
+        )
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(to_entity_or_corrupt).collect()
@@ -239,12 +271,19 @@ impl FunctionVersionRepository {
         &self,
         function_id: &FunctionId,
     ) -> Result<Option<FunctionVersion>> {
-        let row = sqlx::query_as::<_, VersionRow>(&format!(
-            "SELECT {COLUMNS} FROM fnr_versions WHERE function_id = $1 AND state <> $2 \
-             ORDER BY version DESC LIMIT 1"
-        ))
-        .bind(function_id)
-        .bind(VersionStateKind::Retired)
+        let row = sqlx::query_as!(
+            VersionRow,
+            "SELECT id AS \"id: FunctionVersionId\", \
+                    function_id AS \"function_id: FunctionId\", version, artifact_ref, \
+                    digest, signature_bundle, signature_bundle_ref, signer_issuer, \
+                    signer_subject, manifest::text AS \"manifest!\", \
+                    state AS \"state: Stored<VersionStateKind>\", published_by, \
+                    published_at, ready_at, retired_at \
+                    FROM fnr_versions WHERE function_id = $1 AND state <> $2 \
+             ORDER BY version DESC LIMIT 1",
+            function_id as &FunctionId,
+            VersionStateKind::Retired as VersionStateKind
+        )
         .fetch_optional(&self.pool)
         .await?;
         row.map(to_entity_or_corrupt).transpose()
@@ -273,10 +312,17 @@ impl FunctionVersionRepository {
         if ids.is_empty() {
             return Ok(batch);
         }
-        let rows = sqlx::query_as::<_, VersionRow>(&format!(
-            "SELECT {COLUMNS} FROM fnr_versions WHERE id = ANY($1)"
-        ))
-        .bind(ids)
+        let rows = sqlx::query_as!(
+            VersionRow,
+            "SELECT id AS \"id: FunctionVersionId\", \
+                    function_id AS \"function_id: FunctionId\", version, artifact_ref, \
+                    digest, signature_bundle, signature_bundle_ref, signer_issuer, \
+                    signer_subject, manifest::text AS \"manifest!\", \
+                    state AS \"state: Stored<VersionStateKind>\", published_by, \
+                    published_at, ready_at, retired_at \
+                    FROM fnr_versions WHERE id = ANY($1)",
+            ids as &[FunctionVersionId]
+        )
         .fetch_all(&self.pool)
         .await?;
         for row in rows {
@@ -296,13 +342,20 @@ impl FunctionVersionRepository {
         if function_ids.is_empty() {
             return Ok(batch);
         }
-        let rows = sqlx::query_as::<_, VersionRow>(&format!(
-            "SELECT DISTINCT ON (function_id) {COLUMNS} FROM fnr_versions \
+        let rows = sqlx::query_as!(
+            VersionRow,
+            "SELECT DISTINCT ON (function_id) id AS \"id: FunctionVersionId\", \
+                    function_id AS \"function_id: FunctionId\", version, artifact_ref, \
+                    digest, signature_bundle, signature_bundle_ref, signer_issuer, \
+                    signer_subject, manifest::text AS \"manifest!\", \
+                    state AS \"state: Stored<VersionStateKind>\", published_by, \
+                    published_at, ready_at, retired_at \
+                    FROM fnr_versions \
              WHERE function_id = ANY($1) AND state = $2 \
-             ORDER BY function_id ASC, version DESC"
-        ))
-        .bind(function_ids)
-        .bind(VersionStateKind::Published)
+             ORDER BY function_id ASC, version DESC",
+            function_ids as &[FunctionId],
+            VersionStateKind::Published as VersionStateKind
+        )
         .fetch_all(&self.pool)
         .await?;
         for row in rows {
@@ -323,12 +376,19 @@ impl FunctionVersionRepository {
         }
         let function_ids: Vec<&FunctionId> = pairs.iter().map(|(f, _)| f).collect();
         let numbers: Vec<i32> = pairs.iter().map(|(_, v)| *v).collect();
-        let rows = sqlx::query_as::<_, VersionRow>(&format!(
-            "SELECT {COLUMNS} FROM fnr_versions \
-             WHERE (function_id, version) IN (SELECT * FROM UNNEST($1::text[], $2::int[]))"
-        ))
-        .bind(&function_ids)
-        .bind(&numbers)
+        let rows = sqlx::query_as!(
+            VersionRow,
+            "SELECT id AS \"id: FunctionVersionId\", \
+                    function_id AS \"function_id: FunctionId\", version, artifact_ref, \
+                    digest, signature_bundle, signature_bundle_ref, signer_issuer, \
+                    signer_subject, manifest::text AS \"manifest!\", \
+                    state AS \"state: Stored<VersionStateKind>\", published_by, \
+                    published_at, ready_at, retired_at \
+                    FROM fnr_versions \
+             WHERE (function_id, version) IN (SELECT * FROM UNNEST($1::text[], $2::int[]))",
+            &function_ids as &[&FunctionId],
+            &numbers
+        )
         .fetch_all(&self.pool)
         .await?;
         for row in rows {
@@ -348,10 +408,17 @@ impl LockedRead<VersionById> for FunctionVersionRepository {
         query: &VersionById,
         tx: &mut DbTx<'_>,
     ) -> Result<Option<FunctionVersion>> {
-        let row = sqlx::query_as::<_, VersionRow>(&format!(
-            "SELECT {COLUMNS} FROM fnr_versions WHERE id = $1 FOR UPDATE"
-        ))
-        .bind(&query.0)
+        let row = sqlx::query_as!(
+            VersionRow,
+            "SELECT id AS \"id: FunctionVersionId\", \
+                    function_id AS \"function_id: FunctionId\", version, artifact_ref, \
+                    digest, signature_bundle, signature_bundle_ref, signer_issuer, \
+                    signer_subject, manifest::text AS \"manifest!\", \
+                    state AS \"state: Stored<VersionStateKind>\", published_by, \
+                    published_at, ready_at, retired_at \
+                    FROM fnr_versions WHERE id = $1 FOR UPDATE",
+            &query.0 as &FunctionVersionId
+        )
         .fetch_optional(&mut **tx.inner)
         .await?;
         row.map(to_entity_or_corrupt).transpose()
@@ -364,11 +431,13 @@ impl LockedRead<NextVersionOf> for FunctionVersionRepository {
     /// Java `nextVersion`: locks the function row, then `max + 1`; `404
     /// FUNCTION_NOT_FOUND` when the function is gone.
     async fn read_locked(&self, query: &NextVersionOf, tx: &mut DbTx<'_>) -> Result<i32> {
-        let locked: Option<(String,)> =
-            sqlx::query_as("SELECT id FROM fnr_functions WHERE id = $1 FOR UPDATE")
-                .bind(&query.0)
-                .fetch_optional(&mut **tx.inner)
-                .await?;
+        let locked: Option<(String,)> = sqlx::query!(
+            "SELECT id FROM fnr_functions WHERE id = $1 FOR UPDATE",
+            &query.0 as &FunctionId
+        )
+        .fetch_optional(&mut **tx.inner)
+        .await?
+        .map(|r| (r.id,));
         if locked.is_none() {
             return Err(PlatformError::Coded {
                 status: StatusCode::NOT_FOUND,
@@ -377,10 +446,12 @@ impl LockedRead<NextVersionOf> for FunctionVersionRepository {
                 details: Default::default(),
             });
         }
-        let (next,): (i32,) = sqlx::query_as(
-            "SELECT COALESCE(MAX(version), 0) + 1 FROM fnr_versions WHERE function_id = $1",
+        // COALESCE: never NULL, so `!`.
+        let next = sqlx::query_scalar!(
+            "SELECT COALESCE(MAX(version), 0) + 1 AS \"next!\" FROM fnr_versions \
+             WHERE function_id = $1",
+            &query.0 as &FunctionId
         )
-        .bind(&query.0)
         .fetch_one(&mut **tx.inner)
         .await?;
         Ok(next)
@@ -401,36 +472,36 @@ impl Persist<FunctionVersion> for FunctionVersionRepository {
             Some(s) => (Some(s.issuer.as_str()), Some(s.subject.as_str())),
             None => (None, None),
         };
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO fnr_versions \
                 (id, function_id, version, artifact_ref, digest, signature_bundle, \
                  signature_bundle_ref, signer_issuer, signer_subject, manifest, state, \
                  published_by, published_at, ready_at, retired_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text::jsonb, $11, $12, $13, $14, $15) \
              ON CONFLICT (id) DO UPDATE SET \
                 state = EXCLUDED.state, \
                 ready_at = CASE WHEN EXCLUDED.state = $16 THEN EXCLUDED.ready_at \
                                 ELSE fnr_versions.ready_at END, \
                 retired_at = CASE WHEN EXCLUDED.state = $17 THEN EXCLUDED.retired_at \
                                   ELSE fnr_versions.retired_at END",
+            &v.id as &FunctionVersionId,
+            &v.function_id as &FunctionId,
+            v.version,
+            &v.artifact_ref,
+            v.digest.value(),
+            v.signature_bundle.as_ref(),
+            v.signature_bundle_ref.as_ref(),
+            issuer,
+            subject,
+            serde_json::to_string(&v.manifest).expect("a manifest always serialises"),
+            v.state.kind() as VersionStateKind,
+            &v.published_by,
+            v.published_at,
+            v.ready_at(),
+            v.retired_at(),
+            VersionStateKind::Ready as VersionStateKind,
+            VersionStateKind::Retired as VersionStateKind
         )
-        .bind(&v.id)
-        .bind(&v.function_id)
-        .bind(v.version)
-        .bind(&v.artifact_ref)
-        .bind(v.digest.value())
-        .bind(&v.signature_bundle)
-        .bind(&v.signature_bundle_ref)
-        .bind(issuer)
-        .bind(subject)
-        .bind(serde_json::to_string(&v.manifest).expect("a manifest always serialises"))
-        .bind(v.state.kind())
-        .bind(&v.published_by)
-        .bind(v.published_at)
-        .bind(v.ready_at())
-        .bind(v.retired_at())
-        .bind(VersionStateKind::Ready)
-        .bind(VersionStateKind::Retired)
         .execute(&mut **tx.inner)
         .await?;
         Ok(())

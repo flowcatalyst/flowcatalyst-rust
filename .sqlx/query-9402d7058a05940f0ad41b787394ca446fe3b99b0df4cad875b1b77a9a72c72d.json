@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT client_id, signers AS \"signers: Value\", max_duration_ms, max_concurrency, max_wasm_memory_mb, max_db_pool_size, created_at, updated_at FROM fnr_client_policies WHERE client_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "client_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "signers: Value",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 2,
+        "name": "max_duration_ms",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "max_concurrency",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "max_wasm_memory_mb",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "max_db_pool_size",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "9402d7058a05940f0ad41b787394ca446fe3b99b0df4cad875b1b77a9a72c72d"
+}

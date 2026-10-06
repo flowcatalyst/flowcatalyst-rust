@@ -22,7 +22,6 @@ use std::collections::HashMap;
 /// `PUBLIC_ROUTE_UNIQUE_CONSTRAINT`).
 const UNIQUE_CONSTRAINT: &str = "fnr_routes_hostname_path_prefix_key";
 
-#[derive(sqlx::FromRow)]
 struct RouteRow {
     id: FunctionRouteId,
     function_id: FunctionId,
@@ -31,8 +30,6 @@ struct RouteRow {
     alias_prefixes: Vec<String>,
     created_at: DateTime<Utc>,
 }
-
-const COLUMNS: &str = "id, function_id, hostname, path_prefix, alias_prefixes, created_at";
 
 pub struct FunctionRouteRepository {
     pool: PgPool,
@@ -44,11 +41,15 @@ impl FunctionRouteRepository {
     }
 
     pub async fn list_by_function(&self, function_id: &FunctionId) -> Result<Vec<FunctionRoute>> {
-        let rows = sqlx::query_as::<_, RouteRow>(&format!(
-            "SELECT {COLUMNS} FROM fnr_routes WHERE function_id = $1 \
-             ORDER BY hostname ASC, path_prefix ASC"
-        ))
-        .bind(function_id)
+        let rows = sqlx::query_as!(
+            RouteRow,
+            "SELECT id AS \"id: FunctionRouteId\", \
+                    function_id AS \"function_id: FunctionId\", hostname, path_prefix, \
+                    alias_prefixes, created_at \
+                    FROM fnr_routes WHERE function_id = $1 \
+             ORDER BY hostname ASC, path_prefix ASC",
+            function_id as &FunctionId
+        )
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(to_entity).collect()
@@ -64,11 +65,15 @@ impl FunctionRouteRepository {
         if function_ids.is_empty() {
             return Ok(out);
         }
-        let rows = sqlx::query_as::<_, RouteRow>(&format!(
-            "SELECT {COLUMNS} FROM fnr_routes WHERE function_id = ANY($1) \
-             ORDER BY hostname ASC, path_prefix ASC"
-        ))
-        .bind(function_ids)
+        let rows = sqlx::query_as!(
+            RouteRow,
+            "SELECT id AS \"id: FunctionRouteId\", \
+                    function_id AS \"function_id: FunctionId\", hostname, path_prefix, \
+                    alias_prefixes, created_at \
+                    FROM fnr_routes WHERE function_id = ANY($1) \
+             ORDER BY hostname ASC, path_prefix ASC",
+            function_ids as &[FunctionId]
+        )
         .fetch_all(&self.pool)
         .await?;
         for row in rows {
@@ -91,23 +96,31 @@ impl FunctionRouteRepository {
         }
         let hostnames: Vec<&str> = keys.iter().map(|(h, _)| h.value()).collect();
         let prefixes: Vec<&str> = keys.iter().map(|(_, p)| p.value()).collect();
-        let rows = sqlx::query_as::<_, RouteRow>(&format!(
-            "SELECT {COLUMNS} FROM fnr_routes \
-             WHERE (hostname, path_prefix) IN (SELECT * FROM UNNEST($1::text[], $2::text[]))"
-        ))
-        .bind(&hostnames)
-        .bind(&prefixes)
+        let rows = sqlx::query_as!(
+            RouteRow,
+            "SELECT id AS \"id: FunctionRouteId\", \
+                    function_id AS \"function_id: FunctionId\", hostname, path_prefix, \
+                    alias_prefixes, created_at \
+                    FROM fnr_routes \
+             WHERE (hostname, path_prefix) IN (SELECT * FROM UNNEST($1::text[], $2::text[]))",
+            &hostnames as &[&str],
+            &prefixes as &[&str]
+        )
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(to_entity).collect()
     }
 
     pub async fn list_by_hostname(&self, hostname: &Hostname) -> Result<Vec<FunctionRoute>> {
-        let rows = sqlx::query_as::<_, RouteRow>(&format!(
-            "SELECT {COLUMNS} FROM fnr_routes WHERE hostname = $1 \
-             ORDER BY hostname ASC, path_prefix ASC"
-        ))
-        .bind(hostname.value())
+        let rows = sqlx::query_as!(
+            RouteRow,
+            "SELECT id AS \"id: FunctionRouteId\", \
+                    function_id AS \"function_id: FunctionId\", hostname, path_prefix, \
+                    alias_prefixes, created_at \
+                    FROM fnr_routes WHERE hostname = $1 \
+             ORDER BY hostname ASC, path_prefix ASC",
+            hostname.value()
+        )
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(to_entity).collect()
@@ -117,13 +130,17 @@ impl FunctionRouteRepository {
     /// hostname strictly under it.
     pub async fn list_under(&self, zone: &Hostname) -> Result<Vec<FunctionRoute>> {
         let suffix = format!(".{}", zone.value());
-        let rows = sqlx::query_as::<_, RouteRow>(&format!(
-            "SELECT {COLUMNS} FROM fnr_routes \
+        let rows = sqlx::query_as!(
+            RouteRow,
+            "SELECT id AS \"id: FunctionRouteId\", \
+                    function_id AS \"function_id: FunctionId\", hostname, path_prefix, \
+                    alias_prefixes, created_at \
+                    FROM fnr_routes \
              WHERE hostname = $1 OR right(hostname, char_length($2)) = $2 \
-             ORDER BY hostname ASC, path_prefix ASC"
-        ))
-        .bind(zone.value())
-        .bind(&suffix)
+             ORDER BY hostname ASC, path_prefix ASC",
+            zone.value(),
+            &suffix
+        )
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(to_entity).collect()
@@ -141,22 +158,24 @@ impl FunctionRouteRepository {
         routes: &[FunctionRoute],
         tx: &mut DbTx<'_>,
     ) -> Result<()> {
-        sqlx::query("DELETE FROM fnr_routes WHERE function_id = $1")
-            .bind(function_id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM fnr_routes WHERE function_id = $1",
+            function_id as &FunctionId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         for r in routes {
-            let inserted = sqlx::query(
+            let inserted = sqlx::query!(
                 "INSERT INTO fnr_routes \
                     (id, function_id, hostname, path_prefix, alias_prefixes, created_at) \
                  VALUES ($1, $2, $3, $4, $5, $6)",
+                &r.id as &FunctionRouteId,
+                &r.function_id as &FunctionId,
+                r.hostname.value(),
+                r.path_prefix.value(),
+                &r.alias_prefixes,
+                r.created_at
             )
-            .bind(&r.id)
-            .bind(&r.function_id)
-            .bind(r.hostname.value())
-            .bind(r.path_prefix.value())
-            .bind(&r.alias_prefixes)
-            .bind(r.created_at)
             .execute(&mut **tx.inner)
             .await;
             match inserted {

@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO fnr_aliases (function_id, alias, version_id, updated_by, updated_at) SELECT $1, * FROM UNNEST($2::text[], $3::text[], $4::text[], $5::timestamptz[]) ON CONFLICT (function_id, alias) DO UPDATE SET version_id = EXCLUDED.version_id, updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "TextArray",
+        "TextArray",
+        "TextArray",
+        "TimestamptzArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a2262db6a798ea3c91b06f5a40d212d95cfbbe3a292b32939baba510282e1936"
+}

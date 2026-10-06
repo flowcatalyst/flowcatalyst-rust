@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO fnr_hosts (id, pool, state, loaded, runtimes, started_at, last_heartbeat) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state, loaded = EXCLUDED.loaded, runtimes = EXCLUDED.runtimes, last_heartbeat = EXCLUDED.last_heartbeat",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Jsonb",
+        "Jsonb",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "dca45793c15064c2f40de4f67aec2222407c64a6d8bf1b4d4c9ea9e6126b7173"
+}

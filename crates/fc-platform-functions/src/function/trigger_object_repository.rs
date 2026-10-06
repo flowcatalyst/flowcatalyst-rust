@@ -31,13 +31,13 @@ impl TriggerObjectRepository {
 
     /// A function's links, by kind then trigger key (Java `listByFunction`).
     pub async fn list(&self, function_id: &FunctionId) -> Result<Vec<TriggerObject>> {
-        let rows: Vec<(Stored<TriggerObjectKind>, String, String, DateTime<Utc>)> = sqlx::query_as(
-            "SELECT kind, object_id, trigger_key, created_at FROM fnr_trigger_objects \
+        let rows: Vec<(Stored<TriggerObjectKind>, String, String, DateTime<Utc>)> = sqlx::query!(
+            "SELECT kind AS \"kind: Stored<TriggerObjectKind>\", object_id, trigger_key, created_at FROM fnr_trigger_objects \
              WHERE function_id = $1 ORDER BY kind ASC, trigger_key ASC",
+            function_id as &FunctionId
         )
-        .bind(function_id)
         .fetch_all(&self.pool)
-        .await?;
+        .await?.into_iter().map(|r| (r.kind, r.object_id, r.trigger_key, r.created_at)).collect();
         rows.into_iter()
             .map(|(kind, object_id, trigger_key, created_at)| {
                 let kind = kind.decode("fnr_trigger_objects", "kind", &object_id)?;
@@ -55,11 +55,15 @@ impl TriggerObjectRepository {
     /// Every linked object id of one kind, across all functions (Java
     /// `objectIds`): what an SDK sync must leave alone.
     pub async fn object_ids(&self, kind: TriggerObjectKind) -> Result<HashSet<String>> {
-        let rows: Vec<(String,)> =
-            sqlx::query_as("SELECT object_id FROM fnr_trigger_objects WHERE kind = $1")
-                .bind(kind)
-                .fetch_all(&self.pool)
-                .await?;
+        let rows: Vec<(String,)> = sqlx::query!(
+            "SELECT object_id FROM fnr_trigger_objects WHERE kind = $1",
+            kind as TriggerObjectKind
+        )
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(|r| (r.object_id,))
+        .collect();
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
@@ -71,8 +75,9 @@ impl TriggerObjectRepository {
         &self,
         function_id: &FunctionId,
     ) -> Result<Vec<TriggerObjectLink>> {
-        let rows: Vec<(Stored<TriggerObjectKind>, String, String, bool)> = sqlx::query_as(
-            "SELECT t.kind, t.trigger_key, t.object_id, \
+        // `present!`: a CASE whose every branch is a boolean (EXISTS or FALSE).
+        let rows: Vec<(Stored<TriggerObjectKind>, String, String, bool)> = sqlx::query!(
+            "SELECT t.kind AS \"kind: Stored<TriggerObjectKind>\", t.trigger_key, t.object_id, \
                 CASE t.kind \
                     WHEN $2 THEN EXISTS \
                         (SELECT 1 FROM msg_dispatch_pools p WHERE p.id = t.object_id) \
@@ -81,16 +86,19 @@ impl TriggerObjectRepository {
                     WHEN $4 THEN EXISTS \
                         (SELECT 1 FROM msg_scheduled_jobs j WHERE j.id = t.object_id) \
                     ELSE FALSE \
-                END \
+                END AS \"present!\" \
              FROM fnr_trigger_objects t WHERE t.function_id = $1 \
              ORDER BY t.kind ASC, t.trigger_key ASC",
+            function_id as &FunctionId,
+            TriggerObjectKind::Pool as TriggerObjectKind,
+            TriggerObjectKind::Subscription as TriggerObjectKind,
+            TriggerObjectKind::ScheduledJob as TriggerObjectKind
         )
-        .bind(function_id)
-        .bind(TriggerObjectKind::Pool)
-        .bind(TriggerObjectKind::Subscription)
-        .bind(TriggerObjectKind::ScheduledJob)
         .fetch_all(&self.pool)
-        .await?;
+        .await?
+        .into_iter()
+        .map(|r| (r.kind, r.trigger_key, r.object_id, r.present))
+        .collect();
         rows.into_iter()
             .map(|(kind, trigger_key, object_id, present)| {
                 let kind = kind.decode("fnr_trigger_objects", "kind", &object_id)?;
@@ -107,29 +115,29 @@ impl TriggerObjectRepository {
     /// Upsert on `(function, kind, trigger key)`: a recreated object moves
     /// the link to its new id (Java `link`).
     async fn link(&self, link: &TriggerObject, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO fnr_trigger_objects (function_id, kind, object_id, trigger_key, created_at) \
              VALUES ($1, $2, $3, $4, $5) \
              ON CONFLICT (function_id, kind, trigger_key) DO UPDATE SET object_id = EXCLUDED.object_id",
+            &link.function_id as &FunctionId,
+            link.kind as TriggerObjectKind,
+            &link.object_id,
+            &link.trigger_key,
+            link.created_at
         )
-        .bind(&link.function_id)
-        .bind(link.kind)
-        .bind(&link.object_id)
-        .bind(&link.trigger_key)
-        .bind(link.created_at)
         .execute(&mut **tx.inner)
         .await?;
         Ok(())
     }
 
     async fn unlink(&self, link: &TriggerObject, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "DELETE FROM fnr_trigger_objects \
              WHERE function_id = $1 AND kind = $2 AND trigger_key = $3",
+            &link.function_id as &FunctionId,
+            link.kind as TriggerObjectKind,
+            &link.trigger_key
         )
-        .bind(&link.function_id)
-        .bind(link.kind)
-        .bind(&link.trigger_key)
         .execute(&mut **tx.inner)
         .await?;
         Ok(())

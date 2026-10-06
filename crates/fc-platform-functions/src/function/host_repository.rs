@@ -18,7 +18,6 @@ use super::FunctionAddress;
 use fc_platform_core::shared::enum_str::Stored;
 use fc_platform_core::shared::error::Result;
 
-#[derive(sqlx::FromRow)]
 struct HostRow {
     id: String,
     pool: String,
@@ -46,10 +45,14 @@ impl FunctionHostRepository {
     }
 
     pub async fn find_by_id(&self, id: &str) -> Result<Option<FunctionHost>> {
-        let row = sqlx::query_as::<_, HostRow>(
-            "SELECT id, pool, state, loaded, runtimes, started_at, last_heartbeat FROM fnr_hosts WHERE id = $1",
+        let row = sqlx::query_as!(
+            HostRow,
+            "SELECT id, pool, state AS \"state: Stored<HostState>\", \
+                    loaded AS \"loaded: Value\", runtimes AS \"runtimes: Value\", \
+                    started_at, last_heartbeat \
+                    FROM fnr_hosts WHERE id = $1",
+            id
         )
-        .bind(id)
         .fetch_optional(&self.pool)
         .await?;
         row.map(to_entity).transpose()
@@ -63,12 +66,16 @@ impl FunctionHostRepository {
         pool: &str,
         seen_since: DateTime<Utc>,
     ) -> Result<Vec<FunctionHost>> {
-        let rows = sqlx::query_as::<_, HostRow>(
-            "SELECT id, pool, state, loaded, runtimes, started_at, last_heartbeat FROM fnr_hosts \
+        let rows = sqlx::query_as!(
+            HostRow,
+            "SELECT id, pool, state AS \"state: Stored<HostState>\", \
+                    loaded AS \"loaded: Value\", runtimes AS \"runtimes: Value\", \
+                    started_at, last_heartbeat \
+                    FROM fnr_hosts \
              WHERE pool = $1 AND last_heartbeat >= $2 ORDER BY id ASC",
+            pool,
+            seen_since
         )
-        .bind(pool)
-        .bind(seen_since)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(to_entity).collect()
@@ -83,13 +90,15 @@ impl FunctionHostRepository {
     /// many stale rows were purged.
     pub async fn heartbeat(&self, host: &FunctionHost, purge_before: DateTime<Utc>) -> Result<u64> {
         let mut tx = self.pool.begin().await?;
-        let purged = sqlx::query("DELETE FROM fnr_hosts WHERE last_heartbeat < $1 AND id <> $2")
-            .bind(purge_before)
-            .bind(&host.id)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-        sqlx::query(
+        let purged = sqlx::query!(
+            "DELETE FROM fnr_hosts WHERE last_heartbeat < $1 AND id <> $2",
+            purge_before,
+            &host.id
+        )
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        sqlx::query!(
             "INSERT INTO fnr_hosts (id, pool, state, loaded, runtimes, started_at, last_heartbeat) \
              VALUES ($1, $2, $3, $4, $5, $6, $7) \
              ON CONFLICT (id) DO UPDATE SET \
@@ -97,14 +106,14 @@ impl FunctionHostRepository {
                 loaded = EXCLUDED.loaded, \
                 runtimes = EXCLUDED.runtimes, \
                 last_heartbeat = EXCLUDED.last_heartbeat",
+            &host.id,
+            &host.pool,
+            host.state as HostState,
+            write_loaded(&host.loaded),
+            host.runtimes.as_ref().map(|r| serde_json::json!(r)),
+            host.started_at,
+            host.last_heartbeat
         )
-        .bind(&host.id)
-        .bind(&host.pool)
-        .bind(host.state)
-        .bind(write_loaded(&host.loaded))
-        .bind(host.runtimes.as_ref().map(|r| serde_json::json!(r)))
-        .bind(host.started_at)
-        .bind(host.last_heartbeat)
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
@@ -116,11 +125,15 @@ impl FunctionHostRepository {
     /// memory; the containment test does the same filter in SQL).
     pub async fn list_reporting(&self, address: &FunctionAddress) -> Result<Vec<FunctionHost>> {
         let probe = serde_json::json!([{ "address": address.render() }]);
-        let rows = sqlx::query_as::<_, HostRow>(
-            "SELECT id, pool, state, loaded, runtimes, started_at, last_heartbeat FROM fnr_hosts \
+        let rows = sqlx::query_as!(
+            HostRow,
+            "SELECT id, pool, state AS \"state: Stored<HostState>\", \
+                    loaded AS \"loaded: Value\", runtimes AS \"runtimes: Value\", \
+                    started_at, last_heartbeat \
+                    FROM fnr_hosts \
              WHERE loaded @> $1 ORDER BY id ASC",
+            probe
         )
-        .bind(probe)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(to_entity).collect()
@@ -129,13 +142,16 @@ impl FunctionHostRepository {
     /// Every pool with at least one host heartbeated at or after
     /// `seen_since`, with that count, by pool name.
     pub async fn pools(&self, seen_since: DateTime<Utc>) -> Result<Vec<PoolSummary>> {
-        let rows: Vec<(String, i64)> = sqlx::query_as(
-            "SELECT pool, COUNT(*) FROM fnr_hosts WHERE last_heartbeat >= $1 \
+        let rows: Vec<(String, i64)> = sqlx::query!(
+            "SELECT pool, COUNT(*) AS \"c1!\" FROM fnr_hosts WHERE last_heartbeat >= $1 \
              GROUP BY pool ORDER BY pool ASC",
+            seen_since
         )
-        .bind(seen_since)
         .fetch_all(&self.pool)
-        .await?;
+        .await?
+        .into_iter()
+        .map(|r| (r.pool, r.c1))
+        .collect();
         Ok(rows
             .into_iter()
             .map(|(pool, hosts)| PoolSummary { pool, hosts })

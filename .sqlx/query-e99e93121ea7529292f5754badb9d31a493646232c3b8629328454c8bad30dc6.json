@@ -1,0 +1,53 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id AS \"id: FunctionRouteId\", function_id AS \"function_id: FunctionId\", hostname, path_prefix, alias_prefixes, created_at FROM fnr_routes WHERE hostname = $1 OR right(hostname, char_length($2)) = $2 ORDER BY hostname ASC, path_prefix ASC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: FunctionRouteId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "function_id: FunctionId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "hostname",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "path_prefix",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "alias_prefixes",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "e99e93121ea7529292f5754badb9d31a493646232c3b8629328454c8bad30dc6"
+}

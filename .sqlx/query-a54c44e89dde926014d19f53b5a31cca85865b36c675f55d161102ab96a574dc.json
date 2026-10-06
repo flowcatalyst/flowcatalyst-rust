@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM fnr_trigger_objects WHERE function_id = $1 AND kind = $2 AND trigger_key = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a54c44e89dde926014d19f53b5a31cca85865b36c675f55d161102ab96a574dc"
+}

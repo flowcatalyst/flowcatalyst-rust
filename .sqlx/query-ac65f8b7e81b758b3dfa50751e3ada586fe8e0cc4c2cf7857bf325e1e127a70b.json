@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT kind AS \"kind: Stored<TriggerObjectKind>\", object_id, trigger_key, created_at FROM fnr_trigger_objects WHERE function_id = $1 ORDER BY kind ASC, trigger_key ASC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "kind: Stored<TriggerObjectKind>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "object_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "trigger_key",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "ac65f8b7e81b758b3dfa50751e3ada586fe8e0cc4c2cf7857bf325e1e127a70b"
+}

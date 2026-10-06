@@ -1,0 +1,58 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, pool, state AS \"state: Stored<HostState>\", loaded AS \"loaded: Value\", runtimes AS \"runtimes: Value\", started_at, last_heartbeat FROM fnr_hosts WHERE loaded @> $1 ORDER BY id ASC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "pool",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "state: Stored<HostState>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "loaded: Value",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 4,
+        "name": "runtimes: Value",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 5,
+        "name": "started_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "last_heartbeat",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Jsonb"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "9647800980629b158740c12101ee95dee4ab088760e2e9c8185b3ca24862072e"
+}

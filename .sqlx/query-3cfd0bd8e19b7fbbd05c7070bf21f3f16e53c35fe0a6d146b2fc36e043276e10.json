@@ -1,0 +1,107 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT ON (function_id) id AS \"id: FunctionVersionId\", function_id AS \"function_id: FunctionId\", version, artifact_ref, digest, signature_bundle, signature_bundle_ref, signer_issuer, signer_subject, manifest::text AS \"manifest!\", state AS \"state: Stored<VersionStateKind>\", published_by, published_at, ready_at, retired_at FROM fnr_versions WHERE function_id = ANY($1) AND state = $2 ORDER BY function_id ASC, version DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: FunctionVersionId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "function_id: FunctionId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "version",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "artifact_ref",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "digest",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "signature_bundle",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "signature_bundle_ref",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "signer_issuer",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "signer_subject",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "manifest!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "state: Stored<VersionStateKind>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 11,
+        "name": "published_by",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 12,
+        "name": "published_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "ready_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 14,
+        "name": "retired_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      null,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "3cfd0bd8e19b7fbbd05c7070bf21f3f16e53c35fe0a6d146b2fc36e043276e10"
+}
