@@ -211,13 +211,12 @@ fn resolve_instance_completion(
         None => None,
     };
     let status = status.unwrap_or("").to_ascii_uppercase();
-    match status.as_str() {
-        "" => Some((InstanceStatus::Completed, explicit)),
-        "SUCCESS" | "FAILURE" => Some((
-            InstanceStatus::Completed,
-            explicit.or_else(|| status.parse::<CompletionStatus>().ok()),
-        )),
-        other => Some((other.parse::<InstanceStatus>().ok()?, explicit)),
+    if status.is_empty() {
+        return Some((InstanceStatus::Completed, explicit));
+    }
+    match status.parse::<CompletionStatus>() {
+        Ok(outcome) => Some((InstanceStatus::Completed, explicit.or(Some(outcome)))),
+        Err(_) => Some((status.parse::<InstanceStatus>().ok()?, explicit)),
     }
 }
 
@@ -1031,3 +1030,43 @@ pub async fn post_instance_complete(
 }
 
 // ── Router ──────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completion_resolves_an_outcome_or_an_instance_status() {
+        use CompletionStatus::{Failure, Success};
+        use InstanceStatus::{Completed, DeliveryFailed, Failed};
+        let cases = [
+            (None, None, Some((Completed, None))),
+            (Some(""), None, Some((Completed, None))),
+            (Some("success"), None, Some((Completed, Some(Success)))),
+            (Some("FAILURE"), None, Some((Completed, Some(Failure)))),
+            // An explicit completionStatus wins.
+            (
+                Some("FAILURE"),
+                Some("success"),
+                Some((Completed, Some(Success))),
+            ),
+            (None, Some("Failure"), Some((Completed, Some(Failure)))),
+            // Anything else is the instance status itself.
+            (Some("failed"), None, Some((Failed, None))),
+            (
+                Some("delivery_failed"),
+                Some("SUCCESS"),
+                Some((DeliveryFailed, Some(Success))),
+            ),
+            (Some("bogus"), None, None),
+            (None, Some("bogus"), None),
+        ];
+        for (status, completion, want) in cases {
+            assert_eq!(
+                resolve_instance_completion(status, completion),
+                want,
+                "{status:?} / {completion:?}"
+            );
+        }
+    }
+}

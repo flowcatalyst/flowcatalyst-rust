@@ -16,7 +16,7 @@ use fc_platform_core::shared::id::ScheduledJobId;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{ScheduledJob, ScheduledJobStatus};
-use fc_platform_core::shared::enum_str::decode;
+use fc_platform_core::shared::enum_str::Stored;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::shared::id::decode_id;
 use fc_platform_core::shared::id::decode_id_opt;
@@ -32,7 +32,7 @@ struct ScheduledJobRow {
     code: String,
     name: String,
     description: Option<String>,
-    status: String,
+    status: Stored<ScheduledJobStatus>,
     crons: Vec<String>,
     timezone: String,
     payload: Option<serde_json::Value>,
@@ -59,7 +59,7 @@ impl TryFrom<ScheduledJobRow> for ScheduledJob {
             "client_id",
             &r.id,
         )?;
-        let status = decode(&r.status, "msg_scheduled_jobs", "status", &r.id)?;
+        let status = r.status.decode("msg_scheduled_jobs", "status", &r.id)?;
         Ok(Self {
             id,
             client_id,
@@ -424,7 +424,7 @@ impl Persist<ScheduledJob> for ScheduledJobRepository {
         .bind(&sj.code)
         .bind(&sj.name)
         .bind(&sj.description)
-        .bind(sj.status.as_str())
+        .bind(sj.status)
         .bind(&sj.crons)
         .bind(&sj.timezone)
         .bind(&sj.payload)

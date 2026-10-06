@@ -17,9 +17,10 @@ use fc_platform_core::shared::id::ScheduledJobInstanceLogId;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{
-    CompletionStatus, InstanceStatus, ScheduledJobInstance, ScheduledJobInstanceLog, TriggerKind,
+    CompletionStatus, InstanceStatus, LogLevel, ScheduledJobInstance, ScheduledJobInstanceLog,
+    TriggerKind,
 };
-use fc_platform_core::shared::enum_str::{decode, decode_opt};
+use fc_platform_core::shared::enum_str::{decode_stored_opt, Stored};
 use fc_platform_core::shared::error::{PlatformError, Result};
 use std::collections::HashSet;
 
@@ -29,15 +30,15 @@ struct InstanceRow {
     scheduled_job_id: ScheduledJobId,
     client_id: Option<ClientId>,
     job_code: String,
-    trigger_kind: String,
+    trigger_kind: Stored<TriggerKind>,
     scheduled_for: Option<DateTime<Utc>>,
     fired_at: DateTime<Utc>,
     delivered_at: Option<DateTime<Utc>>,
     completed_at: Option<DateTime<Utc>>,
-    status: String,
+    status: Stored<InstanceStatus>,
     delivery_attempts: i32,
     delivery_error: Option<String>,
-    completion_status: Option<String>,
+    completion_status: Option<Stored<CompletionStatus>>,
     completion_result: Option<serde_json::Value>,
     correlation_id: Option<String>,
     created_at: DateTime<Utc>,
@@ -46,20 +47,14 @@ struct InstanceRow {
 impl TryFrom<InstanceRow> for ScheduledJobInstance {
     type Error = PlatformError;
     fn try_from(r: InstanceRow) -> Result<Self> {
-        let trigger_kind = decode(
-            &r.trigger_kind,
-            "msg_scheduled_job_instances",
-            "trigger_kind",
-            r.id.as_str(),
-        )?;
-        let status = decode(
-            &r.status,
-            "msg_scheduled_job_instances",
-            "status",
-            r.id.as_str(),
-        )?;
-        let completion_status = decode_opt(
-            r.completion_status.as_deref(),
+        let trigger_kind =
+            r.trigger_kind
+                .decode("msg_scheduled_job_instances", "trigger_kind", r.id.as_str())?;
+        let status = r
+            .status
+            .decode("msg_scheduled_job_instances", "status", r.id.as_str())?;
+        let completion_status = decode_stored_opt(
+            r.completion_status,
             "msg_scheduled_job_instances",
             "completion_status",
             r.id.as_str(),
@@ -91,7 +86,7 @@ struct LogRow {
     instance_id: ScheduledJobInstanceId,
     scheduled_job_id: Option<ScheduledJobId>,
     client_id: Option<ClientId>,
-    level: String,
+    level: Stored<LogLevel>,
     message: String,
     metadata: Option<serde_json::Value>,
     created_at: DateTime<Utc>,
@@ -100,12 +95,9 @@ struct LogRow {
 impl TryFrom<LogRow> for ScheduledJobInstanceLog {
     type Error = PlatformError;
     fn try_from(r: LogRow) -> Result<Self> {
-        let level = decode(
-            &r.level,
-            "msg_scheduled_job_instance_logs",
-            "level",
-            r.id.as_str(),
-        )?;
+        let level = r
+            .level
+            .decode("msg_scheduled_job_instance_logs", "level", r.id.as_str())?;
         Ok(Self {
             id: r.id,
             instance_id: r.instance_id,
@@ -164,10 +156,10 @@ impl ScheduledJobInstanceRepository {
         .bind(&inst.scheduled_job_id)
         .bind(&inst.client_id)
         .bind(&inst.job_code)
-        .bind(inst.trigger_kind.as_str())
+        .bind(inst.trigger_kind)
         .bind(inst.scheduled_for)
         .bind(inst.fired_at)
-        .bind(inst.status.as_str())
+        .bind(inst.status)
         .bind(inst.delivery_attempts)
         .bind(&inst.correlation_id)
         .bind(inst.created_at)
@@ -263,8 +255,8 @@ impl ScheduledJobInstanceRepository {
         )
         .bind(id)
         .bind(created_at)
-        .bind(status.as_str())
-        .bind(completion_status.map(|c| c.as_str()))
+        .bind(status)
+        .bind(completion_status)
         .bind(result)
         .execute(&self.pool)
         .await?;
@@ -476,7 +468,7 @@ impl ScheduledJobInstanceRepository {
         .bind(&log.instance_id)
         .bind(&log.scheduled_job_id)
         .bind(&log.client_id)
-        .bind(log.level.as_str())
+        .bind(log.level)
         .bind(&log.message)
         .bind(&log.metadata)
         .bind(log.created_at)
