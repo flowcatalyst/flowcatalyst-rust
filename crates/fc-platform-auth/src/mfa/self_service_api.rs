@@ -110,7 +110,7 @@ pub async fn totp_begin(State(s): State<Arc<TwoFactorLogin>>, auth: OptionalAuth
         .policy
         .evaluate(&email_of(&p))
         .await
-        .method_allowed("TOTP")
+        .method_allowed(MethodType::Totp)
     {
         return coded(
             StatusCode::FORBIDDEN,
@@ -177,7 +177,7 @@ pub async fn email_begin(State(s): State<Arc<TwoFactorLogin>>, auth: OptionalAut
         .policy
         .evaluate(&email_of(&p))
         .await
-        .method_allowed("EMAIL_PIN")
+        .method_allowed(MethodType::EmailPin)
     {
         return coded(
             StatusCode::FORBIDDEN,

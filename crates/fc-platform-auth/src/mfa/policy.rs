@@ -3,6 +3,8 @@
 
 use std::sync::Arc;
 
+use super::entity::MethodType;
+
 use fc_platform_iam::email_domain_mapping::entity::EmailDomainMapping;
 use fc_platform_iam::identity_provider::entity::IdentityProviderType;
 use fc_platform_iam::{
@@ -95,10 +97,10 @@ impl Eval {
 
     /// Whether the user may use `method`: always, unless the domain
     /// requires 2FA with an allow-list (Go `methodAllowed`).
-    pub fn method_allowed(&self, method: &str) -> bool {
+    pub fn method_allowed(&self, method: MethodType) -> bool {
         if !self.requires_2fa() {
             return true;
         }
-        self.allowed_methods().iter().any(|m| m == method)
+        self.allowed_methods().iter().any(|m| m == method.as_str())
     }
 }

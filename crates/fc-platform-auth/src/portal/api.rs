@@ -23,7 +23,9 @@ use chrono::{DateTime, Utc};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
-use super::entity::{micros, normalize_app_code, LinkedOAuthClient, PortalApp, PortalIdentity};
+use super::entity::{
+    micros, normalize_app_code, IdentityStatus, LinkedOAuthClient, PortalApp, PortalIdentity,
+};
 use super::operations::{
     not_found, AppGrantCommand, AssignUnassignedCommand, AssignUnassignedPortalIdentitiesUseCase,
     CreateAppWithOAuthClientCommand, CreatePortalAppWithOAuthClientUseCase, DeleteAppCommand,
@@ -42,6 +44,7 @@ use fc_platform_core::shared::tsid;
 use fc_platform_core::shared::tsid::EntityType;
 use fc_platform_core::usecase::Committed;
 use fc_platform_core::usecase::{ExecutionContext, UseCase, UseCaseError};
+use fc_platform_iam::auth::oauth_entity::OAuthClientType;
 
 type ApiResult<T> = Result<T, PlatformError>;
 
@@ -661,7 +664,7 @@ async fn set_status(
     auth: &Authenticated,
     id: String,
     raw: &Bytes,
-    status: &str,
+    status: IdentityStatus,
 ) -> ApiResult<Json<MessageResponse>> {
     huma_check(raw, &["clientId"], &[])?;
     let req: ClientBody = body(raw)?;
@@ -676,13 +679,13 @@ async fn set_status(
         client_id,
         email: String::new(),
         id,
-        status: status.to_string(),
+        status: status.as_str().to_string(),
     };
     use_case
         .run(cmd, ExecutionContext::from_auth(&auth.0))
         .await
         .into_result()?;
-    Ok(message(if status == "DISABLED" {
+    Ok(message(if status == IdentityStatus::Disabled {
         "Portal user deactivated"
     } else {
         "Portal user activated"
@@ -707,7 +710,7 @@ pub async fn activate_portal_user(
     RawBody(raw): RawBody,
 ) -> ApiResult<Json<MessageResponse>> {
     // Gated in set_status: can_write_portal_users for the body's client.
-    set_status(&state, &auth, id, &raw, "ACTIVE").await
+    set_status(&state, &auth, id, &raw, IdentityStatus::Active).await
 }
 
 /// Suspend a portal identity (blocks portal login, keeps the row)
@@ -728,7 +731,7 @@ pub async fn deactivate_portal_user(
     RawBody(raw): RawBody,
 ) -> ApiResult<Json<MessageResponse>> {
     // Gated in set_status: can_write_portal_users for the body's client.
-    set_status(&state, &auth, id, &raw, "DISABLED").await
+    set_status(&state, &auth, id, &raw, IdentityStatus::Disabled).await
 }
 
 /// Delete a portal identity (offboarding from every portal of the client)
@@ -1033,7 +1036,8 @@ pub async fn create_portal_app(
     can_write_portal_users(&auth.0, &client_id)?;
 
     let client_type = req.client_type.clone().unwrap_or_default();
-    let confidential = client_type.is_empty() || client_type == "CONFIDENTIAL";
+    let confidential = client_type.is_empty()
+        || client_type.parse::<OAuthClientType>().ok() == Some(OAuthClientType::Confidential);
     // The secret is generated here so the plaintext can be returned once;
     // only its hash reaches the use case.
     let (secret, secret_ref) = match (confidential, state.encryption_service.as_ref()) {

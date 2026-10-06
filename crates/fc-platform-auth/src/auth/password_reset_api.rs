@@ -26,6 +26,7 @@ use fc_platform_core::shared::rate_limit_store::{
 };
 use fc_platform_core::usecase::unit_of_work::PgUnitOfWork;
 use fc_platform_iam::auth::password_service::PasswordService;
+use fc_platform_iam::identity_provider::entity::IdentityProviderType;
 use fc_platform_iam::mfa::entity::MethodType;
 use fc_platform_iam::password_reset::entity::{PasswordResetToken, TokenPurpose};
 use fc_platform_iam::password_reset::repository::PasswordResetTokenRepository;
@@ -167,7 +168,8 @@ pub fn password_setup_eligible(p: &Principal) -> bool {
     let Some(identity) = p.user_identity.as_ref() else {
         return false;
     };
-    identity.password_hash.is_none() && identity.provider.as_deref() != Some("OIDC")
+    identity.password_hash.is_none()
+        && identity.provider.as_deref() != Some(IdentityProviderType::Oidc.as_str())
 }
 
 fn domain_of(email: &str) -> &str {

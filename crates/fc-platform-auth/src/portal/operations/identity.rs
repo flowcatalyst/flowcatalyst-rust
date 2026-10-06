@@ -85,7 +85,7 @@ impl<U: UnitOfWork> EnsurePortalIdentityUseCase<U> {
             ),
             None => None,
         };
-        let source = if cmd.source == "JIT" {
+        let source = if cmd.source == IdentitySource::Jit.as_str() {
             IdentitySource::Jit
         } else {
             IdentitySource::Invite

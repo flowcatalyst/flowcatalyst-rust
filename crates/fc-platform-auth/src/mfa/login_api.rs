@@ -539,6 +539,29 @@ struct VerifyRequest {
     remember_device: bool,
 }
 
+/// What a verify request presents a code for: an enrolled factor, or one of
+/// the recovery codes (which is not a factor a user enrols).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Presented {
+    Factor(MethodType),
+    RecoveryCode,
+}
+
+impl Presented {
+    /// The request's `method`, ignoring surrounding space and letter case;
+    /// `None` for anything else.
+    fn from_input(text: &str) -> Option<Self> {
+        let text = text.trim().to_uppercase();
+        if text == RECOVERY_CODE {
+            return Some(Self::RecoveryCode);
+        }
+        text.parse().ok().map(Self::Factor)
+    }
+}
+
+/// How a verify request spells "a recovery code" (not a [`MethodType`]).
+const RECOVERY_CODE: &str = "RECOVERY_CODE";
+
 /// `POST /auth/2fa/verify` (Go `handle2FAVerify`).
 pub async fn verify(
     State(s): State<Arc<TwoFactorLogin>>,
@@ -570,13 +593,13 @@ pub async fn verify(
         return too_many_requests(retry_after_secs);
     }
 
-    let method = req.method.trim().to_uppercase();
+    let method = Presented::from_input(&req.method);
     // Owner ruling I-Q12 (Java, 2026-09-05): a domain's allow-list binds the
     // challenge too, not only enrolment. Invisible to a user of an allowed
     // method.
-    if matches!(method.as_str(), "TOTP" | "EMAIL_PIN") {
+    if let Some(Presented::Factor(factor)) = method {
         let eval = s.policy.evaluate(&email).await;
-        if !eval.method_allowed(&method) {
+        if !eval.method_allowed(factor) {
             record_user_login_attempt(
                 &s.login_attempt_repo,
                 Some(&email),
@@ -589,11 +612,13 @@ pub async fn verify(
             return unauthorized("Invalid or expired code");
         }
     }
-    let result = match method.as_str() {
-        "TOTP" => s.mfa.verify_totp(&p.id, &req.code).await,
-        "EMAIL_PIN" => s.mfa.verify_login_email_pin(&p.id, &req.code).await,
-        "RECOVERY_CODE" => s.mfa.verify_recovery_code(&p.id, &req.code).await,
-        _ => {
+    let result = match method {
+        Some(Presented::Factor(MethodType::Totp)) => s.mfa.verify_totp(&p.id, &req.code).await,
+        Some(Presented::Factor(MethodType::EmailPin)) => {
+            s.mfa.verify_login_email_pin(&p.id, &req.code).await
+        }
+        Some(Presented::RecoveryCode) => s.mfa.verify_recovery_code(&p.id, &req.code).await,
+        None => {
             return coded(
                 StatusCode::BAD_REQUEST,
                 "INVALID_METHOD",
@@ -625,7 +650,7 @@ pub async fn verify(
         return unauthorized("Invalid or expired code");
     }
 
-    if method == "RECOVERY_CODE" {
+    if method == Some(Presented::RecoveryCode) {
         s.notifier.recovery_code_used(&email_of(&p)).await;
     }
     let jar = if req.remember_device {
@@ -714,7 +739,7 @@ pub async fn enroll_totp_begin(State(s): State<Arc<TwoFactorLogin>>, body: Bytes
         .policy
         .evaluate(&email_of(&p))
         .await
-        .method_allowed("TOTP")
+        .method_allowed(MethodType::Totp)
     {
         return coded(
             StatusCode::FORBIDDEN,
@@ -787,7 +812,7 @@ pub async fn enroll_email_begin(State(s): State<Arc<TwoFactorLogin>>, body: Byte
         .policy
         .evaluate(&email_of(&p))
         .await
-        .method_allowed("EMAIL_PIN")
+        .method_allowed(MethodType::EmailPin)
     {
         return coded(
             StatusCode::FORBIDDEN,

@@ -12,7 +12,7 @@ use fc_platform_core::shared::id::PrincipalId;
 use serde::Serialize;
 use sqlx::PgPool;
 
-use fc_platform_core::shared::enum_str::{corrupt_value, decode, str_enum};
+use fc_platform_core::shared::enum_str::{corrupt_value, str_enum, Stored};
 use fc_platform_core::shared::error::{PlatformError, Result};
 
 /// Where a request stands (Go `resetapproval.Status`).
@@ -107,7 +107,7 @@ struct ResetApprovalRow {
     id: String,
     principal_id: PrincipalId,
     client_id: Option<ClientId>,
-    status: String,
+    status: Stored<ResetApprovalStatus>,
     reset_2fa: bool,
     note: Option<String>,
     decided_by: Option<String>,
@@ -119,8 +119,9 @@ struct ResetApprovalRow {
 impl TryFrom<ResetApprovalRow> for ResetApprovalRequest {
     type Error = PlatformError;
     fn try_from(r: ResetApprovalRow) -> Result<Self> {
-        let status: ResetApprovalStatus =
-            decode(&r.status, "iam_reset_approval_requests", "status", &r.id)?;
+        let status = r
+            .status
+            .decode("iam_reset_approval_requests", "status", &r.id)?;
         let state = match (status, r.decided_by, r.decided_at) {
             (ResetApprovalStatus::Pending, ..) => ResetApprovalState::Pending,
             (ResetApprovalStatus::Expired, ..) => ResetApprovalState::Expired,
@@ -201,18 +202,20 @@ impl ResetApprovalRepository {
             None => {
                 sqlx::query_as::<_, ResetApprovalRow>(&format!(
                     "SELECT {COLUMNS} FROM iam_reset_approval_requests \
-                     WHERE status = 'PENDING' AND expires_at > NOW() ORDER BY created_at"
+                     WHERE status = $1 AND expires_at > NOW() ORDER BY created_at"
                 ))
+                .bind(ResetApprovalStatus::Pending)
                 .fetch_all(&self.pool)
                 .await?
             }
             Some(ids) => {
                 sqlx::query_as::<_, ResetApprovalRow>(&format!(
                     "SELECT {COLUMNS} FROM iam_reset_approval_requests \
-                     WHERE status = 'PENDING' AND expires_at > NOW() \
+                     WHERE status = $2 AND expires_at > NOW() \
                        AND client_id = ANY($1::varchar[]) ORDER BY created_at"
                 ))
                 .bind(ids)
+                .bind(ResetApprovalStatus::Pending)
                 .fetch_all(&self.pool)
                 .await?
             }
@@ -228,11 +231,12 @@ impl ResetApprovalRepository {
         let r = sqlx::query(
             "UPDATE iam_reset_approval_requests \
              SET status = $2, decided_by = $3, decided_at = NOW() \
-             WHERE id = $1 AND status = 'PENDING' AND expires_at > NOW()",
+             WHERE id = $1 AND status = $4 AND expires_at > NOW()",
         )
         .bind(id)
-        .bind(decision.status().as_str())
+        .bind(decision.status())
         .bind(decided_by)
+        .bind(ResetApprovalStatus::Pending)
         .execute(&self.pool)
         .await?;
         Ok(r.rows_affected() == 1)
@@ -252,7 +256,7 @@ mod tests {
             id: "rar_1".to_string(),
             principal_id: PrincipalId::parse("prn_1").unwrap(),
             client_id: None,
-            status: status.to_string(),
+            status: Stored::of_text(status),
             reset_2fa: false,
             note: None,
             decided_by: decided_by.map(str::to_string),
