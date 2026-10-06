@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE oauth_oidc_payloads\n            SET payload = jsonb_set(\n                jsonb_set(payload, '{revoked}', 'true'::jsonb),\n                '{revokedAt}', to_jsonb($3::text)\n            ),\n            consumed_at = $2\n            WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "61b84d9ee799d7eaa137e4f3825990313c4773fedd0999fa109f919d48d59f96"
+}

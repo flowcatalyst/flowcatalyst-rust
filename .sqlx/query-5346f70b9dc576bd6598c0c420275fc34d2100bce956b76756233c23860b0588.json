@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM oauth_oidc_payloads\n            WHERE type = $1 AND expires_at < NOW()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5346f70b9dc576bd6598c0c420275fc34d2100bce956b76756233c23860b0588"
+}

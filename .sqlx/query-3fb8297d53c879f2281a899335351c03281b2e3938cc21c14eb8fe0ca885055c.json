@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO oauth_oidc_payloads\n                (id, type, payload, grant_id, user_code, uid, expires_at, consumed_at, created_at)\n            VALUES ($1, $2, $3, NULL, NULL, NULL, $4, NULL, $5)\n            ON CONFLICT (id) DO UPDATE SET payload = $3, expires_at = $4",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Jsonb",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3fb8297d53c879f2281a899335351c03281b2e3938cc21c14eb8fe0ca885055c"
+}

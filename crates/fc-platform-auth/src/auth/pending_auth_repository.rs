@@ -71,16 +71,16 @@ impl PendingAuthRepository {
             "createdAt": pending.created_at.to_rfc3339(),
         });
 
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO oauth_oidc_payloads (id, type, payload, expires_at, created_at)
                VALUES ($1, $2, $3, $4, $5)
                ON CONFLICT (id) DO UPDATE SET payload = $3, expires_at = $4"#,
+            Self::make_id(state_param),
+            PAYLOAD_TYPE,
+            &payload,
+            expires_at,
+            now
         )
-        .bind(Self::make_id(state_param))
-        .bind(PAYLOAD_TYPE)
-        .bind(&payload)
-        .bind(expires_at)
-        .bind(now)
         .execute(&self.pool)
         .await?;
 
@@ -92,12 +92,13 @@ impl PendingAuthRepository {
     pub async fn find_and_consume(&self, state_param: &str) -> Result<Option<PendingAuth>> {
         let composite_id = Self::make_id(state_param);
 
-        let row = sqlx::query_as::<_, PayloadRow>(
+        let row = sqlx::query_as!(
+            PayloadRow,
             r#"DELETE FROM oauth_oidc_payloads
                WHERE id = $1 AND consumed_at IS NULL AND expires_at > NOW()
-               RETURNING *"#,
+               RETURNING id, type, payload AS "payload: serde_json::Value", grant_id, user_code, uid, expires_at, consumed_at, created_at"#,
+            &composite_id
         )
-        .bind(&composite_id)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -139,11 +140,12 @@ impl PendingAuthRepository {
 
     /// Delete all expired pending auth states (cleanup).
     pub async fn delete_expired(&self) -> Result<u64> {
-        let result =
-            sqlx::query("DELETE FROM oauth_oidc_payloads WHERE type = $1 AND expires_at < NOW()")
-                .bind(PAYLOAD_TYPE)
-                .execute(&self.pool)
-                .await?;
+        let result = sqlx::query!(
+            "DELETE FROM oauth_oidc_payloads WHERE type = $1 AND expires_at < NOW()",
+            PAYLOAD_TYPE
+        )
+        .execute(&self.pool)
+        .await?;
 
         Ok(result.rows_affected())
     }

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE oauth_oidc_payloads\n            SET consumed_at = NOW()\n            WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6fc82b096097711847158c685dc6b536e3d78410a59a1c6c4a30bad47c862420"
+}

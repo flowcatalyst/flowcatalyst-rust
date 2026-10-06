@@ -1,0 +1,118 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT state, email_domain, identity_provider_id AS \"identity_provider_id: IdentityProviderId\", email_domain_mapping_id AS \"email_domain_mapping_id: EmailDomainMappingId\", nonce, code_verifier, return_url, oauth_client_id, oauth_redirect_uri, oauth_scope, oauth_state, oauth_code_challenge, oauth_code_challenge_method, oauth_nonce, interaction_uid, created_at, expires_at FROM oauth_oidc_login_states WHERE state = $1 AND expires_at > NOW()",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "state",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "email_domain",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "identity_provider_id: IdentityProviderId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "email_domain_mapping_id: EmailDomainMappingId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "nonce",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "code_verifier",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "return_url",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "oauth_client_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "oauth_redirect_uri",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "oauth_scope",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 10,
+        "name": "oauth_state",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 11,
+        "name": "oauth_code_challenge",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 12,
+        "name": "oauth_code_challenge_method",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 13,
+        "name": "oauth_nonce",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 14,
+        "name": "interaction_uid",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 15,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 16,
+        "name": "expires_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "9a026ab2a68f1e76a13b50e2b748be925c43d2e4de60f1cb10d9d7fadcf231d5"
+}

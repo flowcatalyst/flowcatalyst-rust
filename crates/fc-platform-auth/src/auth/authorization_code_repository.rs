@@ -129,17 +129,17 @@ impl AuthorizationCodeRepository {
 
     /// Insert a new authorization code.
     pub async fn insert(&self, code: &AuthorizationCode) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO oauth_oidc_payloads
                 (id, type, payload, grant_id, user_code, uid, expires_at, consumed_at, created_at)
             VALUES ($1, $2, $3, NULL, NULL, NULL, $4, NULL, $5)
             ON CONFLICT (id) DO UPDATE SET payload = $3, expires_at = $4"#,
+            Self::make_id(&code.code),
+            PAYLOAD_TYPE,
+            Self::to_payload(code),
+            Some(code.expires_at),
+            code.created_at
         )
-        .bind(Self::make_id(&code.code))
-        .bind(PAYLOAD_TYPE)
-        .bind(Self::to_payload(code))
-        .bind(Some(code.expires_at))
-        .bind(code.created_at)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -147,23 +147,30 @@ impl AuthorizationCodeRepository {
 
     /// Find an authorization code by its code value.
     pub async fn find_by_code(&self, code: &str) -> Result<Option<AuthorizationCode>> {
-        let row =
-            sqlx::query_as::<_, PayloadRow>("SELECT * FROM oauth_oidc_payloads WHERE id = $1")
-                .bind(Self::make_id(code))
-                .fetch_optional(&self.pool)
-                .await?;
+        let row = sqlx::query_as!(
+            PayloadRow,
+            "SELECT id, type, payload AS \"payload: Value\", grant_id, user_code, uid, \
+                    expires_at, consumed_at, created_at \
+                    FROM oauth_oidc_payloads WHERE id = $1",
+            Self::make_id(code)
+        )
+        .fetch_optional(&self.pool)
+        .await?;
         row.map(AuthorizationCode::try_from).transpose()
     }
 
     /// Find a valid (not used, not expired) authorization code.
     pub async fn find_valid_code(&self, code: &str) -> Result<Option<AuthorizationCode>> {
-        let row = sqlx::query_as::<_, PayloadRow>(
-            r#"SELECT * FROM oauth_oidc_payloads
+        let row = sqlx::query_as!(
+            PayloadRow,
+            r#"SELECT id, type, payload AS "payload: Value", grant_id, user_code, uid,
+                    expires_at, consumed_at, created_at
+                    FROM oauth_oidc_payloads
             WHERE id = $1
               AND consumed_at IS NULL
               AND expires_at > NOW()"#,
+            Self::make_id(code)
         )
-        .bind(Self::make_id(code))
         .fetch_optional(&self.pool)
         .await?;
         row.map(AuthorizationCode::try_from).transpose()
@@ -177,15 +184,16 @@ impl AuthorizationCodeRepository {
     /// has expired, or was already consumed by another request.
     pub async fn find_and_consume(&self, code: &str) -> Result<Option<AuthorizationCode>> {
         let composite_id = Self::make_id(code);
-        let row = sqlx::query_as::<_, PayloadRow>(
+        let row = sqlx::query_as!(
+            PayloadRow,
             r#"UPDATE oauth_oidc_payloads
             SET consumed_at = NOW()
             WHERE id = $1
               AND consumed_at IS NULL
               AND expires_at > NOW()
-            RETURNING *"#,
+            RETURNING id, type, payload AS "payload: Value", grant_id, user_code, uid, expires_at, consumed_at, created_at"#,
+            &composite_id
         )
-        .bind(&composite_id)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -201,12 +209,12 @@ impl AuthorizationCodeRepository {
 
     /// Mark an authorization code as used (consumed).
     pub async fn mark_as_used(&self, code: &str) -> Result<bool> {
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"UPDATE oauth_oidc_payloads
             SET consumed_at = NOW()
             WHERE id = $1"#,
+            Self::make_id(code)
         )
-        .bind(Self::make_id(code))
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected() > 0)
@@ -214,20 +222,22 @@ impl AuthorizationCodeRepository {
 
     /// Delete an authorization code.
     pub async fn delete(&self, code: &str) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM oauth_oidc_payloads WHERE id = $1")
-            .bind(Self::make_id(code))
-            .execute(&self.pool)
-            .await?;
+        let result = sqlx::query!(
+            "DELETE FROM oauth_oidc_payloads WHERE id = $1",
+            Self::make_id(code)
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(result.rows_affected() > 0)
     }
 
     /// Delete all expired authorization codes.
     pub async fn delete_expired(&self) -> Result<u64> {
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"DELETE FROM oauth_oidc_payloads
             WHERE type = $1 AND expires_at < NOW()"#,
+            PAYLOAD_TYPE
         )
-        .bind(PAYLOAD_TYPE)
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected())
@@ -235,12 +245,12 @@ impl AuthorizationCodeRepository {
 
     /// Delete all authorization codes for a principal.
     pub async fn delete_by_principal(&self, principal_id: &str) -> Result<u64> {
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"DELETE FROM oauth_oidc_payloads
             WHERE type = $1 AND payload->>'accountId' = $2"#,
+            PAYLOAD_TYPE,
+            principal_id
         )
-        .bind(PAYLOAD_TYPE)
-        .bind(principal_id)
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected())
@@ -248,12 +258,12 @@ impl AuthorizationCodeRepository {
 
     /// Delete all authorization codes for a client.
     pub async fn delete_by_client(&self, client_id: &str) -> Result<u64> {
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"DELETE FROM oauth_oidc_payloads
             WHERE type = $1 AND payload->>'clientId' = $2"#,
+            PAYLOAD_TYPE,
+            client_id
         )
-        .bind(PAYLOAD_TYPE)
-        .bind(client_id)
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected())
@@ -261,23 +271,24 @@ impl AuthorizationCodeRepository {
 
     /// Count all authorization codes.
     pub async fn count(&self) -> Result<u64> {
-        let (count,) =
-            sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM oauth_oidc_payloads WHERE type = $1")
-                .bind(PAYLOAD_TYPE)
-                .fetch_one(&self.pool)
-                .await?;
+        let count = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM oauth_oidc_payloads WHERE type = $1",
+            PAYLOAD_TYPE
+        )
+        .fetch_one(&self.pool)
+        .await?;
         Ok(count as u64)
     }
 
     /// Count valid (not consumed, not expired) authorization codes.
     pub async fn count_valid(&self) -> Result<u64> {
-        let (count,) = sqlx::query_as::<_, (i64,)>(
-            r#"SELECT COUNT(*) FROM oauth_oidc_payloads
+        let count = sqlx::query_scalar!(
+            r#"SELECT COUNT(*) AS "count!" FROM oauth_oidc_payloads
             WHERE type = $1
               AND consumed_at IS NULL
               AND expires_at > NOW()"#,
+            PAYLOAD_TYPE
         )
-        .bind(PAYLOAD_TYPE)
         .fetch_one(&self.pool)
         .await?;
         Ok(count as u64)

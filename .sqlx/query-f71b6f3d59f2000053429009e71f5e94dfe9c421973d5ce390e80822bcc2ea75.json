@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM oauth_oidc_payloads\n            WHERE type = $1 AND payload->>'clientId' = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f71b6f3d59f2000053429009e71f5e94dfe9c421973d5ce390e80822bcc2ea75"
+}

@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE oauth_oidc_payloads\n            SET payload = jsonb_set(payload, '{replacedBy}', to_jsonb($3::text))\n            WHERE type = $1 AND payload->>'tokenHash' = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d8b7126ce7f780acb89a030d1891eb567530726cd1b2989955a749d8d71e810c"
+}

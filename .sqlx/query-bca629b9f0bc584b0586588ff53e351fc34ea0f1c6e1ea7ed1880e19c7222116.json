@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(*) AS \"count!\" FROM oauth_oidc_payloads\n            WHERE type = $1\n              AND payload->>'accountId' = $2\n              AND expires_at > NOW()\n              AND consumed_at IS NULL\n              AND (payload->>'revoked' IS NULL OR payload->>'revoked' = 'false')",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "bca629b9f0bc584b0586588ff53e351fc34ea0f1c6e1ea7ed1880e19c7222116"
+}

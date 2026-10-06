@@ -22,8 +22,8 @@ impl OidcPayloadRepository {
     /// Remove every payload past its expiry, whatever its type. A payload
     /// with no expiry is kept. Returns the rows removed.
     pub async fn purge_expired(&self) -> Result<u64> {
-        let done = sqlx::query(
-            "DELETE FROM oauth_oidc_payloads WHERE expires_at IS NOT NULL AND expires_at < NOW()",
+        let done = sqlx::query!(
+            "DELETE FROM oauth_oidc_payloads WHERE expires_at IS NOT NULL AND expires_at < NOW()"
         )
         .execute(&self.pool)
         .await?;

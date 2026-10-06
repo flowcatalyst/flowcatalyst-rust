@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE iam_reset_approval_requests SET status = $2, decided_by = $3, decided_at = NOW() WHERE id = $1 AND status = $4 AND expires_at > NOW()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Varchar",
+        "Varchar",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "14ad6d22f2f7b9f45036b32ede81b6e673cc70d349ceb80500c46c36b4d11899"
+}

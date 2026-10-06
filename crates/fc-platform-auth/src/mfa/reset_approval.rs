@@ -102,7 +102,6 @@ impl ResetApprovalRequest {
     }
 }
 
-#[derive(sqlx::FromRow)]
 struct ResetApprovalRow {
     id: String,
     principal_id: PrincipalId,
@@ -169,9 +168,6 @@ impl Decision {
     }
 }
 
-const COLUMNS: &str = "id, principal_id, client_id, status, reset_2fa, note, decided_by, \
-     decided_at, expires_at, created_at";
-
 pub struct ResetApprovalRepository {
     pool: PgPool,
 }
@@ -182,10 +178,15 @@ impl ResetApprovalRepository {
     }
 
     pub async fn find_by_id(&self, id: &str) -> Result<Option<ResetApprovalRequest>> {
-        sqlx::query_as::<_, ResetApprovalRow>(&format!(
-            "SELECT {COLUMNS} FROM iam_reset_approval_requests WHERE id = $1"
-        ))
-        .bind(id)
+        sqlx::query_as!(
+            ResetApprovalRow,
+            "SELECT id, principal_id AS \"principal_id: PrincipalId\", \
+                    client_id AS \"client_id: ClientId\", \
+                    status AS \"status: Stored<ResetApprovalStatus>\", reset_2fa, note, \
+                    decided_by, decided_at, expires_at, created_at \
+                    FROM iam_reset_approval_requests WHERE id = $1",
+            id
+        )
         .fetch_optional(&self.pool)
         .await?
         .map(ResetApprovalRequest::try_from)
@@ -200,22 +201,32 @@ impl ResetApprovalRepository {
     ) -> Result<Vec<ResetApprovalRequest>> {
         let rows = match client_ids {
             None => {
-                sqlx::query_as::<_, ResetApprovalRow>(&format!(
-                    "SELECT {COLUMNS} FROM iam_reset_approval_requests \
-                     WHERE status = $1 AND expires_at > NOW() ORDER BY created_at"
-                ))
-                .bind(ResetApprovalStatus::Pending)
+                sqlx::query_as!(
+                    ResetApprovalRow,
+                    "SELECT id, principal_id AS \"principal_id: PrincipalId\", \
+                    client_id AS \"client_id: ClientId\", \
+                    status AS \"status: Stored<ResetApprovalStatus>\", reset_2fa, note, \
+                    decided_by, decided_at, expires_at, created_at \
+                    FROM iam_reset_approval_requests \
+                     WHERE status = $1 AND expires_at > NOW() ORDER BY created_at",
+                    ResetApprovalStatus::Pending as ResetApprovalStatus
+                )
                 .fetch_all(&self.pool)
                 .await?
             }
             Some(ids) => {
-                sqlx::query_as::<_, ResetApprovalRow>(&format!(
-                    "SELECT {COLUMNS} FROM iam_reset_approval_requests \
+                sqlx::query_as!(
+                    ResetApprovalRow,
+                    "SELECT id, principal_id AS \"principal_id: PrincipalId\", \
+                    client_id AS \"client_id: ClientId\", \
+                    status AS \"status: Stored<ResetApprovalStatus>\", reset_2fa, note, \
+                    decided_by, decided_at, expires_at, created_at \
+                    FROM iam_reset_approval_requests \
                      WHERE status = $2 AND expires_at > NOW() \
-                       AND client_id = ANY($1::varchar[]) ORDER BY created_at"
-                ))
-                .bind(ids)
-                .bind(ResetApprovalStatus::Pending)
+                       AND client_id = ANY($1::varchar[]) ORDER BY created_at",
+                    ids,
+                    ResetApprovalStatus::Pending as ResetApprovalStatus
+                )
                 .fetch_all(&self.pool)
                 .await?
             }
@@ -228,15 +239,15 @@ impl ResetApprovalRepository {
     /// Decide a pending, unexpired request; `false` when it no longer was
     /// (one guarded statement: a request is decided once).
     pub async fn decide(&self, id: &str, decision: Decision, decided_by: &str) -> Result<bool> {
-        let r = sqlx::query(
+        let r = sqlx::query!(
             "UPDATE iam_reset_approval_requests \
              SET status = $2, decided_by = $3, decided_at = NOW() \
              WHERE id = $1 AND status = $4 AND expires_at > NOW()",
+            id,
+            decision.status() as ResetApprovalStatus,
+            decided_by,
+            ResetApprovalStatus::Pending as ResetApprovalStatus
         )
-        .bind(id)
-        .bind(decision.status())
-        .bind(decided_by)
-        .bind(ResetApprovalStatus::Pending)
         .execute(&self.pool)
         .await?;
         Ok(r.rows_affected() == 1)

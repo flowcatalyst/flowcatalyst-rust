@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE oauth_oidc_payloads\n            SET payload = jsonb_set(\n                    jsonb_set(\n                        jsonb_set(\n                            jsonb_set(payload, '{revoked}', 'true'::jsonb),\n                            '{revokedAt}', to_jsonb($4::text)\n                        ),\n                        '{replacedBy}', to_jsonb($5::text)\n                    ),\n                    '{tokenFamily}',\n                    COALESCE(NULLIF(payload->'tokenFamily', 'null'::jsonb), to_jsonb($6::text))\n                ),\n                grant_id = COALESCE(grant_id, $6),\n                consumed_at = $3\n            WHERE type = $1\n              AND payload->>'tokenHash' = $2\n              AND consumed_at IS NULL\n              AND expires_at > NOW()\n              AND (payload->>'revoked' IS NULL OR payload->>'revoked' = 'false')\n            RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "bcdd5e1357cacee5151c3238033902e030d57dde03d3a06799dec87890f4d46f"
+}

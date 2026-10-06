@@ -12,7 +12,7 @@ use sqlx::PgPool;
 use tracing::debug;
 
 /// Row struct matching the `oauth_oidc_login_states` table
-#[derive(Debug, sqlx::FromRow)]
+#[derive(Debug)]
 struct OidcLoginStateRow {
     pub state: String,
     pub email_domain: String,
@@ -69,7 +69,7 @@ impl OidcLoginStateRepository {
 
     /// Insert a new login state
     pub async fn insert(&self, state: &OidcLoginState) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO oauth_oidc_login_states (
                 state, email_domain, identity_provider_id, email_domain_mapping_id,
                 nonce, code_verifier, return_url,
@@ -77,24 +77,24 @@ impl OidcLoginStateRepository {
                 oauth_code_challenge, oauth_code_challenge_method, oauth_nonce,
                 interaction_uid, created_at, expires_at
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)"#,
+            &state.state,
+            &state.email_domain,
+            &state.identity_provider_id as &IdentityProviderId,
+            &state.email_domain_mapping_id as &EmailDomainMappingId,
+            &state.nonce,
+            &state.code_verifier,
+            state.return_url.as_ref(),
+            state.oauth_client_id.as_ref(),
+            state.oauth_redirect_uri.as_ref(),
+            state.oauth_scope.as_ref(),
+            state.oauth_state.as_ref(),
+            state.oauth_code_challenge.as_ref(),
+            state.oauth_code_challenge_method.as_ref(),
+            state.oauth_nonce.as_ref(),
+            state.interaction_uid.as_ref(),
+            state.created_at,
+            state.expires_at
         )
-        .bind(&state.state)
-        .bind(&state.email_domain)
-        .bind(&state.identity_provider_id)
-        .bind(&state.email_domain_mapping_id)
-        .bind(&state.nonce)
-        .bind(&state.code_verifier)
-        .bind(&state.return_url)
-        .bind(&state.oauth_client_id)
-        .bind(&state.oauth_redirect_uri)
-        .bind(&state.oauth_scope)
-        .bind(&state.oauth_state)
-        .bind(&state.oauth_code_challenge)
-        .bind(&state.oauth_code_challenge_method)
-        .bind(&state.oauth_nonce)
-        .bind(&state.interaction_uid)
-        .bind(state.created_at)
-        .bind(state.expires_at)
         .execute(&self.pool)
         .await?;
 
@@ -103,10 +103,18 @@ impl OidcLoginStateRepository {
 
     /// Find a state by its state parameter (which is the primary key)
     pub async fn find_by_state(&self, state: &str) -> Result<Option<OidcLoginState>> {
-        let row = sqlx::query_as::<_, OidcLoginStateRow>(
-            "SELECT * FROM oauth_oidc_login_states WHERE state = $1",
+        let row = sqlx::query_as!(
+            OidcLoginStateRow,
+            "SELECT state, email_domain, \
+                    identity_provider_id AS \"identity_provider_id: IdentityProviderId\", \
+                    email_domain_mapping_id AS \"email_domain_mapping_id: EmailDomainMappingId\", \
+                    nonce, code_verifier, return_url, oauth_client_id, \
+                    oauth_redirect_uri, oauth_scope, oauth_state, oauth_code_challenge, \
+                    oauth_code_challenge_method, oauth_nonce, interaction_uid, \
+                    created_at, expires_at \
+                    FROM oauth_oidc_login_states WHERE state = $1",
+            state
         )
-        .bind(state)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -118,10 +126,18 @@ impl OidcLoginStateRepository {
     /// This is the main method used during callback validation.
     /// Returns None if the state doesn't exist or has expired.
     pub async fn find_valid_state(&self, state: &str) -> Result<Option<OidcLoginState>> {
-        let row = sqlx::query_as::<_, OidcLoginStateRow>(
-            "SELECT * FROM oauth_oidc_login_states WHERE state = $1 AND expires_at > NOW()",
+        let row = sqlx::query_as!(
+            OidcLoginStateRow,
+            "SELECT state, email_domain, \
+                    identity_provider_id AS \"identity_provider_id: IdentityProviderId\", \
+                    email_domain_mapping_id AS \"email_domain_mapping_id: EmailDomainMappingId\", \
+                    nonce, code_verifier, return_url, oauth_client_id, \
+                    oauth_redirect_uri, oauth_scope, oauth_state, oauth_code_challenge, \
+                    oauth_code_challenge_method, oauth_nonce, interaction_uid, \
+                    created_at, expires_at \
+                    FROM oauth_oidc_login_states WHERE state = $1 AND expires_at > NOW()",
+            state
         )
-        .bind(state)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -138,12 +154,13 @@ impl OidcLoginStateRepository {
         &self,
         state_param: &str,
     ) -> Result<Option<OidcLoginState>> {
-        let row = sqlx::query_as::<_, OidcLoginStateRow>(
+        let row = sqlx::query_as!(
+            OidcLoginStateRow,
             r#"DELETE FROM oauth_oidc_login_states
                WHERE state = $1 AND expires_at > NOW()
-               RETURNING *"#,
+               RETURNING state, email_domain, identity_provider_id AS "identity_provider_id: IdentityProviderId", email_domain_mapping_id AS "email_domain_mapping_id: EmailDomainMappingId", nonce, code_verifier, return_url, oauth_client_id, oauth_redirect_uri, oauth_scope, oauth_state, oauth_code_challenge, oauth_code_challenge_method, oauth_nonce, interaction_uid, created_at, expires_at"#,
+            state_param
         )
-        .bind(state_param)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -159,10 +176,12 @@ impl OidcLoginStateRepository {
     /// Should be called immediately after finding the state to ensure
     /// it cannot be reused.
     pub async fn delete_by_state(&self, state: &str) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM oauth_oidc_login_states WHERE state = $1")
-            .bind(state)
-            .execute(&self.pool)
-            .await?;
+        let result = sqlx::query!(
+            "DELETE FROM oauth_oidc_login_states WHERE state = $1",
+            state
+        )
+        .execute(&self.pool)
+        .await?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -172,7 +191,7 @@ impl OidcLoginStateRepository {
     /// Should be called periodically to clean up abandoned login attempts.
     /// Returns the number of deleted states.
     pub async fn delete_expired(&self) -> Result<u64> {
-        let result = sqlx::query("DELETE FROM oauth_oidc_login_states WHERE expires_at < NOW()")
+        let result = sqlx::query!("DELETE FROM oauth_oidc_login_states WHERE expires_at < NOW()")
             .execute(&self.pool)
             .await?;
 
@@ -181,26 +200,37 @@ impl OidcLoginStateRepository {
 
     /// Find all states (for debugging/admin purposes)
     pub async fn find_all(&self) -> Result<Vec<OidcLoginState>> {
-        let rows = sqlx::query_as::<_, OidcLoginStateRow>("SELECT * FROM oauth_oidc_login_states")
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sqlx::query_as!(
+            OidcLoginStateRow,
+            "SELECT state, email_domain, \
+                    identity_provider_id AS \"identity_provider_id: IdentityProviderId\", \
+                    email_domain_mapping_id AS \"email_domain_mapping_id: EmailDomainMappingId\", \
+                    nonce, code_verifier, return_url, oauth_client_id, \
+                    oauth_redirect_uri, oauth_scope, oauth_state, oauth_code_challenge, \
+                    oauth_code_challenge_method, oauth_nonce, interaction_uid, \
+                    created_at, expires_at \
+                    FROM oauth_oidc_login_states"
+        )
+        .fetch_all(&self.pool)
+        .await?;
 
         Ok(rows.into_iter().map(OidcLoginState::from).collect())
     }
 
     /// Count all states (for monitoring)
     pub async fn count(&self) -> Result<u64> {
-        let (count,) = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM oauth_oidc_login_states")
-            .fetch_one(&self.pool)
-            .await?;
+        let count =
+            sqlx::query_scalar!("SELECT COUNT(*) AS \"count!\" FROM oauth_oidc_login_states")
+                .fetch_one(&self.pool)
+                .await?;
 
         Ok(count as u64)
     }
 
     /// Count expired states (for monitoring cleanup backlog)
     pub async fn count_expired(&self) -> Result<u64> {
-        let (count,) = sqlx::query_as::<_, (i64,)>(
-            "SELECT COUNT(*) FROM oauth_oidc_login_states WHERE expires_at < NOW()",
+        let count = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM oauth_oidc_login_states WHERE expires_at < NOW()"
         )
         .fetch_one(&self.pool)
         .await?;
@@ -212,10 +242,12 @@ impl OidcLoginStateRepository {
     ///
     /// Useful for cleaning up states that are much older than the normal 10-minute expiry.
     pub async fn delete_older_than(&self, cutoff: DateTime<Utc>) -> Result<u64> {
-        let result = sqlx::query("DELETE FROM oauth_oidc_login_states WHERE created_at < $1")
-            .bind(cutoff)
-            .execute(&self.pool)
-            .await?;
+        let result = sqlx::query!(
+            "DELETE FROM oauth_oidc_login_states WHERE created_at < $1",
+            cutoff
+        )
+        .execute(&self.pool)
+        .await?;
 
         Ok(result.rows_affected())
     }

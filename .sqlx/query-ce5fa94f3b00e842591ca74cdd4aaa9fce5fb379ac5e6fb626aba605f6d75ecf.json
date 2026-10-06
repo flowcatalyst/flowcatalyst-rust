@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE oauth_oidc_payloads\n            SET payload = jsonb_set(payload, '{lastUsedAt}', to_jsonb($2::text))\n            WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ce5fa94f3b00e842591ca74cdd4aaa9fce5fb379ac5e6fb626aba605f6d75ecf"
+}

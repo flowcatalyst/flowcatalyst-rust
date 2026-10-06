@@ -165,18 +165,18 @@ impl RefreshTokenRepository {
 
     /// Insert a new refresh token
     pub async fn insert(&self, token: &RefreshToken) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO oauth_oidc_payloads
                 (id, type, payload, grant_id, user_code, uid, expires_at, consumed_at, created_at)
             VALUES ($1, $2, $3, $4, NULL, NULL, $5, NULL, $6)
             ON CONFLICT (id) DO UPDATE SET payload = $3, grant_id = $4, expires_at = $5"#,
+            Self::make_id(&token.id),
+            PAYLOAD_TYPE,
+            Self::to_payload(token),
+            token.token_family.as_ref(),
+            Some(token.expires_at),
+            token.created_at
         )
-        .bind(Self::make_id(&token.id))
-        .bind(PAYLOAD_TYPE)
-        .bind(Self::to_payload(token))
-        .bind(&token.token_family)
-        .bind(Some(token.expires_at))
-        .bind(token.created_at)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -199,7 +199,7 @@ impl RefreshTokenRepository {
     ) -> Result<bool> {
         let now = Utc::now();
         let mut tx = self.pool.begin().await?;
-        let consumed = sqlx::query_scalar::<_, String>(
+        let consumed = sqlx::query_scalar!(
             r#"UPDATE oauth_oidc_payloads
             SET payload = jsonb_set(
                     jsonb_set(
@@ -220,30 +220,30 @@ impl RefreshTokenRepository {
               AND expires_at > NOW()
               AND (payload->>'revoked' IS NULL OR payload->>'revoked' = 'false')
             RETURNING id"#,
+            PAYLOAD_TYPE,
+            token_hash,
+            now,
+            now.to_rfc3339(),
+            &replacement.token_hash,
+            family
         )
-        .bind(PAYLOAD_TYPE)
-        .bind(token_hash)
-        .bind(now)
-        .bind(now.to_rfc3339())
-        .bind(&replacement.token_hash)
-        .bind(family)
         .fetch_optional(&mut *tx)
         .await?;
         if consumed.is_none() {
             tx.rollback().await?;
             return Ok(false);
         }
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO oauth_oidc_payloads
                 (id, type, payload, grant_id, user_code, uid, expires_at, consumed_at, created_at)
             VALUES ($1, $2, $3, $4, NULL, NULL, $5, NULL, $6)"#,
+            Self::make_id(&replacement.id),
+            PAYLOAD_TYPE,
+            Self::to_payload(replacement),
+            replacement.token_family.as_ref(),
+            Some(replacement.expires_at),
+            replacement.created_at
         )
-        .bind(Self::make_id(&replacement.id))
-        .bind(PAYLOAD_TYPE)
-        .bind(Self::to_payload(replacement))
-        .bind(&replacement.token_family)
-        .bind(Some(replacement.expires_at))
-        .bind(replacement.created_at)
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
@@ -252,12 +252,15 @@ impl RefreshTokenRepository {
 
     /// Find a refresh token by its hash
     pub async fn find_by_hash(&self, token_hash: &str) -> Result<Option<RefreshToken>> {
-        let row = sqlx::query_as::<_, PayloadRow>(
-            r#"SELECT * FROM oauth_oidc_payloads
+        let row = sqlx::query_as!(
+            PayloadRow,
+            r#"SELECT id, type, payload AS "payload: Value", grant_id, user_code, uid,
+                    expires_at, consumed_at, created_at
+                    FROM oauth_oidc_payloads
             WHERE type = $1 AND payload->>'tokenHash' = $2"#,
+            PAYLOAD_TYPE,
+            token_hash
         )
-        .bind(PAYLOAD_TYPE)
-        .bind(token_hash)
         .fetch_optional(&self.pool)
         .await?;
         Ok(row.map(RefreshToken::from))
@@ -265,15 +268,18 @@ impl RefreshTokenRepository {
 
     /// Find a valid (non-expired, non-revoked) refresh token by its hash
     pub async fn find_valid_by_hash(&self, token_hash: &str) -> Result<Option<RefreshToken>> {
-        let row = sqlx::query_as::<_, PayloadRow>(
-            r#"SELECT * FROM oauth_oidc_payloads
+        let row = sqlx::query_as!(
+            PayloadRow,
+            r#"SELECT id, type, payload AS "payload: Value", grant_id, user_code, uid,
+                    expires_at, consumed_at, created_at
+                    FROM oauth_oidc_payloads
             WHERE type = $1
               AND payload->>'tokenHash' = $2
               AND expires_at > NOW()
               AND consumed_at IS NULL"#,
+            PAYLOAD_TYPE,
+            token_hash
         )
-        .bind(PAYLOAD_TYPE)
-        .bind(token_hash)
         .fetch_optional(&self.pool)
         .await?;
         match row {
@@ -291,12 +297,15 @@ impl RefreshTokenRepository {
 
     /// Find all tokens for a principal
     pub async fn find_by_principal(&self, principal_id: &PrincipalId) -> Result<Vec<RefreshToken>> {
-        let rows = sqlx::query_as::<_, PayloadRow>(
-            r#"SELECT * FROM oauth_oidc_payloads
+        let rows = sqlx::query_as!(
+            PayloadRow,
+            r#"SELECT id, type, payload AS "payload: Value", grant_id, user_code, uid,
+                    expires_at, consumed_at, created_at
+                    FROM oauth_oidc_payloads
             WHERE type = $1 AND payload->>'accountId' = $2"#,
+            PAYLOAD_TYPE,
+            principal_id as &PrincipalId
         )
-        .bind(PAYLOAD_TYPE)
-        .bind(principal_id)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(RefreshToken::from).collect())
@@ -307,15 +316,18 @@ impl RefreshTokenRepository {
         &self,
         principal_id: &PrincipalId,
     ) -> Result<Vec<RefreshToken>> {
-        let rows = sqlx::query_as::<_, PayloadRow>(
-            r#"SELECT * FROM oauth_oidc_payloads
+        let rows = sqlx::query_as!(
+            PayloadRow,
+            r#"SELECT id, type, payload AS "payload: Value", grant_id, user_code, uid,
+                    expires_at, consumed_at, created_at
+                    FROM oauth_oidc_payloads
             WHERE type = $1
               AND payload->>'accountId' = $2
               AND expires_at > NOW()
               AND consumed_at IS NULL"#,
+            PAYLOAD_TYPE,
+            principal_id as &PrincipalId
         )
-        .bind(PAYLOAD_TYPE)
-        .bind(principal_id)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
@@ -331,7 +343,7 @@ impl RefreshTokenRepository {
     pub async fn revoke_by_id(&self, id: &str) -> Result<bool> {
         let composite_id = Self::make_id(id);
         let now = Utc::now();
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"UPDATE oauth_oidc_payloads
             SET payload = jsonb_set(
                 jsonb_set(payload, '{revoked}', 'true'::jsonb),
@@ -339,10 +351,10 @@ impl RefreshTokenRepository {
             ),
             consumed_at = $2
             WHERE id = $1"#,
+            &composite_id,
+            now,
+            now.to_rfc3339()
         )
-        .bind(&composite_id)
-        .bind(now)
-        .bind(now.to_rfc3339())
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected() > 0)
@@ -351,7 +363,7 @@ impl RefreshTokenRepository {
     /// Revoke a token by its hash
     pub async fn revoke_by_hash(&self, token_hash: &str) -> Result<bool> {
         let now = Utc::now();
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"UPDATE oauth_oidc_payloads
             SET payload = jsonb_set(
                 jsonb_set(payload, '{revoked}', 'true'::jsonb),
@@ -359,11 +371,11 @@ impl RefreshTokenRepository {
             ),
             consumed_at = $3
             WHERE type = $1 AND payload->>'tokenHash' = $2"#,
+            PAYLOAD_TYPE,
+            token_hash,
+            now,
+            now.to_rfc3339()
         )
-        .bind(PAYLOAD_TYPE)
-        .bind(token_hash)
-        .bind(now)
-        .bind(now.to_rfc3339())
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected() > 0)
@@ -374,7 +386,7 @@ impl RefreshTokenRepository {
     /// Single UPDATE instead of N individual revocations.
     pub async fn revoke_all_for_principal(&self, principal_id: &PrincipalId) -> Result<u64> {
         let now = Utc::now();
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"UPDATE oauth_oidc_payloads
             SET payload = jsonb_set(
                 jsonb_set(payload, '{revoked}', 'true'::jsonb),
@@ -386,11 +398,11 @@ impl RefreshTokenRepository {
               AND consumed_at IS NULL
               AND expires_at > NOW()
               AND (payload->>'revoked' IS NULL OR payload->>'revoked' = 'false')"#,
+            PAYLOAD_TYPE,
+            principal_id as &PrincipalId,
+            now,
+            now.to_rfc3339()
         )
-        .bind(PAYLOAD_TYPE)
-        .bind(principal_id)
-        .bind(now)
-        .bind(now.to_rfc3339())
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected())
@@ -398,12 +410,15 @@ impl RefreshTokenRepository {
 
     /// Find all tokens in a token family (by grant_id)
     pub async fn find_by_family(&self, family_id: &str) -> Result<Vec<RefreshToken>> {
-        let rows = sqlx::query_as::<_, PayloadRow>(
-            r#"SELECT * FROM oauth_oidc_payloads
+        let rows = sqlx::query_as!(
+            PayloadRow,
+            r#"SELECT id, type, payload AS "payload: Value", grant_id, user_code, uid,
+                    expires_at, consumed_at, created_at
+                    FROM oauth_oidc_payloads
             WHERE type = $1 AND grant_id = $2"#,
+            PAYLOAD_TYPE,
+            family_id
         )
-        .bind(PAYLOAD_TYPE)
-        .bind(family_id)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(RefreshToken::from).collect())
@@ -414,7 +429,7 @@ impl RefreshTokenRepository {
     /// Single UPDATE instead of N individual revocations.
     pub async fn revoke_all_in_family(&self, family_id: &str) -> Result<u64> {
         let now = Utc::now();
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"UPDATE oauth_oidc_payloads
             SET payload = jsonb_set(
                 jsonb_set(payload, '{revoked}', 'true'::jsonb),
@@ -424,11 +439,11 @@ impl RefreshTokenRepository {
             WHERE type = $1
               AND grant_id = $2
               AND (payload->>'revoked' IS NULL OR payload->>'revoked' = 'false')"#,
+            PAYLOAD_TYPE,
+            family_id,
+            now,
+            now.to_rfc3339()
         )
-        .bind(PAYLOAD_TYPE)
-        .bind(family_id)
-        .bind(now)
-        .bind(now.to_rfc3339())
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected())
@@ -438,14 +453,14 @@ impl RefreshTokenRepository {
     ///
     /// Atomically sets the replacedBy field in the JSONB payload.
     pub async fn mark_as_replaced(&self, token_hash: &str, new_token_hash: &str) -> Result<bool> {
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"UPDATE oauth_oidc_payloads
             SET payload = jsonb_set(payload, '{replacedBy}', to_jsonb($3::text))
             WHERE type = $1 AND payload->>'tokenHash' = $2"#,
+            PAYLOAD_TYPE,
+            token_hash,
+            new_token_hash
         )
-        .bind(PAYLOAD_TYPE)
-        .bind(token_hash)
-        .bind(new_token_hash)
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected() > 0)
@@ -453,16 +468,17 @@ impl RefreshTokenRepository {
 
     /// Check if a token was replaced
     pub async fn was_replaced(&self, token_hash: &str) -> Result<bool> {
-        let (exists,) = sqlx::query_as::<_, (bool,)>(
+        // EXISTS is never NULL.
+        let exists = sqlx::query_scalar!(
             r#"SELECT EXISTS(
                 SELECT 1 FROM oauth_oidc_payloads
                 WHERE type = $1
                   AND payload->>'tokenHash' = $2
                   AND payload->>'replacedBy' IS NOT NULL
-            )"#,
+            ) AS "exists!""#,
+            PAYLOAD_TYPE,
+            token_hash
         )
-        .bind(PAYLOAD_TYPE)
-        .bind(token_hash)
         .fetch_one(&self.pool)
         .await?;
         Ok(exists)
@@ -473,13 +489,13 @@ impl RefreshTokenRepository {
     /// Atomically sets the lastUsedAt field in the JSONB payload.
     pub async fn update_last_used(&self, id: &str) -> Result<bool> {
         let now = Utc::now();
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"UPDATE oauth_oidc_payloads
             SET payload = jsonb_set(payload, '{lastUsedAt}', to_jsonb($2::text))
             WHERE id = $1"#,
+            Self::make_id(id),
+            now.to_rfc3339()
         )
-        .bind(Self::make_id(id))
-        .bind(now.to_rfc3339())
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected() > 0)
@@ -487,11 +503,11 @@ impl RefreshTokenRepository {
 
     /// Delete expired tokens (cleanup job)
     pub async fn delete_expired(&self) -> Result<u64> {
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"DELETE FROM oauth_oidc_payloads
             WHERE type = $1 AND expires_at < NOW()"#,
+            PAYLOAD_TYPE
         )
-        .bind(PAYLOAD_TYPE)
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected())
@@ -499,14 +515,14 @@ impl RefreshTokenRepository {
 
     /// Delete revoked tokens older than a given date (cleanup job)
     pub async fn delete_revoked_before(&self, cutoff: DateTime<Utc>) -> Result<u64> {
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"DELETE FROM oauth_oidc_payloads
             WHERE type = $1
               AND consumed_at IS NOT NULL
               AND created_at < $2"#,
+            PAYLOAD_TYPE,
+            cutoff
         )
-        .bind(PAYLOAD_TYPE)
-        .bind(cutoff)
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected())
@@ -516,16 +532,16 @@ impl RefreshTokenRepository {
     ///
     /// Uses a single COUNT query instead of loading all tokens into memory.
     pub async fn count_active_for_principal(&self, principal_id: &PrincipalId) -> Result<u64> {
-        let (count,) = sqlx::query_as::<_, (i64,)>(
-            r#"SELECT COUNT(*) FROM oauth_oidc_payloads
+        let count = sqlx::query_scalar!(
+            r#"SELECT COUNT(*) AS "count!" FROM oauth_oidc_payloads
             WHERE type = $1
               AND payload->>'accountId' = $2
               AND expires_at > NOW()
               AND consumed_at IS NULL
               AND (payload->>'revoked' IS NULL OR payload->>'revoked' = 'false')"#,
+            PAYLOAD_TYPE,
+            principal_id as &PrincipalId
         )
-        .bind(PAYLOAD_TYPE)
-        .bind(principal_id)
         .fetch_one(&self.pool)
         .await?;
         Ok(count as u64)
@@ -533,21 +549,22 @@ impl RefreshTokenRepository {
 
     /// Count all refresh token payloads
     pub async fn count(&self) -> Result<u64> {
-        let (count,) =
-            sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM oauth_oidc_payloads WHERE type = $1")
-                .bind(PAYLOAD_TYPE)
-                .fetch_one(&self.pool)
-                .await?;
+        let count = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM oauth_oidc_payloads WHERE type = $1",
+            PAYLOAD_TYPE
+        )
+        .fetch_one(&self.pool)
+        .await?;
         Ok(count as u64)
     }
 
     /// Count expired refresh tokens
     pub async fn count_expired(&self) -> Result<u64> {
-        let (count,) = sqlx::query_as::<_, (i64,)>(
-            r#"SELECT COUNT(*) FROM oauth_oidc_payloads
+        let count = sqlx::query_scalar!(
+            r#"SELECT COUNT(*) AS "count!" FROM oauth_oidc_payloads
             WHERE type = $1 AND expires_at < NOW()"#,
+            PAYLOAD_TYPE
         )
-        .bind(PAYLOAD_TYPE)
         .fetch_one(&self.pool)
         .await?;
         Ok(count as u64)

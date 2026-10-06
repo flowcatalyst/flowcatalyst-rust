@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS(\n                SELECT 1 FROM oauth_oidc_payloads\n                WHERE type = $1\n                  AND payload->>'tokenHash' = $2\n                  AND payload->>'replacedBy' IS NOT NULL\n            ) AS \"exists!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "0bf191e87a7ecc93b26b5bf464d1ac23618c3450396ce38fb6915b9e7696469d"
+}

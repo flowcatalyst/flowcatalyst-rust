@@ -58,15 +58,15 @@ impl WebauthnCeremonyRepository {
                 .map_err(|e| PlatformError::internal(format!("serialise PasskeyRegistration: {}", e)))?,
         });
         let expires_at = Utc::now() + Duration::seconds(DEFAULT_TTL_SECS);
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO oauth_oidc_payloads (id, type, payload, expires_at, created_at)
              VALUES ($1, $2, $3, $4, NOW())
              ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, expires_at = EXCLUDED.expires_at",
+            make_id(REGISTRATION_TYPE, state_id),
+            REGISTRATION_TYPE,
+            payload,
+            expires_at
         )
-        .bind(make_id(REGISTRATION_TYPE, state_id))
-        .bind(REGISTRATION_TYPE)
-        .bind(payload)
-        .bind(expires_at)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -76,16 +76,16 @@ impl WebauthnCeremonyRepository {
         &self,
         state_id: &str,
     ) -> Result<Option<ConsumedRegistration>> {
-        let row: Option<(serde_json::Value,)> = sqlx::query_as(
+        let payload = sqlx::query_scalar!(
             "DELETE FROM oauth_oidc_payloads
              WHERE id = $1 AND (expires_at IS NULL OR expires_at > NOW())
              RETURNING payload",
+            make_id(REGISTRATION_TYPE, state_id)
         )
-        .bind(make_id(REGISTRATION_TYPE, state_id))
         .fetch_optional(&self.pool)
         .await?;
 
-        let Some((payload,)) = row else {
+        let Some(payload) = payload else {
             return Ok(None);
         };
         let principal_id = payload
@@ -124,15 +124,15 @@ impl WebauthnCeremonyRepository {
                 .map_err(|e| PlatformError::internal(format!("serialise PasskeyAuthentication: {}", e)))?,
         });
         let expires_at = Utc::now() + Duration::seconds(DEFAULT_TTL_SECS);
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO oauth_oidc_payloads (id, type, payload, expires_at, created_at)
              VALUES ($1, $2, $3, $4, NOW())
              ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, expires_at = EXCLUDED.expires_at",
+            make_id(AUTHENTICATION_TYPE, state_id),
+            AUTHENTICATION_TYPE,
+            payload,
+            expires_at
         )
-        .bind(make_id(AUTHENTICATION_TYPE, state_id))
-        .bind(AUTHENTICATION_TYPE)
-        .bind(payload)
-        .bind(expires_at)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -142,16 +142,16 @@ impl WebauthnCeremonyRepository {
         &self,
         state_id: &str,
     ) -> Result<Option<ConsumedAuthentication>> {
-        let row: Option<(serde_json::Value,)> = sqlx::query_as(
+        let payload = sqlx::query_scalar!(
             "DELETE FROM oauth_oidc_payloads
              WHERE id = $1 AND (expires_at IS NULL OR expires_at > NOW())
              RETURNING payload",
+            make_id(AUTHENTICATION_TYPE, state_id)
         )
-        .bind(make_id(AUTHENTICATION_TYPE, state_id))
         .fetch_optional(&self.pool)
         .await?;
 
-        let Some((payload,)) = row else {
+        let Some(payload) = payload else {
             return Ok(None);
         };
         let principal_id = payload
@@ -175,12 +175,12 @@ impl WebauthnCeremonyRepository {
     }
 
     pub async fn purge_expired(&self) -> Result<u64> {
-        let res = sqlx::query(
+        let res = sqlx::query!(
             "DELETE FROM oauth_oidc_payloads
              WHERE type IN ($1, $2) AND expires_at IS NOT NULL AND expires_at <= NOW()",
+            REGISTRATION_TYPE,
+            AUTHENTICATION_TYPE
         )
-        .bind(REGISTRATION_TYPE)
-        .bind(AUTHENTICATION_TYPE)
         .execute(&self.pool)
         .await?;
         Ok(res.rows_affected())

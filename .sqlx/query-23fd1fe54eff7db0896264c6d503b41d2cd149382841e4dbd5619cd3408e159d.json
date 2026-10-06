@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO webauthn_credentials\n                (id, principal_id, credential_id, passkey_data, name, created_at, last_used_at)\n             VALUES ($1, $2, $3, $4, $5, $6, $7)\n             ON CONFLICT (id) DO UPDATE SET\n                passkey_data = EXCLUDED.passkey_data,\n                name = EXCLUDED.name,\n                last_used_at = EXCLUDED.last_used_at",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Bytea",
+        "Jsonb",
+        "Varchar",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "23fd1fe54eff7db0896264c6d503b41d2cd149382841e4dbd5619cd3408e159d"
+}

@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO oauth_oidc_payloads\n                (id, type, payload, grant_id, user_code, uid, expires_at, consumed_at, created_at)\n            VALUES ($1, $2, $3, $4, NULL, NULL, $5, NULL, $6)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Jsonb",
+        "Varchar",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b74f56f3e4d748f7fde48d96f3449120dcc822735d829670c906b4dc2584341f"
+}

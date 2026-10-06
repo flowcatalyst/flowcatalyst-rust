@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, principal_id AS \"principal_id: PrincipalId\", client_id AS \"client_id: ClientId\", status AS \"status: Stored<ResetApprovalStatus>\", reset_2fa, note, decided_by, decided_at, expires_at, created_at FROM iam_reset_approval_requests WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "principal_id: PrincipalId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "client_id: ClientId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "status: Stored<ResetApprovalStatus>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "reset_2fa",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "note",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "decided_by",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "decided_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "expires_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "841f8750157311a1e6cd176b142baa6e6cb3d096cb06daf357892456e1d5b6f7"
+}

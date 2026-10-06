@@ -12,7 +12,6 @@ use fc_platform_core::usecase::DbTx;
 use fc_platform_core::usecase::HasId;
 use fc_platform_core::usecase::Persist;
 
-#[derive(sqlx::FromRow)]
 struct WebauthnCredentialRow {
     id: String,
     principal_id: PrincipalId,
@@ -51,10 +50,14 @@ impl WebauthnCredentialRepository {
     }
 
     pub async fn find_by_id(&self, id: &str) -> Result<Option<WebauthnCredential>> {
-        let row = sqlx::query_as::<_, WebauthnCredentialRow>(
-            "SELECT * FROM webauthn_credentials WHERE id = $1",
+        let row = sqlx::query_as!(
+            WebauthnCredentialRow,
+            "SELECT id, principal_id AS \"principal_id: PrincipalId\", credential_id, \
+                    passkey_data AS \"passkey_data: serde_json::Value\", name, \
+                    created_at, last_used_at \
+                    FROM webauthn_credentials WHERE id = $1",
+            id
         )
-        .bind(id)
         .fetch_optional(&self.pool)
         .await?;
         row.map(WebauthnCredential::try_from).transpose()
@@ -64,10 +67,14 @@ impl WebauthnCredentialRepository {
         &self,
         credential_id: &[u8],
     ) -> Result<Option<WebauthnCredential>> {
-        let row = sqlx::query_as::<_, WebauthnCredentialRow>(
-            "SELECT * FROM webauthn_credentials WHERE credential_id = $1",
+        let row = sqlx::query_as!(
+            WebauthnCredentialRow,
+            "SELECT id, principal_id AS \"principal_id: PrincipalId\", credential_id, \
+                    passkey_data AS \"passkey_data: serde_json::Value\", name, \
+                    created_at, last_used_at \
+                    FROM webauthn_credentials WHERE credential_id = $1",
+            credential_id
         )
-        .bind(credential_id)
         .fetch_optional(&self.pool)
         .await?;
         row.map(WebauthnCredential::try_from).transpose()
@@ -77,22 +84,27 @@ impl WebauthnCredentialRepository {
         &self,
         principal_id: &PrincipalId,
     ) -> Result<Vec<WebauthnCredential>> {
-        let rows = sqlx::query_as::<_, WebauthnCredentialRow>(
-            "SELECT * FROM webauthn_credentials WHERE principal_id = $1 ORDER BY created_at DESC",
+        let rows = sqlx::query_as!(
+            WebauthnCredentialRow,
+            "SELECT id, principal_id AS \"principal_id: PrincipalId\", credential_id, \
+                    passkey_data AS \"passkey_data: serde_json::Value\", name, \
+                    created_at, last_used_at \
+                    FROM webauthn_credentials WHERE principal_id = $1 ORDER BY created_at DESC",
+            principal_id as &PrincipalId
         )
-        .bind(principal_id)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(WebauthnCredential::try_from).collect()
     }
 
     pub async fn count_for_principal(&self, principal_id: &PrincipalId) -> Result<i64> {
-        let count: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM webauthn_credentials WHERE principal_id = $1")
-                .bind(principal_id)
-                .fetch_one(&self.pool)
-                .await?;
-        Ok(count.0)
+        let count = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM webauthn_credentials WHERE principal_id = $1",
+            principal_id as &PrincipalId
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count)
     }
 }
 
@@ -106,7 +118,7 @@ impl Persist<WebauthnCredential> for WebauthnCredentialRepository {
     async fn persist(&self, c: &WebauthnCredential, tx: &mut DbTx<'_>) -> Result<()> {
         let passkey_data = serde_json::to_value(&c.passkey)
             .map_err(|e| PlatformError::internal(format!("serialise passkey: {}", e)))?;
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO webauthn_credentials
                 (id, principal_id, credential_id, passkey_data, name, created_at, last_used_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -114,24 +126,26 @@ impl Persist<WebauthnCredential> for WebauthnCredentialRepository {
                 passkey_data = EXCLUDED.passkey_data,
                 name = EXCLUDED.name,
                 last_used_at = EXCLUDED.last_used_at",
+            &c.id as &WebauthnCredentialId,
+            &c.principal_id as &PrincipalId,
+            c.credential_id_bytes(),
+            passkey_data,
+            c.name.as_ref(),
+            c.created_at,
+            c.last_used_at
         )
-        .bind(&c.id)
-        .bind(&c.principal_id)
-        .bind(c.credential_id_bytes())
-        .bind(passkey_data)
-        .bind(&c.name)
-        .bind(c.created_at)
-        .bind(c.last_used_at)
         .execute(&mut **tx.inner)
         .await?;
         Ok(())
     }
 
     async fn delete(&self, c: &WebauthnCredential, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query("DELETE FROM webauthn_credentials WHERE id = $1")
-            .bind(&c.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM webauthn_credentials WHERE id = $1",
+            &c.id as &WebauthnCredentialId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         Ok(())
     }
 }

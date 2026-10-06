@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM oauth_oidc_payloads\n             WHERE id = $1 AND (expires_at IS NULL OR expires_at > NOW())\n             RETURNING payload",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "payload",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "80c88c27d16789a3255fc62682027a97794f13cd0356d908c2b1f4810eebcb1a"
+}
