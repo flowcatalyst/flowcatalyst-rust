@@ -4,6 +4,7 @@
 //! Applications are global platform entities (not client-scoped).
 
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::OAuthClientId;
 use std::sync::Arc;
 
 use axum::{
@@ -321,7 +322,7 @@ pub struct ApplicationRoleResponse {
 impl From<AuthRole> for ApplicationRoleResponse {
     fn from(r: AuthRole) -> Self {
         Self {
-            id: r.id,
+            id: r.id.into_string(),
             code: r.name,
             display_name: r.display_name,
             description: r.description,
@@ -753,7 +754,12 @@ pub async fn deactivate_application_cascade(
         let clients = oauth_client_repo
             .find_by_service_account_principal_id(sa.id.as_str())
             .await?;
-        oauth_clients_to_deactivate.extend(clients.into_iter().filter(|c| c.active).map(|c| c.id));
+        oauth_clients_to_deactivate.extend(
+            clients
+                .into_iter()
+                .filter(|c| c.active)
+                .map(|c| c.id.into_string()),
+        );
     }
 
     let auth = auth.clone();
@@ -792,7 +798,7 @@ pub async fn deactivate_application_cascade(
                 deactivate_oauth_uc
                     .run(
                         DeactivateOAuthClientCommand {
-                            oauth_client_id: oauth_id,
+                            oauth_client_id: OAuthClientId::from_wire(oauth_id),
                         },
                         ctx.clone(),
                     )
@@ -944,7 +950,7 @@ pub async fn provision_application_service_account(
     // Mint the OAuth client identifiers and a fresh secret BEFORE opening
     // the tx. We hand the hashed ref into the closure and keep the
     // plaintext to return in the response.
-    let oauth_row_id = tsid::generate(EntityType::OAuthClient);
+    let oauth_row_id = OAuthClientId::generate();
     let oauth_public_client_id = tsid::generate(EntityType::OAuthClient);
     let (client_secret_plaintext, client_secret_ref) = generate_client_secret()?;
 
@@ -1021,7 +1027,7 @@ pub async fn provision_application_service_account(
             // 3. Mint the OAuth client (client_credentials grant) so the
             //    consumer can actually authenticate AS this service account.
             let oauth_cmd = CreateOAuthClientCommand {
-                oauth_client_id: oauth_row_id_for_cmd,
+                oauth_client_id: OAuthClientId::from_wire(oauth_row_id_for_cmd),
                 client_id: oauth_public_client_id_for_cmd,
                 client_name: oauth_client_name,
                 client_type: OAuthClientType::Confidential,
@@ -1063,7 +1069,7 @@ pub async fn provision_application_service_account(
         principal_id: service_account.id.into_string(),
         name: service_account.name,
         oauth_client: OAuthClientCredentials {
-            id: oauth_row_id,
+            id: oauth_row_id.into_string(),
             client_id: oauth_public_client_id,
             client_secret: Some(client_secret_plaintext),
         },
@@ -1175,7 +1181,7 @@ pub async fn provision_application_login_client<U: UnitOfWork>(
         .ok_or_else(|| PlatformError::not_found("Application", id))?;
     let _ = oauth_client_repo;
 
-    let oauth_row_id = tsid::generate(EntityType::OAuthClient);
+    let oauth_row_id = OAuthClientId::generate();
     let oauth_public_client_id = tsid::generate(EntityType::OAuthClient);
     let client_name = format!("{} Login", app.name);
 
@@ -1222,7 +1228,7 @@ pub async fn provision_application_login_client<U: UnitOfWork>(
     Ok(LoginClientCredentialsResponse {
         client_type: client_type.as_str().to_string(),
         oauth_client: OAuthClientCredentials {
-            id: oauth_row_id,
+            id: oauth_row_id.into_string(),
             client_id: oauth_public_client_id,
             client_secret: client_secret_plaintext,
         },

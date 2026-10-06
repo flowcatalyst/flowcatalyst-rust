@@ -2,6 +2,7 @@
 //! `role/permission_repo.go`, `sqlc/queries/role.sql` Permission*).
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::PermissionId;
 use sqlx::PgPool;
 
 use crate::role::permission_catalog::CatalogPermission;
@@ -12,7 +13,7 @@ use fc_platform_core::usecase::Persist;
 
 #[derive(sqlx::FromRow)]
 struct PermissionRow {
-    id: String,
+    id: PermissionId,
     code: String,
     subdomain: String,
     context: String,
@@ -73,7 +74,7 @@ impl PermissionCatalogRepository {
 
 impl HasId for CatalogPermission {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 

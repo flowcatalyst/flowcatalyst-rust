@@ -7,6 +7,7 @@
 //! nothing.
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::OAuthClientId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -21,7 +22,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RevokeOAuthClientPreviousSecretCommand {
-    pub oauth_client_id: String,
+    pub oauth_client_id: OAuthClientId,
 }
 
 impl AuditMasked for RevokeOAuthClientPreviousSecretCommand {}
@@ -49,7 +50,7 @@ impl<U: UnitOfWork> UseCase for RevokeOAuthClientPreviousSecretUseCase<U> {
         &self,
         command: &RevokeOAuthClientPreviousSecretCommand,
     ) -> Result<(), UseCaseError> {
-        if command.oauth_client_id.trim().is_empty() {
+        if command.oauth_client_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "OAUTH_CLIENT_ID_REQUIRED",
                 "OAuth client id is required",

@@ -554,8 +554,8 @@ pub async fn oidc_login(
         ..OidcLoginState::new(
             &oidc_state,
             &domain,
-            &idp.id,
-            &mapping.id,
+            idp.id.clone(),
+            mapping.id.clone(),
             &nonce,
             &code_verifier,
         )
@@ -887,7 +887,7 @@ pub async fn oidc_callback(
         impl AuditMasked for OidcLoginCommand {}
         let command = OidcLoginCommand {
             email: claims.email.clone(),
-            identity_provider_id: idp.id.clone(),
+            identity_provider_id: idp.id.to_string(),
         };
 
         if let Err(e) = state.unit_of_work.emit_event(login_event, &command).await {

@@ -1,6 +1,7 @@
 //! Delete Identity Provider Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::IdentityProviderId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -19,7 +20,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteIdentityProviderCommand {
-    pub idp_id: String,
+    pub idp_id: IdentityProviderId,
 }
 
 impl AuditMasked for DeleteIdentityProviderCommand {}
@@ -51,7 +52,7 @@ impl<U: UnitOfWork> UseCase for DeleteIdentityProviderUseCase<U> {
     type Event = IdentityProviderDeleted;
 
     async fn validate(&self, command: &DeleteIdentityProviderCommand) -> Result<(), UseCaseError> {
-        if command.idp_id.trim().is_empty() {
+        if command.idp_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation("ID_REQUIRED", "id is required"));
         }
         Ok(())
@@ -121,7 +122,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = DeleteIdentityProviderCommand {
-            idp_id: "idp-123".to_string(),
+            idp_id: IdentityProviderId::from_wire("idp-123"),
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

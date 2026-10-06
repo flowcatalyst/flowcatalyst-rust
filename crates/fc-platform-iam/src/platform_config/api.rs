@@ -1,5 +1,6 @@
 //! Platform Config Admin API
 
+use fc_platform_core::shared::id::PlatformConfigAccessId;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -79,7 +80,7 @@ impl ConfigResponse {
     fn from_config(c: PlatformConfig) -> Self {
         let value = c.masked_value().to_string();
         Self {
-            id: c.id,
+            id: c.id.into_string(),
             application_code: c.application_code,
             section: c.section,
             property: c.property,
@@ -600,7 +601,7 @@ impl GoPlatformConfigState {
             c.value.clone()
         };
         GoConfigResponse {
-            id: c.id,
+            id: c.id.into_string(),
             application_code: c.application_code,
             section: c.section,
             property: c.property,
@@ -841,7 +842,7 @@ pub async fn grant_platform_config_access(
     Ok((
         StatusCode::CREATED,
         Json(CreatedResponse {
-            id: event.access_id,
+            id: event.access_id.into_string(),
         }),
     ))
 }
@@ -864,6 +865,7 @@ pub async fn revoke_platform_config_access(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = PlatformConfigAccessId::from_wire(id);
     checks::can_update_platform_config(&auth.0)?;
     let access = state
         .access_repo

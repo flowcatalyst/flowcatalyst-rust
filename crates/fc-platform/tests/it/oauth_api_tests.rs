@@ -9,6 +9,8 @@
 use fc_platform::auth::auth_service::{AuthConfig, AuthService};
 use fc_platform::domain::{Principal, PrincipalType, UserScope};
 use fc_platform::shared::authorization_service::Credential;
+use fc_platform::shared::id::EmailDomainMappingId;
+use fc_platform::shared::id::IdentityProviderId;
 use fc_platform_core::shared::id::ClientId;
 
 /// Create a test AuthService with HS256 (no RSA keys needed)
@@ -245,8 +247,8 @@ fn test_oidc_login_state_expiry() {
     let state = OidcLoginState::new(
         "test-state",
         "example.com",
-        "idp-123",
-        "edm-456",
+        IdentityProviderId::from_wire("idp-123"),
+        EmailDomainMappingId::from_wire("edm-456"),
         "nonce-789",
         "verifier-abc",
     );
@@ -269,8 +271,8 @@ fn test_oidc_login_state_oauth_flow() {
         ..OidcLoginState::new(
             "test-state",
             "example.com",
-            "idp-123",
-            "edm-456",
+            IdentityProviderId::from_wire("idp-123"),
+            EmailDomainMappingId::from_wire("edm-456"),
             "nonce-789",
             "verifier-abc",
         )
@@ -291,8 +293,8 @@ fn test_oidc_login_state_not_oauth_flow() {
     let state = OidcLoginState::new(
         "test-state",
         "example.com",
-        "idp-123",
-        "edm-456",
+        IdentityProviderId::from_wire("idp-123"),
+        EmailDomainMappingId::from_wire("edm-456"),
         "nonce-789",
         "verifier-abc",
     );
@@ -307,8 +309,8 @@ fn test_oidc_login_state_with_return_url() {
     let state = OidcLoginState::new(
         "test-state",
         "example.com",
-        "idp-123",
-        "edm-456",
+        IdentityProviderId::from_wire("idp-123"),
+        EmailDomainMappingId::from_wire("edm-456"),
         "nonce-789",
         "verifier-abc",
     )
@@ -324,8 +326,8 @@ fn test_oidc_login_state_email_domain_lowercased() {
     let state = OidcLoginState::new(
         "test-state",
         "EXAMPLE.COM",
-        "idp-123",
-        "edm-456",
+        IdentityProviderId::from_wire("idp-123"),
+        EmailDomainMappingId::from_wire("edm-456"),
         "nonce-789",
         "verifier-abc",
     );

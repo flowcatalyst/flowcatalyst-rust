@@ -6,6 +6,7 @@
 //! them inside `PgUnitOfWork::run`, so every commit lands in one transaction
 //! (Go's `TxOperation`).
 
+use fc_platform_core::shared::id::OAuthClientId;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -51,8 +52,8 @@ pub struct CreateAppWithOAuthClientCommand {
     /// CONFIDENTIAL (default) or PUBLIC.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub client_type: String,
-    #[serde(skip)]
-    pub oauth_client_row_id: String,
+    #[serde(skip_serializing, default = "OAuthClientId::generate")]
+    pub oauth_client_row_id: OAuthClientId,
     #[serde(skip)]
     pub oauth_client_id: String,
     /// `hashed:v1:` ref of the generated secret (CONFIDENTIAL only).
@@ -585,7 +586,7 @@ mod tests {
             description: None,
             redirect_uris: vec![],
             client_type: String::new(),
-            oauth_client_row_id: "oac_1".into(),
+            oauth_client_row_id: OAuthClientId::parse("oac_1").unwrap(),
             oauth_client_id: "oac_2".into(),
             client_secret_ref: Some("hashed:v1:x".into()),
         };

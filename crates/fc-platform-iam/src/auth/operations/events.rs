@@ -7,6 +7,10 @@
 //! and each payload carries exactly Go's `ToDataJSON` fields.
 
 use fc_platform_core::impl_domain_event;
+use fc_platform_core::shared::id::AnchorDomainId;
+use fc_platform_core::shared::id::ClientAuthConfigId;
+use fc_platform_core::shared::id::IdpRoleMappingId;
+use fc_platform_core::shared::id::OAuthClientId;
 use fc_platform_core::usecase::domain_event::EventMetadata;
 use fc_platform_core::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
@@ -37,7 +41,7 @@ macro_rules! anchor_domain_event {
         pub struct $name {
             #[serde(skip)]
             pub metadata: EventMetadata,
-            pub anchor_domain_id: String,
+            pub anchor_domain_id: AnchorDomainId,
             pub domain: String,
         }
 
@@ -46,10 +50,10 @@ macro_rules! anchor_domain_event {
         impl $name {
             pub const EVENT_TYPE: &'static str = $event_type;
 
-            pub fn new(ctx: &ExecutionContext, id: &str, domain: &str) -> Self {
+            pub fn new(ctx: &ExecutionContext, id: &AnchorDomainId, domain: &str) -> Self {
                 Self {
-                    metadata: metadata(ctx, Self::EVENT_TYPE, "anchordomain", id),
-                    anchor_domain_id: id.to_string(),
+                    metadata: metadata(ctx, Self::EVENT_TYPE, "anchordomain", id.as_str()),
+                    anchor_domain_id: id.clone(),
                     domain: domain.to_string(),
                 }
             }
@@ -83,7 +87,7 @@ macro_rules! auth_config_event {
         pub struct $name {
             #[serde(skip)]
             pub metadata: EventMetadata,
-            pub auth_config_id: String,
+            pub auth_config_id: ClientAuthConfigId,
             pub email_domain: String,
         }
 
@@ -92,10 +96,10 @@ macro_rules! auth_config_event {
         impl $name {
             pub const EVENT_TYPE: &'static str = $event_type;
 
-            pub fn new(ctx: &ExecutionContext, id: &str, email_domain: &str) -> Self {
+            pub fn new(ctx: &ExecutionContext, id: &ClientAuthConfigId, email_domain: &str) -> Self {
                 Self {
-                    metadata: metadata(ctx, Self::EVENT_TYPE, "authconfig", id),
-                    auth_config_id: id.to_string(),
+                    metadata: metadata(ctx, Self::EVENT_TYPE, "authconfig", id.as_str()),
+                    auth_config_id: id.clone(),
                     email_domain: email_domain.to_string(),
                 }
             }
@@ -127,7 +131,7 @@ auth_config_event!(
 pub struct IdpRoleMappingCreated {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub mapping_id: String,
+    pub mapping_id: IdpRoleMappingId,
     pub idp_type: String,
     pub idp_role_name: String,
     pub platform_role_name: String,
@@ -140,14 +144,14 @@ impl IdpRoleMappingCreated {
 
     pub fn new(
         ctx: &ExecutionContext,
-        id: &str,
+        id: &IdpRoleMappingId,
         idp_type: &str,
         idp_role_name: &str,
         platform_role_name: &str,
     ) -> Self {
         Self {
-            metadata: metadata(ctx, Self::EVENT_TYPE, "idprolemapping", id),
-            mapping_id: id.to_string(),
+            metadata: metadata(ctx, Self::EVENT_TYPE, "idprolemapping", id.as_str()),
+            mapping_id: id.clone(),
             idp_type: idp_type.to_string(),
             idp_role_name: idp_role_name.to_string(),
             platform_role_name: platform_role_name.to_string(),
@@ -161,7 +165,7 @@ impl IdpRoleMappingCreated {
 pub struct IdpRoleMappingDeleted {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub mapping_id: String,
+    pub mapping_id: IdpRoleMappingId,
     pub idp_role_name: String,
 }
 
@@ -170,10 +174,10 @@ impl_domain_event!(IdpRoleMappingDeleted);
 impl IdpRoleMappingDeleted {
     pub const EVENT_TYPE: &'static str = "platform:admin:idp-role-mapping:deleted";
 
-    pub fn new(ctx: &ExecutionContext, id: &str, idp_role_name: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, id: &IdpRoleMappingId, idp_role_name: &str) -> Self {
         Self {
-            metadata: metadata(ctx, Self::EVENT_TYPE, "idprolemapping", id),
-            mapping_id: id.to_string(),
+            metadata: metadata(ctx, Self::EVENT_TYPE, "idprolemapping", id.as_str()),
+            mapping_id: id.clone(),
             idp_role_name: idp_role_name.to_string(),
         }
     }
@@ -196,7 +200,7 @@ macro_rules! oauth_client_event {
             #[serde(skip)]
             pub metadata: EventMetadata,
 
-            pub oauth_client_id: String,
+            pub oauth_client_id: OAuthClientId,
             $(pub $field: String,)*
         }
 
@@ -205,10 +209,10 @@ macro_rules! oauth_client_event {
         impl $name {
             pub const EVENT_TYPE: &'static str = $event_type;
 
-            pub fn new(ctx: &ExecutionContext, id: &str $(, $field: &str)*) -> Self {
+            pub fn new(ctx: &ExecutionContext, id: &OAuthClientId $(, $field: &str)*) -> Self {
                 Self {
-                    metadata: metadata(ctx, Self::EVENT_TYPE, "oauthclient", id),
-                    oauth_client_id: id.to_string(),
+                    metadata: metadata(ctx, Self::EVENT_TYPE, "oauthclient", id.as_str()),
+                    oauth_client_id: id.clone(),
                     $($field: $field.to_string(),)*
                 }
             }
@@ -261,7 +265,7 @@ pub struct OAuthClientSecretRotated {
     #[serde(skip)]
     pub metadata: EventMetadata,
 
-    pub oauth_client_id: String,
+    pub oauth_client_id: OAuthClientId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous_secret_expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -271,10 +275,10 @@ impl_domain_event!(OAuthClientSecretRotated);
 impl OAuthClientSecretRotated {
     pub const EVENT_TYPE: &'static str = "platform:admin:oauth-client:secret-rotated";
 
-    pub fn new(ctx: &ExecutionContext, id: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, id: &OAuthClientId) -> Self {
         Self {
-            metadata: metadata(ctx, Self::EVENT_TYPE, "oauthclient", id),
-            oauth_client_id: id.to_string(),
+            metadata: metadata(ctx, Self::EVENT_TYPE, "oauthclient", id.as_str()),
+            oauth_client_id: id.clone(),
             previous_secret_expires_at: None,
         }
     }
@@ -297,33 +301,60 @@ mod tests {
     fn oauth_client_payloads_match_go() {
         let ctx = ExecutionContext::system("prn_actor");
         assert_eq!(
-            payload_keys(&OAuthClientCreated::new(&ctx, "oac_1", "cid", "Name")),
+            payload_keys(&OAuthClientCreated::new(
+                &ctx,
+                &OAuthClientId::parse("oac_1").unwrap(),
+                "cid",
+                "Name"
+            )),
             ["clientId", "clientName", "oauthClientId"]
         );
         assert_eq!(
-            payload_keys(&OAuthClientUpdated::new(&ctx, "oac_1", "Name")),
+            payload_keys(&OAuthClientUpdated::new(
+                &ctx,
+                &OAuthClientId::parse("oac_1").unwrap(),
+                "Name"
+            )),
             ["clientName", "oauthClientId"]
         );
         assert_eq!(
-            payload_keys(&OAuthClientDeleted::new(&ctx, "oac_1", "cid")),
+            payload_keys(&OAuthClientDeleted::new(
+                &ctx,
+                &OAuthClientId::parse("oac_1").unwrap(),
+                "cid"
+            )),
             ["clientId", "oauthClientId"]
         );
         for keys in [
-            payload_keys(&OAuthClientActivated::new(&ctx, "oac_1")),
-            payload_keys(&OAuthClientDeactivated::new(&ctx, "oac_1")),
-            payload_keys(&OAuthClientPreviousSecretRevoked::new(&ctx, "oac_1")),
-            payload_keys(&OAuthClientSecretRotated::new(&ctx, "oac_1")),
+            payload_keys(&OAuthClientActivated::new(
+                &ctx,
+                &OAuthClientId::parse("oac_1").unwrap(),
+            )),
+            payload_keys(&OAuthClientDeactivated::new(
+                &ctx,
+                &OAuthClientId::parse("oac_1").unwrap(),
+            )),
+            payload_keys(&OAuthClientPreviousSecretRevoked::new(
+                &ctx,
+                &OAuthClientId::parse("oac_1").unwrap(),
+            )),
+            payload_keys(&OAuthClientSecretRotated::new(
+                &ctx,
+                &OAuthClientId::parse("oac_1").unwrap(),
+            )),
         ] {
             assert_eq!(keys, ["oauthClientId"]);
         }
-        let mut rotated = OAuthClientSecretRotated::new(&ctx, "oac_1");
+        let mut rotated =
+            OAuthClientSecretRotated::new(&ctx, &OAuthClientId::parse("oac_1").unwrap());
         rotated.previous_secret_expires_at = Some(chrono::Utc::now());
         assert_eq!(
             payload_keys(&rotated),
             ["oauthClientId", "previousSecretExpiresAt"]
         );
 
-        let created = OAuthClientCreated::new(&ctx, "oac_1", "cid", "Name");
+        let created =
+            OAuthClientCreated::new(&ctx, &OAuthClientId::parse("oac_1").unwrap(), "cid", "Name");
         assert_eq!(created.metadata.source, "platform:admin");
         assert_eq!(created.metadata.subject, "platform.oauthclient.oac_1");
         assert_eq!(created.metadata.message_group, "platform:oauthclient:oac_1");
@@ -332,22 +363,34 @@ mod tests {
     #[test]
     fn anchor_auth_config_and_mapping_events_are_go_shaped() {
         let ctx = ExecutionContext::system("prn_actor");
-        let a = AnchorDomainCreated::new(&ctx, "anc_1", "acme.com");
+        let a =
+            AnchorDomainCreated::new(&ctx, &AnchorDomainId::parse("anc_1").unwrap(), "acme.com");
         assert_eq!(
             a.metadata.event_type,
             "platform:admin:anchor-domain:created"
         );
         assert_eq!(a.metadata.subject, "platform.anchordomain.anc_1");
         assert_eq!(payload_keys(&a), ["anchorDomainId", "domain"]);
-        let c = AuthConfigDeleted::new(&ctx, "cac_1", "acme.com");
+        let c = AuthConfigDeleted::new(
+            &ctx,
+            &ClientAuthConfigId::parse("cac_1").unwrap(),
+            "acme.com",
+        );
         assert_eq!(c.metadata.event_type, "platform:admin:auth-config:deleted");
         assert_eq!(payload_keys(&c), ["authConfigId", "emailDomain"]);
-        let m = IdpRoleMappingCreated::new(&ctx, "irm_1", "OIDC", "admins", "platform:admin");
+        let m = IdpRoleMappingCreated::new(
+            &ctx,
+            &IdpRoleMappingId::parse("irm_1").unwrap(),
+            "OIDC",
+            "admins",
+            "platform:admin",
+        );
         assert_eq!(
             payload_keys(&m),
             ["idpRoleName", "idpType", "mappingId", "platformRoleName"]
         );
-        let d = IdpRoleMappingDeleted::new(&ctx, "irm_1", "admins");
+        let d =
+            IdpRoleMappingDeleted::new(&ctx, &IdpRoleMappingId::parse("irm_1").unwrap(), "admins");
         assert_eq!(payload_keys(&d), ["idpRoleName", "mappingId"]);
     }
 }

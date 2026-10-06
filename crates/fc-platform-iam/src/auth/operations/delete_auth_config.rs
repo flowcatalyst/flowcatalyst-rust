@@ -1,6 +1,7 @@
 //! Delete ClientAuthConfig Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ClientAuthConfigId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -15,7 +16,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteAuthConfigCommand {
-    pub auth_config_id: String,
+    pub auth_config_id: ClientAuthConfigId,
 }
 
 impl AuditMasked for DeleteAuthConfigCommand {}
@@ -40,7 +41,7 @@ impl<U: UnitOfWork> UseCase for DeleteAuthConfigUseCase<U> {
     type Event = AuthConfigDeleted;
 
     async fn validate(&self, command: &DeleteAuthConfigCommand) -> Result<(), UseCaseError> {
-        if command.auth_config_id.trim().is_empty() {
+        if command.auth_config_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "ID_REQUIRED",
                 "Auth config ID is required",

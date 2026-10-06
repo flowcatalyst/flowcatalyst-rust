@@ -8,6 +8,9 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use fc_platform_core::shared::id::AnchorDomainId;
+use fc_platform_core::shared::id::ClientAuthConfigId;
+use fc_platform_core::shared::id::IdpRoleMappingId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
@@ -69,7 +72,7 @@ pub struct AnchorDomainListResponse {
 impl From<AnchorDomain> for AnchorDomainResponse {
     fn from(d: AnchorDomain) -> Self {
         Self {
-            id: d.id,
+            id: d.id.into_string(),
             domain: d.domain,
             created_at: d.created_at.to_rfc3339(),
             updated_at: d.updated_at.to_rfc3339(),
@@ -264,7 +267,7 @@ pub struct AuthConfigListResponse {
 impl From<ClientAuthConfig> for ClientAuthConfigResponse {
     fn from(c: ClientAuthConfig) -> Self {
         Self {
-            id: c.id,
+            id: c.id.into_string(),
             email_domain: c.email_domain,
             config_type: c.config_type.as_str().to_string(),
             primary_client_id: c.primary_client_id,
@@ -350,7 +353,7 @@ pub struct IdpRoleMappingListResponse {
 impl From<IdpRoleMapping> for IdpRoleMappingResponse {
     fn from(m: IdpRoleMapping) -> Self {
         Self {
-            id: m.id,
+            id: m.id.into_string(),
             idp_type: m.idp_type,
             idp_role_name: m.idp_role_name,
             platform_role_name: m.platform_role_name,
@@ -482,6 +485,7 @@ pub async fn get_anchor_domain(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<AnchorDomainResponse>, PlatformError> {
+    let id = AnchorDomainId::from_wire(id);
     checks::can_read_anchor_domains(&auth.0)?;
 
     let domain = state
@@ -552,6 +556,7 @@ pub async fn delete_anchor_domain(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = AnchorDomainId::from_wire(id);
     use crate::auth::operations::DeleteAnchorDomainCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
@@ -599,6 +604,7 @@ pub async fn update_anchor_domain(
     Path(id): Path<String>,
     Json(req): Json<UpdateAnchorDomainRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = AnchorDomainId::from_wire(id);
     use crate::auth::operations::UpdateAnchorDomainCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
@@ -708,6 +714,7 @@ pub async fn get_client_auth_config(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ClientAuthConfigResponse>, PlatformError> {
+    let id = ClientAuthConfigId::from_wire(id);
     checks::can_read_auth_configs(&auth.0)?;
 
     let config = state
@@ -768,6 +775,7 @@ pub async fn update_client_auth_config(
     Path(id): Path<String>,
     Json(req): Json<UpdateClientAuthConfigRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = ClientAuthConfigId::from_wire(id);
     use crate::auth::operations::UpdateAuthConfigCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
@@ -824,6 +832,7 @@ pub async fn delete_client_auth_config(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = ClientAuthConfigId::from_wire(id);
     use crate::auth::operations::DeleteAuthConfigCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
@@ -869,6 +878,7 @@ pub async fn update_config_type(
     Path(id): Path<String>,
     Json(req): Json<UpdateConfigTypeRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = ClientAuthConfigId::from_wire(id);
     use crate::auth::operations::UpdateAuthConfigCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
@@ -1055,6 +1065,7 @@ pub async fn update_oidc_config(
     Path(id): Path<String>,
     Json(req): Json<UpdateOidcConfigRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = ClientAuthConfigId::from_wire(id);
     checks::can_update_auth_configs(&auth.0)?;
 
     use crate::auth::operations::UpdateAuthConfigCommand;
@@ -1104,6 +1115,7 @@ pub async fn update_client_binding(
     Path(id): Path<String>,
     Json(req): Json<UpdateClientBindingRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = ClientAuthConfigId::from_wire(id);
     checks::can_update_auth_configs(&auth.0)?;
 
     use crate::auth::operations::UpdateAuthConfigCommand;
@@ -1153,6 +1165,7 @@ pub async fn update_additional_clients(
     Path(id): Path<String>,
     Json(req): Json<UpdateAdditionalClientsRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = ClientAuthConfigId::from_wire(id);
     checks::can_update_auth_configs(&auth.0)?;
 
     use crate::auth::operations::UpdateAuthConfigCommand;
@@ -1202,6 +1215,7 @@ pub async fn update_granted_clients(
     Path(id): Path<String>,
     Json(req): Json<UpdateGrantedClientsRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = ClientAuthConfigId::from_wire(id);
     checks::can_update_auth_configs(&auth.0)?;
 
     use crate::auth::operations::UpdateAuthConfigCommand;
@@ -1337,6 +1351,7 @@ pub async fn delete_idp_role_mapping(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = IdpRoleMappingId::from_wire(id);
     use crate::auth::operations::DeleteIdpRoleMappingCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 

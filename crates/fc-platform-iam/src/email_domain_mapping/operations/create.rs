@@ -1,6 +1,7 @@
 //! Create Email Domain Mapping Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::IdentityProviderId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -18,7 +19,7 @@ use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase
 #[serde(rename_all = "camelCase")]
 pub struct CreateEmailDomainMappingCommand {
     pub email_domain: String,
-    pub identity_provider_id: String,
+    pub identity_provider_id: IdentityProviderId,
     pub scope_type: ScopeType,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub primary_client_id: Option<String>,
@@ -92,7 +93,7 @@ impl<U: UnitOfWork> UseCase for CreateEmailDomainMappingUseCase<U> {
         }
         super::create_rules::validate_domain(&email_domain)?;
 
-        if command.identity_provider_id.trim().is_empty() {
+        if command.identity_provider_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "IDENTITY_PROVIDER_ID_REQUIRED",
                 "Identity provider ID is required",
@@ -153,8 +154,11 @@ impl<U: UnitOfWork> UseCase for CreateEmailDomainMappingUseCase<U> {
 
         let scope_type = command.scope_type;
 
-        let mut mapping =
-            EmailDomainMapping::new(&email_domain, &command.identity_provider_id, scope_type);
+        let mut mapping = EmailDomainMapping::new(
+            &email_domain,
+            command.identity_provider_id.clone(),
+            scope_type,
+        );
         mapping.primary_client_id = command.primary_client_id.clone();
         mapping.additional_client_ids = command.additional_client_ids.clone();
         mapping.granted_client_ids = command.granted_client_ids.clone();
@@ -185,7 +189,7 @@ mod tests {
     fn test_command_serialization() {
         let cmd = CreateEmailDomainMappingCommand {
             email_domain: "example.com".to_string(),
-            identity_provider_id: "idp-123".to_string(),
+            identity_provider_id: IdentityProviderId::parse("idp_123").unwrap(),
             scope_type: ScopeType::Anchor,
             primary_client_id: Some("client-456".to_string()),
             sync_roles_from_idp: true,
@@ -200,14 +204,17 @@ mod tests {
         assert!(json.contains("emailDomain"));
         assert!(json.contains("example.com"));
         assert!(json.contains("identityProviderId"));
-        assert!(json.contains("idp-123"));
+        assert!(json.contains("idp_123"));
         assert!(json.contains("primaryClientId"));
         assert!(json.contains("client-456"));
         assert!(json.contains("syncRolesFromIdp"));
 
         let deserialized: CreateEmailDomainMappingCommand = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.email_domain, "example.com");
-        assert_eq!(deserialized.identity_provider_id, "idp-123");
+        assert_eq!(
+            deserialized.identity_provider_id,
+            IdentityProviderId::parse("idp_123").unwrap()
+        );
         assert_eq!(deserialized.scope_type, ScopeType::Anchor);
         assert_eq!(
             deserialized.primary_client_id,
@@ -220,7 +227,7 @@ mod tests {
     fn test_command_serialization_without_optional_fields() {
         let cmd = CreateEmailDomainMappingCommand {
             email_domain: "test.org".to_string(),
-            identity_provider_id: "idp-1".to_string(),
+            identity_provider_id: IdentityProviderId::from_wire("idp-1"),
             scope_type: ScopeType::Client,
             primary_client_id: None,
             sync_roles_from_idp: false,
@@ -241,7 +248,7 @@ mod tests {
         // Replicate the validation logic from validate() — email_domain is trimmed
         let cmd = CreateEmailDomainMappingCommand {
             email_domain: "   ".to_string(),
-            identity_provider_id: "idp-1".to_string(),
+            identity_provider_id: IdentityProviderId::from_wire("idp-1"),
             scope_type: ScopeType::Anchor,
             primary_client_id: None,
             sync_roles_from_idp: false,
@@ -262,7 +269,7 @@ mod tests {
     fn test_validate_empty_identity_provider_id() {
         let cmd = CreateEmailDomainMappingCommand {
             email_domain: "example.com".to_string(),
-            identity_provider_id: "  ".to_string(),
+            identity_provider_id: IdentityProviderId::from_wire("  "),
             scope_type: ScopeType::Anchor,
             primary_client_id: None,
             sync_roles_from_idp: false,
@@ -273,7 +280,7 @@ mod tests {
             two_factor: Default::default(),
         };
         assert!(
-            cmd.identity_provider_id.trim().is_empty(),
+            cmd.identity_provider_id.as_str().trim().is_empty(),
             "Whitespace-only IDP ID should be treated as empty"
         );
     }
@@ -282,7 +289,7 @@ mod tests {
     fn test_validate_valid_inputs() {
         let cmd = CreateEmailDomainMappingCommand {
             email_domain: "example.com".to_string(),
-            identity_provider_id: "idp-123".to_string(),
+            identity_provider_id: IdentityProviderId::parse("idp_123").unwrap(),
             scope_type: ScopeType::Anchor,
             primary_client_id: None,
             sync_roles_from_idp: false,
@@ -294,14 +301,14 @@ mod tests {
         };
         let trimmed = cmd.email_domain.trim().to_lowercase();
         assert!(!trimmed.is_empty());
-        assert!(!cmd.identity_provider_id.trim().is_empty());
+        assert!(!cmd.identity_provider_id.as_str().trim().is_empty());
     }
 
     #[test]
     fn test_email_domain_normalized_to_lowercase() {
         let cmd = CreateEmailDomainMappingCommand {
             email_domain: "  EXAMPLE.COM  ".to_string(),
-            identity_provider_id: "idp-1".to_string(),
+            identity_provider_id: IdentityProviderId::from_wire("idp-1"),
             scope_type: ScopeType::Client,
             primary_client_id: None,
             sync_roles_from_idp: false,

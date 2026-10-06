@@ -3,6 +3,7 @@
 //! REST endpoints for principal (user/service account) management.
 
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::IdentityProviderId;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -338,7 +339,7 @@ pub struct ClientAccessGrantResponse {
 impl From<ClientAccessGrant> for ClientAccessGrantResponse {
     fn from(g: ClientAccessGrant) -> Self {
         Self {
-            id: g.id,
+            id: g.id.into_string(),
             client_id: g.client_id,
             // Go's `jsontime` layout: six fractional digits, `Z`.
             granted_at: g
@@ -2127,7 +2128,7 @@ pub async fn bulk_import_principals(
         .into_iter()
         .map(|m| (m.email_domain.clone(), m))
         .collect();
-    let idp_types: HashMap<String, IdentityProviderType> =
+    let idp_types: HashMap<IdentityProviderId, IdentityProviderType> =
         idps.into_iter().map(|i| (i.id, i.r#type)).collect();
     let entitled: HashSet<ApplicationId> = configs
         .into_iter()
@@ -2397,7 +2398,11 @@ mod tests {
         primary: Option<&str>,
         granted: &[&str],
     ) -> EmailDomainMapping {
-        let mut m = EmailDomainMapping::new("acme.test", "idp_1", scope_type);
+        let mut m = EmailDomainMapping::new(
+            "acme.test",
+            IdentityProviderId::parse("idp_1").unwrap(),
+            scope_type,
+        );
         m.primary_client_id = primary.map(String::from);
         m.granted_client_ids = granted.iter().map(|g| g.to_string()).collect();
         m

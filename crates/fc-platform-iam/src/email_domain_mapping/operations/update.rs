@@ -1,6 +1,8 @@
 //! Update Email Domain Mapping Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::EmailDomainMappingId;
+use fc_platform_core::shared::id::IdentityProviderId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -19,9 +21,9 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateEmailDomainMappingCommand {
-    pub mapping_id: String,
+    pub mapping_id: EmailDomainMappingId,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub identity_provider_id: Option<String>,
+    pub identity_provider_id: Option<IdentityProviderId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scope_type: Option<ScopeType>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -96,7 +98,7 @@ impl<U: UnitOfWork> UseCase for UpdateEmailDomainMappingUseCase<U> {
         &self,
         command: &UpdateEmailDomainMappingCommand,
     ) -> Result<(), UseCaseError> {
-        if command.mapping_id.trim().is_empty() {
+        if command.mapping_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "MAPPING_ID_REQUIRED",
                 "Mapping ID is required",
@@ -205,7 +207,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = UpdateEmailDomainMappingCommand {
-            mapping_id: "edm-123".to_string(),
+            mapping_id: EmailDomainMappingId::parse("edm_123").unwrap(),
             scope_type: Some(ScopeType::Partner),
             primary_client_id: Some("client-456".to_string()),
             sync_roles_from_idp: Some(true),
@@ -219,7 +221,7 @@ mod tests {
 
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("mappingId"));
-        assert!(json.contains("edm-123"));
+        assert!(json.contains("edm_123"));
         assert!(json.contains("scopeType"));
         assert!(json.contains("PARTNER"));
         assert!(json.contains("additionalClientIds"));
@@ -227,7 +229,10 @@ mod tests {
         assert!(json.contains("allowedRoleIds"));
 
         let deserialized: UpdateEmailDomainMappingCommand = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.mapping_id, "edm-123");
+        assert_eq!(
+            deserialized.mapping_id,
+            EmailDomainMappingId::parse("edm_123").unwrap()
+        );
         assert_eq!(deserialized.scope_type, Some(ScopeType::Partner));
         assert_eq!(deserialized.sync_roles_from_idp, Some(true));
     }
@@ -235,7 +240,7 @@ mod tests {
     #[test]
     fn test_command_serialization_none_fields_skipped() {
         let cmd = UpdateEmailDomainMappingCommand {
-            mapping_id: "edm-1".to_string(),
+            mapping_id: EmailDomainMappingId::from_wire("edm-1"),
             scope_type: None,
             primary_client_id: None,
             sync_roles_from_idp: None,
@@ -260,7 +265,7 @@ mod tests {
     #[test]
     fn test_validate_empty_mapping_id() {
         let cmd = UpdateEmailDomainMappingCommand {
-            mapping_id: "   ".to_string(),
+            mapping_id: EmailDomainMappingId::from_wire("   "),
             scope_type: None,
             primary_client_id: None,
             sync_roles_from_idp: None,
@@ -272,7 +277,7 @@ mod tests {
             two_factor: Default::default(),
         };
         assert!(
-            cmd.mapping_id.trim().is_empty(),
+            cmd.mapping_id.as_str().trim().is_empty(),
             "Whitespace-only mapping_id should be treated as empty"
         );
     }
@@ -280,7 +285,7 @@ mod tests {
     #[test]
     fn test_validate_valid_mapping_id() {
         let cmd = UpdateEmailDomainMappingCommand {
-            mapping_id: "edm-123".to_string(),
+            mapping_id: EmailDomainMappingId::parse("edm_123").unwrap(),
             scope_type: None,
             primary_client_id: None,
             sync_roles_from_idp: None,
@@ -291,6 +296,6 @@ mod tests {
             required_oidc_tenant_id: None,
             two_factor: Default::default(),
         };
-        assert!(!cmd.mapping_id.trim().is_empty());
+        assert!(!cmd.mapping_id.as_str().trim().is_empty());
     }
 }

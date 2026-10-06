@@ -1,6 +1,7 @@
 //! Delete Role Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::RoleId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -18,7 +19,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct DeleteRoleCommand {
     /// Role ID to delete
-    pub role_id: String,
+    pub role_id: RoleId,
 }
 
 impl AuditMasked for DeleteRoleCommand {}
@@ -44,7 +45,7 @@ impl<U: UnitOfWork> UseCase for DeleteRoleUseCase<U> {
     type Event = RoleDeleted;
 
     async fn validate(&self, command: &DeleteRoleCommand) -> Result<(), UseCaseError> {
-        if command.role_id.trim().is_empty() {
+        if command.role_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "ROLE_ID_REQUIRED",
                 "Role ID is required",
@@ -127,7 +128,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = DeleteRoleCommand {
-            role_id: "role-123".to_string(),
+            role_id: RoleId::from_wire("role-123"),
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

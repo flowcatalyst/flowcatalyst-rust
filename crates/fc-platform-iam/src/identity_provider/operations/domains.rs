@@ -157,7 +157,7 @@ where
                 format!("a new mapping for '{domain}' has no scope"),
             )
         })?;
-        let mut mapping = EmailDomainMapping::new(domain, &idp.id, scope);
+        let mut mapping = EmailDomainMapping::new(domain, idp.id.clone(), scope);
         if scope == ScopeType::Client {
             mapping.primary_client_id = client.map(str::to_string);
         }

@@ -3,6 +3,7 @@
 //! REST endpoints for role management.
 
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::RoleId;
 use std::sync::Arc;
 
 use axum::{
@@ -115,7 +116,7 @@ impl From<AuthRole> for RoleResponse {
         let mut permissions: Vec<String> = r.permissions.into_iter().collect();
         permissions.sort();
         Self {
-            id: r.id,
+            id: r.id.into_string(),
             application_id: r.application_id.map(ApplicationId::into_string),
             name: r.name,
             display_name: r.display_name,
@@ -218,7 +219,7 @@ pub struct ApplicationFilterListResponse {
 /// role/api/api.go): the SPA addresses roles by id, the SDKs by name, on
 /// the same routes.
 async fn resolve_role(repo: &RoleRepository, id_or_name: &str) -> Result<AuthRole, PlatformError> {
-    if let Some(role) = repo.find_by_id(id_or_name).await? {
+    if let Some(role) = repo.find_by_id(&RoleId::from_wire(id_or_name)).await? {
         return Ok(role);
     }
     repo.find_by_name(id_or_name)
@@ -652,7 +653,7 @@ async fn role_by_name(
     name: &str,
 ) -> Result<RoleResponse, PlatformError> {
     // Go's resolveRole: the id first, then the name.
-    let role = match state.role_repo.find_by_id(name).await? {
+    let role = match state.role_repo.find_by_id(&RoleId::from_wire(name)).await? {
         Some(r) => Some(r),
         None => state.role_repo.find_by_name(name).await?,
     };

@@ -8,6 +8,7 @@
 //! the client secret or its reference.
 
 use fc_platform_core::impl_domain_event;
+use fc_platform_core::shared::id::IdentityProviderId;
 use fc_platform_core::usecase::domain_event::EventMetadata;
 use fc_platform_core::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
@@ -15,7 +16,11 @@ use serde::{Deserialize, Serialize};
 const SPEC_VERSION: &str = "1.0";
 const SOURCE: &str = "platform:admin";
 
-fn metadata(ctx: &ExecutionContext, event_type: &str, idp_id: &str) -> EventMetadata {
+fn metadata(
+    ctx: &ExecutionContext,
+    event_type: &str,
+    idp_id: &IdentityProviderId,
+) -> EventMetadata {
     EventMetadata::from_ctx(
         ctx,
         event_type,
@@ -34,7 +39,7 @@ macro_rules! idp_event {
         pub struct $name {
             #[serde(skip)]
             pub metadata: EventMetadata,
-            pub identity_provider_id: String,
+            pub identity_provider_id: IdentityProviderId,
             pub code: String,
         }
 
@@ -43,10 +48,10 @@ macro_rules! idp_event {
         impl $name {
             pub const EVENT_TYPE: &'static str = $event_type;
 
-            pub fn new(ctx: &ExecutionContext, idp_id: &str, code: &str) -> Self {
+            pub fn new(ctx: &ExecutionContext, idp_id: &IdentityProviderId, code: &str) -> Self {
                 Self {
                     metadata: metadata(ctx, Self::EVENT_TYPE, idp_id),
-                    identity_provider_id: idp_id.to_string(),
+                    identity_provider_id: idp_id.clone(),
                     code: code.to_string(),
                 }
             }
@@ -77,7 +82,11 @@ mod tests {
     #[test]
     fn identity_provider_events_are_go_shaped() {
         let ctx = ExecutionContext::system("prn_1");
-        let e = IdentityProviderCreated::new(&ctx, "idp_1", "okta");
+        let e = IdentityProviderCreated::new(
+            &ctx,
+            &IdentityProviderId::parse("idp_1").unwrap(),
+            "okta",
+        );
         assert_eq!(
             e.metadata.event_type,
             "platform:admin:identity-provider:created"

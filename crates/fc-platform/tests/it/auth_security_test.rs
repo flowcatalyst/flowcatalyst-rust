@@ -2,6 +2,7 @@
 //! owner rulings of 2026-09-25), end to end against a real database.
 
 use crate::support;
+use fc_platform::shared::id::IdentityProviderId;
 
 use axum::{
     body::Body,
@@ -191,14 +192,22 @@ async fn an_unpinned_multi_tenant_mapping_cannot_sign_in() {
     let multi = create_oidc_idp(&app, &token, "entra-multi", true).await;
 
     // A legacy row, written straight to the table as the rule never saw it.
-    let legacy = EmailDomainMapping::new("legacy.test", &multi, ScopeType::Anchor);
+    let legacy = EmailDomainMapping::new(
+        "legacy.test",
+        IdentityProviderId::from_wire(multi.as_str()),
+        ScopeType::Anchor,
+    );
     app.repos.edm_repo.insert(&legacy).await.unwrap();
 
     let (status, body) = read_json(send(&app, oidc_login_request("legacy.test")).await).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
     assert_eq!(body["error"], "TENANT_NOT_PINNED", "{body}");
 
-    let mut pinned = EmailDomainMapping::new("pinned.test", &multi, ScopeType::Anchor);
+    let mut pinned = EmailDomainMapping::new(
+        "pinned.test",
+        IdentityProviderId::from_wire(multi.as_str()),
+        ScopeType::Anchor,
+    );
     pinned.required_oidc_tenant_id = Some("tenant-a".to_string());
     app.repos.edm_repo.insert(&pinned).await.unwrap();
     let resp = send(&app, oidc_login_request("pinned.test")).await;

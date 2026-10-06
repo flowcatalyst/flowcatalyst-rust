@@ -1,6 +1,7 @@
 //! Delete Email Domain Mapping Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::EmailDomainMappingId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -16,7 +17,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteEmailDomainMappingCommand {
-    pub mapping_id: String,
+    pub mapping_id: EmailDomainMappingId,
 }
 
 impl AuditMasked for DeleteEmailDomainMappingCommand {}
@@ -44,7 +45,7 @@ impl<U: UnitOfWork> UseCase for DeleteEmailDomainMappingUseCase<U> {
         &self,
         command: &DeleteEmailDomainMappingCommand,
     ) -> Result<(), UseCaseError> {
-        if command.mapping_id.trim().is_empty() {
+        if command.mapping_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "MAPPING_ID_REQUIRED",
                 "Mapping ID is required",
@@ -97,32 +98,35 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = DeleteEmailDomainMappingCommand {
-            mapping_id: "edm-123".to_string(),
+            mapping_id: EmailDomainMappingId::parse("edm_123").unwrap(),
         };
 
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("mappingId"));
-        assert!(json.contains("edm-123"));
+        assert!(json.contains("edm_123"));
 
         let deserialized: DeleteEmailDomainMappingCommand = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.mapping_id, "edm-123");
+        assert_eq!(
+            deserialized.mapping_id,
+            EmailDomainMappingId::parse("edm_123").unwrap()
+        );
     }
 
     #[test]
     fn test_validate_empty_mapping_id() {
         let cmd = DeleteEmailDomainMappingCommand {
-            mapping_id: "".to_string(),
+            mapping_id: EmailDomainMappingId::from_wire(""),
         };
-        assert!(cmd.mapping_id.trim().is_empty());
+        assert!(cmd.mapping_id.as_str().trim().is_empty());
     }
 
     #[test]
     fn test_validate_whitespace_mapping_id() {
         let cmd = DeleteEmailDomainMappingCommand {
-            mapping_id: "   ".to_string(),
+            mapping_id: EmailDomainMappingId::from_wire("   "),
         };
         assert!(
-            cmd.mapping_id.trim().is_empty(),
+            cmd.mapping_id.as_str().trim().is_empty(),
             "Whitespace-only mapping_id should be treated as empty"
         );
     }
@@ -130,8 +134,8 @@ mod tests {
     #[test]
     fn test_validate_valid_mapping_id() {
         let cmd = DeleteEmailDomainMappingCommand {
-            mapping_id: "edm-456".to_string(),
+            mapping_id: EmailDomainMappingId::from_wire("edm-456"),
         };
-        assert!(!cmd.mapping_id.trim().is_empty());
+        assert!(!cmd.mapping_id.as_str().trim().is_empty());
     }
 }

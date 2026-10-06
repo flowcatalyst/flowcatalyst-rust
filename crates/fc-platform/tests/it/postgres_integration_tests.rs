@@ -1367,19 +1367,19 @@ async fn test_secret_backfill_encrypts_plaintext_idempotently() {
     };
     let idp_secret = stored(
         "SELECT oidc_client_secret_ref FROM oauth_identity_providers WHERE id = $1",
-        idp.id.clone(),
+        idp.id.to_string(),
     )
     .await;
     assert_eq!(enc.decrypt_ref(&idp_secret).unwrap(), "idp-plain");
     let idp_done_secret = stored(
         "SELECT oidc_client_secret_ref FROM oauth_identity_providers WHERE id = $1",
-        idp_done.id.clone(),
+        idp_done.id.to_string(),
     )
     .await;
     assert_eq!(idp_done_secret, already, "encrypted rows are untouched");
     let idp_ref_secret = stored(
         "SELECT oidc_client_secret_ref FROM oauth_identity_providers WHERE id = $1",
-        idp_ref.id.clone(),
+        idp_ref.id.to_string(),
     )
     .await;
     assert_eq!(
@@ -1414,13 +1414,13 @@ async fn test_secret_backfill_encrypts_plaintext_idempotently() {
     assert_eq!(enc.decrypt_ref(&password).unwrap(), "plain-password");
     let cfg = stored(
         "SELECT value FROM app_platform_configs WHERE id = $1",
-        secret.id.clone(),
+        secret.id.to_string(),
     )
     .await;
     assert_eq!(enc.decrypt_ref(&cfg).unwrap(), "cfg-plain");
     let plain_cfg = stored(
         "SELECT value FROM app_platform_configs WHERE id = $1",
-        plain.id.clone(),
+        plain.id.to_string(),
     )
     .await;
     assert_eq!(plain_cfg, "smtp.example.com", "PLAIN config is untouched");

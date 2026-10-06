@@ -4,8 +4,7 @@
 
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::ApplicationId;
-use fc_platform_core::shared::tsid;
-use fc_platform_core::shared::tsid::EntityType;
+use fc_platform_core::shared::id::RoleId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -74,7 +73,7 @@ impl Permission {
 #[serde(rename_all = "camelCase")]
 pub struct AuthRole {
     /// TSID as Crockford Base32 string
-    pub id: String,
+    pub id: RoleId,
 
     /// Application ID reference (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -123,7 +122,7 @@ impl AuthRole {
         let now = Utc::now();
 
         Self {
-            id: tsid::generate(EntityType::Role),
+            id: RoleId::generate(),
             application_id: None,
             name: format!("{}:{}", app, rname),
             display_name: display_name.into(),

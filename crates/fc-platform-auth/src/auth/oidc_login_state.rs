@@ -5,6 +5,8 @@
 //! and prevent CSRF attacks.
 
 use chrono::{DateTime, Duration, Utc};
+use fc_platform_core::shared::id::EmailDomainMappingId;
+use fc_platform_core::shared::id::IdentityProviderId;
 use serde::{Deserialize, Serialize};
 
 /// OIDC login state for authorization code flow
@@ -24,10 +26,10 @@ pub struct OidcLoginState {
     pub email_domain: String,
 
     /// The IdentityProvider ID used for this login
-    pub identity_provider_id: String,
+    pub identity_provider_id: IdentityProviderId,
 
     /// The EmailDomainMapping ID that matched this login
-    pub email_domain_mapping_id: String,
+    pub email_domain_mapping_id: EmailDomainMappingId,
 
     /// Nonce for ID token validation (prevents replay attacks)
     pub nonce: String,
@@ -90,8 +92,8 @@ impl OidcLoginState {
     pub fn new(
         state: impl Into<String>,
         email_domain: impl Into<String>,
-        identity_provider_id: impl Into<String>,
-        email_domain_mapping_id: impl Into<String>,
+        identity_provider_id: IdentityProviderId,
+        email_domain_mapping_id: EmailDomainMappingId,
         nonce: impl Into<String>,
         code_verifier: impl Into<String>,
     ) -> Self {
@@ -99,8 +101,8 @@ impl OidcLoginState {
         Self {
             state: state.into(),
             email_domain: email_domain.into().to_lowercase(),
-            identity_provider_id: identity_provider_id.into(),
-            email_domain_mapping_id: email_domain_mapping_id.into(),
+            identity_provider_id,
+            email_domain_mapping_id,
             nonce: nonce.into(),
             code_verifier: code_verifier.into(),
             return_url: None,
@@ -149,16 +151,22 @@ mod tests {
         let state = OidcLoginState::new(
             "random-state-123",
             "example.com",
-            "idp-456",
-            "edm-789",
+            IdentityProviderId::from_wire("idp-456"),
+            EmailDomainMappingId::from_wire("edm-789"),
             "nonce-789",
             "verifier-abc",
         );
 
         assert_eq!(state.state, "random-state-123");
         assert_eq!(state.email_domain, "example.com");
-        assert_eq!(state.identity_provider_id, "idp-456");
-        assert_eq!(state.email_domain_mapping_id, "edm-789");
+        assert_eq!(
+            state.identity_provider_id,
+            IdentityProviderId::from_wire("idp-456")
+        );
+        assert_eq!(
+            state.email_domain_mapping_id,
+            EmailDomainMappingId::from_wire("edm-789")
+        );
         assert_eq!(state.nonce, "nonce-789");
         assert_eq!(state.code_verifier, "verifier-abc");
         assert!(!state.is_expired());
@@ -176,8 +184,8 @@ mod tests {
             ..OidcLoginState::new(
                 "state",
                 "example.com",
-                "idp-id",
-                "edm-id",
+                IdentityProviderId::from_wire("idp-id"),
+                EmailDomainMappingId::from_wire("edm-id"),
                 "nonce",
                 "verifier",
             )
@@ -192,8 +200,8 @@ mod tests {
         let state = OidcLoginState::new(
             "state",
             "EXAMPLE.COM",
-            "idp-id",
-            "edm-id",
+            IdentityProviderId::from_wire("idp-id"),
+            EmailDomainMappingId::from_wire("edm-id"),
             "nonce",
             "verifier",
         );

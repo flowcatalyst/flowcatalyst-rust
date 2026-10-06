@@ -1,6 +1,7 @@
 //! IdentityProvider Repository — PostgreSQL via SQLx
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::IdentityProviderId;
 use sqlx::PgPool;
 use std::collections::HashMap;
 
@@ -15,7 +16,7 @@ use fc_platform_core::usecase::Persist;
 
 #[derive(sqlx::FromRow)]
 struct IdentityProviderRow {
-    id: String,
+    id: IdentityProviderId,
     code: String,
     name: String,
     r#type: String,
@@ -34,7 +35,7 @@ struct IdentityProviderRow {
 impl TryFrom<IdentityProviderRow> for IdentityProvider {
     type Error = PlatformError;
     fn try_from(r: IdentityProviderRow) -> Result<Self> {
-        let r#type = decode(&r.r#type, "oauth_identity_providers", "type", &r.id)?;
+        let r#type = decode(&r.r#type, "oauth_identity_providers", "type", r.id.as_str())?;
         Ok(Self {
             id: r.id,
             code: r.code,
@@ -56,7 +57,7 @@ impl TryFrom<IdentityProviderRow> for IdentityProvider {
 
 impl HasId for IdentityProvider {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 
@@ -86,16 +87,16 @@ impl IdentityProviderRepository {
         if idps.is_empty() {
             return Ok(idps);
         }
-        let ids: Vec<&str> = idps.iter().map(|i| i.id.as_str()).collect();
+        let ids: Vec<&IdentityProviderId> = idps.iter().map(|i| &i.id).collect();
 
-        let domains = sqlx::query_as::<_, (String, String)>(
+        let domains = sqlx::query_as::<_, (IdentityProviderId, String)>(
             "SELECT identity_provider_id, email_domain FROM tnt_email_domain_mappings \
              WHERE identity_provider_id = ANY($1) ORDER BY identity_provider_id, email_domain",
         )
         .bind(&ids)
         .fetch_all(&self.pool)
         .await?;
-        let roles = sqlx::query_as::<_, (String, String)>(
+        let roles = sqlx::query_as::<_, (IdentityProviderId, String)>(
             "SELECT identity_provider_id, role_id FROM oauth_identity_provider_allowed_roles \
              WHERE identity_provider_id = ANY($1) ORDER BY identity_provider_id, role_id",
         )
@@ -103,11 +104,11 @@ impl IdentityProviderRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        let mut domain_map: HashMap<String, Vec<String>> = HashMap::new();
+        let mut domain_map: HashMap<IdentityProviderId, Vec<String>> = HashMap::new();
         for (idp_id, domain) in domains {
             domain_map.entry(idp_id).or_default().push(domain);
         }
-        let mut role_map: HashMap<String, Vec<String>> = HashMap::new();
+        let mut role_map: HashMap<IdentityProviderId, Vec<String>> = HashMap::new();
         for (idp_id, role_id) in roles {
             role_map.entry(idp_id).or_default().push(role_id);
         }
@@ -118,7 +119,7 @@ impl IdentityProviderRepository {
         Ok(idps)
     }
 
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<IdentityProvider>> {
+    pub async fn find_by_id(&self, id: &IdentityProviderId) -> Result<Option<IdentityProvider>> {
         let row = sqlx::query_as::<_, IdentityProviderRow>(
             "SELECT * FROM oauth_identity_providers WHERE id = $1",
         )
@@ -159,11 +160,14 @@ impl IdentityProviderRepository {
 
     /// `id → name` for the given providers, in one query (the mapping
     /// responses' `identityProviderName`).
-    pub async fn find_names_by_ids(&self, ids: &[String]) -> Result<HashMap<String, String>> {
+    pub async fn find_names_by_ids(
+        &self,
+        ids: &[IdentityProviderId],
+    ) -> Result<HashMap<IdentityProviderId, String>> {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
-        let rows = sqlx::query_as::<_, (String, String)>(
+        let rows = sqlx::query_as::<_, (IdentityProviderId, String)>(
             "SELECT id, name FROM oauth_identity_providers WHERE id = ANY($1)",
         )
         .bind(ids)
@@ -205,7 +209,7 @@ impl IdentityProviderRepository {
         self.insert(idp).await
     }
 
-    pub async fn delete(&self, id: &str) -> Result<bool> {
+    pub async fn delete(&self, id: &IdentityProviderId) -> Result<bool> {
         let mut tx = self.pool.begin().await?;
         let deleted = {
             let mut db = fc_platform_core::usecase::DbTx { inner: &mut tx };
@@ -269,7 +273,7 @@ async fn write_provider(idp: &IdentityProvider, tx: &mut DbTx<'_>) -> Result<()>
 
 /// Delete the provider and clear its junctions (the allowed roles, and the
 /// legacy allowed-domains rows so an old install keeps no orphans).
-async fn delete_provider(id: &str, tx: &mut DbTx<'_>) -> Result<bool> {
+async fn delete_provider(id: &IdentityProviderId, tx: &mut DbTx<'_>) -> Result<bool> {
     sqlx::query(
         "DELETE FROM oauth_identity_provider_allowed_domains WHERE identity_provider_id = $1",
     )

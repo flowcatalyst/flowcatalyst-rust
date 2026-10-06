@@ -1,6 +1,7 @@
 //! Deactivate OAuth Client Use Case.
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::OAuthClientId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -15,7 +16,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeactivateOAuthClientCommand {
-    pub oauth_client_id: String,
+    pub oauth_client_id: OAuthClientId,
 }
 
 impl AuditMasked for DeactivateOAuthClientCommand {}
@@ -40,7 +41,7 @@ impl<U: UnitOfWork> UseCase for DeactivateOAuthClientUseCase<U> {
     type Event = OAuthClientDeactivated;
 
     async fn validate(&self, command: &DeactivateOAuthClientCommand) -> Result<(), UseCaseError> {
-        if command.oauth_client_id.trim().is_empty() {
+        if command.oauth_client_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "OAUTH_CLIENT_ID_REQUIRED",
                 "OAuth client id is required",

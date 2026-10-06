@@ -1,6 +1,7 @@
 //! Update ClientAuthConfig Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::ClientAuthConfigId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -16,7 +17,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateAuthConfigCommand {
-    pub auth_config_id: String,
+    pub auth_config_id: ClientAuthConfigId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub primary_client_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -64,7 +65,7 @@ impl<U: UnitOfWork> UseCase for UpdateAuthConfigUseCase<U> {
     type Event = AuthConfigUpdated;
 
     async fn validate(&self, command: &UpdateAuthConfigCommand) -> Result<(), UseCaseError> {
-        if command.auth_config_id.trim().is_empty() {
+        if command.auth_config_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "ID_REQUIRED",
                 "Auth config ID is required",

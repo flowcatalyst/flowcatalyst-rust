@@ -1,6 +1,7 @@
 //! Update Anchor Domain Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::AnchorDomainId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -15,7 +16,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateAnchorDomainCommand {
-    pub anchor_domain_id: String,
+    pub anchor_domain_id: AnchorDomainId,
     pub domain: String,
 }
 
@@ -41,7 +42,7 @@ impl<U: UnitOfWork> UseCase for UpdateAnchorDomainUseCase<U> {
     type Event = AnchorDomainUpdated;
 
     async fn validate(&self, command: &UpdateAnchorDomainCommand) -> Result<(), UseCaseError> {
-        if command.anchor_domain_id.trim().is_empty() {
+        if command.anchor_domain_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "ID_REQUIRED",
                 "Anchor domain ID is required",

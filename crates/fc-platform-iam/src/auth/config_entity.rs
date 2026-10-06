@@ -1,8 +1,9 @@
 //! Authentication Configuration Entities — matches TypeScript domain
 
 use chrono::{DateTime, Utc};
-use fc_platform_core::shared::tsid;
-use fc_platform_core::shared::tsid::EntityType;
+use fc_platform_core::shared::id::AnchorDomainId;
+use fc_platform_core::shared::id::ClientAuthConfigId;
+use fc_platform_core::shared::id::IdpRoleMappingId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,7 +40,7 @@ fc_platform_core::shared::enum_str::str_enum!(AuthConfigType, "auth config type"
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnchorDomain {
-    pub id: String,
+    pub id: AnchorDomainId,
     pub domain: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -49,7 +50,7 @@ impl AnchorDomain {
     pub fn new(domain: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
-            id: tsid::generate(EntityType::AnchorDomain),
+            id: AnchorDomainId::generate(),
             domain: domain.into().to_lowercase(),
             created_at: now,
             updated_at: now,
@@ -65,7 +66,7 @@ impl AnchorDomain {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientAuthConfig {
-    pub id: String,
+    pub id: ClientAuthConfigId,
     pub email_domain: String,
     pub config_type: AuthConfigType,
     pub primary_client_id: Option<String>,
@@ -85,7 +86,7 @@ impl ClientAuthConfig {
     pub fn new_internal(email_domain: impl Into<String>, config_type: AuthConfigType) -> Self {
         let now = Utc::now();
         Self {
-            id: tsid::generate(EntityType::ClientAuthConfig),
+            id: ClientAuthConfigId::generate(),
             email_domain: email_domain.into().to_lowercase(),
             config_type,
             primary_client_id: None,
@@ -154,7 +155,7 @@ impl ClientAuthConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IdpRoleMapping {
-    pub id: String,
+    pub id: IdpRoleMappingId,
     pub idp_type: String,
     pub idp_role_name: String,
     pub platform_role_name: String,
@@ -170,7 +171,7 @@ impl IdpRoleMapping {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: tsid::generate(EntityType::IdpRoleMapping),
+            id: IdpRoleMappingId::generate(),
             idp_type: idp_type.into(),
             idp_role_name: idp_role_name.into(),
             platform_role_name: platform_role_name.into(),

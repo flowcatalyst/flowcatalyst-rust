@@ -1,8 +1,8 @@
 //! EmailDomainMapping Entity
 
 use chrono::{DateTime, Utc};
-use fc_platform_core::shared::tsid;
-use fc_platform_core::shared::tsid::EntityType;
+use fc_platform_core::shared::id::EmailDomainMappingId;
+use fc_platform_core::shared::id::IdentityProviderId;
 use fc_platform_core::usecase::UseCaseError;
 use serde::{Deserialize, Serialize};
 
@@ -23,9 +23,9 @@ fc_platform_core::shared::enum_str::str_enum!(ScopeType, "scope type", {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EmailDomainMapping {
-    pub id: String,
+    pub id: EmailDomainMappingId,
     pub email_domain: String,
-    pub identity_provider_id: String,
+    pub identity_provider_id: IdentityProviderId,
     pub scope_type: ScopeType,
     pub primary_client_id: Option<String>,
     pub additional_client_ids: Vec<String>,
@@ -74,14 +74,14 @@ pub fn validate_two_factor(require_2fa: bool, methods: &[String]) -> Result<(), 
 impl EmailDomainMapping {
     pub fn new(
         email_domain: impl Into<String>,
-        identity_provider_id: impl Into<String>,
+        identity_provider_id: IdentityProviderId,
         scope_type: ScopeType,
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: tsid::generate(EntityType::EmailDomainMapping),
+            id: EmailDomainMappingId::generate(),
             email_domain: email_domain.into(),
-            identity_provider_id: identity_provider_id.into(),
+            identity_provider_id,
             scope_type,
             primary_client_id: None,
             additional_client_ids: Vec::new(),
@@ -114,16 +114,23 @@ mod tests {
 
     #[test]
     fn test_new_email_domain_mapping() {
-        let edm = EmailDomainMapping::new("example.com", "idp-123", ScopeType::Anchor);
+        let edm = EmailDomainMapping::new(
+            "example.com",
+            IdentityProviderId::from_wire("idp-123"),
+            ScopeType::Anchor,
+        );
 
-        assert!(!edm.id.is_empty());
+        assert!(!edm.id.as_str().is_empty());
         assert!(
-            edm.id.starts_with("edm_"),
+            edm.id.as_str().starts_with("edm_"),
             "ID should have edm_ prefix, got: {}",
             edm.id
         );
         assert_eq!(edm.email_domain, "example.com");
-        assert_eq!(edm.identity_provider_id, "idp-123");
+        assert_eq!(
+            edm.identity_provider_id,
+            IdentityProviderId::from_wire("idp-123")
+        );
         assert_eq!(edm.scope_type, ScopeType::Anchor);
         assert!(edm.primary_client_id.is_none());
         assert!(edm.additional_client_ids.is_empty());
@@ -177,14 +184,26 @@ mod tests {
 
     #[test]
     fn test_email_domain_mapping_unique_ids() {
-        let edm1 = EmailDomainMapping::new("a.com", "idp-1", ScopeType::Anchor);
-        let edm2 = EmailDomainMapping::new("b.com", "idp-2", ScopeType::Client);
+        let edm1 = EmailDomainMapping::new(
+            "a.com",
+            IdentityProviderId::from_wire("idp-1"),
+            ScopeType::Anchor,
+        );
+        let edm2 = EmailDomainMapping::new(
+            "b.com",
+            IdentityProviderId::from_wire("idp-2"),
+            ScopeType::Client,
+        );
         assert_ne!(edm1.id, edm2.id);
     }
 
     #[test]
     fn test_email_domain_mapping_serialization() {
-        let edm = EmailDomainMapping::new("test.org", "idp-1", ScopeType::Partner);
+        let edm = EmailDomainMapping::new(
+            "test.org",
+            IdentityProviderId::from_wire("idp-1"),
+            ScopeType::Partner,
+        );
 
         let json = serde_json::to_string(&edm).unwrap();
         assert!(json.contains("emailDomain"));

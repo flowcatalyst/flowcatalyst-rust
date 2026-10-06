@@ -16,6 +16,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::{Duration, Utc};
+use fc_platform_core::shared::id::IdentityProviderId;
 use std::collections::HashMap;
 
 use super::entity::{email_domain_of, IdentityStatus, LoginFlow};
@@ -50,7 +51,10 @@ fn resolve_failed() -> Response {
 /// Go `Bridge.ResolveByProviderID`'s guards, all fail-closed: the IdP must
 /// exist, be OIDC, be fully configured, and a multi-tenant one must bound
 /// the emails it may assert.
-async fn resolve_provider(portal: &PortalState, provider_id: &str) -> Option<IdentityProvider> {
+async fn resolve_provider(
+    portal: &PortalState,
+    provider_id: &IdentityProviderId,
+) -> Option<IdentityProvider> {
     let idp = portal
         .identity_providers
         .find_by_id(provider_id)
@@ -68,7 +72,7 @@ async fn resolve_provider(portal: &PortalState, provider_id: &str) -> Option<Ide
 pub async fn start(
     s: &PortalLoginState,
     flow: &LoginFlow,
-    provider_id: &str,
+    provider_id: &IdentityProviderId,
     host: &str,
     uri: &Uri,
 ) -> Response {

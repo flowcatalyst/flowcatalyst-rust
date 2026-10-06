@@ -17,8 +17,17 @@ use chrono::{DateTime, TimeZone, Utc};
 use fc_platform_core::shared::id::AppClientConfigId;
 use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::shared::id::ApplicationOpenApiSpecId;
+use fc_platform_core::shared::id::ClientAuthConfigId;
 use fc_platform_core::shared::id::ConnectionId;
+use fc_platform_core::shared::id::CorsOriginId;
+use fc_platform_core::shared::id::EmailDomainMappingId;
+use fc_platform_core::shared::id::IdentityProviderId;
+use fc_platform_core::shared::id::IdpRoleMappingId;
+use fc_platform_core::shared::id::OAuthClientId;
+use fc_platform_core::shared::id::PlatformConfigAccessId;
+use fc_platform_core::shared::id::PlatformConfigId;
 use fc_platform_core::shared::id::ProcessId;
+use fc_platform_core::shared::id::RoleId;
 use fc_platform_core::shared::id::ScheduledJobId;
 use fc_platform_core::shared::id::SubscriptionId;
 use serde::Serialize;
@@ -221,7 +230,11 @@ fn application_openapi_spec_synced() {
 
 #[test]
 fn auth_config_created() {
-    let e = fixed!(AuthConfigCreated::new(&fresh_ctx(), "cac_1", "example.com"));
+    let e = fixed!(AuthConfigCreated::new(
+        &fresh_ctx(),
+        &ClientAuthConfigId::parse("cac_1").unwrap(),
+        "example.com"
+    ));
     check(&e, EXPECTED_AUTH_CONFIG_CREATED);
 }
 
@@ -229,7 +242,7 @@ fn auth_config_created() {
 fn idp_role_mapping_created() {
     let e = fixed!(IdpRoleMappingCreated::new(
         &ctx(),
-        "irm_1",
+        &IdpRoleMappingId::parse("irm_1").unwrap(),
         "OIDC",
         "okta-admins",
         "platform:admin"
@@ -260,7 +273,7 @@ fn connection_created() {
 fn cors_origin_added() {
     let e = fixed!(CorsOriginAdded::new(
         &ctx(),
-        "cor_1",
+        &CorsOriginId::parse("cor_1").unwrap(),
         "https://app.example.com"
     ));
     check(&e, EXPECTED_CORS_ORIGIN_ADDED);
@@ -285,7 +298,7 @@ fn dispatch_pools_synced() {
 fn email_domain_mapping_created() {
     let e = fixed!(EmailDomainMappingCreated::new(
         &ctx(),
-        "edm_1",
+        &EmailDomainMappingId::parse("edm_1").unwrap(),
         "example.com"
     ));
     check(&e, EXPECTED_EMAIL_DOMAIN_MAPPING_CREATED);
@@ -293,7 +306,11 @@ fn email_domain_mapping_created() {
 
 #[test]
 fn identity_provider_created() {
-    let e = fixed!(IdentityProviderCreated::new(&ctx(), "idp_1", "okta"));
+    let e = fixed!(IdentityProviderCreated::new(
+        &ctx(),
+        &IdentityProviderId::parse("idp_1").unwrap(),
+        "okta"
+    ));
     check(&e, EXPECTED_IDENTITY_PROVIDER_CREATED);
 }
 
@@ -333,8 +350,11 @@ fn event_types_synced() {
 #[test]
 fn platform_config_property_set() {
     let e = fixed!(PlatformConfigPropertySet {
-        metadata: PlatformConfigPropertySet::metadata_for(&ctx(), "pcf_1"),
-        config_id: "pcf_1".to_string(),
+        metadata: PlatformConfigPropertySet::metadata_for(
+            &ctx(),
+            &PlatformConfigId::parse("pcf_1").unwrap()
+        ),
+        config_id: PlatformConfigId::parse("pcf_1").unwrap(),
         application_code: "orders".to_string(),
         section: "limits".to_string(),
         property: "max_batch".to_string(),
@@ -353,14 +373,17 @@ fn platform_config_property_set() {
 #[test]
 fn platform_config_property_set_from_the_aggregate() {
     let mut config = PlatformConfig::new("orders", "limits", "max_batch", "100");
-    config.id = "pcf_1".to_string();
+    config.id = PlatformConfigId::parse("pcf_1").unwrap();
     config.scope = ConfigScope::Client;
     config.client_id = Some("clt_1".to_string());
     config.value_type = ConfigValueType::Secret;
     let built = fixed!(PlatformConfigPropertySet::new(&ctx(), &config, true));
     let literal = fixed!(PlatformConfigPropertySet {
-        metadata: PlatformConfigPropertySet::metadata_for(&ctx(), "pcf_1"),
-        config_id: "pcf_1".to_string(),
+        metadata: PlatformConfigPropertySet::metadata_for(
+            &ctx(),
+            &PlatformConfigId::parse("pcf_1").unwrap()
+        ),
+        config_id: PlatformConfigId::parse("pcf_1").unwrap(),
         application_code: "orders".to_string(),
         section: "limits".to_string(),
         property: "max_batch".to_string(),
@@ -376,7 +399,7 @@ fn platform_config_property_set_from_the_aggregate() {
 #[test]
 fn platform_config_access_granted() {
     let mut access = PlatformConfigAccess::new("orders", "orders:viewer");
-    access.id = "pca_1".to_string();
+    access.id = PlatformConfigAccessId::from_wire("pca_1");
     let e = fixed!(PlatformConfigAccessGranted::new(&ctx(), &access, true));
     check(&e, EXPECTED_PLATFORM_CONFIG_ACCESS_GRANTED);
 }
@@ -454,7 +477,11 @@ fn process_updated() {
 
 #[test]
 fn role_created() {
-    let e = fixed!(RoleCreated::new(&ctx(), "rol_1", "orders:viewer"));
+    let e = fixed!(RoleCreated::new(
+        &ctx(),
+        &RoleId::parse("rol_1").unwrap(),
+        "orders:viewer"
+    ));
     check(&e, EXPECTED_ROLE_CREATED);
 }
 
@@ -682,7 +709,7 @@ const OAUTH_CLIENT_SECRET: &str = "oauth-plaintext-client-secret";
 fn oauth_client_secret_rotation_persists_only_the_hash() {
     let enc = test_encryption();
     let cmd = RotateOAuthClientSecretCommand {
-        oauth_client_id: "oac_1".to_string(),
+        oauth_client_id: OAuthClientId::parse("oac_1").unwrap(),
         new_client_secret_ref: enc.hash_secret(OAUTH_CLIENT_SECRET),
         grace_seconds: None,
     };
@@ -691,7 +718,10 @@ fn oauth_client_secret_rotation_persists_only_the_hash() {
         (true, false)
     );
 
-    let e = fixed!(OAuthClientSecretRotated::new(&ctx(), "oac_1"));
+    let e = fixed!(OAuthClientSecretRotated::new(
+        &ctx(),
+        &OAuthClientId::parse("oac_1").unwrap()
+    ));
     let rows = persisted(&e, &cmd);
     assert_no_plaintext(&rows, OAUTH_CLIENT_SECRET);
     // The hash itself no longer reaches the audit row either: the
@@ -725,7 +755,11 @@ fn identity_provider_create_persists_no_plaintext_secret() {
     let stored = cmd.oidc_client_secret_ref.as_deref().unwrap();
     assert_eq!(enc.decrypt_ref(stored).unwrap(), IDP_SECRET);
 
-    let e = fixed!(IdentityProviderCreated::new(&ctx(), "idp_1", "okta"));
+    let e = fixed!(IdentityProviderCreated::new(
+        &ctx(),
+        &IdentityProviderId::parse("idp_1").unwrap(),
+        "okta"
+    ));
     let rows = persisted(&e, &cmd);
     assert_no_plaintext(&rows, IDP_SECRET);
     // Neither the plaintext nor the sealed ref reaches the audit row: the
@@ -741,7 +775,7 @@ fn identity_provider_create_persists_no_plaintext_secret() {
 fn identity_provider_update_persists_no_plaintext_secret() {
     let enc = test_encryption();
     let cmd = UpdateIdentityProviderCommand {
-        idp_id: "idp_1".to_string(),
+        idp_id: IdentityProviderId::parse("idp_1").unwrap(),
         name: None,
         oidc_issuer_url: None,
         oidc_client_id: None,
@@ -755,7 +789,11 @@ fn identity_provider_update_persists_no_plaintext_secret() {
         sync_roles_from_idp: None,
         allowed_role_ids: None,
     };
-    let e = fixed!(IdentityProviderUpdated::new(&ctx(), "idp_1", "okta"));
+    let e = fixed!(IdentityProviderUpdated::new(
+        &ctx(),
+        &IdentityProviderId::parse("idp_1").unwrap(),
+        "okta"
+    ));
     let rows = persisted(&e, &cmd);
     assert_no_plaintext(&rows, IDP_SECRET);
     // Neither the plaintext nor the sealed ref reaches the audit row: the
@@ -855,8 +893,11 @@ fn platform_config_secret_persists_no_plaintext_value() {
         description: None,
     };
     let e = fixed!(PlatformConfigPropertySet {
-        metadata: PlatformConfigPropertySet::metadata_for(&ctx(), "pcf_1"),
-        config_id: "pcf_1".to_string(),
+        metadata: PlatformConfigPropertySet::metadata_for(
+            &ctx(),
+            &PlatformConfigId::parse("pcf_1").unwrap()
+        ),
+        config_id: PlatformConfigId::parse("pcf_1").unwrap(),
         application_code: "orders".to_string(),
         section: "email".to_string(),
         property: "smtp_host".to_string(),

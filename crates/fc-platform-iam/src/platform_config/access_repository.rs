@@ -1,6 +1,7 @@
 //! PlatformConfigAccess Repository — PostgreSQL via SQLx
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::PlatformConfigAccessId;
 use sqlx::PgPool;
 
 use super::access_entity::PlatformConfigAccess;
@@ -11,7 +12,7 @@ use fc_platform_core::usecase::Persist;
 
 #[derive(sqlx::FromRow)]
 struct PlatformConfigAccessRow {
-    id: String,
+    id: PlatformConfigAccessId,
     application_code: String,
     role_code: String,
     can_read: bool,
@@ -131,7 +132,7 @@ impl PlatformConfigAccessRepository {
 
 impl HasId for PlatformConfigAccess {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 
@@ -169,7 +170,10 @@ impl Persist<PlatformConfigAccess> for PlatformConfigAccessRepository {
 
 impl PlatformConfigAccessRepository {
     /// One grant by id (Go `FindAccessByID`).
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<PlatformConfigAccess>> {
+    pub async fn find_by_id(
+        &self,
+        id: &PlatformConfigAccessId,
+    ) -> Result<Option<PlatformConfigAccess>> {
         let row = sqlx::query_as::<_, PlatformConfigAccessRow>(
             "SELECT * FROM app_platform_config_access WHERE id = $1",
         )

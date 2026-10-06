@@ -1,6 +1,10 @@
 //! Authentication Configuration Repositories — PostgreSQL via SQLx
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::AnchorDomainId;
+use fc_platform_core::shared::id::ClientAccessGrantId;
+use fc_platform_core::shared::id::ClientAuthConfigId;
+use fc_platform_core::shared::id::IdpRoleMappingId;
 use sqlx::PgPool;
 
 use crate::auth::config_entity::{AnchorDomain, ClientAuthConfig, IdpRoleMapping};
@@ -16,7 +20,7 @@ use fc_platform_core::usecase::Persist;
 
 #[derive(sqlx::FromRow)]
 struct AnchorDomainRow {
-    id: String,
+    id: AnchorDomainId,
     domain: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -35,7 +39,7 @@ impl From<AnchorDomainRow> for AnchorDomain {
 
 #[derive(sqlx::FromRow)]
 struct ClientAuthConfigRow {
-    id: String,
+    id: ClientAuthConfigId,
     email_domain: String,
     config_type: String,
     primary_client_id: Option<String>,
@@ -58,13 +62,13 @@ impl TryFrom<ClientAuthConfigRow> for ClientAuthConfig {
             &r.config_type,
             "tnt_client_auth_configs",
             "config_type",
-            &r.id,
+            r.id.as_str(),
         )?;
         let auth_provider = decode(
             &r.auth_provider,
             "tnt_client_auth_configs",
             "auth_provider",
-            &r.id,
+            r.id.as_str(),
         )?;
         let additional_client_ids: Vec<String> =
             serde_json::from_value(r.additional_client_ids).unwrap_or_default();
@@ -91,7 +95,7 @@ impl TryFrom<ClientAuthConfigRow> for ClientAuthConfig {
 
 #[derive(sqlx::FromRow)]
 struct ClientAccessGrantRow {
-    id: String,
+    id: ClientAccessGrantId,
     principal_id: String,
     client_id: String,
     granted_by: String,
@@ -116,7 +120,7 @@ impl From<ClientAccessGrantRow> for ClientAccessGrant {
 
 #[derive(sqlx::FromRow)]
 struct IdpRoleMappingRow {
-    id: String,
+    id: IdpRoleMappingId,
     idp_role_name: String,
     internal_role_name: String,
     created_at: DateTime<Utc>,
@@ -162,7 +166,7 @@ impl AnchorDomainRepository {
         Ok(())
     }
 
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<AnchorDomain>> {
+    pub async fn find_by_id(&self, id: &AnchorDomainId) -> Result<Option<AnchorDomain>> {
         let row =
             sqlx::query_as::<_, AnchorDomainRow>("SELECT * FROM tnt_anchor_domains WHERE id = $1")
                 .bind(id)
@@ -210,7 +214,7 @@ impl AnchorDomainRepository {
         Ok(())
     }
 
-    pub async fn delete(&self, id: &str) -> Result<bool> {
+    pub async fn delete(&self, id: &AnchorDomainId) -> Result<bool> {
         let result = sqlx::query("DELETE FROM tnt_anchor_domains WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
@@ -263,7 +267,7 @@ impl ClientAuthConfigRepository {
         Ok(())
     }
 
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<ClientAuthConfig>> {
+    pub async fn find_by_id(&self, id: &ClientAuthConfigId) -> Result<Option<ClientAuthConfig>> {
         let row = sqlx::query_as::<_, ClientAuthConfigRow>(
             "SELECT * FROM tnt_client_auth_configs WHERE id = $1",
         )
@@ -335,7 +339,7 @@ impl ClientAuthConfigRepository {
         Ok(())
     }
 
-    pub async fn delete(&self, id: &str) -> Result<bool> {
+    pub async fn delete(&self, id: &ClientAuthConfigId) -> Result<bool> {
         let result = sqlx::query("DELETE FROM tnt_client_auth_configs WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
@@ -373,7 +377,7 @@ impl ClientAccessGrantRepository {
         Ok(())
     }
 
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<ClientAccessGrant>> {
+    pub async fn find_by_id(&self, id: &ClientAccessGrantId) -> Result<Option<ClientAccessGrant>> {
         let row = sqlx::query_as::<_, ClientAccessGrantRow>(
             "SELECT * FROM iam_client_access_grants WHERE id = $1",
         )
@@ -420,7 +424,7 @@ impl ClientAccessGrantRepository {
         Ok(row.map(ClientAccessGrant::from))
     }
 
-    pub async fn delete(&self, id: &str) -> Result<bool> {
+    pub async fn delete(&self, id: &ClientAccessGrantId) -> Result<bool> {
         let result = sqlx::query("DELETE FROM iam_client_access_grants WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
@@ -448,7 +452,7 @@ impl ClientAccessGrantRepository {
 
 impl HasId for ClientAccessGrant {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 
@@ -486,7 +490,7 @@ impl Persist<ClientAccessGrant> for ClientAccessGrantRepository {
 
 impl HasId for AnchorDomain {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 
@@ -522,7 +526,7 @@ impl Persist<AnchorDomain> for AnchorDomainRepository {
 
 impl HasId for ClientAuthConfig {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 
@@ -606,7 +610,7 @@ impl IdpRoleMappingRepository {
         Ok(())
     }
 
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<IdpRoleMapping>> {
+    pub async fn find_by_id(&self, id: &IdpRoleMappingId) -> Result<Option<IdpRoleMapping>> {
         let row = sqlx::query_as::<_, IdpRoleMappingRow>(
             "SELECT * FROM oauth_idp_role_mappings WHERE id = $1",
         )
@@ -657,7 +661,7 @@ impl IdpRoleMappingRepository {
         Ok(row.map(IdpRoleMapping::from))
     }
 
-    pub async fn delete(&self, id: &str) -> Result<bool> {
+    pub async fn delete(&self, id: &IdpRoleMappingId) -> Result<bool> {
         let result = sqlx::query("DELETE FROM oauth_idp_role_mappings WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
@@ -668,7 +672,7 @@ impl IdpRoleMappingRepository {
 
 impl usecase::HasId for IdpRoleMapping {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 

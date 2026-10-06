@@ -8,6 +8,7 @@
 //! (`{application}:{role}`).
 
 use fc_platform_core::impl_domain_event;
+use fc_platform_core::shared::id::RoleId;
 use fc_platform_core::usecase::domain_event::EventMetadata;
 use fc_platform_core::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
@@ -15,7 +16,7 @@ use serde::{Deserialize, Serialize};
 const SPEC_VERSION: &str = "1.0";
 const SOURCE: &str = "platform:admin";
 
-fn metadata(ctx: &ExecutionContext, event_type: &str, role_id: &str) -> EventMetadata {
+fn metadata(ctx: &ExecutionContext, event_type: &str, role_id: &RoleId) -> EventMetadata {
     EventMetadata::from_ctx(
         ctx,
         event_type,
@@ -34,7 +35,7 @@ macro_rules! role_event {
         pub struct $name {
             #[serde(skip)]
             pub metadata: EventMetadata,
-            pub role_id: String,
+            pub role_id: RoleId,
             pub name: String,
         }
 
@@ -43,10 +44,10 @@ macro_rules! role_event {
         impl $name {
             pub const EVENT_TYPE: &'static str = $event_type;
 
-            pub fn new(ctx: &ExecutionContext, role_id: &str, name: &str) -> Self {
+            pub fn new(ctx: &ExecutionContext, role_id: &RoleId, name: &str) -> Self {
                 Self {
                     metadata: metadata(ctx, Self::EVENT_TYPE, role_id),
-                    role_id: role_id.to_string(),
+                    role_id: role_id.clone(),
                     name: name.to_string(),
                 }
             }
@@ -76,7 +77,7 @@ role_event!(
 pub struct RolePermissionGranted {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub role_id: String,
+    pub role_id: RoleId,
     pub role_name: String,
     pub permission: String,
 }
@@ -86,10 +87,15 @@ impl_domain_event!(RolePermissionGranted);
 impl RolePermissionGranted {
     pub const EVENT_TYPE: &'static str = "platform:admin:role:permission-granted";
 
-    pub fn new(ctx: &ExecutionContext, role_id: &str, role_name: &str, permission: &str) -> Self {
+    pub fn new(
+        ctx: &ExecutionContext,
+        role_id: &RoleId,
+        role_name: &str,
+        permission: &str,
+    ) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, role_id),
-            role_id: role_id.to_string(),
+            role_id: role_id.clone(),
             role_name: role_name.to_string(),
             permission: permission.to_string(),
         }
@@ -102,7 +108,7 @@ impl RolePermissionGranted {
 pub struct RolePermissionRevoked {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub role_id: String,
+    pub role_id: RoleId,
     pub role_name: String,
     pub permission: String,
 }
@@ -112,10 +118,15 @@ impl_domain_event!(RolePermissionRevoked);
 impl RolePermissionRevoked {
     pub const EVENT_TYPE: &'static str = "platform:admin:role:permission-revoked";
 
-    pub fn new(ctx: &ExecutionContext, role_id: &str, role_name: &str, permission: &str) -> Self {
+    pub fn new(
+        ctx: &ExecutionContext,
+        role_id: &RoleId,
+        role_name: &str,
+        permission: &str,
+    ) -> Self {
         Self {
             metadata: metadata(ctx, Self::EVENT_TYPE, role_id),
-            role_id: role_id.to_string(),
+            role_id: role_id.clone(),
             role_name: role_name.to_string(),
             permission: permission.to_string(),
         }
@@ -173,7 +184,7 @@ mod tests {
     #[test]
     fn test_role_created_event() {
         let ctx = ExecutionContext::system("admin-123");
-        let event = RoleCreated::new(&ctx, "role-1", "orders:admin");
+        let event = RoleCreated::new(&ctx, &RoleId::from_wire("role-1"), "orders:admin");
 
         assert_eq!(event.metadata.event_type, "platform:admin:role:created");
         assert_eq!(event.metadata.source, "platform:admin");
@@ -186,7 +197,7 @@ mod tests {
     #[test]
     fn test_role_deleted_event() {
         let ctx = ExecutionContext::system("admin-123");
-        let event = RoleDeleted::new(&ctx, "role-1", "orders:admin");
+        let event = RoleDeleted::new(&ctx, &RoleId::from_wire("role-1"), "orders:admin");
 
         assert_eq!(event.metadata.event_type, "platform:admin:role:deleted");
         assert_eq!(event.name, "orders:admin");

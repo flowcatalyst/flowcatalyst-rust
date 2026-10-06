@@ -189,7 +189,11 @@ pub async fn require_role_ref_change<A: Authority + Sync + ?Sized>(
         .map_err(|e| UseCaseError::commit(format!("Failed to load roles: {e}")))?;
     let names: Vec<String> = changed_refs
         .iter()
-        .filter_map(|r| roles.iter().find(|role| &role.name == r || &role.id == r))
+        .filter_map(|r| {
+            roles
+                .iter()
+                .find(|role| &role.name == r || role.id.as_str() == r)
+        })
         .map(|role| role.name.clone())
         .collect();
     let definitions: HashMap<String, AuthRole> =

@@ -4,6 +4,7 @@ use axum::{
     extract::{Path, State},
     Json,
 };
+use fc_platform_core::shared::id::IdentityProviderId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
@@ -115,7 +116,7 @@ impl From<IdentityProvider> for IdentityProviderResponse {
     fn from(idp: IdentityProvider) -> Self {
         let has_secret = idp.has_client_secret();
         Self {
-            id: idp.id,
+            id: idp.id.into_string(),
             code: idp.code,
             name: idp.name,
             r#type: idp.r#type.as_str().to_string(),
@@ -316,6 +317,7 @@ pub async fn get_identity_provider(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<IdentityProviderResponse>, PlatformError> {
+    let id = IdentityProviderId::from_wire(id);
     checks::can_read_identity_providers(&auth.0)?;
 
     let idp = state
@@ -347,6 +349,7 @@ pub async fn update_identity_provider(
     Path(id): Path<String>,
     Json(req): Json<UpdateIdentityProviderRequest>,
 ) -> Result<Json<IdentityProviderResponse>, PlatformError> {
+    let id = IdentityProviderId::from_wire(id);
     use crate::identity_provider::operations::{
         UpdateIdentityProviderCommand, UpdateIdentityProviderUseCase,
     };
@@ -417,6 +420,7 @@ pub async fn delete_identity_provider(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = IdentityProviderId::from_wire(id);
     use crate::identity_provider::operations::DeleteIdentityProviderCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 

@@ -1,8 +1,7 @@
 //! PlatformConfig Entity
 
 use chrono::{DateTime, Utc};
-use fc_platform_core::shared::tsid;
-use fc_platform_core::shared::tsid::EntityType;
+use fc_platform_core::shared::id::PlatformConfigId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,7 +31,7 @@ fc_platform_core::shared::enum_str::str_enum!(ConfigValueType, "config value typ
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlatformConfig {
-    pub id: String,
+    pub id: PlatformConfigId,
     pub application_code: String,
     pub section: String,
     pub property: String,
@@ -57,7 +56,7 @@ impl PlatformConfig {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: tsid::generate(EntityType::PlatformConfig),
+            id: PlatformConfigId::generate(),
             application_code: application_code.into(),
             section: section.into(),
             property: property.into(),
@@ -89,17 +88,17 @@ mod tests {
     fn test_new_platform_config() {
         let config = PlatformConfig::new("my-app", "email", "smtp_host", "smtp.example.com");
 
-        assert!(!config.id.is_empty());
+        assert!(!config.id.as_str().is_empty());
         assert!(
-            config.id.starts_with("pcf_"),
+            config.id.as_str().starts_with("pcf_"),
             "ID should have pcf_ prefix, got: {}",
             config.id
         );
         assert_eq!(
-            config.id.len(),
+            config.id.as_str().len(),
             17,
             "Typed ID should be 17 chars, got: {}",
-            config.id.len()
+            config.id.as_str().len()
         );
         assert_eq!(config.application_code, "my-app");
         assert_eq!(config.section, "email");

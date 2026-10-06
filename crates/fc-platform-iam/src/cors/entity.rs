@@ -1,14 +1,13 @@
 //! CorsAllowedOrigin Entity
 
 use chrono::{DateTime, Utc};
-use fc_platform_core::shared::tsid;
-use fc_platform_core::shared::tsid::EntityType;
+use fc_platform_core::shared::id::CorsOriginId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CorsAllowedOrigin {
-    pub id: String,
+    pub id: CorsOriginId,
     pub origin: String,
     pub description: Option<String>,
     pub created_by: Option<String>,
@@ -24,7 +23,7 @@ impl CorsAllowedOrigin {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: tsid::generate(EntityType::CorsOrigin),
+            id: CorsOriginId::generate(),
             origin: origin.into(),
             description,
             created_by,

@@ -11,6 +11,7 @@
 //! Requires Docker. Run with:
 //!   cargo test -p fc-platform --test it webauthn_integration_tests:: -- --ignored
 
+use fc_platform::shared::id::IdentityProviderId;
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
 
@@ -32,7 +33,7 @@ async fn identity_provider(
         .insert(&idp)
         .await
         .expect("insert identity provider");
-    idp.id
+    idp.id.into_string()
 }
 
 async fn setup_test_db() -> (sqlx::PgPool, testcontainers::ContainerAsync<Postgres>) {
@@ -117,7 +118,11 @@ async fn gate_rejects_federated_domain() {
     let edm_repo = EmailDomainMappingRepository::new(&pool);
 
     let oidc = identity_provider(&pool, "entra", IdentityProviderType::Oidc).await;
-    let mapping = EmailDomainMapping::new("federated.com", &oidc, ScopeType::Anchor);
+    let mapping = EmailDomainMapping::new(
+        "federated.com",
+        IdentityProviderId::from_wire(oidc.as_str()),
+        ScopeType::Anchor,
+    );
     edm_repo.insert(&mapping).await.expect("insert mapping");
 
     let err = ensure_internal_auth("user@federated.com", &edm_repo)
@@ -142,7 +147,11 @@ async fn gate_allows_a_domain_mapped_to_an_internal_provider() {
     let edm_repo = EmailDomainMappingRepository::new(&pool);
 
     let internal = identity_provider(&pool, "internal", IdentityProviderType::Internal).await;
-    let mapping = EmailDomainMapping::new("anchor.com", &internal, ScopeType::Anchor);
+    let mapping = EmailDomainMapping::new(
+        "anchor.com",
+        IdentityProviderId::from_wire(internal.as_str()),
+        ScopeType::Anchor,
+    );
     edm_repo.insert(&mapping).await.expect("insert mapping");
 
     ensure_internal_auth("admin@anchor.com", &edm_repo)
@@ -160,7 +169,11 @@ async fn gate_normalises_domain_case_when_matching_mapping() {
     // must lowercase the email domain before lookup so mixed-case email
     // inputs aren't mistakenly treated as internal.
     let oidc = identity_provider(&pool, "okta", IdentityProviderType::Oidc).await;
-    let mapping = EmailDomainMapping::new("acme.com", &oidc, ScopeType::Anchor);
+    let mapping = EmailDomainMapping::new(
+        "acme.com",
+        IdentityProviderId::from_wire(oidc.as_str()),
+        ScopeType::Anchor,
+    );
     edm_repo.insert(&mapping).await.expect("insert mapping");
 
     assert!(ensure_internal_auth("USER@ACME.COM", &edm_repo)

@@ -1,6 +1,7 @@
 //! Update Role Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::RoleId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -19,7 +20,7 @@ use fc_platform_core::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct UpdateRoleCommand {
     /// Role ID to update
-    pub role_id: String,
+    pub role_id: RoleId,
 
     /// New display name (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -67,7 +68,7 @@ impl<U: UnitOfWork> UseCase for UpdateRoleUseCase<U> {
     type Event = RoleUpdated;
 
     async fn validate(&self, command: &UpdateRoleCommand) -> Result<(), UseCaseError> {
-        if command.role_id.trim().is_empty() {
+        if command.role_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "ROLE_ID_REQUIRED",
                 "Role ID is required",
@@ -218,7 +219,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = UpdateRoleCommand {
-            role_id: "role-123".to_string(),
+            role_id: RoleId::from_wire("role-123"),
             display_name: Some("New Name".to_string()),
             description: None,
             permissions: Some(vec!["orders:read".to_string()]),

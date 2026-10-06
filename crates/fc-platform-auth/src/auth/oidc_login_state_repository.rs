@@ -6,6 +6,8 @@
 use crate::auth::oidc_login_state::OidcLoginState;
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::error::Result;
+use fc_platform_core::shared::id::EmailDomainMappingId;
+use fc_platform_core::shared::id::IdentityProviderId;
 use sqlx::PgPool;
 use tracing::debug;
 
@@ -14,8 +16,8 @@ use tracing::debug;
 struct OidcLoginStateRow {
     pub state: String,
     pub email_domain: String,
-    pub identity_provider_id: String,
-    pub email_domain_mapping_id: String,
+    pub identity_provider_id: IdentityProviderId,
+    pub email_domain_mapping_id: EmailDomainMappingId,
     pub nonce: String,
     pub code_verifier: String,
     pub return_url: Option<String>,

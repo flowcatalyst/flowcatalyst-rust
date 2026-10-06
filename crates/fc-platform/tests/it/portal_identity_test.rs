@@ -6,6 +6,7 @@
 //! Run with `cargo test -p fc-platform --test it portal_identity_test:: -- --ignored`.
 
 use crate::support;
+use fc_platform::shared::id::OAuthClientId;
 use fc_platform_core::shared::id::ClientId;
 
 use std::sync::Arc;
@@ -484,7 +485,7 @@ async fn portal_apps_admin_surface_follows_go() {
     let oc = app
         .repos
         .oauth_client_repo
-        .find_by_id(&oc_row)
+        .find_by_id(&OAuthClientId::from_wire(oc_row.as_str()))
         .await
         .unwrap()
         .expect("oauth client");
@@ -825,7 +826,7 @@ async fn portal_apps_admin_surface_follows_go() {
     assert!(app
         .repos
         .oauth_client_repo
-        .find_by_id(&oc_row)
+        .find_by_id(&OAuthClientId::from_wire(oc_row.as_str()))
         .await
         .unwrap()
         .is_none());
@@ -1218,7 +1219,8 @@ async fn sso_owned_domains_route_to_their_idp() {
     idp.oidc_client_id = Some("portal-client".into());
     app.repos.idp_repo.insert(&idp).await.expect("insert idp");
     // The provider's domains are its email-domain mappings (Go's model).
-    let mut mapping = fc_platform::EmailDomainMapping::new("acme.test", &idp.id, ScopeType::Client);
+    let mut mapping =
+        fc_platform::EmailDomainMapping::new("acme.test", idp.id.clone(), ScopeType::Client);
     mapping.primary_client_id = Some(client_id.clone());
     app.repos
         .edm_repo

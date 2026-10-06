@@ -6,6 +6,7 @@
 
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::OAuthClientId;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -22,7 +23,7 @@ use fc_platform_core::usecase::Persist;
 
 #[derive(sqlx::FromRow)]
 struct OAuthClientRow {
-    id: String,
+    id: OAuthClientId,
     client_id: String,
     client_name: String,
     client_type: String,
@@ -44,7 +45,12 @@ struct OAuthClientRow {
 impl TryFrom<OAuthClientRow> for OAuthClient {
     type Error = PlatformError;
     fn try_from(r: OAuthClientRow) -> Result<Self> {
-        let client_type = decode(&r.client_type, "oauth_clients", "client_type", &r.id)?;
+        let client_type = decode(
+            &r.client_type,
+            "oauth_clients",
+            "client_type",
+            r.id.as_str(),
+        )?;
         let default_scopes: Vec<String> = r
             .default_scopes
             .map(|s| {
@@ -114,7 +120,7 @@ impl OAuthClientRepository {
 
     // ── Junction table helpers ───────────────────────────────────
 
-    async fn load_redirect_uris(&self, oauth_client_id: &str) -> Result<Vec<String>> {
+    async fn load_redirect_uris(&self, oauth_client_id: &OAuthClientId) -> Result<Vec<String>> {
         let rows = sqlx::query_scalar::<_, String>(
             "SELECT redirect_uri FROM oauth_client_redirect_uris WHERE oauth_client_id = $1",
         )
@@ -124,7 +130,10 @@ impl OAuthClientRepository {
         Ok(rows)
     }
 
-    async fn load_post_logout_redirect_uris(&self, oauth_client_id: &str) -> Result<Vec<String>> {
+    async fn load_post_logout_redirect_uris(
+        &self,
+        oauth_client_id: &OAuthClientId,
+    ) -> Result<Vec<String>> {
         let rows = sqlx::query_scalar::<_, String>(
             "SELECT post_logout_redirect_uri FROM oauth_client_post_logout_redirect_uris \
              WHERE oauth_client_id = $1",
@@ -135,7 +144,7 @@ impl OAuthClientRepository {
         Ok(rows)
     }
 
-    async fn load_grant_types(&self, oauth_client_id: &str) -> Result<Vec<GrantType>> {
+    async fn load_grant_types(&self, oauth_client_id: &OAuthClientId) -> Result<Vec<GrantType>> {
         let rows = sqlx::query_scalar::<_, String>(
             "SELECT grant_type FROM oauth_client_grant_types WHERE oauth_client_id = $1",
         )
@@ -143,11 +152,21 @@ impl OAuthClientRepository {
         .fetch_all(&self.pool)
         .await?;
         rows.iter()
-            .map(|g| decode(g, "oauth_client_grant_types", "grant_type", oauth_client_id))
+            .map(|g| {
+                decode(
+                    g,
+                    "oauth_client_grant_types",
+                    "grant_type",
+                    oauth_client_id.as_str(),
+                )
+            })
             .collect()
     }
 
-    async fn load_application_ids(&self, oauth_client_id: &str) -> Result<Vec<ApplicationId>> {
+    async fn load_application_ids(
+        &self,
+        oauth_client_id: &OAuthClientId,
+    ) -> Result<Vec<ApplicationId>> {
         let rows = sqlx::query_scalar::<_, ApplicationId>(
             "SELECT application_id FROM oauth_client_application_ids WHERE oauth_client_id = $1",
         )
@@ -157,7 +176,7 @@ impl OAuthClientRepository {
         Ok(rows)
     }
 
-    async fn load_allowed_origins(&self, oauth_client_id: &str) -> Result<Vec<String>> {
+    async fn load_allowed_origins(&self, oauth_client_id: &OAuthClientId) -> Result<Vec<String>> {
         let rows = sqlx::query_scalar::<_, String>(
             "SELECT allowed_origin FROM oauth_client_allowed_origins WHERE oauth_client_id = $1",
         )
@@ -194,27 +213,27 @@ impl OAuthClientRepository {
         // Batch-load all junction tables concurrently
         #[derive(sqlx::FromRow)]
         struct UriRow {
-            oauth_client_id: String,
+            oauth_client_id: OAuthClientId,
             redirect_uri: String,
         }
         #[derive(sqlx::FromRow)]
         struct PostLogoutUriRow {
-            oauth_client_id: String,
+            oauth_client_id: OAuthClientId,
             post_logout_redirect_uri: String,
         }
         #[derive(sqlx::FromRow)]
         struct GrantRow {
-            oauth_client_id: String,
+            oauth_client_id: OAuthClientId,
             grant_type: String,
         }
         #[derive(sqlx::FromRow)]
         struct AppRow {
-            oauth_client_id: String,
+            oauth_client_id: OAuthClientId,
             application_id: ApplicationId,
         }
         #[derive(sqlx::FromRow)]
         struct OriginRow {
-            oauth_client_id: String,
+            oauth_client_id: OAuthClientId,
             allowed_origin: String,
         }
 
@@ -237,7 +256,7 @@ impl OAuthClientRepository {
         )?;
 
         // Group by parent ID
-        let mut uri_map: HashMap<String, Vec<String>> = HashMap::new();
+        let mut uri_map: HashMap<OAuthClientId, Vec<String>> = HashMap::new();
         for r in uri_rows {
             uri_map
                 .entry(r.oauth_client_id)
@@ -245,7 +264,7 @@ impl OAuthClientRepository {
                 .push(r.redirect_uri);
         }
 
-        let mut post_logout_map: HashMap<String, Vec<String>> = HashMap::new();
+        let mut post_logout_map: HashMap<OAuthClientId, Vec<String>> = HashMap::new();
         for r in post_logout_rows {
             post_logout_map
                 .entry(r.oauth_client_id)
@@ -253,18 +272,18 @@ impl OAuthClientRepository {
                 .push(r.post_logout_redirect_uri);
         }
 
-        let mut grant_map: HashMap<String, Vec<GrantType>> = HashMap::new();
+        let mut grant_map: HashMap<OAuthClientId, Vec<GrantType>> = HashMap::new();
         for r in grant_rows {
             let gt = decode(
                 &r.grant_type,
                 "oauth_client_grant_types",
                 "grant_type",
-                &r.oauth_client_id,
+                r.oauth_client_id.as_str(),
             )?;
             grant_map.entry(r.oauth_client_id).or_default().push(gt);
         }
 
-        let mut app_map: HashMap<String, Vec<ApplicationId>> = HashMap::new();
+        let mut app_map: HashMap<OAuthClientId, Vec<ApplicationId>> = HashMap::new();
         for r in app_rows {
             app_map
                 .entry(r.oauth_client_id)
@@ -272,7 +291,7 @@ impl OAuthClientRepository {
                 .push(r.application_id);
         }
 
-        let mut origin_map: HashMap<String, Vec<String>> = HashMap::new();
+        let mut origin_map: HashMap<OAuthClientId, Vec<String>> = HashMap::new();
         for r in origin_rows {
             origin_map
                 .entry(r.oauth_client_id)
@@ -301,7 +320,11 @@ impl OAuthClientRepository {
         Ok(clients)
     }
 
-    async fn save_redirect_uris(&self, oauth_client_id: &str, uris: &[String]) -> Result<()> {
+    async fn save_redirect_uris(
+        &self,
+        oauth_client_id: &OAuthClientId,
+        uris: &[String],
+    ) -> Result<()> {
         sqlx::query("DELETE FROM oauth_client_redirect_uris WHERE oauth_client_id = $1")
             .bind(oauth_client_id)
             .execute(&self.pool)
@@ -320,7 +343,7 @@ impl OAuthClientRepository {
 
     async fn save_post_logout_redirect_uris(
         &self,
-        oauth_client_id: &str,
+        oauth_client_id: &OAuthClientId,
         uris: &[String],
     ) -> Result<()> {
         sqlx::query(
@@ -344,7 +367,7 @@ impl OAuthClientRepository {
 
     async fn save_grant_types(
         &self,
-        oauth_client_id: &str,
+        oauth_client_id: &OAuthClientId,
         grant_types: &[GrantType],
     ) -> Result<()> {
         sqlx::query("DELETE FROM oauth_client_grant_types WHERE oauth_client_id = $1")
@@ -363,7 +386,11 @@ impl OAuthClientRepository {
         Ok(())
     }
 
-    async fn save_allowed_origins(&self, oauth_client_id: &str, origins: &[String]) -> Result<()> {
+    async fn save_allowed_origins(
+        &self,
+        oauth_client_id: &OAuthClientId,
+        origins: &[String],
+    ) -> Result<()> {
         sqlx::query("DELETE FROM oauth_client_allowed_origins WHERE oauth_client_id = $1")
             .bind(oauth_client_id)
             .execute(&self.pool)
@@ -382,7 +409,7 @@ impl OAuthClientRepository {
 
     async fn save_application_ids(
         &self,
-        oauth_client_id: &str,
+        oauth_client_id: &OAuthClientId,
         app_ids: &[ApplicationId],
     ) -> Result<()> {
         sqlx::query("DELETE FROM oauth_client_application_ids WHERE oauth_client_id = $1")
@@ -447,7 +474,7 @@ impl OAuthClientRepository {
         Ok(())
     }
 
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<OAuthClient>> {
+    pub async fn find_by_id(&self, id: &OAuthClientId) -> Result<Option<OAuthClient>> {
         let row = sqlx::query_as::<_, OAuthClientRow>("SELECT * FROM oauth_clients WHERE id = $1")
             .bind(id)
             .fetch_optional(&self.pool)
@@ -679,7 +706,7 @@ impl OAuthClientRepository {
     /// no event or audit row.
     pub async fn touch_previous_secret_used(
         &self,
-        id: &str,
+        id: &OAuthClientId,
         now: DateTime<Utc>,
         stale_before: DateTime<Utc>,
     ) -> Result<u64> {
@@ -721,14 +748,14 @@ impl OAuthClientRepository {
         Ok(cleared)
     }
 
-    pub async fn delete(&self, id: &str) -> Result<bool> {
+    pub async fn delete(&self, id: &OAuthClientId) -> Result<bool> {
         // Evict from cache before delete
         {
             let cache = self.cache_by_client_id.read().await;
             // Find the client_id key to evict (reverse lookup)
             let client_id_key: Option<String> = cache
                 .iter()
-                .find(|(_, entry)| entry.client.id == id)
+                .find(|(_, entry)| entry.client.id == *id)
                 .map(|(k, _)| k.clone());
             drop(cache);
             if let Some(key) = client_id_key {
@@ -772,7 +799,7 @@ impl OAuthClientRepository {
 
 impl HasId for OAuthClient {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 

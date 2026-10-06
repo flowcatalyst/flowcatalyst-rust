@@ -8,6 +8,7 @@ use axum::{
     Json,
 };
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::OAuthClientId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
@@ -212,7 +213,7 @@ impl From<OAuthClient> for OAuthClientResponse {
     fn from(c: OAuthClient) -> Self {
         let overlap_open = c.usable_previous_secret_ref().is_some();
         Self {
-            id: c.id,
+            id: c.id.into_string(),
             client_id: c.client_id,
             client_name: c.client_name,
             client_type: c.client_type.as_str().to_string(),
@@ -453,7 +454,7 @@ pub async fn create_oauth_client(
         }
     };
 
-    let oauth_client_id = tsid::generate(EntityType::OAuthClient);
+    let oauth_client_id = OAuthClientId::generate();
 
     let cmd = CreateOAuthClientCommand {
         oauth_client_id: oauth_client_id.clone(),
@@ -516,6 +517,7 @@ pub async fn get_oauth_client(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<OAuthClientResponse>, PlatformError> {
+    let id = OAuthClientId::from_wire(id);
     checks::can_read_oauth_clients(&auth.0)?;
 
     let client = state
@@ -588,6 +590,7 @@ pub async fn update_oauth_client(
     Path(id): Path<String>,
     Json(req): Json<UpdateOAuthClientRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = OAuthClientId::from_wire(id);
     use crate::auth::operations::UpdateOAuthClientCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
@@ -649,6 +652,7 @@ pub async fn delete_oauth_client(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = OAuthClientId::from_wire(id);
     use crate::auth::operations::DeleteOAuthClientCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
@@ -748,6 +752,7 @@ pub async fn activate_oauth_client(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<SuccessResponse>, PlatformError> {
+    let id = OAuthClientId::from_wire(id);
     use crate::auth::operations::ActivateOAuthClientCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
@@ -788,6 +793,7 @@ pub async fn deactivate_oauth_client(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<SuccessResponse>, PlatformError> {
+    let id = OAuthClientId::from_wire(id);
     use crate::auth::operations::DeactivateOAuthClientCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
@@ -844,6 +850,7 @@ pub async fn regenerate_oauth_client_secret(
     Path(id): Path<String>,
     body: Bytes,
 ) -> Result<Json<RegenerateSecretResponse>, PlatformError> {
+    let id = OAuthClientId::from_wire(id);
     use crate::auth::operations::RotateOAuthClientSecretCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
@@ -934,6 +941,7 @@ pub async fn revoke_oauth_client_previous_secret(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<SuccessResponse>, PlatformError> {
+    let id = OAuthClientId::from_wire(id);
     use crate::auth::operations::RevokeOAuthClientPreviousSecretCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 

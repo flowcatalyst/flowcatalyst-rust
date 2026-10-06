@@ -6,12 +6,11 @@
 use crate::service_account::entity::{AssignmentSource, RoleAssignment};
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::ClientAccessGrantId;
 use serde::{Deserialize, Serialize};
 
 pub use fc_platform_core::principal_kind::{PrincipalType, UserScope};
 use fc_platform_core::shared::id::{ClientId, PrincipalId};
-use fc_platform_core::shared::tsid;
-use fc_platform_core::shared::tsid::EntityType;
 use std::collections::HashMap;
 
 /// User identity for human users
@@ -366,7 +365,7 @@ impl Principal {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientAccessGrant {
-    pub id: String,
+    pub id: ClientAccessGrantId,
     pub principal_id: String,
     pub client_id: String,
     pub granted_by: String,
@@ -384,7 +383,7 @@ impl ClientAccessGrant {
         let now = Utc::now();
         Self {
             // `gnt_`, as Go's `tsid.ClientAccessGrant`.
-            id: tsid::generate(EntityType::ClientAccessGrant),
+            id: ClientAccessGrantId::generate(),
             principal_id: principal_id.into(),
             client_id: client_id.into(),
             granted_by: granted_by.into(),

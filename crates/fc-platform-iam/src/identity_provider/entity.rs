@@ -1,8 +1,7 @@
 //! IdentityProvider Entity
 
 use chrono::{DateTime, Utc};
-use fc_platform_core::shared::tsid;
-use fc_platform_core::shared::tsid::EntityType;
+use fc_platform_core::shared::id::IdentityProviderId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -20,7 +19,7 @@ fc_platform_core::shared::enum_str::str_enum!(IdentityProviderType, "identity pr
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IdentityProvider {
-    pub id: String,
+    pub id: IdentityProviderId,
     pub code: String,
     pub name: String,
     pub r#type: IdentityProviderType,
@@ -51,7 +50,7 @@ impl IdentityProvider {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: tsid::generate(EntityType::IdentityProvider),
+            id: IdentityProviderId::generate(),
             code: code.into(),
             name: name.into(),
             r#type: idp_type,
@@ -86,9 +85,9 @@ mod tests {
             IdentityProviderType::Internal,
         );
 
-        assert!(!idp.id.is_empty());
+        assert!(!idp.id.as_str().is_empty());
         assert!(
-            idp.id.starts_with("idp_"),
+            idp.id.as_str().starts_with("idp_"),
             "ID should have idp_ prefix, got: {}",
             idp.id
         );

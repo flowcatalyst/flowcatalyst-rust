@@ -171,3 +171,80 @@ impl IdKind for ScheduledJobInstanceLogKind {
     const ENTITY: EntityType = EntityType::ScheduledJobInstanceLog;
 }
 pub type ScheduledJobInstanceLogId = Id<ScheduledJobInstanceLogKind>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum ClientAccessGrantKind {}
+impl IdKind for ClientAccessGrantKind {
+    const ENTITY: EntityType = EntityType::ClientAccessGrant;
+}
+pub type ClientAccessGrantId = Id<ClientAccessGrantKind>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum PasswordResetTokenKind {}
+impl IdKind for PasswordResetTokenKind {
+    const ENTITY: EntityType = EntityType::PasswordResetToken;
+}
+pub type PasswordResetTokenId = Id<PasswordResetTokenKind>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum LoginAttemptKind {}
+impl IdKind for LoginAttemptKind {
+    const ENTITY: EntityType = EntityType::LoginAttempt;
+}
+pub type LoginAttemptId = Id<LoginAttemptKind>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum WebauthnCredentialKind {}
+impl IdKind for WebauthnCredentialKind {
+    const ENTITY: EntityType = EntityType::WebauthnCredential;
+}
+pub type WebauthnCredentialId = Id<WebauthnCredentialKind>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum PlatformConfigAccessKind {}
+impl IdKind for PlatformConfigAccessKind {
+    const ENTITY: EntityType = EntityType::ConfigAccess;
+}
+pub type PlatformConfigAccessId = Id<PlatformConfigAccessKind>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum SpecVersionKind {}
+impl IdKind for SpecVersionKind {
+    const ENTITY: EntityType = EntityType::Schema;
+}
+pub type SpecVersionId = Id<SpecVersionKind>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum AuthCodeKind {}
+impl IdKind for AuthCodeKind {
+    const ENTITY: EntityType = EntityType::AuthCode;
+}
+pub type AuthCodeId = Id<AuthCodeKind>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum FunctionKind {}
+impl IdKind for FunctionKind {
+    const ENTITY: EntityType = EntityType::Function;
+}
+pub type FunctionId = Id<FunctionKind>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum FunctionVersionKind {}
+impl IdKind for FunctionVersionKind {
+    const ENTITY: EntityType = EntityType::FunctionVersion;
+}
+pub type FunctionVersionId = Id<FunctionVersionKind>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum FunctionDomainKind {}
+impl IdKind for FunctionDomainKind {
+    const ENTITY: EntityType = EntityType::FunctionDomain;
+}
+pub type FunctionDomainId = Id<FunctionDomainKind>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum FunctionRouteKind {}
+impl IdKind for FunctionRouteKind {
+    const ENTITY: EntityType = EntityType::FunctionRoute;
+}
+pub type FunctionRouteId = Id<FunctionRouteKind>;

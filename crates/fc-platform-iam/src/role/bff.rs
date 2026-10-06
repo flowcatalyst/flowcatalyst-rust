@@ -3,6 +3,7 @@
 //! Backend-For-Frontend endpoints for role management.
 //! Provides a UI-friendly view of roles at `/bff/roles`.
 
+use fc_platform_core::shared::id::RoleId;
 use std::sync::Arc;
 
 use axum::http::StatusCode;
@@ -71,7 +72,7 @@ impl From<AuthRole> for BffRoleResponse {
         let mut permissions: Vec<String> = r.permissions.into_iter().collect();
         permissions.sort();
         Self {
-            id: r.id,
+            id: r.id.into_string(),
             name: r.name,
             short_name,
             display_name: r.display_name,
@@ -426,7 +427,10 @@ pub async fn get_role(
     let role = if role_name.contains(':') {
         state.role_repo.find_by_name(&role_name).await?
     } else {
-        state.role_repo.find_by_id(&role_name).await?
+        state
+            .role_repo
+            .find_by_id(&RoleId::from_wire(role_name.as_str()))
+            .await?
     };
 
     let role = role.ok_or_else(|| PlatformError::not_found("Role", &role_name))?;
@@ -505,7 +509,10 @@ pub async fn update_role(
     let role = if role_name.contains(':') {
         state.role_repo.find_by_name(&role_name).await?
     } else {
-        state.role_repo.find_by_id(&role_name).await?
+        state
+            .role_repo
+            .find_by_id(&RoleId::from_wire(role_name.as_str()))
+            .await?
     }
     .ok_or_else(|| PlatformError::not_found("Role", &role_name))?;
 
@@ -553,7 +560,10 @@ pub async fn delete_role(
     let role = if role_name.contains(':') {
         state.role_repo.find_by_name(&role_name).await?
     } else {
-        state.role_repo.find_by_id(&role_name).await?
+        state
+            .role_repo
+            .find_by_id(&RoleId::from_wire(role_name.as_str()))
+            .await?
     }
     .ok_or_else(|| PlatformError::not_found("Role", &role_name))?;
 

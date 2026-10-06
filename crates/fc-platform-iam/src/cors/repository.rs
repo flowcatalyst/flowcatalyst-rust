@@ -1,6 +1,7 @@
 //! CORS Origin Repository — PostgreSQL via SQLx
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::CorsOriginId;
 use sqlx::PgPool;
 
 use super::entity::CorsAllowedOrigin;
@@ -11,7 +12,7 @@ use fc_platform_core::usecase::Persist;
 
 #[derive(sqlx::FromRow)]
 struct CorsOriginRow {
-    id: String,
+    id: CorsOriginId,
     origin: String,
     description: Option<String>,
     created_by: Option<String>,
@@ -41,7 +42,7 @@ impl CorsOriginRepository {
         Self { pool: pool.clone() }
     }
 
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<CorsAllowedOrigin>> {
+    pub async fn find_by_id(&self, id: &CorsOriginId) -> Result<Option<CorsAllowedOrigin>> {
         let row = sqlx::query_as::<_, CorsOriginRow>(
             "SELECT * FROM tnt_cors_allowed_origins WHERE id = $1",
         )
@@ -80,7 +81,7 @@ impl CorsOriginRepository {
 
 impl HasId for CorsAllowedOrigin {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 

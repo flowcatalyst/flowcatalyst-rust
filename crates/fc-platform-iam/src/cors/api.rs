@@ -4,6 +4,7 @@ use axum::{
     extract::{Path, State},
     Json,
 };
+use fc_platform_core::shared::id::CorsOriginId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
@@ -47,7 +48,7 @@ pub struct CorsOriginResponse {
 impl From<CorsAllowedOrigin> for CorsOriginResponse {
     fn from(c: CorsAllowedOrigin) -> Self {
         Self {
-            id: c.id,
+            id: c.id.into_string(),
             origin: c.origin,
             description: c.description,
             created_by: c.created_by,
@@ -179,6 +180,7 @@ pub async fn get_cors_origin(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<CorsOriginResponse>, PlatformError> {
+    let id = CorsOriginId::from_wire(id);
     checks::can_read_cors_origins(&auth.0)?;
 
     let origin = state
@@ -209,6 +211,7 @@ pub async fn delete_cors_origin(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = CorsOriginId::from_wire(id);
     use crate::cors::operations::DeleteCorsOriginCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 

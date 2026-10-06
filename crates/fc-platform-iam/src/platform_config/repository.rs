@@ -1,6 +1,7 @@
 //! PlatformConfig Repository — PostgreSQL via SQLx
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::PlatformConfigId;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::PlatformConfig;
@@ -12,7 +13,7 @@ use fc_platform_core::usecase::Persist;
 
 #[derive(sqlx::FromRow)]
 struct PlatformConfigRow {
-    id: String,
+    id: PlatformConfigId,
     application_code: String,
     section: String,
     property: String,
@@ -28,8 +29,13 @@ struct PlatformConfigRow {
 impl TryFrom<PlatformConfigRow> for PlatformConfig {
     type Error = PlatformError;
     fn try_from(r: PlatformConfigRow) -> Result<Self> {
-        let scope = decode(&r.scope, "app_platform_configs", "scope", &r.id)?;
-        let value_type = decode(&r.value_type, "app_platform_configs", "value_type", &r.id)?;
+        let scope = decode(&r.scope, "app_platform_configs", "scope", r.id.as_str())?;
+        let value_type = decode(
+            &r.value_type,
+            "app_platform_configs",
+            "value_type",
+            r.id.as_str(),
+        )?;
         Ok(Self {
             id: r.id,
             application_code: r.application_code,
@@ -55,7 +61,7 @@ impl PlatformConfigRepository {
         Self { pool: pool.clone() }
     }
 
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<PlatformConfig>> {
+    pub async fn find_by_id(&self, id: &PlatformConfigId) -> Result<Option<PlatformConfig>> {
         let row = sqlx::query_as::<_, PlatformConfigRow>(
             "SELECT * FROM app_platform_configs WHERE id = $1",
         )
@@ -234,7 +240,7 @@ impl PlatformConfigRepository {
 
 impl HasId for PlatformConfig {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 

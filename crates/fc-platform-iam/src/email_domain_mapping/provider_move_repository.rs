@@ -3,6 +3,8 @@
 //! move to an internal provider, the domain's federated users, in one
 //! transaction. The principal writes go through `PrincipalRepository`.
 
+use fc_platform_core::shared::id::EmailDomainMappingId;
+use fc_platform_core::shared::id::IdentityProviderId;
 use sqlx::PgPool;
 use std::sync::Arc;
 
@@ -16,8 +18,8 @@ use fc_platform_core::usecase::Persist;
 /// The move: the mapping (by id), its new provider, the users to reset.
 #[derive(Debug, Clone)]
 pub struct ProviderMove {
-    pub mapping_id: String,
-    pub identity_provider_id: String,
+    pub mapping_id: EmailDomainMappingId,
+    pub identity_provider_id: IdentityProviderId,
     /// Also link this primary client (an identity-provider claim of a
     /// mapping that had none).
     pub primary_client_id: Option<String>,
@@ -26,7 +28,7 @@ pub struct ProviderMove {
 
 impl HasId for ProviderMove {
     fn id(&self) -> &str {
-        &self.mapping_id
+        self.mapping_id.as_str()
     }
 }
 

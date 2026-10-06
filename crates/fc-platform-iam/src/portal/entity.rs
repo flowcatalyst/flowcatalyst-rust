@@ -7,6 +7,7 @@
 
 use base64::engine::general_purpose;
 use chrono::{DateTime, Duration, Utc};
+use fc_platform_core::shared::id::OAuthClientId;
 use fc_platform_core::shared::tsid;
 use fc_platform_core::usecase::HasId;
 use serde::{Deserialize, Serialize};
@@ -346,7 +347,7 @@ pub struct LinkedOAuthClient {
 /// validate `/portal/authorize` and derive portal origins.
 #[derive(Debug, Clone)]
 pub struct PortalOAuthClient {
-    pub id: String,
+    pub id: OAuthClientId,
     pub client_id: String,
     pub client_name: String,
     pub active: bool,

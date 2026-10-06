@@ -1,6 +1,7 @@
 //! CORS Domain Events
 
 use fc_platform_core::impl_domain_event;
+use fc_platform_core::shared::id::CorsOriginId;
 use fc_platform_core::usecase::domain_event::EventMetadata;
 use fc_platform_core::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
@@ -12,7 +13,7 @@ pub struct CorsOriginAdded {
     #[serde(skip)]
     pub metadata: EventMetadata,
 
-    pub origin_id: String,
+    pub origin_id: CorsOriginId,
     pub origin: String,
 }
 
@@ -23,7 +24,7 @@ impl CorsOriginAdded {
     const SPEC_VERSION: &'static str = "1.0";
     const SOURCE: &'static str = "platform:admin";
 
-    pub fn new(ctx: &ExecutionContext, origin_id: &str, origin: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, origin_id: &CorsOriginId, origin: &str) -> Self {
         Self {
             metadata: EventMetadata::from_ctx(
                 ctx,
@@ -33,7 +34,7 @@ impl CorsOriginAdded {
                 format!("platform.cors.{}", origin_id),
                 format!("platform:cors:{}", origin_id),
             ),
-            origin_id: origin_id.to_string(),
+            origin_id: origin_id.clone(),
             origin: origin.to_string(),
         }
     }
@@ -46,7 +47,7 @@ pub struct CorsOriginDeleted {
     #[serde(skip)]
     pub metadata: EventMetadata,
 
-    pub origin_id: String,
+    pub origin_id: CorsOriginId,
     pub origin: String,
 }
 
@@ -57,7 +58,7 @@ impl CorsOriginDeleted {
     const SPEC_VERSION: &'static str = "1.0";
     const SOURCE: &'static str = "platform:admin";
 
-    pub fn new(ctx: &ExecutionContext, origin_id: &str, origin: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, origin_id: &CorsOriginId, origin: &str) -> Self {
         Self {
             metadata: EventMetadata::from_ctx(
                 ctx,
@@ -67,7 +68,7 @@ impl CorsOriginDeleted {
                 format!("platform.cors.{}", origin_id),
                 format!("platform:cors:{}", origin_id),
             ),
-            origin_id: origin_id.to_string(),
+            origin_id: origin_id.clone(),
             origin: origin.to_string(),
         }
     }

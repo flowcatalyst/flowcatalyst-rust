@@ -46,10 +46,15 @@ pub fn require_tenant_pin(
 mod tests {
     use super::*;
     use crate::email_domain_mapping::entity::{EmailDomainMapping, ScopeType};
+    use fc_platform_core::shared::id::IdentityProviderId;
 
     #[test]
     fn a_multi_tenant_mapping_must_pin_the_tenant() {
-        let mut m = EmailDomainMapping::new("acme.test", "idp_1", ScopeType::Client);
+        let mut m = EmailDomainMapping::new(
+            "acme.test",
+            IdentityProviderId::parse("idp_1").unwrap(),
+            ScopeType::Client,
+        );
         assert!(
             require_tenant_pin(false, &m).is_ok(),
             "single-tenant needs none"

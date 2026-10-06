@@ -7,6 +7,7 @@
 //! Every handler resolves the target client from the request, then gates on
 //! [`can_read_portal_users`] / [`can_write_portal_users`] for that client.
 
+use fc_platform_core::shared::id::OAuthClientId;
 use std::collections::HashMap;
 
 use axum::{
@@ -1041,7 +1042,7 @@ pub async fn create_portal_app(
         description: req.description,
         redirect_uris: req.redirect_uris,
         client_type: client_type.clone(),
-        oauth_client_row_id: tsid::generate(EntityType::OAuthClient),
+        oauth_client_row_id: OAuthClientId::generate(),
         oauth_client_id: tsid::generate(EntityType::OAuthClient),
         client_secret_ref: secret_ref,
     };
@@ -1069,7 +1070,7 @@ pub async fn create_portal_app(
         Json(CreatePortalAppResponse {
             portal_app,
             oauth_client_id,
-            oauth_client_row_id,
+            oauth_client_row_id: oauth_client_row_id.into_string(),
             client_type: if confidential {
                 "CONFIDENTIAL".to_string()
             } else {

@@ -13,6 +13,8 @@
 use crate::platform_config::access_entity::PlatformConfigAccess;
 use crate::platform_config::entity::PlatformConfig;
 use fc_platform_core::impl_domain_event;
+use fc_platform_core::shared::id::PlatformConfigAccessId;
+use fc_platform_core::shared::id::PlatformConfigId;
 use fc_platform_core::usecase::domain_event::EventMetadata;
 use fc_platform_core::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
@@ -37,7 +39,7 @@ fn metadata(ctx: &ExecutionContext, event_type: &str, id: &str) -> EventMetadata
 pub struct PlatformConfigPropertySet {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub config_id: String,
+    pub config_id: PlatformConfigId,
     pub application_code: String,
     pub section: String,
     pub property: String,
@@ -73,8 +75,8 @@ impl PlatformConfigPropertySet {
     }
 
     /// Metadata for this event, raised inside `ctx`.
-    pub fn metadata_for(ctx: &ExecutionContext, config_id: &str) -> EventMetadata {
-        metadata(ctx, Self::EVENT_TYPE, config_id)
+    pub fn metadata_for(ctx: &ExecutionContext, config_id: &PlatformConfigId) -> EventMetadata {
+        metadata(ctx, Self::EVENT_TYPE, config_id.as_str())
     }
 }
 
@@ -84,7 +86,7 @@ impl PlatformConfigPropertySet {
 pub struct PlatformConfigAccessGranted {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub access_id: String,
+    pub access_id: PlatformConfigAccessId,
     pub application_code: String,
     pub role_code: String,
     #[serde(skip)]
@@ -114,8 +116,11 @@ impl PlatformConfigAccessGranted {
     }
 
     /// Metadata for this event, raised inside `ctx`.
-    pub fn metadata_for(ctx: &ExecutionContext, access_id: &str) -> EventMetadata {
-        metadata(ctx, Self::EVENT_TYPE, access_id)
+    pub fn metadata_for(
+        ctx: &ExecutionContext,
+        access_id: &PlatformConfigAccessId,
+    ) -> EventMetadata {
+        metadata(ctx, Self::EVENT_TYPE, access_id.as_str())
     }
 }
 
@@ -125,7 +130,7 @@ impl PlatformConfigAccessGranted {
 pub struct PlatformConfigAccessRevoked {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub access_id: String,
+    pub access_id: PlatformConfigAccessId,
     pub application_code: String,
     pub role_code: String,
 }
@@ -137,13 +142,13 @@ impl PlatformConfigAccessRevoked {
 
     pub fn new(
         ctx: &ExecutionContext,
-        access_id: &str,
+        access_id: &PlatformConfigAccessId,
         application_code: &str,
         role_code: &str,
     ) -> Self {
         Self {
-            metadata: metadata(ctx, Self::EVENT_TYPE, access_id),
-            access_id: access_id.to_string(),
+            metadata: metadata(ctx, Self::EVENT_TYPE, access_id.as_str()),
+            access_id: access_id.clone(),
             application_code: application_code.to_string(),
             role_code: role_code.to_string(),
         }
@@ -157,7 +162,12 @@ mod tests {
     #[test]
     fn access_revoked_is_go_shaped() {
         let ctx = ExecutionContext::system("prn_1");
-        let e = PlatformConfigAccessRevoked::new(&ctx, "pca_1", "orders", "orders:admin");
+        let e = PlatformConfigAccessRevoked::new(
+            &ctx,
+            &PlatformConfigAccessId::from_wire("pca_1"),
+            "orders",
+            "orders:admin",
+        );
         assert_eq!(
             e.metadata.event_type,
             "platform:admin:platform-config:access-revoked"

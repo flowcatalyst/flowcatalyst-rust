@@ -14,6 +14,7 @@
 //! than through `UseCase` / `UnitOfWork`. Same exception that
 //! `seed_builtin_roles` and `seed_platform_application` use.
 
+use fc_platform_core::shared::id::IdentityProviderId;
 use sqlx::PgPool;
 use tracing::{info, warn};
 
@@ -136,7 +137,7 @@ pub async fn bootstrap_admin_user(pool: &PgPool) -> Result<()> {
     Ok(())
 }
 
-async fn ensure_internal_identity_provider(pool: &PgPool) -> Result<String> {
+async fn ensure_internal_identity_provider(pool: &PgPool) -> Result<IdentityProviderId> {
     let repo = IdentityProviderRepository::new(pool);
 
     if let Some(existing) = repo.find_by_code("internal").await? {
@@ -156,7 +157,7 @@ async fn ensure_internal_identity_provider(pool: &PgPool) -> Result<String> {
 async fn ensure_anchor_email_domain_mapping(
     pool: &PgPool,
     email_domain: &str,
-    idp_id: &str,
+    idp_id: &IdentityProviderId,
 ) -> Result<()> {
     let repo = EmailDomainMappingRepository::new(pool);
 
@@ -164,7 +165,7 @@ async fn ensure_anchor_email_domain_mapping(
         return Ok(());
     }
 
-    let mapping = EmailDomainMapping::new(email_domain, idp_id, ScopeType::Anchor);
+    let mapping = EmailDomainMapping::new(email_domain, idp_id.clone(), ScopeType::Anchor);
     repo.insert(&mapping).await?;
     info!(email_domain = %email_domain, "Created anchor domain mapping");
     Ok(())

@@ -5,6 +5,7 @@
 
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::RoleId;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 use std::collections::HashSet;
 
@@ -20,7 +21,7 @@ use std::iter;
 /// Row mapping for iam_roles table
 #[derive(sqlx::FromRow)]
 struct RoleRow {
-    id: String,
+    id: RoleId,
     application_id: Option<ApplicationId>,
     application_code: Option<String>,
     name: String,
@@ -35,7 +36,7 @@ struct RoleRow {
 impl TryFrom<RoleRow> for AuthRole {
     type Error = PlatformError;
     fn try_from(r: RoleRow) -> Result<Self> {
-        let source = decode(&r.source, "iam_roles", "source", &r.id)?;
+        let source = decode(&r.source, "iam_roles", "source", r.id.as_str())?;
         // Extract application_code from the role name (part before first colon) if not set
         let application_code = r
             .application_code
@@ -60,7 +61,7 @@ impl TryFrom<RoleRow> for AuthRole {
 /// Row mapping for iam_role_permissions junction table
 #[derive(sqlx::FromRow)]
 struct RolePermissionRow {
-    role_id: String,
+    role_id: RoleId,
     permission: String,
 }
 
@@ -98,7 +99,7 @@ impl RoleRepository {
         Ok(())
     }
 
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<AuthRole>> {
+    pub async fn find_by_id(&self, id: &RoleId) -> Result<Option<AuthRole>> {
         let row = sqlx::query_as::<_, RoleRow>("SELECT * FROM iam_roles WHERE id = $1")
             .bind(id)
             .fetch_optional(&self.pool)
@@ -349,7 +350,7 @@ impl RoleRepository {
         self.hydrate_roles(rows).await
     }
 
-    pub async fn exists(&self, id: &str) -> Result<bool> {
+    pub async fn exists(&self, id: &RoleId) -> Result<bool> {
         let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM iam_roles WHERE id = $1")
             .bind(id)
             .fetch_one(&self.pool)
@@ -405,7 +406,7 @@ impl RoleRepository {
     /// references roles by **name** (no DB-level FK), so deletion must remove
     /// those rows atomically or we leak orphaned role assignments. Role
     /// permissions have a real FK and cascade at the DB level.
-    pub async fn delete(&self, id: &str) -> Result<bool> {
+    pub async fn delete(&self, id: &RoleId) -> Result<bool> {
         let mut tx = self.pool.begin().await?;
 
         // Look up the name so we can cascade the text-keyed junction.
@@ -459,7 +460,7 @@ impl RoleRepository {
     // ── Helpers ──────────────────────────────────────────────
 
     /// Load permissions for a role from the junction table
-    async fn load_permissions(&self, role_id: &str) -> Result<HashSet<String>> {
+    async fn load_permissions(&self, role_id: &RoleId) -> Result<HashSet<String>> {
         let perms: Vec<String> =
             sqlx::query_scalar("SELECT permission FROM iam_role_permissions WHERE role_id = $1")
                 .bind(role_id)
@@ -470,7 +471,11 @@ impl RoleRepository {
     }
 
     /// Insert permissions into the junction table using UNNEST
-    async fn insert_permissions(&self, role_id: &str, permissions: &HashSet<String>) -> Result<()> {
+    async fn insert_permissions(
+        &self,
+        role_id: &RoleId,
+        permissions: &HashSet<String>,
+    ) -> Result<()> {
         if permissions.is_empty() {
             return Ok(());
         }
@@ -498,7 +503,7 @@ impl RoleRepository {
         }
 
         // Batch-load all permissions for these roles
-        let role_ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+        let role_ids: Vec<RoleId> = rows.iter().map(|r| r.id.clone()).collect();
         let all_perms = sqlx::query_as::<_, RolePermissionRow>(
             "SELECT role_id, permission FROM iam_role_permissions WHERE role_id = ANY($1)",
         )
@@ -507,7 +512,7 @@ impl RoleRepository {
         .await?;
 
         // Group permissions by role_id
-        let mut perm_map: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut perm_map: HashMap<RoleId, HashSet<String>> = HashMap::new();
         for rp in all_perms {
             perm_map
                 .entry(rp.role_id)
@@ -533,7 +538,7 @@ impl RoleRepository {
 
 impl HasId for AuthRole {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 

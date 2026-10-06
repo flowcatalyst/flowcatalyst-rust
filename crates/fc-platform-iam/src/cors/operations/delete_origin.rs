@@ -1,6 +1,7 @@
 //! Delete CORS Origin Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::CorsOriginId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -16,7 +17,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteCorsOriginCommand {
-    pub origin_id: String,
+    pub origin_id: CorsOriginId,
 }
 
 impl AuditMasked for DeleteCorsOriginCommand {}
@@ -85,7 +86,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = DeleteCorsOriginCommand {
-            origin_id: "cors-123".to_string(),
+            origin_id: CorsOriginId::from_wire("cors-123"),
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("originId"));

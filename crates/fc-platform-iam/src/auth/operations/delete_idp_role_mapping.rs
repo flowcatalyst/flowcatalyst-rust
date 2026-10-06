@@ -1,6 +1,7 @@
 //! Delete IdpRoleMapping Use Case
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::IdpRoleMappingId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -18,7 +19,7 @@ use std::slice;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteIdpRoleMappingCommand {
-    pub mapping_id: String,
+    pub mapping_id: IdpRoleMappingId,
 }
 
 impl AuditMasked for DeleteIdpRoleMappingCommand {}
@@ -50,7 +51,7 @@ impl<U: UnitOfWork> UseCase for DeleteIdpRoleMappingUseCase<U> {
     type Event = IdpRoleMappingDeleted;
 
     async fn validate(&self, command: &DeleteIdpRoleMappingCommand) -> Result<(), UseCaseError> {
-        if command.mapping_id.trim().is_empty() {
+        if command.mapping_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "ID_REQUIRED",
                 "Mapping ID is required",

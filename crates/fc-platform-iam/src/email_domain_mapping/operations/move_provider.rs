@@ -5,6 +5,8 @@
 //! transaction as the mapping. Moving to an OIDC provider resets nobody.
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::EmailDomainMappingId;
+use fc_platform_core::shared::id::IdentityProviderId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -29,10 +31,10 @@ use fc_platform_core::usecase::{
 pub struct EmailDomainMappingProviderChanged {
     #[serde(flatten)]
     pub metadata: EventMetadata,
-    pub mapping_id: String,
+    pub mapping_id: EmailDomainMappingId,
     pub email_domain: String,
-    pub from_identity_provider_id: String,
-    pub to_identity_provider_id: String,
+    pub from_identity_provider_id: IdentityProviderId,
+    pub to_identity_provider_id: IdentityProviderId,
     /// How many users went back to the internal provider (the response's
     /// `usersReset`; not part of the event data, as in Go).
     #[serde(skip)]
@@ -48,8 +50,8 @@ impl EmailDomainMappingProviderChanged {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MoveMappingToProviderCommand {
-    pub mapping_id: String,
-    pub identity_provider_id: String,
+    pub mapping_id: EmailDomainMappingId,
+    pub identity_provider_id: IdentityProviderId,
 }
 
 impl AuditMasked for MoveMappingToProviderCommand {}
@@ -170,10 +172,10 @@ impl<U: UnitOfWork> UseCase for MoveMappingToProviderUseCase<U> {
     type Event = EmailDomainMappingProviderChanged;
 
     async fn validate(&self, c: &MoveMappingToProviderCommand) -> Result<(), UseCaseError> {
-        if c.mapping_id.trim().is_empty() {
+        if c.mapping_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation("ID_REQUIRED", "id is required"));
         }
-        if c.identity_provider_id.trim().is_empty() {
+        if c.identity_provider_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "IDP_REQUIRED",
                 "identityProviderId is required",

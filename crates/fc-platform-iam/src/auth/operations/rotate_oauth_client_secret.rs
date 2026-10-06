@@ -7,6 +7,7 @@
 //! stays in the handler so the domain layer never touches plaintext secrets.
 
 use async_trait::async_trait;
+use fc_platform_core::shared::id::OAuthClientId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -21,7 +22,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RotateOAuthClientSecretCommand {
-    pub oauth_client_id: String,
+    pub oauth_client_id: OAuthClientId,
     /// The stored secret reference (`hashed:v1:…`). The use case treats
     /// this as opaque — hashing happens at the edge so the
     /// plaintext can be returned to the caller without ever crossing the
@@ -60,7 +61,7 @@ impl<U: UnitOfWork> UseCase for RotateOAuthClientSecretUseCase<U> {
     type Event = OAuthClientSecretRotated;
 
     async fn validate(&self, command: &RotateOAuthClientSecretCommand) -> Result<(), UseCaseError> {
-        if command.oauth_client_id.trim().is_empty() {
+        if command.oauth_client_id.as_str().trim().is_empty() {
             return Err(UseCaseError::validation(
                 "OAUTH_CLIENT_ID_REQUIRED",
                 "OAuth client id is required",

@@ -4,8 +4,7 @@
 
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::ApplicationId;
-use fc_platform_core::shared::tsid;
-use fc_platform_core::shared::tsid::EntityType;
+use fc_platform_core::shared::id::OAuthClientId;
 use serde::{Deserialize, Serialize};
 
 /// OAuth client type
@@ -47,7 +46,7 @@ fc_platform_core::shared::enum_str::str_enum!(GrantType, "grant type", {
 #[serde(rename_all = "camelCase")]
 pub struct OAuthClient {
     /// TSID as Crockford Base32 string
-    pub id: String,
+    pub id: OAuthClientId,
 
     /// OAuth client_id (public identifier)
     pub client_id: String,
@@ -164,7 +163,7 @@ impl OAuthClient {
     fn from_parts(
         #[builder(into)] client_id: String,
         #[builder(into)] client_name: String,
-        #[builder(default = tsid::generate(EntityType::OAuthClient))] id: String,
+        #[builder(default = OAuthClientId::generate())] id: OAuthClientId,
         #[builder(default = OAuthClientType::Public)] client_type: OAuthClientType,
         client_secret_ref: Option<String>,
         #[builder(default)] redirect_uris: Vec<String>,
@@ -342,7 +341,7 @@ mod tests {
     #[test]
     fn new_has_the_defaults() {
         let c = OAuthClient::new("cid", "Client");
-        assert!(c.id.starts_with("oac_"), "{}", c.id);
+        assert!(c.id.as_str().starts_with("oac_"), "{}", c.id);
         assert_eq!(
             (c.client_id.as_str(), c.client_name.as_str()),
             ("cid", "Client")
@@ -366,9 +365,9 @@ mod tests {
         let c = OAuthClient::builder()
             .client_id("cid")
             .client_name("Client")
-            .id("oac_given".to_string())
+            .id(OAuthClientId::parse("oac_given").unwrap())
             .build();
-        assert_eq!(c.id, "oac_given");
+        assert_eq!(c.id, OAuthClientId::parse("oac_given").unwrap());
     }
 
     #[test]

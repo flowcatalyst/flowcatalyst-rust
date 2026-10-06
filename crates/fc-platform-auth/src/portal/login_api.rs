@@ -17,6 +17,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use fc_platform_core::shared::id::IdentityProviderId;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::json;
@@ -320,7 +321,7 @@ pub async fn check_domain(State(s): State<PortalLoginState>, raw: Bytes) -> Resp
             "redirectUrl": format!(
                 "/portal/auth/oidc/login?flow={}&provider_id={}",
                 query_escape(&flow.id),
-                query_escape(&idp.id)
+                query_escape(idp.id.as_str())
             ),
         }))
         .into_response(),
@@ -586,7 +587,14 @@ pub async fn portal_oidc_login(
         .and_then(|h| h.to_str().ok())
         .unwrap_or("localhost")
         .to_string();
-    super::oidc::start(&s, &flow, provider_id, &host, &uri).await
+    super::oidc::start(
+        &s,
+        &flow,
+        &IdentityProviderId::from_wire(provider_id),
+        &host,
+        &uri,
+    )
+    .await
 }
 
 /// The per-IP quota on the portal routes: Go mounts them in the OIDC

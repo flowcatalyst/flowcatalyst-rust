@@ -1,5 +1,7 @@
 //! Email Domain Mappings Admin API
 
+use fc_platform_core::shared::id::EmailDomainMappingId;
+use fc_platform_core::shared::id::IdentityProviderId;
 use std::sync::Arc;
 
 use axum::extract::Query;
@@ -129,9 +131,9 @@ impl EmailDomainMappingResponse {
         identity_provider_name: Option<String>,
     ) -> Self {
         Self {
-            id: m.id,
+            id: m.id.into_string(),
             email_domain: m.email_domain,
-            identity_provider_id: m.identity_provider_id,
+            identity_provider_id: m.identity_provider_id.into_string(),
             scope_type: m.scope_type.as_str().to_string(),
             primary_client_id: m.primary_client_id,
             additional_client_ids: m.additional_client_ids,
@@ -200,7 +202,7 @@ pub async fn create_email_domain_mapping(
 
     let cmd = CreateEmailDomainMappingCommand {
         email_domain: req.email_domain,
-        identity_provider_id: req.identity_provider_id,
+        identity_provider_id: IdentityProviderId::from_wire(req.identity_provider_id),
         scope_type: parse_scope_type(&req.scope_type)?,
         primary_client_id: req.primary_client_id,
         additional_client_ids: req.additional_client_ids.unwrap_or_default(),
@@ -246,7 +248,7 @@ pub async fn list_email_domain_mappings(
 
     // Identity-provider names in one query (Go leaves an unresolvable one
     // out).
-    let mut idp_ids: Vec<String> = mappings
+    let mut idp_ids: Vec<IdentityProviderId> = mappings
         .iter()
         .map(|m| m.identity_provider_id.clone())
         .collect();
@@ -288,6 +290,7 @@ pub async fn get_email_domain_mapping(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<EmailDomainMappingResponse>, PlatformError> {
+    let id = EmailDomainMappingId::from_wire(id);
     checks::can_read_email_domain_mappings(&auth.0)?;
 
     let edm = state
@@ -358,6 +361,7 @@ pub async fn update_email_domain_mapping(
     Path(id): Path<String>,
     Json(req): Json<UpdateEmailDomainMappingRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = EmailDomainMappingId::from_wire(id);
     use crate::email_domain_mapping::operations::UpdateEmailDomainMappingCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
@@ -365,7 +369,7 @@ pub async fn update_email_domain_mapping(
 
     let cmd = UpdateEmailDomainMappingCommand {
         mapping_id: id,
-        identity_provider_id: req.identity_provider_id,
+        identity_provider_id: req.identity_provider_id.map(IdentityProviderId::from_wire),
         scope_type: enum_str::parse_opt(req.scope_type.as_deref())?,
         // An explicit null clears: passed as blank, which the use case reads
         // as "no link".
@@ -407,6 +411,7 @@ pub async fn delete_email_domain_mapping(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    let id = EmailDomainMappingId::from_wire(id);
     use crate::email_domain_mapping::operations::DeleteEmailDomainMappingCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
@@ -568,23 +573,24 @@ pub async fn move_email_domain_mapping_provider(
     Path(id): Path<String>,
     Json(req): Json<MoveProviderRequest>,
 ) -> Result<Json<MoveProviderResponse>, PlatformError> {
+    let id = EmailDomainMappingId::from_wire(id);
     checks::can_update_email_domain_mappings(&auth.0)?;
     let event = state
         .move_use_case
         .run(
             MoveMappingToProviderCommand {
                 mapping_id: id,
-                identity_provider_id: req.identity_provider_id,
+                identity_provider_id: IdentityProviderId::from_wire(req.identity_provider_id),
             },
             ExecutionContext::from_auth(&auth.0),
         )
         .await
         .into_result()?;
     Ok(Json(MoveProviderResponse {
-        mapping_id: event.mapping_id,
+        mapping_id: event.mapping_id.into_string(),
         email_domain: event.email_domain,
-        from_identity_provider_id: event.from_identity_provider_id,
-        to_identity_provider_id: event.to_identity_provider_id,
+        from_identity_provider_id: event.from_identity_provider_id.into_string(),
+        to_identity_provider_id: event.to_identity_provider_id.into_string(),
         users_reset: event.users_reset,
     }))
 }

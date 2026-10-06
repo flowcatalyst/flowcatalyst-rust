@@ -86,7 +86,7 @@ async fn rotated_secret_overlaps_until_revoked_or_lapsed() {
     assert_eq!(token_status(&app, &client_id, &first).await, StatusCode::OK);
 
     // Body-less rotation keeps the old secret for the default window.
-    let (status, rotated) = rotate(&app, &row_id, None).await;
+    let (status, rotated) = rotate(&app, row_id.as_str(), None).await;
     assert_eq!(status, StatusCode::OK, "{rotated}");
     assert_eq!(rotated["clientId"], client_id.as_str());
     assert!(rotated["previousSecretExpiresAt"].is_string(), "{rotated}");
@@ -133,9 +133,9 @@ async fn rotated_secret_overlaps_until_revoked_or_lapsed() {
     );
 
     // graceSeconds 0 is an immediate cutover; a negative one is a 400.
-    let (status, body) = rotate(&app, &row_id, Some(json!({ "graceSeconds": -1 }))).await;
+    let (status, body) = rotate(&app, row_id.as_str(), Some(json!({ "graceSeconds": -1 }))).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    let (status, cut) = rotate(&app, &row_id, Some(json!({ "graceSeconds": 0 }))).await;
+    let (status, cut) = rotate(&app, row_id.as_str(), Some(json!({ "graceSeconds": 0 }))).await;
     assert_eq!(status, StatusCode::OK, "{cut}");
     assert!(cut.get("previousSecretExpiresAt").is_none(), "{cut}");
     let third = cut["clientSecret"].as_str().unwrap().to_string();
@@ -145,7 +145,7 @@ async fn rotated_secret_overlaps_until_revoked_or_lapsed() {
     );
 
     // A lapsed overlap is refused, and the purge clears it from the row.
-    let (status, _) = rotate(&app, &row_id, Some(json!({ "graceSeconds": 3600 }))).await;
+    let (status, _) = rotate(&app, row_id.as_str(), Some(json!({ "graceSeconds": 3600 }))).await;
     assert_eq!(status, StatusCode::OK);
     sqlx::query(
         "UPDATE oauth_clients SET previous_secret_expires_at = NOW() - INTERVAL '1 second' \

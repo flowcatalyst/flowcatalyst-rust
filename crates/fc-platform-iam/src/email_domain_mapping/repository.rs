@@ -1,6 +1,8 @@
 //! EmailDomainMapping Repository — PostgreSQL via SQLx
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::EmailDomainMappingId;
+use fc_platform_core::shared::id::IdentityProviderId;
 use sqlx::PgPool;
 use std::collections::HashMap;
 
@@ -15,9 +17,9 @@ use fc_platform_core::usecase::Persist;
 
 #[derive(sqlx::FromRow)]
 struct EmailDomainMappingRow {
-    id: String,
+    id: EmailDomainMappingId,
     email_domain: String,
-    identity_provider_id: String,
+    identity_provider_id: IdentityProviderId,
     scope_type: String,
     primary_client_id: Option<String>,
     required_oidc_tenant_id: Option<String>,
@@ -36,7 +38,7 @@ impl TryFrom<EmailDomainMappingRow> for EmailDomainMapping {
             &r.scope_type,
             "tnt_email_domain_mappings",
             "scope_type",
-            &r.id,
+            r.id.as_str(),
         )?;
         Ok(Self {
             id: r.id,
@@ -103,17 +105,17 @@ impl EmailDomainMappingRepository {
 
         #[derive(sqlx::FromRow)]
         struct ClientRow {
-            email_domain_mapping_id: String,
+            email_domain_mapping_id: EmailDomainMappingId,
             client_id: String,
         }
         #[derive(sqlx::FromRow)]
         struct RoleRow {
-            email_domain_mapping_id: String,
+            email_domain_mapping_id: EmailDomainMappingId,
             role_id: String,
         }
         #[derive(sqlx::FromRow)]
         struct MethodRow {
-            email_domain_mapping_id: String,
+            email_domain_mapping_id: EmailDomainMappingId,
             method: String,
         }
 
@@ -132,7 +134,7 @@ impl EmailDomainMappingRepository {
             ).bind(&ids).fetch_all(&self.pool),
         )?;
 
-        let mut methods_map: HashMap<String, Vec<String>> = HashMap::new();
+        let mut methods_map: HashMap<EmailDomainMappingId, Vec<String>> = HashMap::new();
         for r in method_rows {
             methods_map
                 .entry(r.email_domain_mapping_id)
@@ -140,7 +142,7 @@ impl EmailDomainMappingRepository {
                 .push(r.method);
         }
 
-        let mut additional_map: HashMap<String, Vec<String>> = HashMap::new();
+        let mut additional_map: HashMap<EmailDomainMappingId, Vec<String>> = HashMap::new();
         for r in additional_rows {
             additional_map
                 .entry(r.email_domain_mapping_id)
@@ -148,7 +150,7 @@ impl EmailDomainMappingRepository {
                 .push(r.client_id);
         }
 
-        let mut granted_map: HashMap<String, Vec<String>> = HashMap::new();
+        let mut granted_map: HashMap<EmailDomainMappingId, Vec<String>> = HashMap::new();
         for r in granted_rows {
             granted_map
                 .entry(r.email_domain_mapping_id)
@@ -156,7 +158,7 @@ impl EmailDomainMappingRepository {
                 .push(r.client_id);
         }
 
-        let mut roles_map: HashMap<String, Vec<String>> = HashMap::new();
+        let mut roles_map: HashMap<EmailDomainMappingId, Vec<String>> = HashMap::new();
         for r in role_rows {
             roles_map
                 .entry(r.email_domain_mapping_id)
@@ -182,7 +184,10 @@ impl EmailDomainMappingRepository {
         Ok(edms)
     }
 
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<EmailDomainMapping>> {
+    pub async fn find_by_id(
+        &self,
+        id: &EmailDomainMappingId,
+    ) -> Result<Option<EmailDomainMapping>> {
         let row = sqlx::query_as::<_, EmailDomainMappingRow>(
             "SELECT * FROM tnt_email_domain_mappings WHERE id = $1",
         )
@@ -240,7 +245,7 @@ impl EmailDomainMappingRepository {
     /// `FindByIdentityProvider`).
     pub async fn find_by_identity_provider(
         &self,
-        identity_provider_id: &str,
+        identity_provider_id: &IdentityProviderId,
     ) -> Result<Vec<EmailDomainMapping>> {
         let rows = sqlx::query_as::<_, EmailDomainMappingRow>(
             "SELECT * FROM tnt_email_domain_mappings WHERE identity_provider_id = $1 \
@@ -260,7 +265,7 @@ impl EmailDomainMappingRepository {
     /// OIDC tenant (a null or blank `required_oidc_tenant_id`), sorted.
     pub async fn find_unpinned_domains_for_identity_provider(
         &self,
-        identity_provider_id: &str,
+        identity_provider_id: &IdentityProviderId,
     ) -> Result<Vec<String>> {
         let domains = sqlx::query_scalar::<_, String>(
             "SELECT email_domain FROM tnt_email_domain_mappings
@@ -288,7 +293,7 @@ impl EmailDomainMappingRepository {
         self.insert(edm).await
     }
 
-    pub async fn delete(&self, id: &str) -> Result<bool> {
+    pub async fn delete(&self, id: &EmailDomainMappingId) -> Result<bool> {
         let mut tx = self.pool.begin().await?;
         let deleted = {
             let mut db = fc_platform_core::usecase::DbTx { inner: &mut tx };
@@ -377,7 +382,7 @@ async fn write_mapping(edm: &EmailDomainMapping, tx: &mut DbTx<'_>) -> Result<()
     Ok(())
 }
 
-async fn delete_junctions(id: &str, tx: &mut DbTx<'_>) -> Result<()> {
+async fn delete_junctions(id: &EmailDomainMappingId, tx: &mut DbTx<'_>) -> Result<()> {
     for table in [
         "tnt_email_domain_mapping_additional_clients",
         "tnt_email_domain_mapping_granted_clients",
@@ -394,7 +399,7 @@ async fn delete_junctions(id: &str, tx: &mut DbTx<'_>) -> Result<()> {
     Ok(())
 }
 
-async fn delete_mapping(id: &str, tx: &mut DbTx<'_>) -> Result<bool> {
+async fn delete_mapping(id: &EmailDomainMappingId, tx: &mut DbTx<'_>) -> Result<bool> {
     delete_junctions(id, tx).await?;
     let result = sqlx::query("DELETE FROM tnt_email_domain_mappings WHERE id = $1")
         .bind(id)
@@ -405,7 +410,7 @@ async fn delete_mapping(id: &str, tx: &mut DbTx<'_>) -> Result<bool> {
 
 impl HasId for EmailDomainMapping {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 

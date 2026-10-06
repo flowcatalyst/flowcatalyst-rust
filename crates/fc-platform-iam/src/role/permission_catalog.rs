@@ -4,15 +4,14 @@
 //! `permission_repository.rs`.
 
 use chrono::{DateTime, Utc};
-use fc_platform_core::shared::tsid;
-use fc_platform_core::shared::tsid::EntityType;
+use fc_platform_core::shared::id::PermissionId;
 
 /// A permission definition. `code` is the canonical four-segment string
 /// `application:context:aggregate:action`; the segments are stored alongside
 /// it (`subdomain` holds the application segment, as in Go).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CatalogPermission {
-    pub id: String,
+    pub id: PermissionId,
     pub code: String,
     pub subdomain: String,
     pub context: String,
@@ -33,7 +32,7 @@ impl CatalogPermission {
         }
         let now = Utc::now();
         Some(Self {
-            id: tsid::generate(EntityType::Permission),
+            id: PermissionId::generate(),
             code: code.to_string(),
             subdomain: parts[0].to_string(),
             context: parts[1].to_string(),
@@ -62,6 +61,6 @@ mod tests {
         assert_eq!(p.subdomain, "shop");
         assert_eq!(p.action, "ship");
         assert_eq!(p.category(), "shop:orders:order");
-        assert!(p.id.starts_with("prm_"));
+        assert!(p.id.as_str().starts_with("prm_"));
     }
 }

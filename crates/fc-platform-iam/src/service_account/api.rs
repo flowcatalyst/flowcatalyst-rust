@@ -4,6 +4,7 @@
 //! Base path: /api/service-accounts
 
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::OAuthClientId;
 use std::sync::Arc;
 
 use axum::{
@@ -46,8 +47,6 @@ use fc_platform_core::shared::encryption_service::EncryptionService;
 use fc_platform_core::shared::enum_str::{non_empty, parse_opt};
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
-use fc_platform_core::shared::tsid;
-use fc_platform_core::shared::tsid::EntityType;
 use fc_platform_core::usecase::PgUnitOfWork;
 use fc_platform_core::usecase::{ExecutionContext, UnitOfWork, UseCase};
 
@@ -645,7 +644,7 @@ pub async fn create_service_account<U: UnitOfWork>(
             // crosses into the use case.
             use base64::Engine;
 
-            let oauth_client_id = tsid::generate(EntityType::OAuthClient);
+            let oauth_client_id = OAuthClientId::generate();
             let mut secret_bytes = [0u8; 32];
             rand::RngCore::fill_bytes(&mut rand::rng(), &mut secret_bytes);
             let plaintext_secret = general_purpose::URL_SAFE_NO_PAD.encode(secret_bytes);
@@ -658,7 +657,7 @@ pub async fn create_service_account<U: UnitOfWork>(
 
             let oauth_cmd = CreateOAuthClientCommand {
                 oauth_client_id: oauth_client_id.clone(),
-                client_id: oauth_client_id.clone(),
+                client_id: oauth_client_id.to_string(),
                 // Go: "<name> Client" (create_credentials.go:132)
                 client_name: format!("{} Client", account.name),
                 client_type: OAuthClientType::Confidential,
@@ -692,7 +691,7 @@ pub async fn create_service_account<U: UnitOfWork>(
                     principal_id: account.id.to_string(),
                     service_account: ServiceAccountResponse::from(account),
                     oauth: OAuthCredentials {
-                        client_id: oauth_client_id,
+                        client_id: oauth_client_id.to_string(),
                         client_secret: plaintext_secret,
                     },
                     webhook: WebhookCredentialsResponse {

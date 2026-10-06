@@ -8,6 +8,7 @@
 //! `{mappingId, emailDomain}`.
 
 use fc_platform_core::impl_domain_event;
+use fc_platform_core::shared::id::EmailDomainMappingId;
 use fc_platform_core::usecase::domain_event::EventMetadata;
 use fc_platform_core::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
@@ -15,7 +16,11 @@ use serde::{Deserialize, Serialize};
 const SPEC_VERSION: &str = "1.0";
 const SOURCE: &str = "platform:admin";
 
-fn metadata(ctx: &ExecutionContext, event_type: &str, mapping_id: &str) -> EventMetadata {
+fn metadata(
+    ctx: &ExecutionContext,
+    event_type: &str,
+    mapping_id: &EmailDomainMappingId,
+) -> EventMetadata {
     EventMetadata::from_ctx(
         ctx,
         event_type,
@@ -34,7 +39,7 @@ macro_rules! mapping_event {
         pub struct $name {
             #[serde(skip)]
             pub metadata: EventMetadata,
-            pub mapping_id: String,
+            pub mapping_id: EmailDomainMappingId,
             pub email_domain: String,
         }
 
@@ -43,10 +48,10 @@ macro_rules! mapping_event {
         impl $name {
             pub const EVENT_TYPE: &'static str = $event_type;
 
-            pub fn new(ctx: &ExecutionContext, mapping_id: &str, email_domain: &str) -> Self {
+            pub fn new(ctx: &ExecutionContext, mapping_id: &EmailDomainMappingId, email_domain: &str) -> Self {
                 Self {
                     metadata: metadata(ctx, Self::EVENT_TYPE, mapping_id),
-                    mapping_id: mapping_id.to_string(),
+                    mapping_id: mapping_id.clone(),
                     email_domain: email_domain.to_string(),
                 }
             }
@@ -77,7 +82,11 @@ mod tests {
     #[test]
     fn test_email_domain_mapping_created_event() {
         let ctx = ExecutionContext::system("admin-123");
-        let event = EmailDomainMappingCreated::new(&ctx, "edm-1", "example.com");
+        let event = EmailDomainMappingCreated::new(
+            &ctx,
+            &EmailDomainMappingId::from_wire("edm-1"),
+            "example.com",
+        );
 
         assert_eq!(
             event.metadata.event_type,
@@ -98,12 +107,20 @@ mod tests {
     #[test]
     fn test_email_domain_mapping_updated_and_deleted_events() {
         let ctx = ExecutionContext::system("admin-456");
-        let updated = EmailDomainMappingUpdated::new(&ctx, "edm-2", "updated.com");
+        let updated = EmailDomainMappingUpdated::new(
+            &ctx,
+            &EmailDomainMappingId::from_wire("edm-2"),
+            "updated.com",
+        );
         assert_eq!(
             updated.metadata.event_type,
             "platform:admin:email-domain-mapping:updated"
         );
-        let deleted = EmailDomainMappingDeleted::new(&ctx, "edm-3", "deleted.com");
+        let deleted = EmailDomainMappingDeleted::new(
+            &ctx,
+            &EmailDomainMappingId::from_wire("edm-3"),
+            "deleted.com",
+        );
         assert_eq!(
             deleted.metadata.event_type,
             "platform:admin:email-domain-mapping:deleted"
@@ -114,8 +131,16 @@ mod tests {
     #[test]
     fn test_event_metadata_ids_are_unique() {
         let ctx = ExecutionContext::system("user-1");
-        let event1 = EmailDomainMappingCreated::new(&ctx, "edm-1", "a.com");
-        let event2 = EmailDomainMappingCreated::new(&ctx, "edm-2", "b.com");
+        let event1 = EmailDomainMappingCreated::new(
+            &ctx,
+            &EmailDomainMappingId::from_wire("edm-1"),
+            "a.com",
+        );
+        let event2 = EmailDomainMappingCreated::new(
+            &ctx,
+            &EmailDomainMappingId::from_wire("edm-2"),
+            "b.com",
+        );
         assert_ne!(event1.metadata.event_id, event2.metadata.event_id);
     }
 }

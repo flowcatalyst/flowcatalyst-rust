@@ -489,7 +489,7 @@ pub async fn check_domain(
             return Ok(Json(DomainCheckResponse {
                 domain,
                 auth_method,
-                provider_id: Some(idp.id),
+                provider_id: Some(idp.id.into_string()),
                 authorization_url: idp
                     .oidc_issuer_url
                     .map(|url| format!("{}/authorize", url.trim_end_matches('/'))),

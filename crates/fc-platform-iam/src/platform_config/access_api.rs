@@ -47,7 +47,7 @@ pub struct AccessResponse {
 impl From<PlatformConfigAccess> for AccessResponse {
     fn from(a: PlatformConfigAccess) -> Self {
         Self {
-            id: a.id,
+            id: a.id.into_string(),
             application_code: a.application_code,
             role_code: a.role_code,
             can_read: a.can_read,

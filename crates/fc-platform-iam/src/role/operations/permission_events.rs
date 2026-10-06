@@ -7,6 +7,7 @@
 //! permission:*` events below (a Rust addition, no Go counterpart).
 
 use fc_platform_core::impl_domain_event;
+use fc_platform_core::shared::id::PermissionId;
 use fc_platform_core::usecase::domain_event::EventMetadata;
 use fc_platform_core::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
@@ -17,7 +18,11 @@ const SOURCE: &str = "platform:admin";
 // The grant/revoke events are `super::events::{RolePermissionGranted,
 // RolePermissionRevoked}` (Go's shape).
 
-fn permission_metadata(ctx: &ExecutionContext, event_type: &str, id: &str) -> EventMetadata {
+fn permission_metadata(
+    ctx: &ExecutionContext,
+    event_type: &str,
+    id: &PermissionId,
+) -> EventMetadata {
     EventMetadata::from_ctx(
         ctx,
         event_type,
@@ -34,7 +39,7 @@ fn permission_metadata(ctx: &ExecutionContext, event_type: &str, id: &str) -> Ev
 pub struct PermissionDefined {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub permission_id: String,
+    pub permission_id: PermissionId,
     pub permission: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -47,13 +52,13 @@ impl PermissionDefined {
 
     pub fn new(
         ctx: &ExecutionContext,
-        id: &str,
+        id: &PermissionId,
         permission: &str,
         description: Option<&str>,
     ) -> Self {
         Self {
             metadata: permission_metadata(ctx, Self::EVENT_TYPE, id),
-            permission_id: id.to_string(),
+            permission_id: id.clone(),
             permission: permission.to_string(),
             description: description.map(str::to_string),
         }
@@ -66,7 +71,7 @@ impl PermissionDefined {
 pub struct PermissionDeleted {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub permission_id: String,
+    pub permission_id: PermissionId,
     pub permission: String,
 }
 
@@ -75,10 +80,10 @@ impl_domain_event!(PermissionDeleted);
 impl PermissionDeleted {
     pub const EVENT_TYPE: &'static str = "platform:admin:permission:deleted";
 
-    pub fn new(ctx: &ExecutionContext, id: &str, permission: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, id: &PermissionId, permission: &str) -> Self {
         Self {
             metadata: permission_metadata(ctx, Self::EVENT_TYPE, id),
-            permission_id: id.to_string(),
+            permission_id: id.clone(),
             permission: permission.to_string(),
         }
     }

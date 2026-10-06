@@ -10,6 +10,8 @@
 //! reset tokens, the invite bookkeeping, the password set by a confirmed
 //! invite/reset, and the last-login stamp.
 
+use fc_platform_core::shared::id::IdentityProviderId;
+use fc_platform_core::shared::id::OAuthClientId;
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
@@ -546,7 +548,7 @@ impl Persist<PortalApp> for PortalAppRepository {
 
 #[derive(sqlx::FromRow)]
 struct PortalOAuthClientRow {
-    id: String,
+    id: OAuthClientId,
     client_id: String,
     client_name: String,
     active: bool,
@@ -595,10 +597,10 @@ impl PortalOAuthClientReader {
     }
 
     async fn hydrate(&self, rows: Vec<PortalOAuthClientRow>) -> Result<Vec<PortalOAuthClient>> {
-        let ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
-        let mut uris: HashMap<String, Vec<String>> = HashMap::new();
+        let ids: Vec<OAuthClientId> = rows.iter().map(|r| r.id.clone()).collect();
+        let mut uris: HashMap<OAuthClientId, Vec<String>> = HashMap::new();
         if !ids.is_empty() {
-            let pairs = sqlx::query_as::<_, (String, String)>(
+            let pairs = sqlx::query_as::<_, (OAuthClientId, String)>(
                 "SELECT oauth_client_id, redirect_uri FROM oauth_client_redirect_uris \
                  WHERE oauth_client_id = ANY($1) ORDER BY redirect_uri",
             )
@@ -812,7 +814,7 @@ impl PortalResetTokenRepository {
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct PortalOidcState {
     pub state: String,
-    pub identity_provider_id: String,
+    pub identity_provider_id: IdentityProviderId,
     pub nonce: String,
     pub code_verifier: String,
     pub portal_client_id: Option<String>,

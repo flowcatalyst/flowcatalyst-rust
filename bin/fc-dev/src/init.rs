@@ -36,6 +36,7 @@
 
 use anyhow::{Context, Result};
 use chrono::Utc;
+use fc_platform::shared::id::OAuthClientId;
 use std::fs;
 use std::io::{stdin, stdout, BufRead, Write};
 use std::path::PathBuf;
@@ -349,7 +350,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
 
     // ── 5. OAuth client for the SA (client_credentials grant) ────────
     let (client_secret_plaintext, client_secret_ref) = generate_client_secret()?;
-    let oauth_row_id = tsid::generate(EntityType::OAuthClient);
+    let oauth_row_id = OAuthClientId::generate();
     let public_client_id = tsid::generate(EntityType::OAuthClient);
 
     let mut oauth_client = OAuthClient::new(
@@ -501,7 +502,7 @@ async fn create_admin(
         .context("look up email-domain mapping")?
         .is_none()
     {
-        let mapping = EmailDomainMapping::new(&domain, &idp_id, ScopeType::Anchor);
+        let mapping = EmailDomainMapping::new(&domain, idp_id.clone(), ScopeType::Anchor);
         edm_repo
             .insert(&mapping)
             .await
