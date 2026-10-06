@@ -212,7 +212,7 @@ pub async fn register_begin(
         .collect();
 
     let (challenge, ceremony_state) = state.webauthn_service.start_registration(
-        auth.0.principal_id.as_str(),
+        &auth.0.principal_id,
         &email,
         &display_name,
         &exclude,

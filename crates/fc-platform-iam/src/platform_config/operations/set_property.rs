@@ -9,7 +9,7 @@ use super::events::PlatformConfigPropertySet;
 use crate::platform_config::access;
 use crate::platform_config::access_repository::PlatformConfigAccessRepository;
 use crate::platform_config::entity::{ConfigScope, ConfigValueType, PlatformConfig};
-use crate::platform_config::repository::PlatformConfigRepository;
+use crate::platform_config::repository::{PlatformConfigRepository, PropertyKey};
 use fc_platform_core::shared::encryption_service::{require_configured, EncryptionService};
 use fc_platform_core::usecase::{
     AuditMasked, Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError,
@@ -142,10 +142,12 @@ impl<U: UnitOfWork> UseCase for SetPlatformConfigPropertyUseCase<U> {
         let existing = self
             .config_repo
             .find_by_key(
-                &command.application_code,
-                &command.section,
-                &command.property,
-                command.scope.as_str(),
+                &PropertyKey {
+                    app_code: &command.application_code,
+                    section: &command.section,
+                    property: &command.property,
+                    scope: command.scope.as_str(),
+                },
                 command.client_id.as_ref(),
             )
             .await?;

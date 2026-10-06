@@ -758,7 +758,7 @@ pub async fn enroll_totp_confirm(
     s.notifier.two_factor_enrolled(&email_of(&p), "TOTP").await;
     super::audit::record(
         &s.audit_log_repo,
-        p.id.as_str(),
+        &p.id,
         super::audit::TOTP_ENROLLED,
         p.id.as_str(),
     )
@@ -836,7 +836,7 @@ pub async fn enroll_email_confirm(
         .await;
     super::audit::record(
         &s.audit_log_repo,
-        p.id.as_str(),
+        &p.id,
         super::audit::EMAIL_ENROLLED,
         p.id.as_str(),
     )

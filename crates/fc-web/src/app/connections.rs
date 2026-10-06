@@ -8,6 +8,8 @@
 //! runs, with its checks (`require_anchor` plus the connection
 //! permission) and its execution context.
 
+use fc_platform::shared::id::ClientId;
+use fc_platform::shared::id::ConnectionId;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -296,7 +298,7 @@ async fn connection_drawer(cx: &Cx, id: String, editing: Signal<bool>) -> Result
     } else {
         let conn = crate::deps(cx)
             .connection_repo
-            .find_by_id(&id)
+            .find_by_id(&ConnectionId::from_wire(id.as_str()))
             .await
             .map_err(platform_error)?
             .ok_or_not_found()?;
@@ -522,7 +524,7 @@ async fn create_connection(cx: &Cx, form: Option<Form<CreateForm>>) -> Result<im
                     description: opt(&form.description),
                     service_account_id: form.service_account_id.clone(),
                     external_id: opt(&form.external_id),
-                    client_id: opt(&form.client_id),
+                    client_id: opt(&form.client_id).map(ClientId::from_wire),
                     application_code: None,
                 },
                 ExecutionContext::from_auth(auth),
@@ -535,7 +537,7 @@ async fn create_connection(cx: &Cx, form: Option<Form<CreateForm>>) -> Result<im
         match outcome {
             Ok(id) => {
                 set_flash(cx, FlashKind::Success, "Connection created");
-                return Err(see_other(detail_href(&id)).into());
+                return Err(see_other(detail_href(id.as_str())).into());
             }
             Err(e) if e.status_code().is_client_error() => state.error = Some(e.to_string()),
             Err(e) => {
@@ -656,7 +658,7 @@ async fn load_for_write(cx: &Cx, auth: &AuthContext) -> Result<Connection> {
     let id = path_param::<Id>(cx);
     let conn = crate::deps(cx)
         .connection_repo
-        .find_by_id(id)
+        .find_by_id(&ConnectionId::from_wire(id))
         .await
         .map_err(platform_error)?
         .ok_or_not_found()?;
@@ -706,7 +708,7 @@ async fn run_update(
 
 fn status_command(id: &str, status: ConnectionStatus) -> UpdateConnectionCommand {
     UpdateConnectionCommand {
-        connection_id: id.to_owned(),
+        connection_id: ConnectionId::from_wire(id),
         name: None,
         description: None,
         external_id: None,
@@ -740,7 +742,7 @@ async fn update(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
         cx,
         auth,
         UpdateConnectionCommand {
-            connection_id: conn.id.to_string(),
+            connection_id: conn.id.clone(),
             name: Some(form.name),
             description: opt(&form.description),
             external_id: opt(&form.external_id),
@@ -802,7 +804,7 @@ async fn delete(cx: &Cx) -> Result<SeeOther> {
     )
     .run(
         DeleteConnectionCommand {
-            connection_id: conn.id.to_string(),
+            connection_id: conn.id.clone(),
         },
         ExecutionContext::from_auth(auth),
     )

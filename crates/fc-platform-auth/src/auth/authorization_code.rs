@@ -6,6 +6,7 @@
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
+use fc_platform_core::shared::id::ClientId;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
@@ -97,7 +98,7 @@ pub struct AuthorizationCode {
     pub state: Option<String>,
 
     /// Client context for the authorization.
-    pub context_client_id: Option<String>,
+    pub context_client_id: Option<ClientId>,
 
     /// When this code was created.
     pub created_at: DateTime<Utc>,
@@ -109,17 +110,32 @@ pub struct AuthorizationCode {
     pub used: bool,
 }
 
+/// What a new authorization code is bound to, by field so the three
+/// adjacent strings cannot be passed in the wrong order.
+#[derive(Debug, Clone)]
+pub struct NewAuthorizationCode {
+    /// The authorization code value.
+    pub code: String,
+    /// The OAuth client's public id (not a tenant client).
+    pub client_id: String,
+    /// The authenticated subject: a principal id, or a portal identity's.
+    pub principal_id: String,
+    /// The redirect URI of the authorization request.
+    pub redirect_uri: String,
+}
+
 impl AuthorizationCode {
     /// Default expiration time for authorization codes (10 minutes)
     const DEFAULT_EXPIRY_MINUTES: i64 = 10;
 
     /// Create a new authorization code.
-    pub fn new(
-        code: String,
-        client_id: String,
-        principal_id: String,
-        redirect_uri: String,
-    ) -> Self {
+    pub fn new(new: NewAuthorizationCode) -> Self {
+        let NewAuthorizationCode {
+            code,
+            client_id,
+            principal_id,
+            redirect_uri,
+        } = new;
         let now = Utc::now();
         Self {
             code,
@@ -167,12 +183,12 @@ mod tests {
 
     #[test]
     fn test_new_code() {
-        let code = AuthorizationCode::new(
-            "test-code".to_string(),
-            "client-123".to_string(),
-            "principal-456".to_string(),
-            "https://example.com/callback".to_string(),
-        );
+        let code = AuthorizationCode::new(NewAuthorizationCode {
+            code: "test-code".to_string(),
+            client_id: "client-123".to_string(),
+            principal_id: "principal-456".to_string(),
+            redirect_uri: "https://example.com/callback".to_string(),
+        });
 
         assert_eq!(code.code, "test-code");
         assert_eq!(code.client_id, "client-123");
@@ -182,12 +198,12 @@ mod tests {
 
     #[test]
     fn test_code_with_pkce() {
-        let code = AuthorizationCode::new(
-            "test-code".to_string(),
-            "client-123".to_string(),
-            "principal-456".to_string(),
-            "https://example.com/callback".to_string(),
-        )
+        let code = AuthorizationCode::new(NewAuthorizationCode {
+            code: "test-code".to_string(),
+            client_id: "client-123".to_string(),
+            principal_id: "principal-456".to_string(),
+            redirect_uri: "https://example.com/callback".to_string(),
+        })
         .with_pkce(Some(Pkce {
             challenge: "challenge".to_string(),
             method: PkceMethod::S256,
@@ -243,12 +259,12 @@ mod tests {
 
     #[test]
     fn test_mark_used() {
-        let mut code = AuthorizationCode::new(
-            "test-code".to_string(),
-            "client-123".to_string(),
-            "principal-456".to_string(),
-            "https://example.com/callback".to_string(),
-        );
+        let mut code = AuthorizationCode::new(NewAuthorizationCode {
+            code: "test-code".to_string(),
+            client_id: "client-123".to_string(),
+            principal_id: "principal-456".to_string(),
+            redirect_uri: "https://example.com/callback".to_string(),
+        });
 
         assert!(code.is_valid());
         code.mark_used();

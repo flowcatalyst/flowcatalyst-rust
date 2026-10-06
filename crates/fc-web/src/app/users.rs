@@ -168,7 +168,7 @@ pub(crate) async fn reachable_clients(cx: &Cx, auth: &AuthContext) -> Result<Vec
         .find_all()
         .await
         .map_err(platform_error)?;
-    clients.retain(|c| auth.is_anchor() || auth.can_access_client(c.id.as_str()));
+    clients.retain(|c| auth.is_anchor() || auth.can_access_client(&c.id));
     clients.sort_by_key(|c| c.name.to_lowercase());
     Ok(clients)
 }

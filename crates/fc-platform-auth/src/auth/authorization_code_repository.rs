@@ -8,6 +8,7 @@ use crate::auth::authorization_code::Pkce;
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::enum_str::corrupt_value;
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::shared::id::ClientId;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use tracing::debug;
@@ -85,7 +86,7 @@ impl TryFrom<PayloadRow> for AuthorizationCode {
             context_client_id: p
                 .get("contextClientId")
                 .and_then(|v| v.as_str())
-                .map(String::from),
+                .map(ClientId::from_wire),
             created_at,
             expires_at,
             used,

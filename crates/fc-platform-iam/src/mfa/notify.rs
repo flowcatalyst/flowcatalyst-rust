@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use tracing::warn;
 
-use crate::platform_config::repository::PlatformConfigRepository;
+use crate::platform_config::repository::{PlatformConfigRepository, PropertyKey};
 use fc_platform_core::shared::email_service::{EmailMessage, EmailService};
 
 /// The brand name when none is configured (Go `branding.DefaultPlatformName`).
@@ -30,7 +30,15 @@ impl PlatformName {
             return DEFAULT_PLATFORM_NAME.to_string();
         };
         match configs
-            .find_by_key("platform", "branding", "platform-name", "GLOBAL", None)
+            .find_by_key(
+                &PropertyKey {
+                    app_code: "platform",
+                    section: "branding",
+                    property: "platform-name",
+                    scope: "GLOBAL",
+                },
+                None,
+            )
             .await
         {
             Ok(Some(c)) if !c.value.trim().is_empty() => c.value.trim().to_string(),

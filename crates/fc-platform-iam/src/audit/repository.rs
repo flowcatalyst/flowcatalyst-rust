@@ -38,13 +38,23 @@ impl From<AuditLogRow> for AuditLog {
     }
 }
 
-fn apply_audit_filters(
-    qb: &mut QueryBuilder<Postgres>,
-    entity_type: Option<&str>,
-    entity_id: Option<&str>,
-    operation: Option<&str>,
-    principal_id: Option<&str>,
-) {
+/// The equality filters of the plain audit search and count, by field so
+/// the four adjacent strings cannot be passed in the wrong order.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct AuditFilter<'a> {
+    pub entity_type: Option<&'a str>,
+    pub entity_id: Option<&'a str>,
+    pub operation: Option<&'a str>,
+    pub principal_id: Option<&'a str>,
+}
+
+fn apply_audit_filters(qb: &mut QueryBuilder<Postgres>, filter: &AuditFilter<'_>) {
+    let AuditFilter {
+        entity_type,
+        entity_id,
+        operation,
+        principal_id,
+    } = *filter;
     let mut has_where = false;
     let push_where = |qb: &mut QueryBuilder<Postgres>, has_where: &mut bool| {
         qb.push(if *has_where { " AND " } else { " WHERE " });
@@ -224,15 +234,12 @@ impl AuditLogRepository {
 
     pub async fn search(
         &self,
-        entity_type: Option<&str>,
-        entity_id: Option<&str>,
-        operation: Option<&str>,
-        principal_id: Option<&str>,
+        filter: &AuditFilter<'_>,
         limit: i64,
         offset: i64,
     ) -> Result<Vec<AuditLog>> {
         let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("SELECT * FROM aud_logs");
-        apply_audit_filters(&mut qb, entity_type, entity_id, operation, principal_id);
+        apply_audit_filters(&mut qb, filter);
         qb.push(" ORDER BY performed_at DESC LIMIT ")
             .push_bind(limit)
             .push(" OFFSET ")
@@ -242,15 +249,9 @@ impl AuditLogRepository {
         Ok(rows.into_iter().map(AuditLog::from).collect())
     }
 
-    pub async fn count_with_filters(
-        &self,
-        entity_type: Option<&str>,
-        entity_id: Option<&str>,
-        operation: Option<&str>,
-        principal_id: Option<&str>,
-    ) -> Result<i64> {
+    pub async fn count_with_filters(&self, filter: &AuditFilter<'_>) -> Result<i64> {
         let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("SELECT COUNT(*) FROM aud_logs");
-        apply_audit_filters(&mut qb, entity_type, entity_id, operation, principal_id);
+        apply_audit_filters(&mut qb, filter);
         let count: i64 = qb.build_query_scalar().fetch_one(&self.pool).await?;
         Ok(count)
     }
@@ -259,19 +260,16 @@ impl AuditLogRepository {
     /// `fetch_limit` rows so the caller can detect `hasMore`.
     pub async fn search_with_cursor(
         &self,
-        entity_type: Option<&str>,
-        entity_id: Option<&str>,
-        operation: Option<&str>,
-        principal_id: Option<&str>,
+        filter: &AuditFilter<'_>,
         cursor: Option<&DecodedCursor>,
         fetch_limit: i64,
     ) -> Result<Vec<AuditLog>> {
         self.search_with_cursor_filtered(
             &AuditCursorFilter {
-                entity_type,
-                entity_id,
-                operation,
-                principal_id,
+                entity_type: filter.entity_type,
+                entity_id: filter.entity_id,
+                operation: filter.operation,
+                principal_id: filter.principal_id,
                 ..Default::default()
             },
             cursor,

@@ -19,6 +19,7 @@
 use fc_platform::dispatch_job::entity::{DispatchAttempt, parse_dispatch_status};
 use fc_platform::dispatch_job::repository::RecordedAttempt;
 use fc_platform::shared::caller_reach::{ensure_row_visible, read_client_filter};
+use fc_platform::shared::id::ClientId;
 use fc_platform::{DispatchJob, PlatformError, checks};
 use topcoat::{
     Result,
@@ -361,7 +362,7 @@ async fn job_drawer(cx: &Cx, id: String) -> Result<impl View> {
         let job = job.ok_or_not_found()?;
         permit(ensure_row_visible(
             auth,
-            job.client_id.as_deref(),
+            job.client_id.as_deref().map(ClientId::from_wire).as_ref(),
             "dispatch job",
         ))?;
         Some((job, attempts))

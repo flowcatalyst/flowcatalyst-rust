@@ -3,6 +3,7 @@
 //! principal/api/api.go:1506-1516): entity `PRINCIPAL`, the operation name,
 //! the acting principal, no command body. Best-effort: a failure is logged.
 
+use fc_platform_core::shared::id::PrincipalId;
 use tracing::warn;
 
 use fc_platform_core::shared::tsid;
@@ -19,19 +20,19 @@ pub const RESET_BY_ADMIN: &str = "2FA_RESET_BY_ADMIN";
 /// Record `operation` on principal `principal_id`, performed by `actor_id`.
 pub async fn record(
     audit_logs: &AuditLogRepository,
-    principal_id: &str,
+    principal_id: &PrincipalId,
     operation: &str,
     actor_id: &str,
 ) {
     let mut log = AuditLog::new(
         "PRINCIPAL",
-        principal_id,
+        principal_id.as_str(),
         operation,
         None,
         Some(actor_id.to_string()),
     );
     log.id = tsid::generate(EntityType::AuditLog);
     if let Err(e) = audit_logs.insert(&log).await {
-        warn!(principal_id, operation, error = %e, "2FA audit row not written");
+        warn!(%principal_id, operation, error = %e, "2FA audit row not written");
     }
 }

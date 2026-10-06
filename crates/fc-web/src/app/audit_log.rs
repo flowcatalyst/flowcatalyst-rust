@@ -8,11 +8,13 @@
 //! browser signal and the shard re-renders on the server with that id, so
 //! the list keeps its scroll position.
 
+use fc_platform::shared::id::ClientId;
 use std::collections::HashMap;
 
 use fc_platform::audit::api::{
     AuditLogDetailResponse, enrich_principal_names, enrich_single_principal_name,
 };
+use fc_platform::audit::repository::AuditFilter;
 use fc_platform::checks;
 use fc_platform::shared::api_common::{decode_cursor, encode_cursor};
 use topcoat::{
@@ -97,6 +99,7 @@ async fn names(
     client_ids: Vec<String>,
 ) -> Result<(HashMap<String, String>, HashMap<String, String>)> {
     let deps = crate::deps(cx);
+    let client_ids = ClientId::from_wire_all(client_ids);
     let (apps, clients) = tokio::try_join!(
         async {
             if app_ids.is_empty() {
@@ -109,7 +112,9 @@ async fn names(
     )
     .map_err(platform_error)?;
     Ok((
-        apps.into_iter().map(|a| (a.id.into_string(), a.name)).collect(),
+        apps.into_iter()
+            .map(|a| (a.id.into_string(), a.name))
+            .collect(),
         clients
             .into_iter()
             .map(|c| (c.id.into_string(), c.name))
@@ -132,17 +137,16 @@ async fn audit_log(cx: &Cx) -> Result<impl View> {
         None => None,
     };
 
+    let filter = AuditFilter {
+        entity_type,
+        operation,
+        ..Default::default()
+    };
     let (entity_types, operations, mut logs) = tokio::try_join!(
         deps.audit_log_repo.find_distinct_entity_types(),
         deps.audit_log_repo.find_distinct_operations(),
-        deps.audit_log_repo.search_with_cursor(
-            entity_type,
-            None,
-            operation,
-            None,
-            cursor.as_ref(),
-            (PAGE_SIZE as i64) + 1,
-        ),
+        deps.audit_log_repo
+            .search_with_cursor(&filter, cursor.as_ref(), (PAGE_SIZE as i64) + 1,),
     )
     .map_err(platform_error)?;
 

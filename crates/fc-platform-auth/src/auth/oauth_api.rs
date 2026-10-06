@@ -23,7 +23,10 @@ use crate::auth::authorization_code::{Pkce, PkceMethod};
 use crate::auth::pending_auth_repository::{PendingAuth, PendingAuthRepository};
 use crate::auth::refresh_rotation;
 use crate::auth::refresh_rotation::Rejection;
-use crate::auth::{authorization_code::AuthorizationCode, refresh_token::RefreshToken};
+use crate::auth::{
+    authorization_code::{AuthorizationCode, NewAuthorizationCode},
+    refresh_token::RefreshToken,
+};
 use crate::auth::{
     authorization_code_repository::AuthorizationCodeRepository,
     refresh_token_repository::RefreshTokenRepository,
@@ -496,12 +499,12 @@ pub async fn authorize(
                     scope: req.scope.clone(),
                     nonce: req.nonce.clone(),
                     state: req.state.clone(),
-                    ..AuthorizationCode::new(
-                        auth_code_str.clone(),
-                        req.client_id.clone(),
-                        session.principal_id.clone(),
-                        req.redirect_uri.clone(),
-                    )
+                    ..AuthorizationCode::new(NewAuthorizationCode {
+                        code: auth_code_str.clone(),
+                        client_id: req.client_id.clone(),
+                        principal_id: session.principal_id.clone(),
+                        redirect_uri: req.redirect_uri.clone(),
+                    })
                 };
 
                 auth_code = auth_code.with_pkce(pkce.clone());
@@ -2155,12 +2158,12 @@ pub async fn issue_code(
     let mut auth_code = AuthorizationCode {
         scope: pending.scope,
         nonce: pending.nonce,
-        ..AuthorizationCode::new(
-            auth_code_str.clone(),
-            pending.client_id,
-            principal_id.to_string(),
-            pending.redirect_uri,
-        )
+        ..AuthorizationCode::new(NewAuthorizationCode {
+            code: auth_code_str.clone(),
+            client_id: pending.client_id,
+            principal_id: principal_id.to_string(),
+            redirect_uri: pending.redirect_uri,
+        })
     };
 
     let method = pending.code_challenge_method.as_deref();

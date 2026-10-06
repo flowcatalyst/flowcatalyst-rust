@@ -159,7 +159,7 @@ pub async fn totp_confirm(
     s.notifier.two_factor_enrolled(&email_of(&p), "TOTP").await;
     super::audit::record(
         &s.audit_log_repo,
-        p.id.as_str(),
+        &p.id,
         super::audit::TOTP_ENROLLED,
         p.id.as_str(),
     )
@@ -228,7 +228,7 @@ pub async fn email_confirm(
         .await;
     super::audit::record(
         &s.audit_log_repo,
-        p.id.as_str(),
+        &p.id,
         super::audit::EMAIL_ENROLLED,
         p.id.as_str(),
     )
@@ -275,7 +275,7 @@ pub async fn remove_method(
         .await;
     super::audit::record(
         &s.audit_log_repo,
-        p.id.as_str(),
+        &p.id,
         super::audit::METHOD_REMOVED,
         p.id.as_str(),
     )
@@ -311,7 +311,7 @@ pub async fn regenerate_recovery_codes(
     s.notifier.recovery_codes_regenerated(&email_of(&p)).await;
     super::audit::record(
         &s.audit_log_repo,
-        p.id.as_str(),
+        &p.id,
         super::audit::RECOVERY_REGENERATED,
         p.id.as_str(),
     )

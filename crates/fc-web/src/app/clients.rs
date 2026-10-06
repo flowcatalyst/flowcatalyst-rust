@@ -9,10 +9,10 @@
 //! can access); every write runs the use case its API handler runs, behind
 //! the same permission check.
 
+use fc_platform::shared::id::ClientId;
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
-use fc_platform::shared::id::ApplicationId;
 use fc_platform::application::operations::{
     UpdateClientApplicationsCommand, UpdateClientApplicationsUseCase,
 };
@@ -22,6 +22,7 @@ use fc_platform::client::operations::{
     DeleteClientCommand, DeleteClientUseCase, SuspendClientCommand, SuspendClientUseCase,
     UpdateClientCommand, UpdateClientUseCase,
 };
+use fc_platform::shared::id::ApplicationId;
 use fc_platform::usecase::UseCase;
 use fc_platform::{AuthContext, Client, ClientStatus, ExecutionContext, PlatformError, checks};
 use serde::Deserialize;
@@ -123,7 +124,7 @@ async fn client_list(cx: &Cx, open_id: String, create: Option<CreateState>) -> R
     let needle = search.to_lowercase();
     let rows: Vec<Client> = all
         .into_iter()
-        .filter(|c| auth.is_anchor() || auth.can_access_client(c.id.as_str()))
+        .filter(|c| auth.is_anchor() || auth.can_access_client(&c.id))
         .filter(|c| {
             needle.is_empty()
                 || c.identifier.to_lowercase().contains(&needle)
@@ -259,12 +260,14 @@ async fn client_drawer(cx: &Cx, id: String, editing: Signal<bool>) -> Result<imp
         None
     } else {
         // `get_client` + `get_client_applications`.
-        permit(ensure_visible(auth, &id))?;
+        let client_id = ClientId::from_wire(id.as_str());
+        permit(ensure_visible(auth, &client_id))?;
         let deps = crate::deps(cx);
         let (client, apps, configs) = tokio::try_join!(
-            deps.client_repo.find_by_id(&id),
+            deps.client_repo.find_by_id(&client_id),
             deps.application_repo.find_all(),
-            deps.application_client_config_repo.find_by_client(&id),
+            deps.application_client_config_repo
+                .find_by_client(&client_id),
         )
         .map_err(platform_error)?;
         let client = client.ok_or_not_found()?;
@@ -546,7 +549,7 @@ async fn create_client(cx: &Cx, form: Option<Form<CreateForm>>) -> Result<impl V
         match outcome {
             Ok(id) => {
                 set_flash(cx, FlashKind::Success, "Client created");
-                return Err(see_other(detail_href(&id)).into());
+                return Err(see_other(detail_href(id.as_str())).into());
             }
             Err(e) if e.status_code().is_client_error() => state.error = Some(e.to_string()),
             Err(e) => {
@@ -645,7 +648,7 @@ async fn update(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
     let outcome = UpdateClientUseCase::new(deps.client_repo.clone(), deps.unit_of_work.clone())
         .run(
             UpdateClientCommand {
-                client_id: id.clone(),
+                client_id: ClientId::from_wire(id.clone()),
                 name: Some(form.name),
             },
             ExecutionContext::from_auth(auth),
@@ -669,7 +672,7 @@ async fn activate(cx: &Cx) -> Result<SeeOther> {
     let outcome = ActivateClientUseCase::new(deps.client_repo.clone(), deps.unit_of_work.clone())
         .run(
             ActivateClientCommand {
-                client_id: id.clone(),
+                client_id: ClientId::from_wire(id.clone()),
             },
             ExecutionContext::from_auth(auth),
         )
@@ -691,7 +694,7 @@ async fn suspend(cx: &Cx) -> Result<SeeOther> {
     let outcome = SuspendClientUseCase::new(deps.client_repo.clone(), deps.unit_of_work.clone())
         .run(
             SuspendClientCommand {
-                client_id: id.clone(),
+                client_id: ClientId::from_wire(id.clone()),
                 reason: "Manual suspension".to_owned(),
             },
             ExecutionContext::from_auth(auth),
@@ -716,7 +719,7 @@ async fn deactivate(cx: &Cx) -> Result<SeeOther> {
     let outcome = DeleteClientUseCase::new(deps.client_repo.clone(), deps.unit_of_work.clone())
         .run(
             DeleteClientCommand {
-                client_id: id.clone(),
+                client_id: ClientId::from_wire(id.clone()),
             },
             ExecutionContext::from_auth(auth),
         )
@@ -757,7 +760,7 @@ async fn applications(cx: &Cx, Form(form): Form<HashMap<String, String>>) -> Res
     )
     .run(
         UpdateClientApplicationsCommand {
-            client_id: id.clone(),
+            client_id: ClientId::from_wire(id.clone()),
             enabled_application_ids: ApplicationId::from_wire_all(enabled_application_ids),
         },
         ExecutionContext::from_auth(auth),

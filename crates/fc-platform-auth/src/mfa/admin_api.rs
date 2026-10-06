@@ -89,7 +89,7 @@ pub async fn reset_user_two_factor(
     state.notifier.two_factor_reset(&email_of(&p)).await;
     super::audit::record(
         &state.audit_log_repo,
-        p.id.as_str(),
+        &p.id,
         super::audit::RESET_BY_ADMIN,
         ctx.principal_id.as_str(),
     )

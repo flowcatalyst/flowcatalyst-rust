@@ -53,6 +53,23 @@ impl TryFrom<PlatformConfigRow> for PlatformConfig {
     }
 }
 
+/// A property's coordinates: application, section, property and scope, by
+/// field so the four adjacent strings cannot be passed in the wrong order.
+#[derive(Debug, Clone, Copy)]
+pub struct PropertyKey<'a> {
+    pub app_code: &'a str,
+    pub section: &'a str,
+    pub property: &'a str,
+    pub scope: &'a str,
+}
+
+/// A section's coordinates: application and section.
+#[derive(Debug, Clone, Copy)]
+pub struct SectionKey<'a> {
+    pub app_code: &'a str,
+    pub section: &'a str,
+}
+
 pub struct PlatformConfigRepository {
     pool: PgPool,
 }
@@ -74,12 +91,15 @@ impl PlatformConfigRepository {
 
     pub async fn find_by_key(
         &self,
-        app_code: &str,
-        section: &str,
-        property: &str,
-        scope: &str,
+        key: &PropertyKey<'_>,
         client_id: Option<&ClientId>,
     ) -> Result<Option<PlatformConfig>> {
+        let PropertyKey {
+            app_code,
+            section,
+            property,
+            scope,
+        } = *key;
         let row = if let Some(cid) = client_id {
             sqlx::query_as::<_, PlatformConfigRow>(
                 "SELECT * FROM app_platform_configs \
@@ -111,11 +131,11 @@ impl PlatformConfigRepository {
 
     pub async fn find_by_section(
         &self,
-        app_code: &str,
-        section: &str,
+        key: &SectionKey<'_>,
         scope: Option<&str>,
         client_id: Option<&ClientId>,
     ) -> Result<Vec<PlatformConfig>> {
+        let SectionKey { app_code, section } = *key;
         let mut qb: QueryBuilder<Postgres> =
             QueryBuilder::new("SELECT * FROM app_platform_configs WHERE application_code = ");
         qb.push_bind(app_code)
@@ -203,12 +223,15 @@ impl PlatformConfigRepository {
 
     pub async fn delete_by_key(
         &self,
-        app_code: &str,
-        section: &str,
-        property: &str,
-        scope: &str,
+        key: &PropertyKey<'_>,
         client_id: Option<&ClientId>,
     ) -> Result<bool> {
+        let PropertyKey {
+            app_code,
+            section,
+            property,
+            scope,
+        } = *key;
         let result = if let Some(cid) = client_id {
             sqlx::query(
                 "DELETE FROM app_platform_configs \

@@ -10,7 +10,7 @@ use std::sync::Arc;
 use utoipa::ToSchema;
 
 use crate::mfa::notify::PlatformName;
-use crate::platform_config::repository::PlatformConfigRepository;
+use crate::platform_config::repository::{PlatformConfigRepository, PropertyKey};
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -144,7 +144,15 @@ async fn theme_document(
     client_id: Option<&ClientId>,
 ) -> Option<serde_json::Map<String, serde_json::Value>> {
     match config_repo
-        .find_by_key("platform", "login", "theme", scope, client_id)
+        .find_by_key(
+            &PropertyKey {
+                app_code: "platform",
+                section: "login",
+                property: "theme",
+                scope,
+            },
+            client_id,
+        )
         .await
     {
         Ok(Some(config)) if !config.value.is_empty() => {

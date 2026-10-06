@@ -22,7 +22,7 @@ use super::operations::{
     RevokePlatformConfigAccessCommand, RevokePlatformConfigAccessUseCase,
     SetPlatformConfigPropertyCommand, SetPlatformConfigPropertyUseCase,
 };
-use super::repository::PlatformConfigRepository;
+use super::repository::{PlatformConfigRepository, PropertyKey, SectionKey};
 use crate::application::repository::ApplicationRepository;
 use crate::shared::authorization_service::ApplicationAccessService;
 use fc_platform_core::shared::api_common::CreatedResponse;
@@ -241,8 +241,10 @@ pub async fn get_section(
     let items = state
         .config_repo
         .find_by_section(
-            &app_code,
-            &section,
+            &SectionKey {
+                app_code: &app_code,
+                section: &section,
+            },
             Some(scope_str),
             query.client_id.as_deref().map(ClientId::from_wire).as_ref(),
         )
@@ -294,10 +296,12 @@ pub async fn get_property(
     let config = state
         .config_repo
         .find_by_key(
-            &app_code,
-            &section,
-            &property,
-            scope_str,
+            &PropertyKey {
+                app_code: &app_code,
+                section: &section,
+                property: &property,
+                scope: scope_str,
+            },
             query.client_id.as_deref().map(ClientId::from_wire).as_ref(),
         )
         .await?
@@ -376,10 +380,12 @@ pub async fn set_property(
     let config = state
         .config_repo
         .find_by_key(
-            &app_code,
-            &section,
-            &property,
-            scope.as_str(),
+            &PropertyKey {
+                app_code: &app_code,
+                section: &section,
+                property: &property,
+                scope: scope.as_str(),
+            },
             query.client_id.as_deref().map(ClientId::from_wire).as_ref(),
         )
         .await?
@@ -425,10 +431,12 @@ pub async fn delete_property(
     state
         .config_repo
         .delete_by_key(
-            &app_code,
-            &section,
-            &property,
-            scope_str,
+            &PropertyKey {
+                app_code: &app_code,
+                section: &section,
+                property: &property,
+                scope: scope_str,
+            },
             query.client_id.as_deref().map(ClientId::from_wire).as_ref(),
         )
         .await?;
@@ -676,10 +684,12 @@ pub async fn get_config_property(
     let config = state
         .config_repo
         .find_by_key(
-            &app,
-            &section,
-            &property,
-            scope.as_str(),
+            &PropertyKey {
+                app_code: &app,
+                section: &section,
+                property: &property,
+                scope: scope.as_str(),
+            },
             client_id.as_ref(),
         )
         .await?
@@ -741,10 +751,12 @@ pub async fn set_config_property(
     let config = state
         .config_repo
         .find_by_key(
-            &app,
-            &section,
-            &property,
-            scope.as_str(),
+            &PropertyKey {
+                app_code: &app,
+                section: &section,
+                property: &property,
+                scope: scope.as_str(),
+            },
             client_id.as_ref(),
         )
         .await?
@@ -782,10 +794,12 @@ pub async fn delete_config_property(
     state
         .config_repo
         .delete_by_key(
-            &app,
-            &section,
-            &property,
-            scope.as_str(),
+            &PropertyKey {
+                app_code: &app,
+                section: &section,
+                property: &property,
+                scope: scope.as_str(),
+            },
             client_id.as_ref(),
         )
         .await?;

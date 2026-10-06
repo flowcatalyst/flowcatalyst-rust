@@ -6,6 +6,7 @@
 //! - `FC_WEBAUTHN_ORIGINS`   (default: `https://{RP_ID}`; comma-separated allow-list)
 
 use base64::Engine;
+use fc_platform_core::shared::id::PrincipalId;
 use std::env;
 use uuid::Uuid;
 use webauthn_rs::fake::{FakePasskeyDistribution, WebauthnFakeCredentialGenerator};
@@ -140,13 +141,13 @@ impl WebauthnService {
     }
 
     /// Derive the stable webauthn user-handle from a principal TSID.
-    pub fn user_handle(principal_id: &str) -> Uuid {
-        Uuid::new_v5(&PRINCIPAL_UUID_NAMESPACE, principal_id.as_bytes())
+    pub fn user_handle(principal_id: &PrincipalId) -> Uuid {
+        Uuid::new_v5(&PRINCIPAL_UUID_NAMESPACE, principal_id.as_str().as_bytes())
     }
 
     pub fn start_registration(
         &self,
-        principal_id: &str,
+        principal_id: &PrincipalId,
         user_name: &str,
         display_name: &str,
         already_registered: &[CredentialID],
@@ -222,15 +223,15 @@ mod tests {
 
     #[test]
     fn user_handle_is_deterministic() {
-        let a = WebauthnService::user_handle("prn_0HZXEQ5Y8JY5Z");
-        let b = WebauthnService::user_handle("prn_0HZXEQ5Y8JY5Z");
+        let a = WebauthnService::user_handle(&PrincipalId::parse("prn_0HZXEQ5Y8JY5Z").unwrap());
+        let b = WebauthnService::user_handle(&PrincipalId::parse("prn_0HZXEQ5Y8JY5Z").unwrap());
         assert_eq!(a, b);
     }
 
     #[test]
     fn user_handle_varies_with_principal() {
-        let a = WebauthnService::user_handle("prn_AAAAAAAAAAAAA");
-        let b = WebauthnService::user_handle("prn_BBBBBBBBBBBBB");
+        let a = WebauthnService::user_handle(&PrincipalId::parse("prn_AAAAAAAAAAAAA").unwrap());
+        let b = WebauthnService::user_handle(&PrincipalId::parse("prn_BBBBBBBBBBBBB").unwrap());
         assert_ne!(a, b);
     }
 

@@ -15,6 +15,8 @@
 //! (`checks::can_write_dispatch_pools`), which the Rust handlers don't
 //! check yet; delete needs anchor + `can_delete_dispatch_pools`, as there.
 
+use fc_platform::shared::id::ClientId;
+use fc_platform::shared::id::DispatchPoolId;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -314,7 +316,7 @@ async fn pool_drawer(cx: &Cx, id: String, editing: Signal<bool>) -> Result<impl 
     } else {
         let pool = crate::deps(cx)
             .dispatch_pool_repo
-            .find_by_id(&id)
+            .find_by_id(&DispatchPoolId::from_wire(id.as_str()))
             .await
             .map_err(platform_error)?
             .ok_or_not_found()?;
@@ -567,7 +569,9 @@ async fn create_pool(cx: &Cx, form: Option<Form<CreateForm>>) -> Result<impl Vie
             ))
         } else if let Err(e) = counts {
             Err(e)
-        } else if let Err(e) = ensure_can_create(auth, client_id.as_deref()) {
+        } else if let Err(e) =
+            ensure_can_create(auth, client_id.as_deref().map(ClientId::from_wire).as_ref())
+        {
             Err(e)
         } else {
             let (rate_limit, concurrency) = counts.unwrap_or_default();
@@ -580,7 +584,7 @@ async fn create_pool(cx: &Cx, form: Option<Form<CreateForm>>) -> Result<impl Vie
                     code: code.to_owned(),
                     name: form.name.clone(),
                     description: Some(form.description.clone()).filter(|d| !d.is_empty()),
-                    client_id,
+                    client_id: client_id.map(ClientId::from_wire),
                     rate_limit: rate_limit.map(|r| r as i32),
                     concurrency: Some(concurrency as i32),
                 },
@@ -594,7 +598,7 @@ async fn create_pool(cx: &Cx, form: Option<Form<CreateForm>>) -> Result<impl Vie
         match outcome {
             Ok(id) => {
                 set_flash(cx, FlashKind::Success, "Dispatch pool created");
-                return Err(see_other(detail_href(&id)).into());
+                return Err(see_other(detail_href(id.as_str())).into());
             }
             Err(e) if e.status_code().is_client_error() => state.error = Some(e.to_string()),
             Err(e) => {
@@ -706,7 +710,7 @@ async fn load_pool(cx: &Cx) -> Result<DispatchPool> {
     let id = path_param::<Id>(cx);
     crate::deps(cx)
         .dispatch_pool_repo
-        .find_by_id(id)
+        .find_by_id(&DispatchPoolId::from_wire(id))
         .await
         .map_err(platform_error)?
         .ok_or_not_found()
@@ -768,7 +772,7 @@ async fn update(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
         )
         .run(
             UpdateDispatchPoolCommand {
-                id: pool.id.to_string(),
+                id: pool.id.clone(),
                 name: Some(form.name),
                 description: Some(form.description).filter(|d| !d.is_empty()),
                 rate_limit: rate_limit.map(|r| r as i32),
@@ -797,7 +801,7 @@ async fn suspend(cx: &Cx) -> Result<SeeOther> {
         SuspendDispatchPoolUseCase::new(deps.dispatch_pool_repo.clone(), deps.unit_of_work.clone())
             .run(
                 SuspendDispatchPoolCommand {
-                    id: pool.id.to_string(),
+                    id: pool.id.clone(),
                 },
                 ExecutionContext::from_auth(auth),
             )
@@ -822,7 +826,7 @@ async fn activate(cx: &Cx) -> Result<SeeOther> {
     )
     .run(
         ActivateDispatchPoolCommand {
-            id: pool.id.to_string(),
+            id: pool.id.clone(),
         },
         ExecutionContext::from_auth(auth),
     )
@@ -845,7 +849,7 @@ async fn delete(cx: &Cx) -> Result<SeeOther> {
         DeleteDispatchPoolUseCase::new(deps.dispatch_pool_repo.clone(), deps.unit_of_work.clone())
             .run(
                 DeleteDispatchPoolCommand {
-                    id: pool.id.to_string(),
+                    id: pool.id.clone(),
                 },
                 ExecutionContext::from_auth(auth),
             )

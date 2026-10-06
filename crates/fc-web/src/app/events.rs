@@ -9,6 +9,7 @@
 //! `ensure_row_visible`), behind the same `can_read_events` check.
 
 use fc_platform::shared::caller_reach::{ensure_row_visible, read_client_filter};
+use fc_platform::shared::id::ClientId;
 use fc_platform::{AuthContext, Event, EventRead, checks};
 use topcoat::{
     Result,
@@ -55,7 +56,7 @@ pub(crate) async fn client_options(cx: &Cx, auth: &AuthContext) -> Result<Vec<(S
         .map_err(platform_error)?;
     Ok(clients
         .into_iter()
-        .filter(|c| auth.is_anchor() || auth.can_access_client(c.id.as_str()))
+        .filter(|c| auth.is_anchor() || auth.can_access_client(&c.id))
         .map(|c| (c.id.into_string(), c.name))
         .collect())
 }
@@ -302,7 +303,7 @@ async fn event_drawer(cx: &Cx, id: String) -> Result<impl View> {
         let event = event.ok_or_not_found()?;
         permit(ensure_row_visible(
             auth,
-            event.client_id.as_deref(),
+            event.client_id.as_deref().map(ClientId::from_wire).as_ref(),
             "event",
         ))?;
         Some((event, read))

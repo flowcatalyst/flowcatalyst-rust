@@ -26,7 +26,7 @@ use tracing::warn;
 
 use super::entity::{email_domain_of, normalize_email, random_token, LoginFlow};
 use super::PortalState;
-use crate::auth::authorization_code::{AuthorizationCode, Pkce};
+use crate::auth::authorization_code::{AuthorizationCode, NewAuthorizationCode, Pkce};
 use crate::auth::oauth_api;
 use crate::auth::oidc_login_api::OidcLoginApiState;
 use fc_platform_core::shared::error::PlatformError;
@@ -484,12 +484,12 @@ pub async fn issue_code(
         scope: flow.scope.clone(),
         nonce: flow.nonce.clone(),
         state: Some(flow.state.clone()),
-        ..AuthorizationCode::new(
-            raw.clone(),
-            flow.oauth_client_id.clone(),
-            subject_id.to_string(),
-            flow.redirect_uri.clone(),
-        )
+        ..AuthorizationCode::new(NewAuthorizationCode {
+            code: raw.clone(),
+            client_id: flow.oauth_client_id.clone(),
+            principal_id: subject_id.to_string(),
+            redirect_uri: flow.redirect_uri.clone(),
+        })
     }
     .with_pkce(pkce);
     portal.auth_codes.insert(&code).await?;

@@ -18,6 +18,7 @@
 //!   back with a flash message (Post/Redirect/Get). Creating is a page
 //!   that re-renders the form with the error on failure.
 
+use fc_platform::shared::id::EventTypeId;
 use std::sync::Arc;
 
 use fc_platform::event_type::access::{ensure_can_create, ensure_modifiable, ensure_visible};
@@ -201,7 +202,7 @@ async fn event_type_list(
         .into_iter()
         .filter(|et| {
             et.client_id
-                .as_deref()
+                .as_ref()
                 .is_none_or(|c| auth.can_access_client(c))
         })
         .collect();
@@ -398,7 +399,7 @@ async fn event_type_drawer(cx: &Cx, id: String, editing: Signal<bool>) -> Result
     } else {
         let et = crate::deps(cx)
             .event_type_repo
-            .find_by_id(&id)
+            .find_by_id(&EventTypeId::from_wire(id.as_str()))
             .await
             .map_err(platform_error)?
             .ok_or_not_found()?;
@@ -735,7 +736,7 @@ async fn create_event_type(cx: &Cx, form: Option<Form<CreateForm>>) -> Result<im
         match outcome {
             Ok(id) => {
                 set_flash(cx, FlashKind::Success, "Event type created");
-                return Err(see_other(detail_href(&id)).into());
+                return Err(see_other(detail_href(id.as_str())).into());
             }
             Err(e) if e.status_code().is_client_error() => state.error = Some(e.to_string()),
             Err(e) => {
@@ -887,7 +888,7 @@ async fn load_for_write(cx: &Cx, auth: &AuthContext) -> Result<EventType> {
     let id = path_param::<Id>(cx);
     crate::deps(cx)
         .event_type_repo
-        .find_by_id(id)
+        .find_by_id(&EventTypeId::from_wire(id))
         .await
         .map_err(platform_error)?
         .ok_or_not_found()
@@ -937,7 +938,7 @@ async fn update(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
         UpdateEventTypeUseCase::new(deps.event_type_repo.clone(), deps.unit_of_work.clone())
             .run(
                 UpdateEventTypeCommand {
-                    event_type_id: et.id.to_string(),
+                    event_type_id: et.id.clone(),
                     name: Some(form.name.trim().to_owned()),
                     description: Some(form.description.trim().to_owned()),
                     client_scoped: None,
@@ -968,7 +969,7 @@ async fn finalise_schema(cx: &Cx, Form(form): Form<VersionForm>) -> Result<SeeOt
         FinaliseSchemaUseCase::new(deps.event_type_repo.clone(), deps.unit_of_work.clone())
             .run(
                 FinaliseSchemaCommand {
-                    event_type_id: et.id.to_string(),
+                    event_type_id: et.id.clone(),
                     version: form.version.clone(),
                 },
                 ExecutionContext::from_auth(auth),
@@ -992,7 +993,7 @@ async fn deprecate_schema(cx: &Cx, Form(form): Form<VersionForm>) -> Result<SeeO
         DeprecateSchemaUseCase::new(deps.event_type_repo.clone(), deps.unit_of_work.clone())
             .run(
                 DeprecateSchemaCommand {
-                    event_type_id: et.id.to_string(),
+                    event_type_id: et.id.clone(),
                     version: form.version.clone(),
                 },
                 ExecutionContext::from_auth(auth),
@@ -1016,7 +1017,7 @@ async fn archive(cx: &Cx) -> Result<SeeOther> {
         ArchiveEventTypeUseCase::new(deps.event_type_repo.clone(), deps.unit_of_work.clone())
             .run(
                 ArchiveEventTypeCommand {
-                    event_type_id: et.id.to_string(),
+                    event_type_id: et.id.clone(),
                 },
                 ExecutionContext::from_auth(auth),
             )
@@ -1038,7 +1039,7 @@ async fn delete(cx: &Cx) -> Result<SeeOther> {
         DeleteEventTypeUseCase::new(deps.event_type_repo.clone(), deps.unit_of_work.clone())
             .run(
                 DeleteEventTypeCommand {
-                    event_type_id: et.id.to_string(),
+                    event_type_id: et.id.clone(),
                 },
                 ExecutionContext::from_auth(auth),
             )

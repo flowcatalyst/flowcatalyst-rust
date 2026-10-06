@@ -328,6 +328,19 @@ pub struct DispatchJobReadFilter<'a> {
     pub offset: i64,
 }
 
+/// The optional filters of [`DispatchJobRepository::find_with_filters`], by
+/// field so the adjacent id and code strings cannot be passed out of order.
+/// The event and client ids stay strings: dispatch jobs carry them as the
+/// external payload sent them.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DispatchJobFilters<'a> {
+    pub event_id: Option<&'a str>,
+    pub correlation_id: Option<&'a str>,
+    pub subscription_id: Option<&'a str>,
+    pub client_id: Option<&'a str>,
+    pub status: Option<&'a str>,
+}
+
 pub struct DispatchJobRepository {
     pool: PgPool,
 }
@@ -499,13 +512,16 @@ impl DispatchJobRepository {
     /// Find dispatch jobs with optional combined filters (AND logic).
     pub async fn find_with_filters(
         &self,
-        event_id: Option<&str>,
-        correlation_id: Option<&str>,
-        subscription_id: Option<&str>,
-        client_id: Option<&str>,
-        status: Option<&str>,
+        filters: &DispatchJobFilters<'_>,
         limit: i64,
     ) -> Result<Vec<DispatchJob>> {
+        let DispatchJobFilters {
+            event_id,
+            correlation_id,
+            subscription_id,
+            client_id,
+            status,
+        } = *filters;
         let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("SELECT * FROM msg_dispatch_jobs");
         let mut has_where = false;
 

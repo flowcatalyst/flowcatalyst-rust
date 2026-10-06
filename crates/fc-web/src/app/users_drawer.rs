@@ -16,6 +16,8 @@
 //! its dialog with the reason, and a new developer secret is shown once in
 //! a dialog (never through a cookie or a URL).
 
+use fc_platform::shared::id::ClientId;
+use fc_platform::shared::id::PrincipalId;
 use std::collections::{HashMap, HashSet};
 
 use fc_platform::developer_credential::DEVELOPER_ROLE;
@@ -189,6 +191,7 @@ pub(crate) async fn user_drawer(
 /// `getClientAccess` for an anchor, the role and client lists), through the
 /// handler bodies, concurrently.
 async fn load(cx: &Cx, auth: &AuthContext, id: &str) -> Result<Loaded> {
+    let id = &PrincipalId::from_wire(id);
     let principals = &crate::deps(cx).users.principals;
     let can_read_roles = checks::can_read_roles(auth).is_ok();
     let anchor = auth.is_anchor();
@@ -1227,7 +1230,7 @@ async fn save_user(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
         let updated = admin::update(
             principals(cx),
             auth,
-            &id,
+            &PrincipalId::from_wire(id.as_str()),
             UpdatePrincipalRequest {
                 name: Some(form.name.clone()),
                 first_name: None,
@@ -1297,7 +1300,13 @@ async fn save_roles(cx: &Cx, Form(form): Form<HashMap<String, String>>) -> Resul
     let auth = auth(cx)?;
     permit(checks::can_assign_principal_roles(auth))?;
     let id = target(cx);
-    let outcome = admin::set_roles(principals(cx), auth, &id, ticked(&form, "role")).await;
+    let outcome = admin::set_roles(
+        principals(cx),
+        auth,
+        &PrincipalId::from_wire(id.as_str()),
+        ticked(&form, "role"),
+    )
+    .await;
     let message = match &outcome {
         Ok(r) => match (r.added.len(), r.removed.len()) {
             (0, 0) => "Roles updated".to_owned(),
@@ -1325,7 +1334,13 @@ async fn grant_client(cx: &Cx, Form(form): Form<GrantForm>) -> Result<SeeOther> 
     let outcome = if form.client_id.trim().is_empty() {
         Err(PlatformError::validation("Select a client"))
     } else {
-        admin::grant_client_access(principals(cx), auth, &id, form.client_id).await
+        admin::grant_client_access(
+            principals(cx),
+            auth,
+            &PrincipalId::from_wire(id.as_str()),
+            form.client_id,
+        )
+        .await
     };
     let base = detail_href(&id);
     finish(cx, outcome, "Client access granted", base.clone(), base)
@@ -1338,7 +1353,13 @@ async fn revoke_client(cx: &Cx) -> Result<SeeOther> {
     permit(checks::can_revoke_client_access(auth))?;
     let id = target(cx);
     let client = path_param::<Client>(cx).to_owned();
-    let outcome = admin::revoke_client_access(principals(cx), auth, &id, &client).await;
+    let outcome = admin::revoke_client_access(
+        principals(cx),
+        auth,
+        &PrincipalId::from_wire(id.as_str()),
+        &ClientId::from_wire(client.as_str()),
+    )
+    .await;
     let base = detail_href(&id);
     finish(cx, outcome, "Client access revoked", base.clone(), base)
 }
@@ -1353,7 +1374,7 @@ async fn save_applications(cx: &Cx, Form(form): Form<HashMap<String, String>>) -
     let outcome = admin::set_application_access(
         principals(cx),
         auth,
-        &id,
+        &PrincipalId::from_wire(id.as_str()),
         SetApplicationAccessRequest {
             application_ids: ticked(&form, "app"),
             all_applications: None,
@@ -1393,11 +1414,13 @@ async fn toggle_all_applications(cx: &Cx, Form(form): Form<AllAppsForm>) -> Resu
     let id = target(cx);
     let on = form.all.is_some();
     let outcome = async {
-        let current = admin::application_access(principals(cx), auth, &id).await?;
+        let current =
+            admin::application_access(principals(cx), auth, &PrincipalId::from_wire(id.as_str()))
+                .await?;
         admin::set_application_access(
             principals(cx),
             auth,
-            &id,
+            &PrincipalId::from_wire(id.as_str()),
             SetApplicationAccessRequest {
                 application_ids: current
                     .applications
@@ -1425,7 +1448,7 @@ async fn activate_user(cx: &Cx) -> Result<SeeOther> {
     let auth = auth(cx)?;
     permit(checks::can_write_principals(auth))?;
     let id = target(cx);
-    let outcome = admin::activate(principals(cx), auth, &id).await;
+    let outcome = admin::activate(principals(cx), auth, &PrincipalId::from_wire(id.as_str())).await;
     let base = detail_href(&id);
     finish(cx, outcome, "User activated", base.clone(), base)
 }
@@ -1436,7 +1459,8 @@ async fn deactivate_user(cx: &Cx) -> Result<SeeOther> {
     let auth = auth(cx)?;
     permit(checks::can_write_principals(auth))?;
     let id = target(cx);
-    let outcome = admin::deactivate(principals(cx), auth, &id).await;
+    let outcome =
+        admin::deactivate(principals(cx), auth, &PrincipalId::from_wire(id.as_str())).await;
     let base = detail_href(&id);
     finish(cx, outcome, "User deactivated", base.clone(), base)
 }
@@ -1448,7 +1472,13 @@ async fn send_password_reset(cx: &Cx) -> Result<SeeOther> {
     let auth = auth(cx)?;
     permit(checks::can_write_principals(auth))?;
     let id = target(cx);
-    let outcome = admin::send_password_reset(principals(cx), auth, &id, false).await;
+    let outcome = admin::send_password_reset(
+        principals(cx),
+        auth,
+        &PrincipalId::from_wire(id.as_str()),
+        false,
+    )
+    .await;
     let base = detail_href(&id);
     finish(cx, outcome, "Password reset email sent", base.clone(), base)
 }
@@ -1478,7 +1508,7 @@ async fn reset_user_password(cx: &Cx, Form(form): Form<ResetPasswordForm>) -> Re
         admin::reset_password(
             principals(cx),
             auth,
-            &id,
+            &PrincipalId::from_wire(id.as_str()),
             ResetPasswordRequest {
                 new_password: form.new_password,
                 enforce_password_complexity: None,
@@ -1563,7 +1593,7 @@ async fn delete_user(cx: &Cx) -> Result<SeeOther> {
     let auth = auth(cx)?;
     permit(checks::can_delete_principals(auth))?;
     let id = target(cx);
-    let outcome = admin::delete(principals(cx), auth, &id).await;
+    let outcome = admin::delete(principals(cx), auth, &PrincipalId::from_wire(id.as_str())).await;
     finish(
         cx,
         outcome,

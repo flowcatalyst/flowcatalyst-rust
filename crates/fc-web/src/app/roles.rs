@@ -11,6 +11,7 @@
 //! anchor *and* the role permission (`can_administer_roles`, owner ruling
 //! 25) plus the permission ceiling (owner ruling 14).
 
+use fc_platform::shared::id::RoleId;
 use std::sync::Arc;
 
 use fc_platform::permissions;
@@ -148,7 +149,7 @@ async fn find_role(cx: &Cx, name_or_id: &str) -> Result<Option<AuthRole>> {
     if name_or_id.contains(':') {
         repo.find_by_name(name_or_id).await
     } else {
-        repo.find_by_id(name_or_id).await
+        repo.find_by_id(&RoleId::from_wire(name_or_id)).await
     }
     .map_err(platform_error)
 }

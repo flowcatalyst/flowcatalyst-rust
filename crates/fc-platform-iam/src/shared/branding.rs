@@ -15,7 +15,7 @@ use base64::Engine;
 use serde::Deserialize;
 
 use crate::mfa::notify::PlatformName;
-use crate::platform_config::repository::PlatformConfigRepository;
+use crate::platform_config::repository::{PlatformConfigRepository, PropertyKey};
 use base64::engine::general_purpose;
 
 /// Go `DefaultPrimaryColor` (the SPA's `loginTheme.ts` default).
@@ -111,7 +111,15 @@ impl Theme {
             return theme;
         };
         let stored = match configs
-            .find_by_key("platform", "login", "theme", "GLOBAL", None)
+            .find_by_key(
+                &PropertyKey {
+                    app_code: "platform",
+                    section: "login",
+                    property: "theme",
+                    scope: "GLOBAL",
+                },
+                None,
+            )
             .await
         {
             Ok(Some(c)) if !c.value.trim().is_empty() => c.value,

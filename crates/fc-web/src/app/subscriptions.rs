@@ -14,6 +14,10 @@
 //! - Client identifier, pool code, source and spec versions come from the
 //!   stored subscription; the API response blanks them.
 
+use fc_platform::shared::id::ClientId;
+use fc_platform::shared::id::ConnectionId;
+use fc_platform::shared::id::DispatchPoolId;
+use fc_platform::shared::id::SubscriptionId;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -101,15 +105,15 @@ async fn local_date(at: DateTime<Utc>) -> Result<impl View> {
 /// carry them. Two batch lookups, whatever the number of subscriptions.
 async fn enrich(cx: &Cx, subs: &mut [Subscription]) -> Result<()> {
     let deps = crate::deps(cx);
-    let pool_ids: Vec<String> = subs
+    let pool_ids: Vec<DispatchPoolId> = subs
         .iter()
         .filter(|s| s.dispatch_pool_code.is_none())
         .filter_map(|s| s.dispatch_pool_id.clone())
         .collect();
-    let client_ids: Vec<String> = subs
+    let client_ids: Vec<ClientId> = subs
         .iter()
         .filter(|s| s.client_identifier.is_none())
-        .filter_map(|s| s.client_id.as_ref().map(|c| c.to_string()))
+        .filter_map(|s| s.client_id.clone())
         .collect();
     let (pools, clients) = tokio::try_join!(
         async {
@@ -128,10 +132,8 @@ async fn enrich(cx: &Cx, subs: &mut [Subscription]) -> Result<()> {
         },
     )
     .map_err(platform_error)?;
-    let pools: std::collections::HashMap<String, String> = pools
-        .into_iter()
-        .map(|p| (p.id.into_string(), p.code))
-        .collect();
+    let pools: std::collections::HashMap<DispatchPoolId, String> =
+        pools.into_iter().map(|p| (p.id, p.code)).collect();
     let clients: std::collections::HashMap<String, String> = clients
         .into_iter()
         .map(|c| (c.id.into_string(), c.identifier))
@@ -245,11 +247,11 @@ async fn subscription_list(
         .filter(|s| {
             needle.is_empty()
                 || [
-                    Some(&s.code),
-                    Some(&s.name),
-                    s.connection_id.as_ref(),
-                    s.application_code.as_ref(),
-                    s.client_identifier.as_ref(),
+                    Some(s.code.as_str()),
+                    Some(s.name.as_str()),
+                    s.connection_id.as_ref().map(ConnectionId::as_str),
+                    s.application_code.as_deref(),
+                    s.client_identifier.as_deref(),
                 ]
                 .into_iter()
                 .flatten()
@@ -397,7 +399,7 @@ async fn subscription_drawer(cx: &Cx, id: String, editing: Signal<bool>) -> Resu
     } else {
         let sub = crate::deps(cx)
             .subscription_repo
-            .find_by_id(&id)
+            .find_by_id(&SubscriptionId::from_wire(id.as_str()))
             .await
             .map_err(platform_error)?
             .ok_or_not_found()?;
@@ -466,7 +468,7 @@ async fn drawer_body(
                         detail_value(label: "Client Scope", value: Some(scope))
                         detail_value(label: "Source", value: Some(sub.source.as_str().to_owned()))
                         detail_field(label: "Endpoint", span: true, <code class="break-all text-[13px]">(&sub.endpoint)</code>)
-                        if let Some(conn) = sub.connection_id.clone().filter(|c| !c.is_empty()) {
+                        if let Some(conn) = sub.connection_id.as_ref().map(ConnectionId::to_string).filter(|c| !c.is_empty()) {
                             detail_field(label: "Connection", span: true, <code>(conn)</code>)
                         }
                         detail_field(label: "Queue", <code>(sub.queue.clone().unwrap_or_default())</code>)
@@ -492,7 +494,7 @@ async fn drawer_body(
                                 <input id="sub-endpoint" name="endpoint" type="url" class="fc-input" value=(&sub.endpoint) required="">
                             )
                             form_field(label: "Connection ID", for_id: "sub-connection",
-                                <input id="sub-connection" name="connection_id" class="fc-input" value=(sub.connection_id.clone().unwrap_or_default())>
+                                <input id="sub-connection" name="connection_id" class="fc-input" value=(sub.connection_id.as_ref().map(ConnectionId::to_string).unwrap_or_default())>
                             )
                             form_field(label: "Timeout (seconds)", for_id: "sub-timeout",
                                 <input id="sub-timeout" name="timeout_seconds" type="number" min="1" class="fc-input" value=(sub.timeout_seconds.to_string())>
@@ -733,7 +735,8 @@ async fn create_subscription(
             Err(PlatformError::validation(
                 "Timeout must be at least 1 second",
             ))
-        } else if let Err(e) = ensure_can_create(auth, client_id) {
+        } else if let Err(e) = ensure_can_create(auth, client_id.map(ClientId::from_wire).as_ref())
+        {
             Err(e)
         } else {
             CreateSubscriptionUseCase::new(
@@ -747,10 +750,11 @@ async fn create_subscription(
                     code: code.to_owned(),
                     name: form.name.trim().to_owned(),
                     description: Some(form.description.trim().to_owned()).filter(|d| !d.is_empty()),
-                    client_id: client_id.map(str::to_owned),
+                    client_id: client_id.map(ClientId::from_wire),
                     endpoint: endpoint.to_owned(),
-                    connection_id: Some(form.connection_id.trim().to_owned())
-                        .filter(|c| !c.is_empty()),
+                    connection_id: Some(form.connection_id.trim())
+                        .filter(|c| !c.is_empty())
+                        .map(ConnectionId::from_wire),
                     event_types: form
                         .event_types
                         .iter()
@@ -761,7 +765,7 @@ async fn create_subscription(
                             spec_version: None,
                         })
                         .collect(),
-                    dispatch_pool_id: Some(form.dispatch_pool_id.trim().to_owned()),
+                    dispatch_pool_id: Some(DispatchPoolId::from_wire(form.dispatch_pool_id.trim())),
                     service_account_id: None,
                     mode: Some(parse_dispatch_mode(Some(form.mode.as_str()))),
                     max_retries: None,
@@ -782,7 +786,7 @@ async fn create_subscription(
         match outcome {
             Ok(id) => {
                 set_flash(cx, FlashKind::Success, "Subscription created");
-                return Err(see_other(detail_href(&id)).into());
+                return Err(see_other(detail_href(id.as_str())).into());
             }
             Err(e) if e.status_code().is_client_error() => state.error = Some(e.to_string()),
             Err(e) => {
@@ -806,7 +810,7 @@ async fn create_subscription(
         .into_iter()
         .filter(|et| {
             et.client_id
-                .as_deref()
+                .as_ref()
                 .is_none_or(|c| auth.can_access_client(c))
         })
         .filter_map(|et| {
@@ -847,7 +851,7 @@ async fn create_subscription(
         .collect();
     state.clients = clients
         .into_iter()
-        .filter(|c| auth.can_access_client(c.id.as_str()))
+        .filter(|c| auth.can_access_client(&c.id))
         .map(|c| (c.id.into_string(), format!("{} ({})", c.name, c.identifier)))
         .collect();
     Ok(view! { subscription_list(open_id: String::new(), create: Some(state)) })
@@ -997,7 +1001,7 @@ async fn load_for_write(cx: &Cx, check: fc_platform::Result<()>) -> Result<Subsc
     let id = path_param::<Id>(cx);
     crate::deps(cx)
         .subscription_repo
-        .find_by_id(id)
+        .find_by_id(&SubscriptionId::from_wire(id))
         .await
         .map_err(platform_error)?
         .ok_or_not_found()
@@ -1061,11 +1065,11 @@ async fn update(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
     )
     .run(
         UpdateSubscriptionCommand {
-            subscription_id: sub.id.to_string(),
+            subscription_id: sub.id.clone(),
             name: Some(form.name.trim().to_owned()),
             description: Some(form.description.trim().to_owned()).filter(|d| !d.is_empty()),
             endpoint: Some(form.endpoint.trim().to_owned()),
-            connection_id: Some(form.connection_id.trim().to_owned()),
+            connection_id: Some(ConnectionId::from_wire(form.connection_id.trim())),
             event_types: None,
             dispatch_pool_id: None,
             service_account_id: None,
@@ -1101,7 +1105,7 @@ async fn pause(cx: &Cx) -> Result<SeeOther> {
         PauseSubscriptionUseCase::new(deps.subscription_repo.clone(), deps.unit_of_work.clone())
             .run(
                 PauseSubscriptionCommand {
-                    subscription_id: sub.id.to_string(),
+                    subscription_id: sub.id.clone(),
                 },
                 ExecutionContext::from_auth(auth),
             )
@@ -1123,7 +1127,7 @@ async fn resume(cx: &Cx) -> Result<SeeOther> {
         ResumeSubscriptionUseCase::new(deps.subscription_repo.clone(), deps.unit_of_work.clone())
             .run(
                 ResumeSubscriptionCommand {
-                    subscription_id: sub.id.to_string(),
+                    subscription_id: sub.id.clone(),
                 },
                 ExecutionContext::from_auth(auth),
             )
@@ -1145,7 +1149,7 @@ async fn delete(cx: &Cx) -> Result<SeeOther> {
         DeleteSubscriptionUseCase::new(deps.subscription_repo.clone(), deps.unit_of_work.clone())
             .run(
                 DeleteSubscriptionCommand {
-                    subscription_id: sub.id.to_string(),
+                    subscription_id: sub.id.clone(),
                 },
                 ExecutionContext::from_auth(auth),
             )
