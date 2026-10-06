@@ -146,7 +146,7 @@ impl<U: UnitOfWork> UseCase for PromoteVersionUseCase<U> {
             .ok_or_else(|| {
                 resource_not_found(
                     "FunctionVersion",
-                    &format!("{}#{}", function.address.render(), command.version),
+                    format!("{}#{}", function.address.render(), command.version),
                 )
             })?;
 

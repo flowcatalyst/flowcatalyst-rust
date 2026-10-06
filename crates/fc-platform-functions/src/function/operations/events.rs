@@ -18,6 +18,9 @@
 use crate::function::OwnerClientId;
 use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::FunctionDomainId;
+use fc_platform_core::shared::id::FunctionId;
+use fc_platform_core::shared::id::FunctionVersionId;
 use serde::Serialize;
 
 use crate::function::entity::{
@@ -56,7 +59,7 @@ fn metadata(ctx: &ExecutionContext, event_type: &str, aggregate: &str, id: &str)
 }
 
 fn function_metadata(ctx: &ExecutionContext, event_type: &str, f: &Function) -> EventMetadata {
-    metadata(ctx, event_type, "function", &f.id)
+    metadata(ctx, event_type, "function", f.id.as_str())
 }
 
 /// `{functionId, address, applicationId, clientId?, runtime}`; `runtime` is
@@ -66,7 +69,7 @@ fn function_metadata(ctx: &ExecutionContext, event_type: &str, f: &Function) -> 
 pub struct FunctionCreated {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub function_id: String,
+    pub function_id: FunctionId,
     pub address: String,
     pub application_id: ApplicationId,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -94,7 +97,7 @@ impl FunctionCreated {
 pub struct FunctionUpdated {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub function_id: String,
+    pub function_id: FunctionId,
     pub address: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -120,7 +123,7 @@ impl FunctionUpdated {
 pub struct FunctionDeleted {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub function_id: String,
+    pub function_id: FunctionId,
     pub address: String,
 }
 impl_domain_event!(FunctionDeleted);
@@ -142,13 +145,13 @@ impl FunctionDeleted {
 pub struct AliasChanged {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub function_id: String,
+    pub function_id: FunctionId,
     pub address: String,
     pub alias: String,
-    pub version_id: String,
+    pub version_id: FunctionVersionId,
     pub version: i32,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub previous_version_id: Option<String>,
+    pub previous_version_id: Option<FunctionVersionId>,
 }
 impl_domain_event!(AliasChanged);
 
@@ -158,7 +161,7 @@ impl AliasChanged {
         f: &Function,
         alias: &str,
         v: &FunctionVersion,
-        previous_version_id: Option<String>,
+        previous_version_id: Option<FunctionVersionId>,
     ) -> Self {
         Self {
             metadata: function_metadata(ctx, ALIAS_CHANGED, f),
@@ -179,10 +182,10 @@ impl AliasChanged {
 pub struct AliasRemoved {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub function_id: String,
+    pub function_id: FunctionId,
     pub address: String,
     pub alias: String,
-    pub version_id: String,
+    pub version_id: FunctionVersionId,
     pub version: i32,
 }
 impl_domain_event!(AliasRemoved);
@@ -207,9 +210,9 @@ impl AliasRemoved {
 pub struct VersionPublished {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub function_id: String,
+    pub function_id: FunctionId,
     pub address: String,
-    pub version_id: String,
+    pub version_id: FunctionVersionId,
     pub version: i32,
     pub digest: String,
     pub pool: String,
@@ -244,9 +247,9 @@ impl VersionPublished {
 pub struct VersionReady {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub function_id: String,
+    pub function_id: FunctionId,
     pub address: String,
-    pub version_id: String,
+    pub version_id: FunctionVersionId,
     pub version: i32,
     pub host_id: String,
 }
@@ -271,9 +274,9 @@ impl VersionReady {
 pub struct VersionRetired {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub function_id: String,
+    pub function_id: FunctionId,
     pub address: String,
-    pub version_id: String,
+    pub version_id: FunctionVersionId,
     pub version: i32,
 }
 impl_domain_event!(VersionRetired);
@@ -297,7 +300,7 @@ impl VersionRetired {
 pub struct ConfigUpdated {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub function_id: String,
+    pub function_id: FunctionId,
     pub address: String,
     pub keys: Vec<String>,
 }
@@ -320,7 +323,7 @@ impl ConfigUpdated {
 pub struct SecretSet {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub function_id: String,
+    pub function_id: FunctionId,
     pub address: String,
     pub key: String,
 }
@@ -343,7 +346,7 @@ impl SecretSet {
 pub struct SecretDeleted {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub function_id: String,
+    pub function_id: FunctionId,
     pub address: String,
     pub key: String,
 }
@@ -388,7 +391,7 @@ impl PolicyUpdated {
 pub struct DomainClaimed {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub domain_id: String,
+    pub domain_id: FunctionDomainId,
     pub hostname: String,
     pub owner: String,
 }
@@ -397,7 +400,7 @@ impl_domain_event!(DomainClaimed);
 impl DomainClaimed {
     pub fn new(ctx: &ExecutionContext, d: &FunctionDomain) -> Self {
         Self {
-            metadata: metadata(ctx, DOMAIN_CLAIMED, "function-domain", &d.id),
+            metadata: metadata(ctx, DOMAIN_CLAIMED, "function-domain", d.id.as_str()),
             domain_id: d.id.clone(),
             hostname: d.hostname.value().to_string(),
             owner: d.owner.to_wire().to_string(),
@@ -411,7 +414,7 @@ impl DomainClaimed {
 pub struct DomainReleased {
     #[serde(skip)]
     pub metadata: EventMetadata,
-    pub domain_id: String,
+    pub domain_id: FunctionDomainId,
     pub hostname: String,
     pub owner: String,
 }
@@ -420,7 +423,7 @@ impl_domain_event!(DomainReleased);
 impl DomainReleased {
     pub fn new(ctx: &ExecutionContext, d: &FunctionDomain) -> Self {
         Self {
-            metadata: metadata(ctx, DOMAIN_RELEASED, "function-domain", &d.id),
+            metadata: metadata(ctx, DOMAIN_RELEASED, "function-domain", d.id.as_str()),
             domain_id: d.id.clone(),
             hostname: d.hostname.value().to_string(),
             owner: d.owner.to_wire().to_string(),
@@ -449,7 +452,7 @@ mod tests {
             Runtime::Wasm,
             None,
         );
-        f.id = "fnc_1".into();
+        f.id = FunctionId::parse("fnc_1").unwrap();
         f
     }
 
@@ -567,7 +570,7 @@ mod tests {
             Hostname::parse("acme.com").unwrap(),
             Utc::now(),
         );
-        d.id = "fnd_1".into();
+        d.id = FunctionDomainId::parse("fnd_1").unwrap();
         let claimed = DomainClaimed::new(&ctx(), &d);
         assert_envelope(
             claimed.metadata(),

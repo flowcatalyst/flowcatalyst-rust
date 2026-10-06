@@ -15,6 +15,7 @@
 //! No reach check: the caller is a host, gated on
 //! `platform:function:host:control` by the control route, as in Java.
 
+use fc_platform_core::shared::id::FunctionVersionId;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -38,7 +39,7 @@ pub const VERSION_NOT_PUBLISHED: &str = "VERSION_NOT_PUBLISHED";
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MarkVersionReadyCommand {
-    pub version_id: String,
+    pub version_id: FunctionVersionId,
     /// The reporting host, carried onto the event.
     pub host_id: String,
 }
@@ -93,7 +94,7 @@ impl<U: UnitOfWork> UseCase for MarkVersionReadyUseCase<U> {
             .unit_of_work
             .read_locked(&*self.versions, &VersionById(command.version_id.clone()))
             .await?
-            .ok_or_else(|| resource_not_found("FunctionVersion", &command.version_id))?;
+            .ok_or_else(|| resource_not_found("FunctionVersion", command.version_id.as_str()))?;
         if v.state != VersionState::Published {
             return Err(UseCaseError::business_rule(
                 VERSION_NOT_PUBLISHED,
@@ -108,7 +109,7 @@ impl<U: UnitOfWork> UseCase for MarkVersionReadyUseCase<U> {
             .functions
             .find_by_id(&v.function_id)
             .await?
-            .ok_or_else(|| resource_not_found("Function", &v.function_id))?;
+            .ok_or_else(|| resource_not_found("Function", v.function_id.as_str()))?;
         v.mark_ready(Utc::now());
         let event = VersionReady::new(&ctx, &f, &v, &command.host_id);
         let (version, event) = (v, event);

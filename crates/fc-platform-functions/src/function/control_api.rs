@@ -30,6 +30,8 @@
 //! What a heartbeat causes (a version becoming `READY`) is a use case,
 //! [`MarkVersionReadyUseCase`], with its `version:ready` event and audit row.
 
+use fc_platform_core::shared::id::FunctionId;
+use fc_platform_core::shared::id::FunctionVersionId;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -314,7 +316,7 @@ async fn mark_ready(
     let addresses: Vec<FunctionAddress> = ok.iter().map(|lv| lv.address.clone()).collect();
     let functions = state.functions.find_by_addresses(&addresses).await?;
     let function_of = |address: &FunctionAddress| functions.iter().find(|f| &f.address == address);
-    let pairs: Vec<(String, i32)> = ok
+    let pairs: Vec<(FunctionId, i32)> = ok
         .iter()
         .filter_map(|lv| function_of(&lv.address).map(|f| (f.id.clone(), lv.version)))
         .collect();
@@ -624,6 +626,7 @@ pub async fn download_artifact(
     auth: Authenticated,
     Path(version_id): Path<String>,
 ) -> Result<Response, PlatformError> {
+    let version_id = FunctionVersionId::from_wire(version_id);
     gate(&auth.0)?;
     let store = state
         .artifacts

@@ -12,6 +12,7 @@
 //! metadata; [`FunctionSettingsRepository::open_secrets_each`] is for the
 //! host control plane's desired state (P6).
 
+use fc_platform_core::shared::id::FunctionId;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::sync::Arc;
@@ -64,7 +65,7 @@ impl FunctionSettingsRepository {
     // ── config ─────────────────────────────────────────────────────────────
 
     /// Every `(key, value)` of a function's config, in key order.
-    pub async fn config_map(&self, function_id: &str) -> Result<BTreeMap<String, String>> {
+    pub async fn config_map(&self, function_id: &FunctionId) -> Result<BTreeMap<String, String>> {
         let rows: Vec<(String, String)> =
             sqlx::query_as("SELECT key, value FROM fnr_config WHERE function_id = $1")
                 .bind(function_id)
@@ -77,13 +78,13 @@ impl FunctionSettingsRepository {
     /// function (absent for a function with none).
     pub async fn config_maps(
         &self,
-        function_ids: &[String],
-    ) -> Result<HashMap<String, BTreeMap<String, String>>> {
-        let mut out: HashMap<String, BTreeMap<String, String>> = HashMap::new();
+        function_ids: &[FunctionId],
+    ) -> Result<HashMap<FunctionId, BTreeMap<String, String>>> {
+        let mut out: HashMap<FunctionId, BTreeMap<String, String>> = HashMap::new();
         if function_ids.is_empty() {
             return Ok(out);
         }
-        let rows: Vec<(String, String, String)> = sqlx::query_as(
+        let rows: Vec<(FunctionId, String, String)> = sqlx::query_as(
             "SELECT function_id, key, value FROM fnr_config WHERE function_id = ANY($1)",
         )
         .bind(function_ids)
@@ -98,7 +99,7 @@ impl FunctionSettingsRepository {
     // ── secrets ────────────────────────────────────────────────────────────
 
     /// Every secret's metadata, in key order. Never a value.
-    pub async fn list_secrets(&self, function_id: &str) -> Result<Vec<SecretInfo>> {
+    pub async fn list_secrets(&self, function_id: &FunctionId) -> Result<Vec<SecretInfo>> {
         let rows: Vec<(String, DateTime<Utc>, String)> = sqlx::query_as(
             "SELECT key, updated_at, updated_by FROM fnr_secrets WHERE function_id = $1 \
              ORDER BY key ASC",
@@ -117,7 +118,7 @@ impl FunctionSettingsRepository {
     }
 
     /// Whether the function has a secret named `key`.
-    pub async fn has_secret(&self, function_id: &str, key: &str) -> Result<bool> {
+    pub async fn has_secret(&self, function_id: &FunctionId, key: &str) -> Result<bool> {
         let (exists,): (bool,) = sqlx::query_as(
             "SELECT EXISTS (SELECT 1 FROM fnr_secrets WHERE function_id = $1 AND key = $2)",
         )
@@ -133,7 +134,7 @@ impl FunctionSettingsRepository {
     /// reference, is absent; with no app key, nothing is read.
     pub async fn decrypt_secrets(
         &self,
-        function_id: &str,
+        function_id: &FunctionId,
         keys: &[String],
     ) -> Result<BTreeMap<String, String>> {
         let mut opened = self
@@ -158,13 +159,13 @@ impl FunctionSettingsRepository {
     /// never a 500); with no app key, nothing is read.
     pub async fn open_secrets_each(
         &self,
-        requests: &[(&str, Vec<String>)],
+        requests: &[(&FunctionId, Vec<String>)],
     ) -> Result<Vec<BTreeMap<String, OpenedSecret>>> {
         let empty = || requests.iter().map(|_| BTreeMap::new()).collect();
         let Some(encryption) = &self.encryption else {
             return Ok(empty());
         };
-        let function_ids: Vec<&str> = requests
+        let function_ids: Vec<&FunctionId> = requests
             .iter()
             .filter(|(_, keys)| !keys.is_empty())
             .map(|(f, _)| *f)
@@ -172,13 +173,13 @@ impl FunctionSettingsRepository {
         if function_ids.is_empty() {
             return Ok(empty());
         }
-        let rows: Vec<(String, String, String)> = sqlx::query_as(
+        let rows: Vec<(FunctionId, String, String)> = sqlx::query_as(
             "SELECT function_id, key, value_ref FROM fnr_secrets WHERE function_id = ANY($1)",
         )
         .bind(&function_ids)
         .fetch_all(&self.pool)
         .await?;
-        let mut refs: HashMap<(String, String), String> = HashMap::new();
+        let mut refs: HashMap<(FunctionId, String), String> = HashMap::new();
         for (function_id, key, value_ref) in rows {
             refs.insert((function_id, key), value_ref);
         }
@@ -187,7 +188,7 @@ impl FunctionSettingsRepository {
             .map(|(function_id, keys)| {
                 keys.iter()
                     .filter_map(|key| {
-                        let value_ref = refs.get(&(function_id.to_string(), key.clone()))?;
+                        let value_ref = refs.get(&((*function_id).clone(), key.clone()))?;
                         if let Ok(OpaqueSecret::Reference(reference)) =
                             classify_opaque_secret(value_ref)
                         {
@@ -196,7 +197,7 @@ impl FunctionSettingsRepository {
                         match encryption.decrypt_ref(value_ref) {
                             Ok(plaintext) => Some((key.clone(), OpenedSecret::Value(plaintext))),
                             Err(e) => {
-                                tracing::warn!(function_id, key = %key, error = %e, "function secret did not decrypt");
+                                tracing::warn!(%function_id, key = %key, error = %e, "function secret did not decrypt");
                                 None
                             }
                         }

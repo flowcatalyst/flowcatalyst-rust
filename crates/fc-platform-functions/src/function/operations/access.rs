@@ -19,6 +19,7 @@ use fc_platform_core::shared::authorization_service::ApplicationScope;
 use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::usecase::UseCaseError;
+use std::fmt::Display;
 
 use fc_platform_core::shared::authorization_service::Authority;
 use fc_platform_core::shared::error;
@@ -143,7 +144,7 @@ impl FunctionReach for Caller {
 /// `<Resource> not found: <id>`, with the code in UPPER_SNAKE
 /// (`FUNCTION_VERSION_NOT_FOUND`; owner decision 5). Java appends
 /// `_NOT_FOUND` to the name as given.
-pub fn resource_not_found(resource: &str, id: &str) -> UseCaseError {
+pub fn resource_not_found(resource: &str, id: impl Display) -> UseCaseError {
     UseCaseError::not_found(
         error::not_found_code(resource),
         format!("{resource} not found: {id}"),
@@ -158,7 +159,7 @@ pub async fn function_by_address(
 ) -> Result<Function, UseCaseError> {
     match functions.find_by_address(address).await? {
         Some(f) if caller.can_reach(&f) => Ok(f),
-        _ => Err(resource_not_found("Function", &address.render())),
+        _ => Err(resource_not_found("Function", address.render())),
     }
 }
 

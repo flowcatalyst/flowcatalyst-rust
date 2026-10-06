@@ -4,6 +4,8 @@
 
 use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::FunctionId;
+use fc_platform_core::shared::id::FunctionVersionId;
 use fc_platform_core::shared::id::OptionIdExt;
 use std::collections::HashMap;
 
@@ -18,7 +20,7 @@ use fc_platform_core::usecase::{DbTx, Persist};
 
 #[derive(sqlx::FromRow)]
 struct FunctionRow {
-    id: String,
+    id: FunctionId,
     application_id: ApplicationId,
     application_code: String,
     service_name: String,
@@ -33,9 +35,9 @@ struct FunctionRow {
 
 #[derive(sqlx::FromRow)]
 struct AliasRow {
-    function_id: String,
+    function_id: FunctionId,
     alias: String,
-    version_id: String,
+    version_id: FunctionVersionId,
     updated_by: String,
     updated_at: DateTime<Utc>,
 }
@@ -80,7 +82,7 @@ impl FunctionRepository {
         Self { pool: pool.clone() }
     }
 
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<Function>> {
+    pub async fn find_by_id(&self, id: &FunctionId) -> Result<Option<Function>> {
         let row = sqlx::query_as::<_, FunctionRow>(&format!(
             "SELECT {COLUMNS} FROM fnr_functions WHERE id = $1"
         ))
@@ -105,7 +107,7 @@ impl FunctionRepository {
 
     /// Every function named by `ids`, in no particular order; an id with no
     /// row is simply absent.
-    pub async fn find_by_ids(&self, ids: &[String]) -> Result<Vec<Function>> {
+    pub async fn find_by_ids(&self, ids: &[FunctionId]) -> Result<Vec<Function>> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -194,7 +196,7 @@ impl FunctionRepository {
         if rows.is_empty() {
             return Ok(Vec::new());
         }
-        let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+        let ids: Vec<&FunctionId> = rows.iter().map(|r| &r.id).collect();
         let alias_rows = sqlx::query_as::<_, AliasRow>(
             "SELECT function_id, alias, version_id, updated_by, updated_at FROM fnr_aliases \
              WHERE function_id = ANY($1) ORDER BY function_id ASC, alias ASC",
@@ -202,7 +204,7 @@ impl FunctionRepository {
         .bind(&ids)
         .fetch_all(&self.pool)
         .await?;
-        let mut aliases: HashMap<String, Vec<FunctionAlias>> = HashMap::new();
+        let mut aliases: HashMap<FunctionId, Vec<FunctionAlias>> = HashMap::new();
         for a in alias_rows {
             aliases
                 .entry(a.function_id)
@@ -289,7 +291,7 @@ fn to_entity(row: FunctionRow, aliases: Vec<FunctionAlias>) -> Result<Function> 
                 "fnr_functions",
                 "application_code/service_name/name",
                 &format!("{}.{}.{}", row.application_code, row.service_name, row.name),
-                &row.id,
+                row.id.as_str(),
             )
         })?;
     let owner = FunctionOwner::of_client_id(row.client_id.as_id_str()).map_err(|_| {
@@ -297,11 +299,11 @@ fn to_entity(row: FunctionRow, aliases: Vec<FunctionAlias>) -> Result<Function> 
             "fnr_functions",
             "client_id",
             row.client_id.as_id_str().unwrap_or(""),
-            &row.id,
+            row.id.as_str(),
         )
     })?;
-    let runtime: Runtime = decode(&row.runtime, "fnr_functions", "runtime", &row.id)?;
-    let status: FunctionStatus = decode(&row.status, "fnr_functions", "status", &row.id)?;
+    let runtime: Runtime = decode(&row.runtime, "fnr_functions", "runtime", row.id.as_str())?;
+    let status: FunctionStatus = decode(&row.status, "fnr_functions", "status", row.id.as_str())?;
     Ok(Function {
         id: row.id,
         application_id: row.application_id,

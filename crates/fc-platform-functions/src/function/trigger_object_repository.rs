@@ -9,6 +9,7 @@
 //! so a function's subscription is a real subscription with a real audit
 //! trail and the link is bookkeeping beside it, as in Java.
 
+use fc_platform_core::shared::id::FunctionId;
 use std::collections::HashSet;
 
 use chrono::{DateTime, Utc};
@@ -29,7 +30,7 @@ impl TriggerObjectRepository {
     }
 
     /// A function's links, by kind then trigger key (Java `listByFunction`).
-    pub async fn list(&self, function_id: &str) -> Result<Vec<TriggerObject>> {
+    pub async fn list(&self, function_id: &FunctionId) -> Result<Vec<TriggerObject>> {
         let rows: Vec<(String, String, String, DateTime<Utc>)> = sqlx::query_as(
             "SELECT kind, object_id, trigger_key, created_at FROM fnr_trigger_objects \
              WHERE function_id = $1 ORDER BY kind ASC, trigger_key ASC",
@@ -42,7 +43,7 @@ impl TriggerObjectRepository {
                 let kind: TriggerObjectKind =
                     decode(&kind, "fnr_trigger_objects", "kind", &object_id)?;
                 Ok(TriggerObject {
-                    function_id: function_id.to_string(),
+                    function_id: function_id.clone(),
                     kind,
                     object_id,
                     trigger_key,
@@ -67,7 +68,10 @@ impl TriggerObjectRepository {
     /// object it names still exists in its own table (Java's status route
     /// asks each object's repository one by one; this asks once). `false`
     /// means it was deleted by hand; the next promote recreates it.
-    pub async fn list_by_function(&self, function_id: &str) -> Result<Vec<TriggerObjectLink>> {
+    pub async fn list_by_function(
+        &self,
+        function_id: &FunctionId,
+    ) -> Result<Vec<TriggerObjectLink>> {
         let rows: Vec<(String, String, String, bool)> = sqlx::query_as(
             "SELECT t.kind, t.trigger_key, t.object_id, \
                 CASE t.kind \

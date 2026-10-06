@@ -4,6 +4,7 @@
 
 use crate::function::operations::access::FunctionReach;
 use crate::function::OwnerClientId;
+use fc_platform_core::shared::id::FunctionId;
 use std::collections::HashMap;
 
 use axum::body::Bytes;
@@ -52,7 +53,7 @@ pub struct DomainResponse {
 impl From<&FunctionDomain> for DomainResponse {
     fn from(d: &FunctionDomain) -> Self {
         Self {
-            id: d.id.clone(),
+            id: d.id.to_string(),
             hostname: d.hostname.value().to_string(),
             owner: d.owner.to_wire().to_string(),
             created_at: d.created_at,
@@ -248,7 +249,7 @@ pub async fn list_routes(
 ) -> Result<Json<Vec<FunctionRouteResponse>>, PlatformError> {
     checks::require_permission(&auth.0, FUNCTION_VIEW)?;
     let caller = state.caller(&auth.0).await?;
-    let (rows, addresses): (Vec<FunctionRoute>, HashMap<String, String>) =
+    let (rows, addresses): (Vec<FunctionRoute>, HashMap<FunctionId, String>) =
         if let Some(raw) = query_param(&params, "address") {
             let address = address_from_path(raw)?;
             let f = reachable_function(&state, &address, &caller).await?;
@@ -257,10 +258,10 @@ pub async fn list_routes(
         } else if let Some(raw) = query_param(&params, "hostname") {
             let hostname = Hostname::parse(raw)?;
             let rows = state.routes.list_by_hostname(&hostname).await?;
-            let mut ids: Vec<String> = rows.iter().map(|r| r.function_id.clone()).collect();
+            let mut ids: Vec<FunctionId> = rows.iter().map(|r| r.function_id.clone()).collect();
             ids.sort();
             ids.dedup();
-            let reachable: HashMap<String, String> = state
+            let reachable: HashMap<FunctionId, String> = state
                 .functions
                 .find_by_ids(&ids)
                 .await?
@@ -286,7 +287,7 @@ pub async fn list_routes(
             address: addresses
                 .get(&r.function_id)
                 .cloned()
-                .unwrap_or_else(|| r.function_id.clone()),
+                .unwrap_or_else(|| r.function_id.to_string()),
             hostname: r.hostname.value().to_string(),
             path_prefix: r.path_prefix.value().to_string(),
             alias_prefixes: r.alias_prefixes,

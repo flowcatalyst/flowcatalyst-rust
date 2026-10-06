@@ -13,6 +13,7 @@
 
 use crate::function::operations::access::FunctionReach;
 use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::FunctionVersionId;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -241,7 +242,7 @@ pub struct LiveResponse {
 impl FunctionResponse {
     pub fn from(f: &Function, live: Option<&FunctionVersion>) -> Self {
         Self {
-            id: f.id.clone(),
+            id: f.id.to_string(),
             address: f.address.render(),
             application_code: f.address.application().to_string(),
             service_name: f.address.service().to_string(),
@@ -253,7 +254,7 @@ impl FunctionResponse {
             status: f.status.as_str().to_string(),
             live: live.map(|v| LiveResponse {
                 version: v.version,
-                version_id: v.id.clone(),
+                version_id: v.id.to_string(),
             }),
             created_at: f.created_at,
             updated_at: f.updated_at,
@@ -461,9 +462,9 @@ pub async fn list_functions(
     )?;
     // One batch read for every row's live version; a corrupt one is simply
     // absent, never a failed list.
-    let live_ids: Vec<String> = rows
+    let live_ids: Vec<FunctionVersionId> = rows
         .iter()
-        .filter_map(|f| f.live_version_id().map(str::to_string))
+        .filter_map(|f| f.live_version_id().cloned())
         .collect();
     let live = state.versions.find_by_ids(&live_ids).await?;
     let data = rows
@@ -656,7 +657,7 @@ pub async fn delete_function(
     // function's uploaded blobs are garbage now, and a store failure is a
     // WARN, never a failed delete.
     if let Some(store) = &state.ops.artifacts {
-        if let Err(e) = store.delete_all(&event.function_id).await {
+        if let Err(e) = store.delete_all(event.function_id.as_str()).await {
             tracing::warn!(id = %event.function_id, error = %e, "deleting a deleted function's artifacts failed");
         }
     }
@@ -689,7 +690,11 @@ pub async fn function_status(
     )?;
     let live = f
         .live_version_id()
-        .and_then(|id| versions.iter().find(|v| v.id == id))
+        .and_then(|id| {
+            versions
+                .iter()
+                .find(|v| v.id == FunctionVersionId::from_wire(id))
+        })
         .map(|v| StatusLive { version: v.version });
     let stale_before = Utc::now() - super::entity::FunctionHost::live_window();
     let hosts = hosts
@@ -796,7 +801,7 @@ async fn declared(
                     .ok_or_else(|| {
                         super::operations::access::resource_not_found(
                             "FunctionVersion",
-                            &format!("{}#{version}", f.address.render()),
+                            format!("{}#{version}", f.address.render()),
                         )
                     })?,
             )

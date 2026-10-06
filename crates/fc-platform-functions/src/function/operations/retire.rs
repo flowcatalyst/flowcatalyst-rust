@@ -69,7 +69,7 @@ impl<U: UnitOfWork> UseCase for RetireVersionUseCase<U> {
             .ok_or_else(|| {
                 resource_not_found(
                     "FunctionVersion",
-                    &format!("{}#{}", f.address.render(), command.version),
+                    format!("{}#{}", f.address.render(), command.version),
                 )
             })?;
         if f.is_live(&v.id) {

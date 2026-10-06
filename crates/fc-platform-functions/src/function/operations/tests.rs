@@ -15,6 +15,8 @@
 
 use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::FunctionId;
+use fc_platform_core::shared::id::FunctionVersionId;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -616,7 +618,7 @@ fn published_version(f: &Function, signer: Option<SignerIdentity>) -> FunctionVe
         "prn_1",
         chrono::Utc::now(),
     );
-    v.id = "fnv_3".into();
+    v.id = FunctionVersionId::parse("fnv_3").unwrap();
     v
 }
 
@@ -628,7 +630,7 @@ fn platform_function() -> Function {
         Runtime::Wasm,
         None,
     );
-    f.id = "fnc_1".into();
+    f.id = FunctionId::parse("fnc_1").unwrap();
     f
 }
 
@@ -742,9 +744,15 @@ fn alias_events_and_commands() {
         Runtime::Wasm,
         None,
     );
-    f.id = "fnc_1".into();
+    f.id = FunctionId::parse("fnc_1").unwrap();
     let v = published_version(&f, None);
-    let changed = AliasChanged::new(&ctx(), &f, "live", &v, Some("fnv_2".into()));
+    let changed = AliasChanged::new(
+        &ctx(),
+        &f,
+        "live",
+        &v,
+        Some(FunctionVersionId::parse("fnv_2").unwrap()),
+    );
     assert_eq!(
         changed.metadata.event_type,
         "platform:function:alias:changed"

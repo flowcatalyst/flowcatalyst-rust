@@ -15,6 +15,7 @@ use axum::extract::{Path, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::Json;
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::FunctionVersionId;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -86,7 +87,7 @@ impl PublishResponse {
     /// An existing version, for a publish that was a no-op: its own state.
     fn existing(v: &FunctionVersion) -> PublishResponse {
         PublishResponse {
-            id: v.id.clone(),
+            id: v.id.to_string(),
             version: v.version,
             state: v.state.name().to_string(),
             digest: v.digest.value().to_string(),
@@ -96,7 +97,7 @@ impl PublishResponse {
 
     fn of(event: &VersionPublished) -> PublishResponse {
         PublishResponse {
-            id: event.version_id.clone(),
+            id: event.version_id.to_string(),
             version: event.version,
             state: "PUBLISHED".to_string(),
             digest: event.digest.clone(),
@@ -158,7 +159,7 @@ pub struct VersionResponse {
 impl VersionResponse {
     fn of(v: &FunctionVersion, live: bool, manifest: Option<JsonNode>) -> VersionResponse {
         VersionResponse {
-            id: v.id.clone(),
+            id: v.id.to_string(),
             version: v.version,
             state: v.state.name().to_string(),
             digest: v.digest.value().to_string(),
@@ -764,7 +765,7 @@ async fn version_or_not_found(
         .ok_or_else(|| {
             super::operations::access::resource_not_found(
                 "FunctionVersion",
-                &format!("{}#{number}", f.address.render()),
+                format!("{}#{number}", f.address.render()),
             )
             .into()
         })
@@ -881,7 +882,7 @@ pub async fn promote(
             return Ok(Json(PromoteResponse {
                 alias,
                 version: v.version,
-                version_id: v.id,
+                version_id: v.id.into_string(),
                 previous_version: Some(v.version),
                 changed: false,
             }));
@@ -895,7 +896,7 @@ pub async fn promote(
     Ok(Json(PromoteResponse {
         alias: event.alias,
         version: event.version,
-        version_id: event.version_id,
+        version_id: event.version_id.into_string(),
         previous_version,
         changed: true,
     }))
@@ -955,7 +956,7 @@ pub async fn list_aliases(
     let address = address_from_path(&address)?;
     let caller = state.caller(&auth.0).await?;
     let f = reachable_function(&state, &address, &caller).await?;
-    let ids: Vec<String> = f.aliases.iter().map(|a| a.version_id.clone()).collect();
+    let ids: Vec<FunctionVersionId> = f.aliases.iter().map(|a| a.version_id.clone()).collect();
     let versions = state.versions.find_by_ids(&ids).await?;
     Ok(Json(
         f.aliases
@@ -964,7 +965,7 @@ pub async fn list_aliases(
                 versions.get(&a.version_id).map(|v| AliasResponse {
                     alias: a.alias.clone(),
                     version: v.version,
-                    version_id: a.version_id.clone(),
+                    version_id: a.version_id.to_string(),
                     updated_by: a.updated_by.clone(),
                     updated_at: a.updated_at,
                 })
@@ -1019,11 +1020,16 @@ pub async fn upload_artifact(
         .get(header::CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.trim().parse::<u64>().ok());
-    let received =
-        artifact::upload::receive(&*store, &f.id, &digest, declared, body.into_data_stream())
-            .await?;
+    let received = artifact::upload::receive(
+        &*store,
+        f.id.as_str(),
+        &digest,
+        declared,
+        body.into_data_stream(),
+    )
+    .await?;
     Ok(Json(UploadArtifactResponse {
-        artifact_ref: PlatformArtifactRef::of(&f.id, &digest).render(),
+        artifact_ref: PlatformArtifactRef::of(f.id.as_str(), &digest).render(),
         digest: digest.value().to_string(),
         bytes: received.bytes,
     }))

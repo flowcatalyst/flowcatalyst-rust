@@ -10,6 +10,7 @@
 
 use crate::support;
 use fc_platform::shared::id::ApplicationId;
+use fc_platform::shared::id::FunctionId;
 use fc_platform_core::shared::id::ClientId;
 
 use std::collections::HashMap;
@@ -603,7 +604,7 @@ async fn functions_crud_reach_and_pagination() {
     assert!(app
         .repos
         .function_repo
-        .find_by_id(b_fn["id"].as_str().unwrap())
+        .find_by_id(&FunctionId::from_wire(b_fn["id"].as_str().unwrap()))
         .await
         .unwrap()
         .is_some());
@@ -1109,7 +1110,10 @@ async fn config_and_secrets() {
         Some(Arc::new(EncryptionService::new(&key).unwrap())),
     );
     let decrypted = settings
-        .decrypt_secrets(&fid, &["API_KEY".to_string(), "NONE".to_string()])
+        .decrypt_secrets(
+            &FunctionId::from_wire(fid.as_str()),
+            &["API_KEY".to_string(), "NONE".to_string()],
+        )
         .await
         .unwrap();
     assert_eq!(
@@ -1187,7 +1191,10 @@ async fn config_and_secrets() {
         delete(&app, &secret, &anchor).await.0,
         StatusCode::NO_CONTENT
     );
-    assert!(!settings.has_secret(&fid, "API_KEY").await.unwrap());
+    assert!(!settings
+        .has_secret(&FunctionId::from_wire(fid.as_str()), "API_KEY")
+        .await
+        .unwrap());
     let again = delete(&app, &secret, &anchor).await;
     assert_error(&again, StatusCode::NOT_FOUND, "FUNCTION_SECRET_NOT_FOUND");
     assert_eq!(
@@ -1209,7 +1216,10 @@ async fn config_and_secrets() {
             "ENCRYPTION_UNCONFIGURED",
         );
     }
-    assert!(!settings.has_secret(&fid, "API_KEY").await.unwrap());
+    assert!(!settings
+        .has_secret(&FunctionId::from_wire(fid.as_str()), "API_KEY")
+        .await
+        .unwrap());
     // Config needs no key.
     assert_eq!(
         get(&app, &format!("{path}/config"), &anchor).await.0,
@@ -1353,7 +1363,10 @@ async fn secret_references_are_kept_and_resolved_on_delivery() {
         "SETTING_VALUE_REQUIRED",
     );
     let settings = FunctionSettingsRepository::new(&app.pool, Some(encryption.clone()));
-    assert!(!settings.has_secret(&fid, "BAD").await.unwrap());
+    assert!(!settings
+        .has_secret(&FunctionId::from_wire(fid.as_str()), "BAD")
+        .await
+        .unwrap());
     assert_eq!(
         app.event_count_by_type("platform:function:secret:set")
             .await,

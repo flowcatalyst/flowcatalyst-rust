@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::FunctionDomainId;
 use fc_platform_core::shared::id::OptionIdExt;
 use sqlx::PgPool;
 
@@ -13,7 +14,7 @@ use fc_platform_core::usecase::{DbTx, Persist};
 
 #[derive(sqlx::FromRow)]
 struct DomainRow {
-    id: String,
+    id: FunctionDomainId,
     client_id: Option<ClientId>,
     hostname: String,
     created_at: DateTime<Utc>,
@@ -28,7 +29,7 @@ impl FunctionDomainRepository {
         Self { pool: pool.clone() }
     }
 
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<FunctionDomain>> {
+    pub async fn find_by_id(&self, id: &FunctionDomainId) -> Result<Option<FunctionDomain>> {
         let row = sqlx::query_as::<_, DomainRow>(
             "SELECT id, client_id, hostname, created_at FROM fnr_domains WHERE id = $1",
         )
@@ -116,11 +117,11 @@ fn to_entity(row: DomainRow) -> Result<FunctionDomain> {
             "fnr_domains",
             "client_id",
             row.client_id.as_id_str().unwrap_or(""),
-            &row.id,
+            row.id.as_str(),
         )
     })?;
     let hostname = Hostname::try_parse(&row.hostname)
-        .ok_or_else(|| corrupt_value("fnr_domains", "hostname", &row.hostname, &row.id))?;
+        .ok_or_else(|| corrupt_value("fnr_domains", "hostname", &row.hostname, row.id.as_str()))?;
     Ok(FunctionDomain {
         id: row.id,
         owner,

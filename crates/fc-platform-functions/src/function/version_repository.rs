@@ -13,6 +13,8 @@
 //! [`FunctionVersionRepository::find_by_ids`] leaves such a row out, so one
 //! corrupt version never fails a list of other functions.
 
+use fc_platform_core::shared::id::FunctionId;
+use fc_platform_core::shared::id::FunctionVersionId;
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
@@ -24,18 +26,19 @@ use axum::http::StatusCode;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::shared::log_throttle::LogThrottle;
 use fc_platform_core::usecase::{DbTx, LockedRead, Persist};
+use std::hash::Hash;
 use std::result;
 use std::time::Duration;
 
 /// The next version number of a function, read under its row lock.
 #[derive(Debug, Clone)]
-pub struct NextVersionOf(pub String);
+pub struct NextVersionOf(pub FunctionId);
 
 /// One version by id, read under its own row lock (Java `lockById`): the
 /// mark-ready use case's guard, so two heartbeats racing to mark one
 /// version ready serialise and the loser sees the winner's `READY`.
 #[derive(Debug, Clone)]
-pub struct VersionById(pub String);
+pub struct VersionById(pub FunctionVersionId);
 
 /// A stored version whose manifest cannot be read (Java
 /// `FunctionVersionRepository.CorruptVersion`). `pool` is a best-effort
@@ -43,8 +46,8 @@ pub struct VersionById(pub String);
 /// a JSON object at all. `cause` never carries manifest content.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CorruptVersion {
-    pub version_id: String,
-    pub function_id: String,
+    pub version_id: FunctionVersionId,
+    pub function_id: FunctionId,
     pub version: i32,
     pub pool: Option<DnsLabel>,
     pub cause: String,
@@ -53,14 +56,23 @@ pub struct CorruptVersion {
 /// A batch read's answer (Java `VersionBatch`): the readable versions under
 /// the caller's key, and every corrupt row reported instead of failing the
 /// batch, so the caller decides what one corrupt version may take down.
-#[derive(Debug, Default)]
-pub struct VersionBatch {
-    pub versions: HashMap<String, FunctionVersion>,
+#[derive(Debug)]
+pub struct VersionBatch<K> {
+    pub versions: HashMap<K, FunctionVersion>,
     pub corrupt: Vec<CorruptVersion>,
 }
 
-impl VersionBatch {
-    fn add(&mut self, key: String, row: VersionRow) {
+impl<K> Default for VersionBatch<K> {
+    fn default() -> Self {
+        Self {
+            versions: HashMap::new(),
+            corrupt: Vec::new(),
+        }
+    }
+}
+
+impl<K: Eq + Hash> VersionBatch<K> {
+    fn add(&mut self, key: K, row: VersionRow) {
         let version_id = row.id.clone();
         let function_id = row.function_id.clone();
         let version = row.version;
@@ -84,8 +96,8 @@ impl VersionBatch {
 
 #[derive(sqlx::FromRow)]
 struct VersionRow {
-    id: String,
-    function_id: String,
+    id: FunctionVersionId,
+    function_id: FunctionId,
     version: i32,
     artifact_ref: String,
     digest: String,
@@ -114,7 +126,7 @@ impl FunctionVersionRepository {
         Self { pool: pool.clone() }
     }
 
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<FunctionVersion>> {
+    pub async fn find_by_id(&self, id: &FunctionVersionId) -> Result<Option<FunctionVersion>> {
         let row = sqlx::query_as::<_, VersionRow>(&format!(
             "SELECT {COLUMNS} FROM fnr_versions WHERE id = $1"
         ))
@@ -126,7 +138,7 @@ impl FunctionVersionRepository {
 
     pub async fn find_by_function_and_version(
         &self,
-        function_id: &str,
+        function_id: &FunctionId,
         version: i32,
     ) -> Result<Option<FunctionVersion>> {
         let row = sqlx::query_as::<_, VersionRow>(&format!(
@@ -142,7 +154,7 @@ impl FunctionVersionRepository {
     /// The version of `function_id` that has this digest, if any.
     pub async fn find_by_function_and_digest(
         &self,
-        function_id: &str,
+        function_id: &FunctionId,
         digest: &Digest,
     ) -> Result<Option<FunctionVersion>> {
         let row = sqlx::query_as::<_, VersionRow>(&format!(
@@ -158,7 +170,7 @@ impl FunctionVersionRepository {
     /// `max(version) + 1`, or 1 for the first: a plain read that reserves
     /// nothing, and may be stale under a concurrent publish (the manifest
     /// check's preview; publish uses [`NextVersionOf`]).
-    pub async fn next_version_preview(&self, function_id: &str) -> Result<i32> {
+    pub async fn next_version_preview(&self, function_id: &FunctionId) -> Result<i32> {
         let (next,): (i32,) = sqlx::query_as(
             "SELECT COALESCE(MAX(version), 0) + 1 FROM fnr_versions WHERE function_id = $1",
         )
@@ -177,11 +189,11 @@ impl FunctionVersionRepository {
     pub async fn count_live_warm_in_pool(
         &self,
         pool: &DnsLabel,
-        excluding_function_id: &str,
+        excluding_function_id: &FunctionId,
     ) -> Result<i32> {
         // A stored manifest is normalised, so `warm` is a JSON boolean; the
         // pool is compared on the decoded manifest, as Java does.
-        let rows: Vec<(String, String, String)> = sqlx::query_as(
+        let rows: Vec<(FunctionVersionId, FunctionId, String)> = sqlx::query_as(
             "SELECT v.id, v.function_id, v.manifest::text FROM fnr_versions v \
              JOIN fnr_aliases a ON a.version_id = v.id \
              WHERE a.alias = $1 AND v.function_id <> $2 AND v.manifest -> 'warm' = 'true'::jsonb",
@@ -209,7 +221,7 @@ impl FunctionVersionRepository {
     }
 
     /// Newest first. Scoped to one function, so a corrupt row fails it.
-    pub async fn list_by_function(&self, function_id: &str) -> Result<Vec<FunctionVersion>> {
+    pub async fn list_by_function(&self, function_id: &FunctionId) -> Result<Vec<FunctionVersion>> {
         let rows = sqlx::query_as::<_, VersionRow>(&format!(
             "SELECT {COLUMNS} FROM fnr_versions WHERE function_id = $1 ORDER BY version DESC"
         ))
@@ -224,7 +236,7 @@ impl FunctionVersionRepository {
     /// retired, so this is at least the live version once one is set.
     pub async fn find_newest_non_retired(
         &self,
-        function_id: &str,
+        function_id: &FunctionId,
     ) -> Result<Option<FunctionVersion>> {
         let row = sqlx::query_as::<_, VersionRow>(&format!(
             "SELECT {COLUMNS} FROM fnr_versions WHERE function_id = $1 AND state <> 'RETIRED' \
@@ -238,7 +250,10 @@ impl FunctionVersionRepository {
 
     /// Every version named by `ids`, by id. A missing id, and a row whose
     /// manifest cannot be read, are both simply absent.
-    pub async fn find_by_ids(&self, ids: &[String]) -> Result<HashMap<String, FunctionVersion>> {
+    pub async fn find_by_ids(
+        &self,
+        ids: &[FunctionVersionId],
+    ) -> Result<HashMap<FunctionVersionId, FunctionVersion>> {
         let batch = self.find_batch_by_ids(ids).await?;
         for c in &batch.corrupt {
             tracing::warn!(version_id = %c.version_id, cause = %c.cause, "skipping a corrupt function version");
@@ -248,7 +263,10 @@ impl FunctionVersionRepository {
 
     /// Every version named by `ids`, by id; a corrupt row is reported in
     /// [`VersionBatch::corrupt`] (Java `findByIds`).
-    pub async fn find_batch_by_ids(&self, ids: &[String]) -> Result<VersionBatch> {
+    pub async fn find_batch_by_ids(
+        &self,
+        ids: &[FunctionVersionId],
+    ) -> Result<VersionBatch<FunctionVersionId>> {
         let mut batch = VersionBatch::default();
         if ids.is_empty() {
             return Ok(batch);
@@ -270,8 +288,8 @@ impl FunctionVersionRepository {
     /// corrupt it is reported instead, never replaced by an older one.
     pub async fn newest_published_by_functions(
         &self,
-        function_ids: &[String],
-    ) -> Result<VersionBatch> {
+        function_ids: &[FunctionId],
+    ) -> Result<VersionBatch<FunctionId>> {
         let mut batch = VersionBatch::default();
         if function_ids.is_empty() {
             return Ok(batch);
@@ -294,13 +312,13 @@ impl FunctionVersionRepository {
     /// keyed by version id: the heartbeat's lookup of what a host reports.
     pub async fn find_batch_by_function_versions(
         &self,
-        pairs: &[(String, i32)],
-    ) -> Result<VersionBatch> {
+        pairs: &[(FunctionId, i32)],
+    ) -> Result<VersionBatch<FunctionVersionId>> {
         let mut batch = VersionBatch::default();
         if pairs.is_empty() {
             return Ok(batch);
         }
-        let function_ids: Vec<&str> = pairs.iter().map(|(f, _)| f.as_str()).collect();
+        let function_ids: Vec<&FunctionId> = pairs.iter().map(|(f, _)| f).collect();
         let numbers: Vec<i32> = pairs.iter().map(|(_, v)| *v).collect();
         let rows = sqlx::query_as::<_, VersionRow>(&format!(
             "SELECT {COLUMNS} FROM fnr_versions \
@@ -429,7 +447,10 @@ impl Persist<FunctionVersion> for FunctionVersionRepository {
 /// dispatch mode without a trace. Throttled to one line a minute (every
 /// repository read of the row runs this); a dropped entry carries names,
 /// never secret values, and is capped.
-fn read_stored_manifest(json: &JsonNode, version_id: &str) -> result::Result<Manifest, String> {
+fn read_stored_manifest(
+    json: &JsonNode,
+    version_id: &FunctionVersionId,
+) -> result::Result<Manifest, String> {
     let (manifest, dropped) = Manifest::read_stored_reporting(json).map_err(|e| e.to_string())?;
     if !dropped.is_empty() {
         static DROPPED_LOG: LogThrottle = LogThrottle::new(Duration::from_secs(60));
@@ -525,9 +546,10 @@ mod tests {
         )
         .unwrap();
         subscriber::with_default(subscriber, || {
-            let manifest = read_stored_manifest(&stored, "fnv_1").unwrap();
+            let manifest =
+                read_stored_manifest(&stored, &FunctionVersionId::parse("fnv_1").unwrap()).unwrap();
             assert_eq!(manifest.endpoints.len(), 1);
-            read_stored_manifest(&stored, "fnv_1").unwrap();
+            read_stored_manifest(&stored, &FunctionVersionId::parse("fnv_1").unwrap()).unwrap();
         });
         let text = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
         let lines: Vec<&str> = text

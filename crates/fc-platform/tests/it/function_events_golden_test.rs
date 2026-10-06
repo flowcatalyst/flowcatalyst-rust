@@ -7,6 +7,9 @@
 //! is JSONB, so key order and number spelling are not part of it).
 
 use fc_platform::shared::id::ApplicationId;
+use fc_platform::shared::id::FunctionDomainId;
+use fc_platform::shared::id::FunctionId;
+use fc_platform::shared::id::FunctionVersionId;
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
@@ -44,7 +47,7 @@ fn function(
     status: FunctionStatus,
 ) -> Function {
     Function {
-        id: id.into(),
+        id: FunctionId::from_wire(id),
         application_id: ApplicationId::parse("app_1").unwrap(),
         address: FunctionAddress::parse("billing.invoices.create").unwrap(),
         owner,
@@ -92,7 +95,7 @@ fn version(
     )
     .unwrap();
     let mut v = FunctionVersion::publish(
-        function_id,
+        &FunctionId::from_wire(function_id),
         number,
         "oci://r/a",
         Digest::parse(&format!("sha256:{}", "b".repeat(64))).unwrap(),
@@ -102,13 +105,13 @@ fn version(
         "prn_1",
         at(),
     );
-    v.id = id.into();
+    v.id = FunctionVersionId::from_wire(id);
     v
 }
 
 fn domain(id: &str, owner: FunctionOwner, hostname: &str) -> FunctionDomain {
     FunctionDomain {
-        id: id.into(),
+        id: FunctionDomainId::from_wire(id),
         owner,
         hostname: Hostname::parse(hostname).unwrap(),
         created_at: at(),

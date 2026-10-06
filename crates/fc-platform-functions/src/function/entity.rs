@@ -5,6 +5,10 @@
 //! writes). Plain data and domain rules: no SQL, no driver types.
 
 use fc_platform_core::shared::id::ApplicationId;
+use fc_platform_core::shared::id::FunctionDomainId;
+use fc_platform_core::shared::id::FunctionId;
+use fc_platform_core::shared::id::FunctionRouteId;
+use fc_platform_core::shared::id::FunctionVersionId;
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -15,7 +19,6 @@ use super::{
     java_is_blank, ClientCeilings, Digest, FunctionAddress, FunctionLimits, FunctionOwner,
     Hostname, Manifest, NonPositiveLimit, RoutePattern, Runtime, LIVE_ALIAS,
 };
-use fc_platform_core::shared::tsid::{self, EntityType};
 use fc_platform_core::usecase::{HasId, UseCaseError};
 
 // ── Function ────────────────────────────────────────────────────────────────
@@ -38,7 +41,7 @@ fc_platform_core::shared::enum_str::str_enum!(FunctionStatus, "function status",
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionAlias {
     pub alias: String,
-    pub version_id: String,
+    pub version_id: FunctionVersionId,
     pub updated_by: String,
     pub updated_at: DateTime<Utc>,
 }
@@ -50,7 +53,7 @@ pub struct FunctionAlias {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function {
     /// `fnc_…`
-    pub id: String,
+    pub id: FunctionId,
     pub application_id: ApplicationId,
     pub address: FunctionAddress,
     pub owner: FunctionOwner,
@@ -78,7 +81,7 @@ impl Function {
     ) -> Function {
         let now = Utc::now();
         Function {
-            id: tsid::generate(EntityType::Function),
+            id: FunctionId::generate(),
             application_id,
             address,
             owner,
@@ -129,16 +132,16 @@ impl Function {
     }
 
     /// The version `live` points at, if any.
-    pub fn live_version_id(&self) -> Option<&str> {
+    pub fn live_version_id(&self) -> Option<&FunctionVersionId> {
         self.version_id_of(LIVE_ALIAS)
     }
 
     /// The version `alias` points at, if the function has that pointer.
-    pub fn version_id_of(&self, alias: &str) -> Option<&str> {
+    pub fn version_id_of(&self, alias: &str) -> Option<&FunctionVersionId> {
         self.aliases
             .iter()
             .find(|a| a.alias == alias)
-            .map(|a| a.version_id.as_str())
+            .map(|a| &a.version_id)
     }
 
     /// Points `alias` at `version` (Java `Function.promote`); returns the
@@ -156,7 +159,7 @@ impl Function {
         version: &FunctionVersion,
         principal_id: &str,
         now: DateTime<Utc>,
-    ) -> Result<Option<String>, UseCaseError> {
+    ) -> Result<Option<FunctionVersionId>, UseCaseError> {
         require_valid_alias_name(alias)?;
         if version.function_id != self.id {
             return Err(UseCaseError::validation(
@@ -176,8 +179,8 @@ impl Function {
                 "function is disabled",
             ));
         }
-        let previous = self.version_id_of(alias).map(str::to_string);
-        if previous.as_deref() == Some(version.id.as_str()) {
+        let previous = self.version_id_of(alias).cloned();
+        if previous.as_ref() == Some(&version.id) {
             return Err(UseCaseError::unchanged(
                 "ALIAS_UNCHANGED",
                 "alias already points at this version",
@@ -206,7 +209,7 @@ impl Function {
         &mut self,
         alias: &str,
         now: DateTime<Utc>,
-    ) -> Result<String, UseCaseError> {
+    ) -> Result<FunctionVersionId, UseCaseError> {
         if alias == LIVE_ALIAS {
             return Err(UseCaseError::business_rule(
                 "ALIAS_PROTECTED",
@@ -223,7 +226,7 @@ impl Function {
         Ok(removed.version_id)
     }
 
-    pub fn is_live(&self, version_id: &str) -> bool {
+    pub fn is_live(&self, version_id: &FunctionVersionId) -> bool {
         self.live_version_id() == Some(version_id)
     }
 }
@@ -253,7 +256,7 @@ pub fn require_valid_alias_name(alias: &str) -> Result<(), UseCaseError> {
 
 impl HasId for Function {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 
@@ -288,8 +291,8 @@ pub use fc_function_model::SignerIdentity;
 #[derive(Clone)]
 pub struct FunctionVersion {
     /// `fnv_…`
-    pub id: String,
-    pub function_id: String,
+    pub id: FunctionVersionId,
+    pub function_id: FunctionId,
     pub version: i32,
     pub artifact_ref: String,
     pub digest: Digest,
@@ -306,7 +309,7 @@ impl FunctionVersion {
     /// A fresh `PUBLISHED` version (Java `FunctionVersion.publish`).
     #[allow(clippy::too_many_arguments)]
     pub fn publish(
-        function_id: &str,
+        function_id: &FunctionId,
         version: i32,
         artifact_ref: &str,
         digest: Digest,
@@ -317,8 +320,8 @@ impl FunctionVersion {
         now: DateTime<Utc>,
     ) -> FunctionVersion {
         FunctionVersion {
-            id: tsid::generate(EntityType::FunctionVersion),
-            function_id: function_id.to_string(),
+            id: FunctionVersionId::generate(),
+            function_id: function_id.clone(),
             version,
             artifact_ref: artifact_ref.to_string(),
             digest,
@@ -378,7 +381,7 @@ impl FunctionVersion {
 
 impl HasId for FunctionVersion {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 
@@ -623,7 +626,7 @@ impl HasId for ClientPolicy {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionDomain {
     /// `fnd_…`
-    pub id: String,
+    pub id: FunctionDomainId,
     pub owner: FunctionOwner,
     pub hostname: Hostname,
     pub created_at: DateTime<Utc>,
@@ -632,7 +635,7 @@ pub struct FunctionDomain {
 impl FunctionDomain {
     pub fn claim(owner: FunctionOwner, hostname: Hostname, now: DateTime<Utc>) -> FunctionDomain {
         FunctionDomain {
-            id: tsid::generate(EntityType::FunctionDomain),
+            id: FunctionDomainId::generate(),
             owner,
             hostname,
             created_at: now,
@@ -642,7 +645,7 @@ impl FunctionDomain {
 
 impl HasId for FunctionDomain {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 
@@ -651,8 +654,8 @@ impl HasId for FunctionDomain {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionRoute {
     /// `fnr_…`
-    pub id: String,
-    pub function_id: String,
+    pub id: FunctionRouteId,
+    pub function_id: FunctionId,
     pub hostname: Hostname,
     pub path_prefix: RoutePattern,
     /// Opt-in alias prefixes; empty for an exact-hostname route.
@@ -663,15 +666,15 @@ pub struct FunctionRoute {
 impl FunctionRoute {
     /// A fresh route row (Java `FunctionRoute.of`), materialised at promote.
     pub fn of(
-        function_id: &str,
+        function_id: &FunctionId,
         hostname: Hostname,
         path_prefix: RoutePattern,
         alias_prefixes: Vec<String>,
         now: DateTime<Utc>,
     ) -> FunctionRoute {
         FunctionRoute {
-            id: tsid::generate(EntityType::FunctionRoute),
-            function_id: function_id.to_string(),
+            id: FunctionRouteId::generate(),
+            function_id: function_id.clone(),
             hostname,
             path_prefix,
             alias_prefixes,
@@ -702,7 +705,7 @@ fc_platform_core::shared::enum_str::str_enum!(TriggerObjectKind, "trigger object
 /// `(function, kind, trigger key)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TriggerObject {
-    pub function_id: String,
+    pub function_id: FunctionId,
     pub kind: TriggerObjectKind,
     pub object_id: String,
     pub trigger_key: String,
@@ -764,7 +767,7 @@ impl Serialize for SecretValue {
 /// `PUT …/config`. Keys are in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionConfig {
-    pub function_id: String,
+    pub function_id: FunctionId,
     pub values: BTreeMap<String, String>,
     pub updated_by: String,
     pub updated_at: DateTime<Utc>,
@@ -772,7 +775,7 @@ pub struct FunctionConfig {
 
 impl HasId for FunctionConfig {
     fn id(&self) -> &str {
-        &self.function_id
+        self.function_id.as_str()
     }
 }
 
@@ -780,7 +783,7 @@ impl HasId for FunctionConfig {
 /// `value` on write; nothing ever reads a value back out through the API.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionSecret {
-    pub function_id: String,
+    pub function_id: FunctionId,
     pub key: String,
     pub value: SecretValue,
     pub updated_by: String,
@@ -789,7 +792,7 @@ pub struct FunctionSecret {
 
 impl HasId for FunctionSecret {
     fn id(&self) -> &str {
-        &self.function_id
+        self.function_id.as_str()
     }
 }
 
@@ -827,7 +830,7 @@ mod tests {
     #[test]
     fn create_is_active_with_no_aliases_and_a_blank_description_absent() {
         let f = function();
-        assert!(f.id.starts_with("fnc_"));
+        assert!(f.id.as_str().starts_with("fnc_"));
         assert_eq!(f.status, FunctionStatus::Active);
         assert!(f.aliases.is_empty());
         assert_eq!(f.description, None);
@@ -864,20 +867,23 @@ mod tests {
         let mut f = function();
         f.aliases.push(FunctionAlias {
             alias: "qa".into(),
-            version_id: "fnv_2".into(),
+            version_id: FunctionVersionId::parse("fnv_2").unwrap(),
             updated_by: "p".into(),
             updated_at: Utc::now(),
         });
         assert_eq!(f.live_version_id(), None);
         f.aliases.push(FunctionAlias {
             alias: "live".into(),
-            version_id: "fnv_1".into(),
+            version_id: FunctionVersionId::parse("fnv_1").unwrap(),
             updated_by: "p".into(),
             updated_at: Utc::now(),
         });
-        assert_eq!(f.live_version_id(), Some("fnv_1"));
-        assert!(f.is_live("fnv_1"));
-        assert!(!f.is_live("fnv_2"));
+        assert_eq!(
+            f.live_version_id(),
+            Some(&FunctionVersionId::parse("fnv_1").unwrap())
+        );
+        assert!(f.is_live(&FunctionVersionId::parse("fnv_1").unwrap()));
+        assert!(!f.is_live(&FunctionVersionId::parse("fnv_2").unwrap()));
     }
 
     #[test]
@@ -920,7 +926,7 @@ mod tests {
         )
         .unwrap();
         FunctionVersion::publish(
-            "fnc_1",
+            &FunctionId::parse("fnc_1").unwrap(),
             1,
             "oci://r/a",
             Digest::parse(&format!("sha256:{}", "a".repeat(64))).unwrap(),
@@ -935,7 +941,7 @@ mod tests {
     #[test]
     fn publish_is_published_and_retire_refuses_a_retired_version() {
         let mut v = version();
-        assert!(v.id.starts_with("fnv_"));
+        assert!(v.id.as_str().starts_with("fnv_"));
         assert_eq!(v.state, VersionState::Published);
         assert_eq!((v.ready_at(), v.retired_at()), (None, None));
         assert_eq!(v.signature_bundle_ref, None);
@@ -969,7 +975,7 @@ mod tests {
         assert_eq!((err.http_status_code(), err.code()), (400, "ALIAS_INVALID"));
 
         let mut foreign = v.clone();
-        foreign.function_id = "fnc_other".into();
+        foreign.function_id = FunctionId::parse("fnc_other").unwrap();
         let err = f.promote("live", &foreign, "prn_1", now).unwrap_err();
         assert_eq!(
             (err.http_status_code(), err.code(), err.message()),
@@ -981,7 +987,7 @@ mod tests {
         );
 
         assert_eq!(f.promote("live", &v, "prn_1", now).unwrap(), None);
-        assert_eq!(f.live_version_id(), Some(v.id.as_str()));
+        assert_eq!(f.live_version_id(), Some(&v.id));
         assert_eq!(f.aliases[0].updated_by, "prn_1");
 
         let err = f.promote("live", &v, "prn_2", now).unwrap_err();
@@ -998,16 +1004,16 @@ mod tests {
         assert_eq!(f.promote("qa", &v, "prn_1", now).unwrap(), None);
 
         let mut v2 = v.clone();
-        v2.id = "fnv_2".into();
+        v2.id = FunctionVersionId::parse("fnv_2").unwrap();
         assert_eq!(
             f.promote("live", &v2, "prn_2", now).unwrap(),
             Some(v.id.clone())
         );
         assert_eq!(f.aliases.len(), 2);
-        assert_eq!(f.version_id_of("qa"), Some(v.id.as_str()));
+        assert_eq!(f.version_id_of("qa"), Some(&v.id));
 
         let mut retired = v2.clone();
-        retired.id = "fnv_3".into();
+        retired.id = FunctionVersionId::parse("fnv_3").unwrap();
         retired.state = VersionState::Retired(now);
         let err = f.promote("live", &retired, "prn_1", now).unwrap_err();
         assert_eq!(
@@ -1016,7 +1022,7 @@ mod tests {
         );
 
         let mut v3 = v2.clone();
-        v3.id = "fnv_4".into();
+        v3.id = FunctionVersionId::parse("fnv_4").unwrap();
         f.disable(now).unwrap();
         let err = f.promote("live", &v3, "prn_1", now).unwrap_err();
         assert_eq!(
@@ -1050,7 +1056,7 @@ mod tests {
         );
         assert_eq!(f.remove_alias("qa", Utc::now()).unwrap(), v.id);
         assert_eq!(f.version_id_of("qa"), None);
-        assert_eq!(f.live_version_id(), Some(v.id.as_str()));
+        assert_eq!(f.live_version_id(), Some(&v.id));
     }
 
     /// `fnr_aliases`' check constraint: 1-63 of `a-z0-9-`, no `-` at an end.

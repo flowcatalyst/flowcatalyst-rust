@@ -41,6 +41,8 @@
 
 use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::FunctionId;
+use fc_platform_core::shared::id::FunctionVersionId;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
@@ -90,8 +92,8 @@ impl Role {
 #[serde(rename_all = "camelCase")]
 pub struct FunctionEntry {
     pub address: String,
-    pub function_id: String,
-    pub version_id: String,
+    pub function_id: FunctionId,
+    pub version_id: FunctionVersionId,
     pub version: i32,
     pub role: Role,
     /// `warm` or `lazy`: only a live entry is ever warm.
@@ -228,7 +230,7 @@ pub fn etag_matches(header: Option<&str>, etag: &str) -> bool {
 
 /// A corrupt live version that could be in the requested pool (Java
 /// `CorruptFunctionVersionException`, the house `500 CORRUPT_ROW`).
-pub fn corrupt_row(version_id: &str, cause: &str) -> PlatformError {
+pub fn corrupt_row(version_id: &FunctionVersionId, cause: &str) -> PlatformError {
     PlatformError::Coded {
         status: StatusCode::INTERNAL_SERVER_ERROR,
         code: "CORRUPT_ROW".to_string(),
@@ -269,11 +271,11 @@ impl DesiredStateBuilder {
         now: DateTime<Utc>,
     ) -> Result<Document, PlatformError> {
         let active = self.functions.list_active().await?;
-        let live_ids: Vec<String> = active
+        let live_ids: Vec<FunctionVersionId> = active
             .iter()
-            .filter_map(|f| f.live_version_id().map(str::to_string))
+            .filter_map(|f| f.live_version_id().cloned())
             .collect();
-        let active_ids: Vec<String> = active.iter().map(|f| f.id.clone()).collect();
+        let active_ids: Vec<FunctionId> = active.iter().map(|f| f.id.clone()).collect();
         let (live_lookup, candidate_lookup) = tokio::try_join!(
             self.versions.find_batch_by_ids(&live_ids),
             self.versions.newest_published_by_functions(&active_ids),
@@ -281,29 +283,29 @@ impl DesiredStateBuilder {
 
         // A named alias whose version is neither live nor the candidate: its
         // own `alias` entry (spec `function-zones-and-aliases.md` §5).
-        let mut alias_only: IndexMap<&str, IndexSet<&str>> = IndexMap::new();
+        let mut alias_only: IndexMap<&FunctionId, IndexSet<&FunctionVersionId>> = IndexMap::new();
         for f in &active {
             let live_id = f.live_version_id();
-            let candidate_id = candidate_lookup.versions.get(&f.id).map(|v| v.id.as_str());
+            let candidate_id = candidate_lookup.versions.get(&f.id).map(|v| &v.id);
             let mut ids = IndexSet::new();
             for a in &f.aliases {
                 if a.alias == LIVE_ALIAS {
                     continue;
                 }
-                let id = Some(a.version_id.as_str());
+                let id = Some(&a.version_id);
                 if id == live_id || id == candidate_id {
                     continue;
                 }
-                ids.insert(a.version_id.as_str());
+                ids.insert(&a.version_id);
             }
             if !ids.is_empty() {
-                alias_only.insert(f.id.as_str(), ids);
+                alias_only.insert(&f.id, ids);
             }
         }
-        let alias_only_ids: Vec<String> = alias_only
+        let alias_only_ids: Vec<FunctionVersionId> = alias_only
             .values()
             .flatten()
-            .map(|id| id.to_string())
+            .map(|id| (*id).clone())
             .collect::<IndexSet<_>>()
             .into_iter()
             .collect();
@@ -342,7 +344,7 @@ impl DesiredStateBuilder {
                     });
                 }
             }
-            for id in alias_only.get(f.id.as_str()).into_iter().flatten() {
+            for id in alias_only.get(&f.id).into_iter().flatten() {
                 // Absent: corrupt (already logged) or gone.
                 if let Some(aliased) = alias_lookup.versions.get(*id) {
                     if &aliased.manifest.pool == pool {
@@ -398,7 +400,7 @@ impl DesiredStateBuilder {
         &self,
         selected: &[Selected<'_>],
     ) -> Result<Vec<FunctionEntry>, PlatformError> {
-        let function_ids: Vec<String> = selected
+        let function_ids: Vec<FunctionId> = selected
             .iter()
             .map(|s| s.function.id.clone())
             .collect::<IndexSet<_>>()
@@ -411,14 +413,9 @@ impl DesiredStateBuilder {
             .collect::<IndexSet<_>>()
             .into_iter()
             .collect();
-        let secret_requests: Vec<(&str, Vec<String>)> = selected
+        let secret_requests: Vec<(&FunctionId, Vec<String>)> = selected
             .iter()
-            .map(|s| {
-                (
-                    s.function.id.as_str(),
-                    declared_secret_keys(&s.version.manifest),
-                )
-            })
+            .map(|s| (&s.function.id, declared_secret_keys(&s.version.manifest)))
             .collect();
         let (config_maps, opened, credentials) = tokio::try_join!(
             self.settings.config_maps(&function_ids),
@@ -573,7 +570,7 @@ impl DesiredStateBuilder {
         &self,
         live_in_pool: &[&Function],
     ) -> Result<Vec<PublicRouteEntry>, PlatformError> {
-        let ids: Vec<String> = live_in_pool.iter().map(|f| f.id.clone()).collect();
+        let ids: Vec<FunctionId> = live_in_pool.iter().map(|f| f.id.clone()).collect();
         let by_function = self.routes.list_by_functions(&ids).await?;
         let mut out: Vec<PublicRouteEntry> = live_in_pool
             .iter()
@@ -608,11 +605,7 @@ impl DesiredStateBuilder {
         if f.status != FunctionStatus::Active {
             return Ok(false);
         }
-        let live_ids: Vec<String> = f
-            .live_version_id()
-            .map(str::to_string)
-            .into_iter()
-            .collect();
+        let live_ids: Vec<FunctionVersionId> = f.live_version_id().cloned().into_iter().collect();
         let function_ids = vec![f.id.clone()];
         let (live_lookup, candidate_lookup) = tokio::try_join!(
             self.versions.find_batch_by_ids(&live_ids),
@@ -743,9 +736,11 @@ mod tests {
             ("pool", |d| d.pool = "other".into()),
             ("address", |d| d.functions[0].address = "a.b.d".into()),
             ("functionId", |d| {
-                d.functions[0].function_id = "fnc_2".into()
+                d.functions[0].function_id = FunctionId::parse("fnc_2").unwrap()
             }),
-            ("versionId", |d| d.functions[0].version_id = "fnv_2".into()),
+            ("versionId", |d| {
+                d.functions[0].version_id = FunctionVersionId::parse("fnv_2").unwrap()
+            }),
             ("version", |d| d.functions[0].version = 2),
             ("role", |d| d.functions[0].role = Role::Candidate),
             ("mode", |d| d.functions[0].mode = "warm"),
@@ -808,8 +803,8 @@ mod tests {
     fn entry() -> FunctionEntry {
         FunctionEntry {
             address: "a.b.c".into(),
-            function_id: "fnc_1".into(),
-            version_id: "fnv_1".into(),
+            function_id: FunctionId::parse("fnc_1").unwrap(),
+            version_id: FunctionVersionId::parse("fnv_1").unwrap(),
             version: 1,
             role: Role::Live,
             mode: "lazy",

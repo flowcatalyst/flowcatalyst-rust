@@ -11,6 +11,7 @@
 
 use crate::function::operations::access::FunctionReach;
 use crate::function::OwnerClientId;
+use fc_platform_core::shared::id::FunctionId;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -146,13 +147,13 @@ impl<U: UnitOfWork> UseCase for ReleaseFunctionDomainUseCase<U> {
         let domain = domain_by_hostname(&self.domains, &hostname, ctx.caller()).await?;
         let using = self.routes.list_under(&domain.hostname).await?;
         if !using.is_empty() {
-            let mut function_ids: Vec<String> = Vec::new();
+            let mut function_ids: Vec<FunctionId> = Vec::new();
             for route in &using {
                 if !function_ids.contains(&route.function_id) {
                     function_ids.push(route.function_id.clone());
                 }
             }
-            let addresses: HashMap<String, String> = self
+            let addresses: HashMap<FunctionId, String> = self
                 .functions
                 .find_by_ids(&function_ids)
                 .await?
@@ -161,7 +162,7 @@ impl<U: UnitOfWork> UseCase for ReleaseFunctionDomainUseCase<U> {
                 .collect();
             let mut names: Vec<String> = function_ids
                 .iter()
-                .map(|id| addresses.get(id).cloned().unwrap_or_else(|| id.clone()))
+                .map(|id| addresses.get(id).cloned().unwrap_or_else(|| id.to_string()))
                 .collect();
             names.sort();
             return Err(UseCaseError::business_rule(

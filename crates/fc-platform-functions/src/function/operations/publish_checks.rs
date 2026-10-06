@@ -22,6 +22,7 @@
 //! which shares [`routes_taken`] with them.
 
 use crate::function::operations::access::FunctionReach;
+use fc_platform_core::shared::id::FunctionId;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -280,10 +281,10 @@ pub(crate) async fn routes_taken(
         .collect();
     let taken = routes.find_public_each(&keys).await?;
     let taken: Vec<&FunctionRoute> = taken.iter().filter(|r| r.function_id != f.id).collect();
-    let mut holder_ids: Vec<String> = taken.iter().map(|r| r.function_id.clone()).collect();
+    let mut holder_ids: Vec<FunctionId> = taken.iter().map(|r| r.function_id.clone()).collect();
     holder_ids.sort();
     holder_ids.dedup();
-    let holders: HashMap<String, Function> = functions
+    let holders: HashMap<FunctionId, Function> = functions
         .find_by_ids(&holder_ids)
         .await?
         .into_iter()

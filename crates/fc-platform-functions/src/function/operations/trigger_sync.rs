@@ -33,6 +33,7 @@
 //! one query each.
 
 use fc_platform_core::shared::id::DispatchPoolId;
+use fc_platform_core::shared::id::FunctionId;
 use fc_platform_core::shared::id::ScheduledJobId;
 use fc_platform_core::shared::id::SubscriptionId;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -158,7 +159,7 @@ fn spec_schedule_key(fid: &str, hasher: fn(&str) -> String, spec: &ScheduleSpec)
 /// seen first, each once.
 pub async fn missing_settings(
     settings: &FunctionSettingsRepository,
-    function_id: &str,
+    function_id: &FunctionId,
     manifest: &Manifest,
 ) -> Result<Vec<String>, UseCaseError> {
     let (config, secrets) = tokio::try_join!(
@@ -316,9 +317,9 @@ impl TriggerSync {
         }
 
         let mut conflicts = Vec::new();
-        let fid = fid(&f.id);
+        let fid = fid(f.id.as_str());
         let current = self.current(&f.id).await?;
-        let pool_key = pool_key(&f.id);
+        let pool_key = pool_key(f.id.as_str());
         let desired_concurrency = manifest.limits.max_concurrency;
         let linked_pool = current.pool.get(&pool_key).and_then(|(_, p)| p.as_ref());
         let pool = match linked_pool {
@@ -630,7 +631,7 @@ impl TriggerSync {
         };
         let manifest = &new_live.manifest;
         let now = Utc::now();
-        let fid = fid(&f.id);
+        let fid = fid(f.id.as_str());
         let application_code = self.application_code(f).await?;
         let current = self.current(&f.id).await?;
 
@@ -1229,7 +1230,7 @@ impl TriggerSync {
     }
 
     /// The links and the objects they name: four queries however many.
-    async fn current(&self, function_id: &str) -> Result<Current, UseCaseError> {
+    async fn current(&self, function_id: &FunctionId) -> Result<Current, UseCaseError> {
         let links = self.trigger_objects.list(function_id).await?;
         let ids = |kind: TriggerObjectKind| -> Vec<String> {
             links

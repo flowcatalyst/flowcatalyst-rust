@@ -6,6 +6,8 @@
 //! manifest live.
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::FunctionId;
+use fc_platform_core::shared::id::FunctionRouteId;
 use sqlx::PgPool;
 
 use super::entity::{Function, FunctionRoute};
@@ -22,8 +24,8 @@ const UNIQUE_CONSTRAINT: &str = "fnr_routes_hostname_path_prefix_key";
 
 #[derive(sqlx::FromRow)]
 struct RouteRow {
-    id: String,
-    function_id: String,
+    id: FunctionRouteId,
+    function_id: FunctionId,
     hostname: String,
     path_prefix: String,
     alias_prefixes: Vec<String>,
@@ -41,7 +43,7 @@ impl FunctionRouteRepository {
         Self { pool: pool.clone() }
     }
 
-    pub async fn list_by_function(&self, function_id: &str) -> Result<Vec<FunctionRoute>> {
+    pub async fn list_by_function(&self, function_id: &FunctionId) -> Result<Vec<FunctionRoute>> {
         let rows = sqlx::query_as::<_, RouteRow>(&format!(
             "SELECT {COLUMNS} FROM fnr_routes WHERE function_id = $1 \
              ORDER BY hostname ASC, path_prefix ASC"
@@ -56,9 +58,9 @@ impl FunctionRouteRepository {
     /// `listByFunctions`), grouped by function.
     pub async fn list_by_functions(
         &self,
-        function_ids: &[String],
-    ) -> Result<HashMap<String, Vec<FunctionRoute>>> {
-        let mut out: HashMap<String, Vec<FunctionRoute>> = HashMap::new();
+        function_ids: &[FunctionId],
+    ) -> Result<HashMap<FunctionId, Vec<FunctionRoute>>> {
+        let mut out: HashMap<FunctionId, Vec<FunctionRoute>> = HashMap::new();
         if function_ids.is_empty() {
             return Ok(out);
         }
@@ -135,7 +137,7 @@ impl FunctionRouteRepository {
     /// PUBLIC_ROUTE_TAKEN`, never a 500; any other failure stays a failure.
     async fn replace_for_function(
         &self,
-        function_id: &str,
+        function_id: &FunctionId,
         routes: &[FunctionRoute],
         tx: &mut DbTx<'_>,
     ) -> Result<()> {
@@ -183,7 +185,7 @@ pub struct PromotedFunction {
 
 impl HasId for PromotedFunction {
     fn id(&self) -> &str {
-        &self.function.id
+        self.function.id.as_str()
     }
 }
 
@@ -215,9 +217,15 @@ impl Persist<PromotedFunction> for PromotedFunctionRepository<'_> {
 
 fn to_entity(row: RouteRow) -> Result<FunctionRoute> {
     let hostname = Hostname::try_parse(&row.hostname)
-        .ok_or_else(|| corrupt_value("fnr_routes", "hostname", &row.hostname, &row.id))?;
-    let path_prefix = RoutePattern::try_parse(&row.path_prefix)
-        .ok_or_else(|| corrupt_value("fnr_routes", "path_prefix", &row.path_prefix, &row.id))?;
+        .ok_or_else(|| corrupt_value("fnr_routes", "hostname", &row.hostname, row.id.as_str()))?;
+    let path_prefix = RoutePattern::try_parse(&row.path_prefix).ok_or_else(|| {
+        corrupt_value(
+            "fnr_routes",
+            "path_prefix",
+            &row.path_prefix,
+            row.id.as_str(),
+        )
+    })?;
     Ok(FunctionRoute {
         id: row.id,
         function_id: row.function_id,

@@ -22,6 +22,7 @@
 //! version is committed in, so concurrent publishes serialise to `n` and
 //! `n + 1`. On any other unit of work the locked read refuses.
 
+use fc_platform_core::shared::id::FunctionId;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -292,7 +293,7 @@ impl<U: UnitOfWork> PublishVersionUseCase<U> {
 async fn check_platform_ref(
     store: Option<&dyn ArtifactBlobStore>,
     artifact_ref: &str,
-    function_id: &str,
+    function_id: &FunctionId,
     digest: &Digest,
 ) -> Result<(), UseCaseError> {
     if !artifact_ref.starts_with("platform://") {
@@ -300,7 +301,7 @@ async fn check_platform_ref(
     }
     let store = store.ok_or_else(artifact::store_not_configured)?;
     let reference = PlatformArtifactRef::parse(artifact_ref)
-        .filter(|r| r.function_id == function_id && r.hex == digest.hex())
+        .filter(|r| r.function_id == function_id.as_str() && r.hex == digest.hex())
         .ok_or_else(artifact::ref_mismatch)?;
     let exists = store
         .exists(&reference.function_id, digest)
@@ -343,7 +344,7 @@ async fn check_artifact_kind(
     let Some(store) = store.filter(|_| artifact_ref.starts_with("platform://")) else {
         return Ok(());
     };
-    let kind = match artifact::sniff(store, &function.id, digest).await {
+    let kind = match artifact::sniff(store, function.id.as_str(), digest).await {
         Ok(kind) => kind,
         Err(e) => {
             tracing::error!(function_id = %function.id, error = %e, "reading an uploaded artifact's header failed");
@@ -579,7 +580,7 @@ mod tests {
         let with: Option<&dyn ArtifactBlobStore> = Some(&store);
         let check = |store, r: &str, id: &str| {
             let (r, id, digest) = (r.to_string(), id.to_string(), digest.clone());
-            async move { check_platform_ref(store, &r, &id, &digest).await }
+            async move { check_platform_ref(store, &r, &FunctionId::from_wire(id), &digest).await }
         };
 
         // Any other scheme passes, with or without a store.
