@@ -355,6 +355,52 @@ pub mod checks {
         require_permission(context, permissions::admin::APPLICATION_READ)
     }
 
+    /// The coarse guard on the six `/api/applications` read endpoints (list,
+    /// get, by code, client configs, one client config, roles): the admin
+    /// view permission, or the application-service view an SDK service
+    /// account holds (Go `CanReadApplications`). A caller admitted only by
+    /// the second is confined by [`can_read_application`] (or, for the
+    /// list, by a filter) to the applications it is bound to. The BFF and
+    /// the server-rendered UI keep [`can_read_applications`].
+    pub fn can_read_applications_or_own(context: &impl Authority) -> Result<()> {
+        require_any_permission(
+            context,
+            &[
+                permissions::admin::APPLICATION_READ,
+                permissions::application_service::APPLICATION_READ,
+            ],
+        )
+    }
+
+    /// Whether the caller reads applications without the per-application
+    /// confinement: it holds the admin view permission, directly or by a
+    /// wildcard (Go `CanReadAllApplications`). The list endpoint filters
+    /// when this is false.
+    pub fn can_read_all_applications(context: &impl Authority) -> bool {
+        context.has_permission(permissions::admin::APPLICATION_READ)
+    }
+
+    /// The resource-level read rule for one application (Go
+    /// `CanReadApplication`): the coarse guard, then the admin view
+    /// permission reads any application, while a holder of only the
+    /// application-service view reads the applications `scope` covers (the
+    /// all-applications flag, or the id among its grants) and no others.
+    /// Refused as Go: 403 `APPLICATION_ACCESS_REQUIRED`.
+    pub fn can_read_application(
+        context: &impl Authority,
+        scope: &ApplicationScope,
+        application_id: &ApplicationId,
+    ) -> Result<()> {
+        can_read_applications_or_own(context)?;
+        if can_read_all_applications(context) || scope.allows(application_id) {
+            return Ok(());
+        }
+        Err(PlatformError::forbidden_code(
+            "APPLICATION_ACCESS_REQUIRED",
+            "not authorised for this application",
+        ))
+    }
+
     /// Clients, read (list, search, by identifier, get): anchor plus
     /// `platform:admin:client:view` (Go `CanReadClients`, auth.go:713).
     pub fn can_read_clients(context: &impl Authority) -> Result<()> {

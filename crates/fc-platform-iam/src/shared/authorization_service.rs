@@ -838,4 +838,149 @@ mod tests {
             other => panic!("unexpected {other:?}"),
         }
     }
+
+    // ── The application read rule ─────────────────────────────────────
+
+    const ADMIN_APP_VIEW: &str = "platform:admin:application:view";
+    const APP_SVC_APP_VIEW: &str = "platform:application-service:application:view";
+
+    /// The scope a principal's binding resolves to.
+    fn scope(all_applications: bool, granted: &[&str]) -> ApplicationScope {
+        ApplicationScope::from_binding(Some(PrincipalApplicationBinding {
+            all_applications,
+            granted_application_ids: granted
+                .iter()
+                .map(|g| ApplicationId::from_wire(*g))
+                .collect(),
+        }))
+    }
+
+    /// The admin view permission reads any application; the
+    /// application-service view reads only the applications the principal is
+    /// bound to (Go `TestCanReadApplication`, minus its nil-context case:
+    /// a Rust caller always has a context).
+    #[test]
+    fn application_read_rule() {
+        struct Case {
+            name: &'static str,
+            permissions: Vec<&'static str>,
+            tier: &'static str,
+            scope: ApplicationScope,
+            app: &'static str,
+            ok: bool,
+        }
+        let cases = vec![
+            Case {
+                name: "no permission",
+                permissions: vec![],
+                tier: "CLIENT",
+                scope: scope(true, &[]),
+                app: "app_1",
+                ok: false,
+            },
+            Case {
+                name: "admin view reads any, even when application-scoped",
+                permissions: vec![ADMIN_APP_VIEW],
+                tier: "CLIENT",
+                scope: scope(false, &["app_1"]),
+                app: "app_2",
+                ok: true,
+            },
+            Case {
+                name: "super-admin wildcard reads any",
+                permissions: vec!["platform:*:*:*"],
+                tier: "CLIENT",
+                scope: scope(false, &[]),
+                app: "app_2",
+                ok: true,
+            },
+            Case {
+                name: "app-service view reads its own application",
+                permissions: vec![APP_SVC_APP_VIEW],
+                tier: "CLIENT",
+                scope: scope(false, &["app_1"]),
+                app: "app_1",
+                ok: true,
+            },
+            Case {
+                name: "app-service view is refused another application",
+                permissions: vec![APP_SVC_APP_VIEW],
+                tier: "CLIENT",
+                scope: scope(false, &["app_1"]),
+                app: "app_2",
+                ok: false,
+            },
+            Case {
+                name: "app-service view with no binding reads nothing",
+                permissions: vec![APP_SVC_APP_VIEW],
+                tier: "CLIENT",
+                scope: scope(false, &[]),
+                app: "app_1",
+                ok: false,
+            },
+            Case {
+                name: "app-service view at anchor tier is still confined",
+                permissions: vec![APP_SVC_APP_VIEW],
+                tier: "ANCHOR",
+                scope: scope(false, &["app_1"]),
+                app: "app_2",
+                ok: false,
+            },
+            Case {
+                name: "app-service view with all-applications reads any",
+                permissions: vec![APP_SVC_APP_VIEW],
+                tier: "CLIENT",
+                scope: scope(true, &[]),
+                app: "app_9",
+                ok: true,
+            },
+        ];
+        for c in cases {
+            let ctx = create_test_context(c.permissions, c.tier, vec![]);
+            let got =
+                checks::can_read_application(&ctx, &c.scope, &ApplicationId::from_wire(c.app));
+            assert_eq!(got.is_ok(), c.ok, "{}: {got:?}", c.name);
+        }
+    }
+
+    /// A refusal for the application in hand is 403 with Go's code.
+    #[test]
+    fn application_read_refusal_is_coded() {
+        let ctx = create_test_context(vec![APP_SVC_APP_VIEW], "CLIENT", vec![]);
+        match checks::can_read_application(
+            &ctx,
+            &scope(false, &["app_1"]),
+            &ApplicationId::from_wire("app_2"),
+        ) {
+            Err(PlatformError::Coded {
+                status,
+                code,
+                message,
+                ..
+            }) => {
+                assert_eq!(status.as_u16(), 403);
+                assert_eq!(code, "APPLICATION_ACCESS_REQUIRED");
+                assert_eq!(message, "not authorised for this application");
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    /// Go `TestCanReadApplicationsCoarseGuard`.
+    #[test]
+    fn application_read_coarse_guard() {
+        let svc = create_test_context(vec![APP_SVC_APP_VIEW], "CLIENT", vec![]);
+        assert!(checks::can_read_applications_or_own(&svc).is_ok());
+        let unrelated = create_test_context(
+            vec!["platform:application-service:role:view"],
+            "CLIENT",
+            vec![],
+        );
+        assert!(checks::can_read_applications_or_own(&unrelated).is_err());
+        assert!(!checks::can_read_all_applications(&svc));
+        let admin = create_test_context(vec![ADMIN_APP_VIEW], "CLIENT", vec![]);
+        assert!(checks::can_read_all_applications(&admin));
+        // The BFF and the server-rendered UI keep the admin-only guard.
+        assert!(checks::can_read_applications(&svc).is_err());
+    }
 }

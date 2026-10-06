@@ -398,6 +398,11 @@ pub mod application_service {
     pub const PROCESS_READ: &str = "platform:application-service:process:view";
     pub const PROCESS_SYNC: &str = "platform:application-service:process:sync";
 
+    // Read its own application (and that application's client configs and
+    // roles). Confined to the applications the service account is bound to
+    // by `checks::can_read_application`; not a grant to read every application.
+    pub const APPLICATION_READ: &str = "platform:application-service:application:view";
+
     /// All application service permissions, in Go's order
     /// (seed/permissions.go:200-225).
     pub const ALL: &[&str] = &[
@@ -425,6 +430,7 @@ pub mod application_service {
         SCHEDULED_JOB_SYNC,
         PROCESS_READ,
         PROCESS_SYNC,
+        APPLICATION_READ,
     ];
 }
 

@@ -26,6 +26,7 @@ use crate::usecase::{PgUnitOfWork, UnitOfWork};
 pub fn routes(ctx: &PlatformContext) -> AggregateRoutes {
     AggregateRoutes {
         documented: OpenApiRouter::new().merge(application_go_router(ApplicationGoState {
+            app_access: ctx.app_access.clone(),
             principal_repo: ctx.repos.principal_repo.clone(),
             client_config_repo: ctx.repos.application_client_config_repo.clone(),
             attach_use_case: Arc::new(AttachServiceAccountToApplicationUseCase::new(
@@ -49,6 +50,7 @@ pub fn applications_state(ctx: &PlatformContext) -> ApplicationsState<PgUnitOfWo
         role_repo: repos.role_repo.clone(),
         client_config_repo: repos.application_client_config_repo.clone(),
         client_repo: repos.client_repo.clone(),
+        app_access: ctx.app_access.clone(),
         create_use_case: Arc::new(CreateApplicationUseCase::new(
             repos.application_repo.clone(),
             uow.clone(),

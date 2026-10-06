@@ -38,6 +38,7 @@ use crate::application::ApplicationClientConfig;
 use crate::auth::oauth_entity::{GrantType, OAuthClientType};
 use crate::auth::operations::CreateOAuthClientUseCase;
 use crate::principal::repository::PrincipalRepository;
+use crate::shared::authorization_service::ApplicationAccessService;
 use crate::{
     application::entity::Application, auth::oauth_client_repository::OAuthClientRepository,
     role::entity::AuthRole, service_account::entity::ServiceAccount,
@@ -344,6 +345,9 @@ pub struct ApplicationsState<U: UnitOfWork + 'static> {
     pub role_repo: Arc<RoleRepository>,
     pub client_config_repo: Arc<ApplicationClientConfigRepository>,
     pub client_repo: Arc<ClientRepository>,
+    /// The caller's application scope, for the read endpoints a service
+    /// account holding only `application-service:application:view` may call.
+    pub app_access: Arc<ApplicationAccessService>,
     pub create_use_case: Arc<CreateApplicationUseCase<U>>,
     pub update_use_case: Arc<UpdateApplicationUseCase<U>>,
     pub activate_use_case: Arc<ActivateApplicationUseCase<U>>,
@@ -360,6 +364,23 @@ pub struct ApplicationsState<U: UnitOfWork + 'static> {
     /// that span two aggregates. Routed via `run(closure)` — handler owns the
     /// tx boundary. Trait-backed use cases still go through `U`.
     pub pg_unit_of_work: Arc<PgUnitOfWork>,
+}
+
+/// The read rule for one application in hand (`checks::can_read_application`):
+/// the admin view permission reads any; a holder of only the
+/// application-service view reads the applications it is bound to.
+async fn require_application_read(
+    app_access: &ApplicationAccessService,
+    auth: &AuthContext,
+    application_id: &ApplicationId,
+) -> Result<(), PlatformError> {
+    checks::can_read_applications_or_own(auth)?;
+    // The admin view permission needs no scope; skip resolving it.
+    if checks::can_read_all_applications(auth) {
+        return Ok(());
+    }
+    let scope = app_access.scope_for(&auth.principal_id).await?;
+    checks::can_read_application(auth, &scope, application_id)
 }
 
 /// Create a new application
@@ -430,7 +451,7 @@ pub async fn get_application<U: UnitOfWork>(
     Path(id): Path<String>,
 ) -> Result<Json<ApplicationResponse>, PlatformError> {
     let id = ApplicationId::from_wire(id);
-    checks::can_read_applications(&auth.0)?;
+    require_application_read(&state.app_access, &auth.0, &id).await?;
 
     let app = state
         .application_repo
@@ -473,7 +494,7 @@ pub async fn list_applications<U: UnitOfWork>(
     auth: Authenticated,
     Query(query): Query<ApplicationsQuery>,
 ) -> Result<Json<ApplicationListResponse>, PlatformError> {
-    checks::can_read_applications(&auth.0)?;
+    checks::can_read_applications_or_own(&auth.0)?;
 
     // Go lists every application, filtered only when asked, ordered by code
     // and unpaginated (application/api/api.go:63-81).
@@ -490,6 +511,12 @@ pub async fn list_applications<U: UnitOfWork>(
         .filter(|a| want_active.is_none_or(|active| a.active == active))
         .collect();
     apps.sort_by(|a, b| a.code.cmp(&b.code));
+    if !checks::can_read_all_applications(&auth.0) {
+        // An application service account sees only the applications it is
+        // bound to.
+        let scope = state.app_access.scope_for(&auth.0.principal_id).await?;
+        apps.retain(|a| scope.allows(&a.id));
+    }
 
     let applications: Vec<ApplicationResponse> = apps.into_iter().map(|a| a.into()).collect();
     let total = applications.len();
@@ -839,13 +866,16 @@ pub async fn get_application_by_code<U: UnitOfWork>(
     auth: Authenticated,
     Path(code): Path<String>,
 ) -> Result<Json<ApplicationResponse>, PlatformError> {
-    checks::can_read_applications(&auth.0)?;
+    checks::can_read_applications_or_own(&auth.0)?;
 
     let app = state
         .application_repo
         .find_by_code(&code)
         .await?
         .ok_or_else(|| PlatformError::not_found("Application", &code))?;
+    // Checked after the load: an unknown code stays 404, an application
+    // outside the caller's scope is refused.
+    require_application_read(&state.app_access, &auth.0, &app.id).await?;
 
     Ok(Json(app.into()))
 }
@@ -1334,7 +1364,7 @@ pub async fn list_application_roles<U: UnitOfWork>(
     Path(id): Path<String>,
 ) -> Result<Json<ApplicationRolesResponse>, PlatformError> {
     let id = ApplicationId::from_wire(id);
-    checks::can_read_applications(&auth.0)?;
+    require_application_read(&state.app_access, &auth.0, &id).await?;
 
     // Go lists the role names registered against the application id; an
     // unknown application simply has none.
@@ -1424,7 +1454,7 @@ pub async fn list_client_configs<U: UnitOfWork>(
     Path(id): Path<String>,
 ) -> Result<Json<ClientConfigsResponse>, PlatformError> {
     let id = ApplicationId::from_wire(id);
-    checks::can_read_applications(&auth.0)?;
+    require_application_read(&state.app_access, &auth.0, &id).await?;
 
     // Go lists the application's configs as stored; an unknown application
     // has none (200 `{items: []}`).
@@ -1610,6 +1640,7 @@ pub async fn disable_for_client<U: UnitOfWork>(
 
 #[derive(Clone)]
 pub struct ApplicationGoState {
+    pub app_access: Arc<ApplicationAccessService>,
     pub principal_repo: Arc<PrincipalRepository>,
     pub client_config_repo: Arc<ApplicationClientConfigRepository>,
     pub attach_use_case: Arc<AttachServiceAccountToApplicationUseCase<PgUnitOfWork>>,
@@ -1732,7 +1763,7 @@ pub async fn get_application_client_config(
 ) -> Result<Json<GoClientConfigResponse>, PlatformError> {
     let client_id = ClientId::from_wire(client_id);
     let id = ApplicationId::from_wire(id);
-    checks::require_permission(&auth.0, permissions::admin::APPLICATION_READ)?;
+    require_application_read(&state.app_access, &auth.0, &id).await?;
     let c = state
         .client_config_repo
         .find_by_application_and_client(&id, &client_id)

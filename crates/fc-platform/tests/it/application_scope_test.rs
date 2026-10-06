@@ -737,3 +737,75 @@ async fn dispatch_pool_sweep_needs_anchor() {
         .expect("insert anchor");
     assert_eq!(sync(token(&app, &anchor), true).await, StatusCode::OK);
 }
+
+/// An application's service account reads its own application through the
+/// read endpoints and is refused the others (Go: the application read rule).
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn service_account_reads_only_its_own_application() {
+    let app = TestApp::setup().await;
+    let app_a = create_app(&app, "read-a").await;
+    let app_b = create_app(&app, "read-b").await;
+
+    let sa_a = token_for(
+        &app,
+        Principal::new_service("read_sa_a", "Read SA A", UserScope::Anchor)
+            .with_application_id(app_a.id.clone()),
+        &[&app_a],
+    )
+    .await;
+
+    let get = |path: String| {
+        let (app, token) = (&app, &sa_a);
+        async move { read_json(app.get(&path, token).await).await }
+    };
+
+    // Its own application, by id and by code.
+    let (status, body) = get(format!("/api/applications/{}", app_a.id)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["code"], "read-a");
+    assert_eq!(
+        get("/api/applications/by-code/read-a".to_string()).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        get(format!("/api/applications/by-id/{}/roles", app_a.id))
+            .await
+            .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        get(format!("/api/applications/{}/clients", app_a.id))
+            .await
+            .0,
+        StatusCode::OK
+    );
+
+    // Another application: refused with the access code.
+    for path in [
+        format!("/api/applications/{}", app_b.id),
+        "/api/applications/by-code/read-b".to_string(),
+        format!("/api/applications/by-id/{}/roles", app_b.id),
+        format!("/api/applications/{}/clients", app_b.id),
+    ] {
+        let (status, body) = get(path.clone()).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{path}");
+        assert_eq!(body["error"], "APPLICATION_ACCESS_REQUIRED", "{path}");
+    }
+    // An unknown code stays not-found.
+    assert_eq!(
+        get("/api/applications/by-code/read-zz".to_string()).await.0,
+        StatusCode::NOT_FOUND
+    );
+
+    // The list is filtered to the bound application.
+    let (status, list) = get("/api/applications".to_string()).await;
+    assert_eq!(status, StatusCode::OK);
+    let codes: Vec<&str> = list["applications"]
+        .as_array()
+        .expect("applications array")
+        .iter()
+        .filter_map(|a| a["code"].as_str())
+        .collect();
+    assert_eq!(codes, vec!["read-a"]);
+}
