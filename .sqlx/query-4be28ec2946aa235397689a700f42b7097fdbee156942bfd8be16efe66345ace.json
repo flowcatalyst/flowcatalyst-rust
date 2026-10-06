@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT j.id AS \"id!\" FROM UNNEST($1::text[], $2::bool[]) AS j(id, tracks) WHERE EXISTS ( SELECT 1 FROM msg_scheduled_job_instances i WHERE i.scheduled_job_id = j.id AND (i.status IN ('QUEUED', 'IN_FLIGHT') OR (i.status = 'DELIVERED' AND j.tracks AND i.completed_at IS NULL)))",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "BoolArray"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "4be28ec2946aa235397689a700f42b7097fdbee156942bfd8be16efe66345ace"
+}

@@ -80,7 +80,6 @@ impl TryFrom<InstanceRow> for ScheduledJobInstance {
     }
 }
 
-#[derive(sqlx::FromRow)]
 struct LogRow {
     id: ScheduledJobInstanceLogId,
     instance_id: ScheduledJobInstanceId,
@@ -116,9 +115,6 @@ const INSTANCE_COLS: &str = "id, scheduled_job_id, client_id, job_code, trigger_
                               delivery_attempts, delivery_error, completion_status, \
                               completion_result, correlation_id, created_at";
 
-const LOG_COLS: &str = "id, instance_id, scheduled_job_id, client_id, level, message, \
-                         metadata, created_at";
-
 /// Composite filter for paginated instance lists. None means "no constraint".
 #[derive(Debug, Default, Clone)]
 pub struct InstanceListFilters<'a> {
@@ -146,23 +142,23 @@ impl ScheduledJobInstanceRepository {
     /// Insert a freshly-created instance row in QUEUED status. Returns the row
     /// as inserted (caller already populated the id/timestamps).
     pub async fn insert(&self, inst: &ScheduledJobInstance) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO msg_scheduled_job_instances \
                 (id, scheduled_job_id, client_id, job_code, trigger_kind, scheduled_for, \
                  fired_at, status, delivery_attempts, correlation_id, created_at) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+            &inst.id as &ScheduledJobInstanceId,
+            &inst.scheduled_job_id as &ScheduledJobId,
+            &inst.client_id as &Option<ClientId>,
+            &inst.job_code,
+            inst.trigger_kind as TriggerKind,
+            inst.scheduled_for,
+            inst.fired_at,
+            inst.status as InstanceStatus,
+            inst.delivery_attempts,
+            inst.correlation_id.as_ref(),
+            inst.created_at
         )
-        .bind(&inst.id)
-        .bind(&inst.scheduled_job_id)
-        .bind(&inst.client_id)
-        .bind(&inst.job_code)
-        .bind(inst.trigger_kind)
-        .bind(inst.scheduled_for)
-        .bind(inst.fired_at)
-        .bind(inst.status)
-        .bind(inst.delivery_attempts)
-        .bind(&inst.correlation_id)
-        .bind(inst.created_at)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -175,13 +171,13 @@ impl ScheduledJobInstanceRepository {
         id: &ScheduledJobInstanceId,
         created_at: DateTime<Utc>,
     ) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "UPDATE msg_scheduled_job_instances \
              SET status = 'IN_FLIGHT', delivery_attempts = delivery_attempts + 1 \
              WHERE id = $1 AND created_at = $2",
+            id as &ScheduledJobInstanceId,
+            created_at
         )
-        .bind(id)
-        .bind(created_at)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -194,13 +190,13 @@ impl ScheduledJobInstanceRepository {
         id: &ScheduledJobInstanceId,
         created_at: DateTime<Utc>,
     ) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "UPDATE msg_scheduled_job_instances \
              SET status = 'DELIVERED', delivered_at = NOW() \
              WHERE id = $1 AND created_at = $2",
+            id as &ScheduledJobInstanceId,
+            created_at
         )
-        .bind(id)
-        .bind(created_at)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -220,15 +216,15 @@ impl ScheduledJobInstanceRepository {
         } else {
             "QUEUED"
         };
-        sqlx::query(
+        sqlx::query!(
             "UPDATE msg_scheduled_job_instances \
              SET status = $3, delivery_error = $4 \
              WHERE id = $1 AND created_at = $2",
+            id as &ScheduledJobInstanceId,
+            created_at,
+            status,
+            error
         )
-        .bind(id)
-        .bind(created_at)
-        .bind(status)
-        .bind(error)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -247,17 +243,17 @@ impl ScheduledJobInstanceRepository {
     ) -> Result<()> {
         // Go's `MarkComplete`: the caller has resolved the instance status
         // and the completion outcome (see the complete handler).
-        sqlx::query(
+        sqlx::query!(
             "UPDATE msg_scheduled_job_instances \
              SET status = $3, completion_status = $4, completion_result = $5, \
                  completed_at = NOW() \
              WHERE id = $1 AND created_at = $2",
+            id as &ScheduledJobInstanceId,
+            created_at,
+            status as InstanceStatus,
+            completion_status as Option<CompletionStatus>,
+            result
         )
-        .bind(id)
-        .bind(created_at)
-        .bind(status)
-        .bind(completion_status)
-        .bind(result)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -272,10 +268,20 @@ impl ScheduledJobInstanceRepository {
         &self,
         id: &ScheduledJobInstanceId,
     ) -> Result<Option<ScheduledJobInstance>> {
-        let row = sqlx::query_as::<_, InstanceRow>(&format!(
-            "SELECT {INSTANCE_COLS} FROM msg_scheduled_job_instances WHERE id = $1"
-        ))
-        .bind(id)
+        let row = sqlx::query_as!(
+            InstanceRow,
+            "SELECT id AS \"id: ScheduledJobInstanceId\", \
+                    scheduled_job_id AS \"scheduled_job_id: ScheduledJobId\", \
+                    client_id AS \"client_id: ClientId\", job_code, \
+                    trigger_kind AS \"trigger_kind: Stored<TriggerKind>\", scheduled_for, \
+                    fired_at, delivered_at, completed_at, \
+                    status AS \"status: Stored<InstanceStatus>\", delivery_attempts, \
+                    delivery_error, \
+                    completion_status AS \"completion_status: Stored<CompletionStatus>\", \
+                    completion_result AS \"completion_result: serde_json::Value\", \
+                    correlation_id, created_at FROM msg_scheduled_job_instances WHERE id = $1",
+            id as &ScheduledJobInstanceId
+        )
         .fetch_optional(&self.pool)
         .await?;
         row.map(ScheduledJobInstance::try_from).transpose()
@@ -292,31 +298,32 @@ impl ScheduledJobInstanceRepository {
         }
         let ids: Vec<&str> = jobs.iter().map(|(id, _)| id.as_str()).collect();
         let tracks: Vec<bool> = jobs.iter().map(|(_, t)| *t).collect();
-        let rows: Vec<(String,)> = sqlx::query_as(
-            "SELECT j.id FROM UNNEST($1::text[], $2::bool[]) AS j(id, tracks) \
+        // `id!`: the ids come from a non-null text[] the caller built.
+        let rows = sqlx::query!(
+            "SELECT j.id AS \"id!\" FROM UNNEST($1::text[], $2::bool[]) AS j(id, tracks) \
              WHERE EXISTS ( \
                  SELECT 1 FROM msg_scheduled_job_instances i \
                  WHERE i.scheduled_job_id = j.id \
                    AND (i.status IN ('QUEUED', 'IN_FLIGHT') \
                         OR (i.status = 'DELIVERED' AND j.tracks AND i.completed_at IS NULL)))",
+            &ids as &[&str],
+            &tracks
         )
-        .bind(&ids)
-        .bind(&tracks)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(|(id,)| id).collect())
+        Ok(rows.into_iter().map(|r| r.id).collect())
     }
 
     pub async fn has_active_instance(&self, scheduled_job_id: &ScheduledJobId) -> Result<bool> {
-        let row: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM msg_scheduled_job_instances \
+        let count = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM msg_scheduled_job_instances \
              WHERE scheduled_job_id = $1 \
                AND status IN ('QUEUED', 'IN_FLIGHT', 'DELIVERED')",
+            scheduled_job_id as &ScheduledJobId
         )
-        .bind(scheduled_job_id)
         .fetch_one(&self.pool)
         .await?;
-        Ok(row.0 > 0)
+        Ok(count > 0)
     }
 
     /// Go's `HasActiveInstance`: a QUEUED or IN_FLIGHT instance, or a
@@ -327,17 +334,17 @@ impl ScheduledJobInstanceRepository {
         scheduled_job_id: &ScheduledJobId,
         tracks_completion: bool,
     ) -> Result<bool> {
-        let row: (bool,) = sqlx::query_as(
+        let exists = sqlx::query_scalar!(
             "SELECT EXISTS (SELECT 1 FROM msg_scheduled_job_instances \
              WHERE scheduled_job_id = $1 \
                AND (status IN ('QUEUED', 'IN_FLIGHT') \
-                    OR (status = 'DELIVERED' AND $2 AND completed_at IS NULL)))",
+                    OR (status = 'DELIVERED' AND $2 AND completed_at IS NULL))) AS \"exists!\"",
+            scheduled_job_id as &ScheduledJobId,
+            tracks_completion
         )
-        .bind(scheduled_job_id)
-        .bind(tracks_completion)
         .fetch_one(&self.pool)
         .await?;
-        Ok(row.0)
+        Ok(exists)
     }
 
     /// [`Self::has_active_instance_for`] for many jobs at once: the ids of
@@ -351,18 +358,18 @@ impl ScheduledJobInstanceRepository {
         if job_ids.is_empty() {
             return Ok(Default::default());
         }
-        let rows: Vec<(String,)> = sqlx::query_as(
+        let rows = sqlx::query!(
             "SELECT DISTINCT scheduled_job_id FROM msg_scheduled_job_instances \
              WHERE scheduled_job_id = ANY($1) \
                AND (status IN ('QUEUED', 'IN_FLIGHT') \
                     OR (status = 'DELIVERED' AND completed_at IS NULL \
                         AND scheduled_job_id = ANY($2)))",
+            job_ids,
+            tracking
         )
-        .bind(job_ids)
-        .bind(tracking)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(|(id,)| id).collect())
+        Ok(rows.into_iter().map(|r| r.scheduled_job_id).collect())
     }
 
     pub async fn list(&self, f: &InstanceListFilters<'_>) -> Result<Vec<ScheduledJobInstance>> {
@@ -457,19 +464,19 @@ impl ScheduledJobInstanceRepository {
     /// Append a log entry to an instance. Called from the SDK callback path
     /// (`/api/scheduled-jobs/instances/:id/log`).
     pub async fn insert_log(&self, log: &ScheduledJobInstanceLog) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO msg_scheduled_job_instance_logs \
                 (id, instance_id, scheduled_job_id, client_id, level, message, metadata, created_at) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+            &log.id as &ScheduledJobInstanceLogId,
+            &log.instance_id as &ScheduledJobInstanceId,
+            &log.scheduled_job_id as &Option<ScheduledJobId>,
+            &log.client_id as &Option<ClientId>,
+            log.level as LogLevel,
+            &log.message,
+            log.metadata.as_ref(),
+            log.created_at
         )
-        .bind(&log.id)
-        .bind(&log.instance_id)
-        .bind(&log.scheduled_job_id)
-        .bind(&log.client_id)
-        .bind(log.level)
-        .bind(&log.message)
-        .bind(&log.metadata)
-        .bind(log.created_at)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -481,12 +488,18 @@ impl ScheduledJobInstanceRepository {
         limit: Option<i64>,
     ) -> Result<Vec<ScheduledJobInstanceLog>> {
         let limit = limit.unwrap_or(500);
-        let rows = sqlx::query_as::<_, LogRow>(&format!(
-            "SELECT {LOG_COLS} FROM msg_scheduled_job_instance_logs \
-             WHERE instance_id = $1 ORDER BY created_at ASC LIMIT $2"
-        ))
-        .bind(instance_id)
-        .bind(limit)
+        let rows = sqlx::query_as!(
+            LogRow,
+            "SELECT id AS \"id: ScheduledJobInstanceLogId\", \
+                    instance_id AS \"instance_id: ScheduledJobInstanceId\", \
+                    scheduled_job_id AS \"scheduled_job_id: ScheduledJobId\", \
+                    client_id AS \"client_id: ClientId\", \
+                    level AS \"level: Stored<LogLevel>\", message, \
+                    metadata AS \"metadata: serde_json::Value\", created_at FROM msg_scheduled_job_instance_logs \
+             WHERE instance_id = $1 ORDER BY created_at ASC LIMIT $2",
+            instance_id as &ScheduledJobInstanceId,
+            limit
+        )
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter()

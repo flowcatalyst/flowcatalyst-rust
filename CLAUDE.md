@@ -139,10 +139,11 @@ note that deferred checked queries). **Conversion is in progress**, one
 repository at a time; a crate is done when it has no runtime `sqlx::query*`
 call left except the exceptions below.
 
-Done: `fc-platform-iam`: `application_openapi_spec` only. Everything else is
-still runtime SQL (`sqlx::query_as::<_, FooRow>("SELECT ...")`) and is converted
-the next time the work resumes; convert a repository you are editing if it is
-not done (one repository per commit, with its `.sqlx/` files).
+Done (every static query checked; only `QueryBuilder` queries stay runtime):
+`fc-platform-scheduled-jobs`. Partly done: `fc-platform-iam` (`application_openapi_spec`).
+Everything else is still runtime SQL (`sqlx::query_as::<_, FooRow>("SELECT ...")`)
+and is converted the next time the work resumes; convert a repository you are
+editing if it is not done (one repository per commit, with its `.sqlx/` files).
 
 ### The rule
 - A static query is `sqlx::query!` / `query_as!` / `query_scalar!` (a `const`

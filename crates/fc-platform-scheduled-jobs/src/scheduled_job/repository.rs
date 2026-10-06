@@ -104,10 +104,17 @@ impl ScheduledJobRepository {
     // ── Reads ────────────────────────────────────────────────────────────────
 
     pub async fn find_by_id(&self, id: &ScheduledJobId) -> Result<Option<ScheduledJob>> {
-        let row = sqlx::query_as::<_, ScheduledJobRow>(&format!(
-            "SELECT {SELECT_COLS} FROM msg_scheduled_jobs WHERE id = $1"
-        ))
-        .bind(id)
+        let row = sqlx::query_as!(
+            ScheduledJobRow,
+            "SELECT id, client_id, application_id AS \"application_id: ApplicationId\", \
+                    code, name, description, \
+                    status AS \"status: Stored<ScheduledJobStatus>\", crons, timezone, \
+                    payload AS \"payload: serde_json::Value\", concurrent, \
+                    tracks_completion, timeout_seconds, delivery_max_attempts, \
+                    target_url, last_fired_at, created_at, updated_at, created_by, \
+                    updated_by, version FROM msg_scheduled_jobs WHERE id = $1",
+            id as &ScheduledJobId
+        )
         .fetch_optional(&self.pool)
         .await?;
         row.map(ScheduledJob::try_from).transpose()
@@ -118,10 +125,17 @@ impl ScheduledJobRepository {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        let rows = sqlx::query_as::<_, ScheduledJobRow>(&format!(
-            "SELECT {SELECT_COLS} FROM msg_scheduled_jobs WHERE id = ANY($1)"
-        ))
-        .bind(ids)
+        let rows = sqlx::query_as!(
+            ScheduledJobRow,
+            "SELECT id, client_id, application_id AS \"application_id: ApplicationId\", \
+                    code, name, description, \
+                    status AS \"status: Stored<ScheduledJobStatus>\", crons, timezone, \
+                    payload AS \"payload: serde_json::Value\", concurrent, \
+                    tracks_completion, timeout_seconds, delivery_max_attempts, \
+                    target_url, last_fired_at, created_at, updated_at, created_by, \
+                    updated_by, version FROM msg_scheduled_jobs WHERE id = ANY($1)",
+            ids as &[ScheduledJobId]
+        )
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(ScheduledJob::try_from).collect()
@@ -135,21 +149,35 @@ impl ScheduledJobRepository {
     ) -> Result<Option<ScheduledJob>> {
         let row = match client_id {
             Some(cid) => {
-                sqlx::query_as::<_, ScheduledJobRow>(&format!(
-                    "SELECT {SELECT_COLS} FROM msg_scheduled_jobs \
-                     WHERE client_id = $1 AND code = $2"
-                ))
-                .bind(cid)
-                .bind(code)
+                sqlx::query_as!(
+                    ScheduledJobRow,
+                    "SELECT id, client_id, application_id AS \"application_id: ApplicationId\", \
+                    code, name, description, \
+                    status AS \"status: Stored<ScheduledJobStatus>\", crons, timezone, \
+                    payload AS \"payload: serde_json::Value\", concurrent, \
+                    tracks_completion, timeout_seconds, delivery_max_attempts, \
+                    target_url, last_fired_at, created_at, updated_at, created_by, \
+                    updated_by, version FROM msg_scheduled_jobs \
+                     WHERE client_id = $1 AND code = $2",
+                    cid as &ClientId,
+                    code
+                )
                 .fetch_optional(&self.pool)
                 .await?
             }
             None => {
-                sqlx::query_as::<_, ScheduledJobRow>(&format!(
-                    "SELECT {SELECT_COLS} FROM msg_scheduled_jobs \
-                     WHERE client_id IS NULL AND code = $1"
-                ))
-                .bind(code)
+                sqlx::query_as!(
+                    ScheduledJobRow,
+                    "SELECT id, client_id, application_id AS \"application_id: ApplicationId\", \
+                    code, name, description, \
+                    status AS \"status: Stored<ScheduledJobStatus>\", crons, timezone, \
+                    payload AS \"payload: serde_json::Value\", concurrent, \
+                    tracks_completion, timeout_seconds, delivery_max_attempts, \
+                    target_url, last_fired_at, created_at, updated_at, created_by, \
+                    updated_by, version FROM msg_scheduled_jobs \
+                     WHERE client_id IS NULL AND code = $1",
+                    code
+                )
                 .fetch_optional(&self.pool)
                 .await?
             }
@@ -158,20 +186,34 @@ impl ScheduledJobRepository {
     }
 
     pub async fn find_all(&self) -> Result<Vec<ScheduledJob>> {
-        let rows = sqlx::query_as::<_, ScheduledJobRow>(&format!(
-            "SELECT {SELECT_COLS} FROM msg_scheduled_jobs ORDER BY created_at DESC"
-        ))
+        let rows = sqlx::query_as!(
+            ScheduledJobRow,
+            "SELECT id, client_id, application_id AS \"application_id: ApplicationId\", \
+                    code, name, description, \
+                    status AS \"status: Stored<ScheduledJobStatus>\", crons, timezone, \
+                    payload AS \"payload: serde_json::Value\", concurrent, \
+                    tracks_completion, timeout_seconds, delivery_max_attempts, \
+                    target_url, last_fired_at, created_at, updated_at, created_by, \
+                    updated_by, version FROM msg_scheduled_jobs ORDER BY created_at DESC"
+        )
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(ScheduledJob::try_from).collect()
     }
 
     pub async fn find_by_client(&self, client_id: &ClientId) -> Result<Vec<ScheduledJob>> {
-        let rows = sqlx::query_as::<_, ScheduledJobRow>(&format!(
-            "SELECT {SELECT_COLS} FROM msg_scheduled_jobs \
-             WHERE client_id = $1 ORDER BY created_at DESC"
-        ))
-        .bind(client_id)
+        let rows = sqlx::query_as!(
+            ScheduledJobRow,
+            "SELECT id, client_id, application_id AS \"application_id: ApplicationId\", \
+                    code, name, description, \
+                    status AS \"status: Stored<ScheduledJobStatus>\", crons, timezone, \
+                    payload AS \"payload: serde_json::Value\", concurrent, \
+                    tracks_completion, timeout_seconds, delivery_max_attempts, \
+                    target_url, last_fired_at, created_at, updated_at, created_by, \
+                    updated_by, version FROM msg_scheduled_jobs \
+             WHERE client_id = $1 ORDER BY created_at DESC",
+            client_id as &ClientId
+        )
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(ScheduledJob::try_from).collect()
@@ -326,11 +368,18 @@ impl ScheduledJobRepository {
     /// `crons` array. Selecting all active jobs each tick is fine — the count
     /// is small (definitions, not firings).
     pub async fn find_active_for_polling(&self) -> Result<Vec<ScheduledJob>> {
-        let rows = sqlx::query_as::<_, ScheduledJobRow>(&format!(
-            "SELECT {SELECT_COLS} FROM msg_scheduled_jobs \
+        let rows = sqlx::query_as!(
+            ScheduledJobRow,
+            "SELECT id, client_id, application_id AS \"application_id: ApplicationId\", \
+                    code, name, description, \
+                    status AS \"status: Stored<ScheduledJobStatus>\", crons, timezone, \
+                    payload AS \"payload: serde_json::Value\", concurrent, \
+                    tracks_completion, timeout_seconds, delivery_max_attempts, \
+                    target_url, last_fired_at, created_at, updated_at, created_by, \
+                    updated_by, version FROM msg_scheduled_jobs \
              WHERE status = 'ACTIVE' \
              ORDER BY last_fired_at NULLS FIRST"
-        ))
+        )
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(ScheduledJob::try_from).collect()
@@ -340,13 +389,13 @@ impl ScheduledJobRepository {
     /// tick. Only updates `last_fired_at` — does not touch any other field
     /// or bump `version`. Bypasses UoW intentionally (infrastructure path).
     pub async fn mark_fired(&self, id: &ScheduledJobId, slot: DateTime<Utc>) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             "UPDATE msg_scheduled_jobs \
              SET last_fired_at = GREATEST(last_fired_at, $2) \
              WHERE id = $1",
+            id as &ScheduledJobId,
+            slot
         )
-        .bind(id)
-        .bind(slot)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -393,7 +442,7 @@ impl Persist<ScheduledJob> for ScheduledJobRepository {
     async fn persist(&self, sj: &ScheduledJob, tx: &mut DbTx<'_>) -> Result<()> {
         // last_fired_at is intentionally excluded from the UPDATE clause —
         // it is owned by the poller and updated via mark_fired().
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO msg_scheduled_jobs \
                 (id, client_id, code, name, description, status, crons, timezone, \
                  payload, concurrent, tracks_completion, timeout_seconds, \
@@ -418,28 +467,28 @@ impl Persist<ScheduledJob> for ScheduledJobRepository {
                 updated_at = EXCLUDED.updated_at, \
                 updated_by = EXCLUDED.updated_by, \
                 version = EXCLUDED.version",
+            &sj.id as &ScheduledJobId,
+            &sj.client_id as &Option<ClientId>,
+            &sj.code,
+            &sj.name,
+            sj.description.as_deref(),
+            sj.status as ScheduledJobStatus,
+            &sj.crons,
+            &sj.timezone,
+            sj.payload.as_ref(),
+            sj.concurrent,
+            sj.tracks_completion,
+            sj.timeout_seconds,
+            sj.delivery_max_attempts,
+            sj.target_url.as_deref(),
+            sj.last_fired_at,
+            sj.created_at,
+            sj.updated_at,
+            sj.created_by.as_deref(),
+            sj.updated_by.as_deref(),
+            sj.version,
+            &sj.application_id as &Option<ApplicationId>
         )
-        .bind(&sj.id)
-        .bind(&sj.client_id)
-        .bind(&sj.code)
-        .bind(&sj.name)
-        .bind(&sj.description)
-        .bind(sj.status)
-        .bind(&sj.crons)
-        .bind(&sj.timezone)
-        .bind(&sj.payload)
-        .bind(sj.concurrent)
-        .bind(sj.tracks_completion)
-        .bind(sj.timeout_seconds)
-        .bind(sj.delivery_max_attempts)
-        .bind(&sj.target_url)
-        .bind(sj.last_fired_at)
-        .bind(sj.created_at)
-        .bind(sj.updated_at)
-        .bind(&sj.created_by)
-        .bind(&sj.updated_by)
-        .bind(sj.version)
-        .bind(&sj.application_id)
         .execute(&mut **tx.inner)
         .await?;
         Ok(())
@@ -448,10 +497,12 @@ impl Persist<ScheduledJob> for ScheduledJobRepository {
     async fn delete(&self, sj: &ScheduledJob, tx: &mut DbTx<'_>) -> Result<()> {
         // Instances + logs remain — they're history. Retention sweeps drop
         // partitions on age, not on parent-row existence.
-        sqlx::query("DELETE FROM msg_scheduled_jobs WHERE id = $1")
-            .bind(&sj.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM msg_scheduled_jobs WHERE id = $1",
+            &sj.id as &ScheduledJobId
+        )
+        .execute(&mut **tx.inner)
+        .await?;
         Ok(())
     }
 }

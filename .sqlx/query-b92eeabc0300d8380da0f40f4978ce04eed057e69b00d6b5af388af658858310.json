@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE msg_scheduled_jobs AS t SET crons = ARRAY(SELECT jsonb_array_elements_text(v.new_crons::jsonb)) FROM UNNEST($1::text[], $2::text[], $3::text[]) AS v(id, old_crons, new_crons) WHERE t.id = v.id AND to_jsonb(t.crons) = v.old_crons::jsonb",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "TextArray",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b92eeabc0300d8380da0f40f4978ce04eed057e69b00d6b5af388af658858310"
+}

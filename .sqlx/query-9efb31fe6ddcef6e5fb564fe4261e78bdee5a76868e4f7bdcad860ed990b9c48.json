@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO msg_scheduled_jobs (id, client_id, code, name, description, status, crons, timezone, payload, concurrent, tracks_completion, timeout_seconds, delivery_max_attempts, target_url, last_fired_at, created_at, updated_at, created_by, updated_by, version, application_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21) ON CONFLICT (id) DO UPDATE SET code = EXCLUDED.code, application_id = EXCLUDED.application_id, name = EXCLUDED.name, description = EXCLUDED.description, status = EXCLUDED.status, crons = EXCLUDED.crons, timezone = EXCLUDED.timezone, payload = EXCLUDED.payload, concurrent = EXCLUDED.concurrent, tracks_completion = EXCLUDED.tracks_completion, timeout_seconds = EXCLUDED.timeout_seconds, delivery_max_attempts = EXCLUDED.delivery_max_attempts, target_url = EXCLUDED.target_url, updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by, version = EXCLUDED.version",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "TextArray",
+        "Varchar",
+        "Jsonb",
+        "Bool",
+        "Bool",
+        "Int4",
+        "Int4",
+        "Varchar",
+        "Timestamptz",
+        "Timestamptz",
+        "Timestamptz",
+        "Varchar",
+        "Varchar",
+        "Int4",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9efb31fe6ddcef6e5fb564fe4261e78bdee5a76868e4f7bdcad860ed990b9c48"
+}

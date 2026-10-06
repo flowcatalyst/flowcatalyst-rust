@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(*) AS \"count!\" FROM msg_scheduled_job_instances WHERE scheduled_job_id = $1 AND status IN ('QUEUED', 'IN_FLIGHT', 'DELIVERED')",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "488133276f395eb8f319d434d634edb44828e39c929c09c8def0a3987034248e"
+}

@@ -1,0 +1,142 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, client_id, application_id AS \"application_id: ApplicationId\", code, name, description, status AS \"status: Stored<ScheduledJobStatus>\", crons, timezone, payload AS \"payload: serde_json::Value\", concurrent, tracks_completion, timeout_seconds, delivery_max_attempts, target_url, last_fired_at, created_at, updated_at, created_by, updated_by, version FROM msg_scheduled_jobs WHERE client_id = $1 ORDER BY created_at DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "client_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "application_id: ApplicationId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "code",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "status: Stored<ScheduledJobStatus>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "crons",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 8,
+        "name": "timezone",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "payload: serde_json::Value",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 10,
+        "name": "concurrent",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 11,
+        "name": "tracks_completion",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 12,
+        "name": "timeout_seconds",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 13,
+        "name": "delivery_max_attempts",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 14,
+        "name": "target_url",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 15,
+        "name": "last_fired_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 16,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 17,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 18,
+        "name": "created_by",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 19,
+        "name": "updated_by",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 20,
+        "name": "version",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "623df320f924e9232deb252f32a5f190d898a014a60fb3efed3d07283bb143ee"
+}

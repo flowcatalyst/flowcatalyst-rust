@@ -80,7 +80,7 @@ elif [ -n "${FC_TEST_PG_BIN:-}" ]; then
     "$bin/initdb" -D "$workdir/data" -U sqlx --auth=trust -E UTF8 --no-locale --no-sync >"$workdir/initdb.log" 2>&1 \
         || { cat "$workdir/initdb.log" >&2; exit 1; }
     "$bin/pg_ctl" -D "$workdir/data" -l "$workdir/postgres.log" -w \
-        -o "-p $port -k $workdir -c listen_addresses=127.0.0.1 -c fsync=off" start >/dev/null \
+        -o "-p $port -c unix_socket_directories= -c listen_addresses=127.0.0.1 -c fsync=off" start >/dev/null \
         || { cat "$workdir/postgres.log" >&2; exit 1; }
     cleanup_cmds+=("\"$bin/pg_ctl\" -D \"$workdir/data\" -m fast -w stop >/dev/null")
     wait_for_port "$port"

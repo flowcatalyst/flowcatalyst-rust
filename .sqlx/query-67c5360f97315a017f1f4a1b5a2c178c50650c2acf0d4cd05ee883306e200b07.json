@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT scheduled_job_id FROM msg_scheduled_job_instances WHERE scheduled_job_id = ANY($1) AND (status IN ('QUEUED', 'IN_FLIGHT') OR (status = 'DELIVERED' AND completed_at IS NULL AND scheduled_job_id = ANY($2)))",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "scheduled_job_id",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "67c5360f97315a017f1f4a1b5a2c178c50650c2acf0d4cd05ee883306e200b07"
+}

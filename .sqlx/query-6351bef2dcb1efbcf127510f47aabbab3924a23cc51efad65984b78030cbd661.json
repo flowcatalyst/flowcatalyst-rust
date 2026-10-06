@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT relname::text AS \"relname!\" FROM pg_catalog.pg_class WHERE relkind IN ('r', 'p') AND relname = ANY($1) ORDER BY relname LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "relname!",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "NameArray"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "6351bef2dcb1efbcf127510f47aabbab3924a23cc51efad65984b78030cbd661"
+}

@@ -246,33 +246,37 @@ pub async fn run(pool: &PgPool) -> Result<CronMigrationReport, sqlx::Error> {
     let started = Instant::now();
     let mut report = CronMigrationReport::default();
     let mut tx = pool.begin().await?;
-    sqlx::query("SELECT pg_advisory_xact_lock($1)")
-        .bind(LOCK_KEY)
+    sqlx::query!("SELECT pg_advisory_xact_lock($1)", LOCK_KEY)
         .execute(&mut *tx)
         .await?;
-    let (applied,): (bool,) =
-        sqlx::query_as("SELECT EXISTS (SELECT 1 FROM _schema_migrations WHERE migration_id = $1)")
-            .bind(MIGRATION_ID)
-            .fetch_one(&mut *tx)
-            .await?;
+    let applied = sqlx::query_scalar!(
+        "SELECT EXISTS (SELECT 1 FROM _schema_migrations WHERE migration_id = $1) \
+         AS \"applied!\"",
+        MIGRATION_ID
+    )
+    .fetch_one(&mut *tx)
+    .await?;
     if applied {
         report.already_applied = true;
         return Ok(report);
     }
 
-    report.foreign_tracker = sqlx::query_as::<_, (String,)>(
-        "SELECT relname::text FROM pg_catalog.pg_class \
+    // `relname!`: pg_class.relname is NOT NULL (a cast loses that).
+    report.foreign_tracker = sqlx::query_scalar!(
+        "SELECT relname::text AS \"relname!\" FROM pg_catalog.pg_class \
          WHERE relkind IN ('r', 'p') AND relname = ANY($1) ORDER BY relname LIMIT 1",
+        &FOREIGN_TRACKERS[..] as &[&str]
     )
-    .bind(&FOREIGN_TRACKERS[..])
     .fetch_optional(&mut *tx)
-    .await?
-    .map(|(t,)| t);
+    .await?;
 
     let jobs: Vec<(String, String, Vec<String>)> =
-        sqlx::query_as("SELECT id, code, crons FROM msg_scheduled_jobs ORDER BY id")
+        sqlx::query!("SELECT id, code, crons FROM msg_scheduled_jobs ORDER BY id")
             .fetch_all(&mut *tx)
-            .await?;
+            .await?
+            .into_iter()
+            .map(|r| (r.id, r.code, r.crons))
+            .collect();
     let (mut ids, mut before, mut after) = (Vec::new(), Vec::new(), Vec::new());
     for (id, code, crons) in jobs {
         let plan = plan_job(&crons);
@@ -311,25 +315,25 @@ pub async fn run(pool: &PgPool) -> Result<CronMigrationReport, sqlx::Error> {
     }
 
     if !ids.is_empty() {
-        sqlx::query(
+        sqlx::query!(
             "UPDATE msg_scheduled_jobs AS t \
              SET crons = ARRAY(SELECT jsonb_array_elements_text(v.new_crons::jsonb)) \
              FROM UNNEST($1::text[], $2::text[], $3::text[]) AS v(id, old_crons, new_crons) \
              WHERE t.id = v.id AND to_jsonb(t.crons) = v.old_crons::jsonb",
+            &ids,
+            &before,
+            &after
         )
-        .bind(&ids)
-        .bind(&before)
-        .bind(&after)
         .execute(&mut *tx)
         .await?;
     }
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO _schema_migrations (migration_id, duration_ms, checksum) \
          VALUES ($1, $2, $3)",
+        MIGRATION_ID,
+        started.elapsed().as_millis() as i32,
+        database::sha256_hex(CHECKSUM_SOURCE)
     )
-    .bind(MIGRATION_ID)
-    .bind(started.elapsed().as_millis() as i32)
-    .bind(database::sha256_hex(CHECKSUM_SOURCE))
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;

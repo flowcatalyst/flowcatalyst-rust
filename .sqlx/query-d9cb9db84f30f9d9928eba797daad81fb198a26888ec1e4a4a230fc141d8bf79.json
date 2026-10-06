@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE msg_scheduled_jobs SET last_fired_at = GREATEST(last_fired_at, $2) WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d9cb9db84f30f9d9928eba797daad81fb198a26888ec1e4a4a230fc141d8bf79"
+}
