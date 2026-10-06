@@ -62,6 +62,10 @@ const RESULTS: [(MediationResult, &str); 7] = [
     (MediationResult::Deferred, "DEFERRED"),
 ];
 
+#[expect(
+    clippy::expect_used,
+    reason = "RESULTS lists every MediationResult variant"
+)]
 fn result_index(result: MediationResult) -> usize {
     RESULTS
         .iter()

@@ -10,10 +10,18 @@ use std::sync::LazyLock;
 
 use crate::vars::Vars;
 
+#[expect(
+    clippy::expect_used,
+    reason = "a regex literal that is valid by inspection"
+)]
 static PLACEHOLDER: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\$\{([^}]+)\}").expect("placeholder regex"));
 
 /// Replaces every `${name}` in `template` with `vars.resolve(name)`.
+#[expect(
+    clippy::expect_used,
+    reason = "capture group 0 always exists for a match"
+)]
 pub fn resolve_str(template: &str, vars: &Vars) -> Result<String> {
     let mut out = String::with_capacity(template.len());
     let mut last = 0;

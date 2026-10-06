@@ -55,6 +55,10 @@ async fn is_file(path: &Path) -> bool {
 
 #[async_trait]
 impl ArtifactBlobStore for FileArtifactBlobStore {
+    #[expect(
+        clippy::expect_used,
+        reason = "a blob path is always built under the store root"
+    )]
     async fn put(
         &self,
         function_id: &str,

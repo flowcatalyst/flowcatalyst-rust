@@ -67,6 +67,10 @@ impl DispatchAuthService {
     }
 
     /// The lower-case hex HMAC-SHA256 of `job_id`.
+    #[expect(
+        clippy::expect_used,
+        reason = "HMAC accepts a key of any length, so new_from_slice cannot fail"
+    )]
     pub fn sign(&self, job_id: &str) -> String {
         let mut mac = HmacSha256::new_from_slice(self.secret.as_bytes())
             .expect("HMAC takes a key of any length");
@@ -89,6 +93,10 @@ pub fn derive_dispatch_secret(app_key: &str) -> String {
     hex::encode(hkdf_sha256_32(app_key.as_bytes(), DISPATCH_AUTH_INFO))
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "HMAC accepts a key of any length, so new_from_slice cannot fail"
+)]
 fn hkdf_sha256_32(ikm: &[u8], info: &[u8]) -> [u8; 32] {
     // Extract: an absent salt is a hash-length run of zeros.
     let mut extract = HmacSha256::new_from_slice(&[0u8; 32]).expect("any key length");

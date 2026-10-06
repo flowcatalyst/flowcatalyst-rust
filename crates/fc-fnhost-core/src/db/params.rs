@@ -303,6 +303,10 @@ fn parse_uuid(text: &str) -> Option<[u8; 16]> {
     hex::decode(hex_digits).ok()?.try_into().ok()
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "a date built from validated or constant components is always in range"
+)]
 fn pg_epoch_date() -> NaiveDate {
     NaiveDate::from_ymd_opt(2000, 1, 1).expect("a valid date")
 }

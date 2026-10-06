@@ -18,9 +18,13 @@ use fc_platform_core::usecase::{
 };
 use std::sync::OnceLock;
 
+#[expect(
+    clippy::expect_used,
+    reason = "a regex literal that is valid by inspection"
+)]
 fn code_pattern() -> &'static Regex {
     static PATTERN: OnceLock<Regex> = OnceLock::new();
-    PATTERN.get_or_init(|| Regex::new(r"^[a-z][a-z0-9-]*$").unwrap())
+    PATTERN.get_or_init(|| Regex::new(r"^[a-z][a-z0-9-]*$").expect("a valid regex literal"))
 }
 
 /// Command for creating a new connection.

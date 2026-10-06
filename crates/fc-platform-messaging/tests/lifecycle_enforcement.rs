@@ -10,6 +10,11 @@
 //!
 //! Adding a write elsewhere means adding a lifecycle operation (and a row in
 //! its table), not an exception.
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "test code: a failed unwrap, expect or panic is a failed test (clippy's test exemption covers #[test] fns and #[cfg(test)] modules, not the helpers of an integration-test crate)"
+)]
 
 use std::fs;
 use std::path::{Path, PathBuf};

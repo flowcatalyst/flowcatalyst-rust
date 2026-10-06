@@ -276,6 +276,10 @@ async fn is_partitioned(pool: &PgPool, table: &str) -> anyhow::Result<bool> {
 
 /// First instant of the month at `offset` months from `now`.
 /// Negative offsets go back, positive forward.
+#[expect(
+    clippy::expect_used,
+    reason = "a date built from validated or constant components is always in range"
+)]
 fn month_start(now: DateTime<Utc>, offset: i32) -> DateTime<Utc> {
     let mut year = now.year();
     let mut month = now.month() as i32 + offset;

@@ -431,15 +431,27 @@ pub async fn start_host(
 pub struct HostSlot(Arc<Mutex<Option<FnHost>>>);
 
 impl HostSlot {
+    #[expect(
+        clippy::expect_used,
+        reason = "a poisoned host-slot lock means another thread already panicked while holding it"
+    )]
     pub fn set(&self, host: FnHost) {
         *self.0.lock().expect("host slot") = Some(host);
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "a poisoned host-slot lock means another thread already panicked while holding it"
+    )]
     pub fn is_running(&self) -> bool {
         self.0.lock().expect("host slot").is_some()
     }
 
     /// Asks the host's reconcile loop for a cycle now (coalesced).
+    #[expect(
+        clippy::expect_used,
+        reason = "a poisoned host-slot lock means another thread already panicked while holding it"
+    )]
     pub fn nudge(&self) {
         if let Some(host) = self.0.lock().expect("host slot").as_ref() {
             host.trigger_reconcile();
@@ -447,6 +459,10 @@ impl HostSlot {
     }
 
     /// Drains and stops the host. Idempotent.
+    #[expect(
+        clippy::expect_used,
+        reason = "a poisoned host-slot lock means another thread already panicked while holding it"
+    )]
     pub async fn close(&self) {
         let host = self.0.lock().expect("host slot").take();
         if let Some(mut host) = host {

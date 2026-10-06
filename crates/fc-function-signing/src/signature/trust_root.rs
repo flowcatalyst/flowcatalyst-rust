@@ -60,6 +60,10 @@ impl TransparencyLog {
 
 impl TrustRoot {
     /// The committed Sigstore public-good root.
+    #[expect(
+        clippy::expect_used,
+        reason = "a trust root embedded in the binary, valid by inspection"
+    )]
     pub fn sigstore_public_good() -> Self {
         Self::parse(PUBLIC_GOOD).expect("the committed public-good trust root parses")
     }

@@ -47,6 +47,10 @@ pub struct ClientCredentialsTokenSource {
 impl ClientCredentialsTokenSource {
     /// `token_url` is the full token endpoint (`<platform>/oauth/token`);
     /// `scope`, when given, narrows the minted token.
+    #[expect(
+        clippy::expect_used,
+        reason = "a reqwest client built from fixed options fails only if the TLS backend cannot initialise: a start-up failure, not a runtime one"
+    )]
     pub fn new(
         token_url: impl Into<String>,
         client_id: impl Into<String>,

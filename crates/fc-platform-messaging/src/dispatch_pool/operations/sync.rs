@@ -21,9 +21,13 @@ use fc_platform_core::usecase::{
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
+#[expect(
+    clippy::expect_used,
+    reason = "a regex literal that is valid by inspection"
+)]
 fn pool_code_pattern() -> &'static Regex {
     static PATTERN: OnceLock<Regex> = OnceLock::new();
-    PATTERN.get_or_init(|| Regex::new(r"^[a-z][a-z0-9_-]*$").unwrap())
+    PATTERN.get_or_init(|| Regex::new(r"^[a-z][a-z0-9_-]*$").expect("a valid regex literal"))
 }
 
 /// A single dispatch pool definition in the sync payload.

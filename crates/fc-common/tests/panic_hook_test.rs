@@ -1,6 +1,10 @@
 //! The panic hook logs through `tracing` with the panicking code's span
 //! context and a backtrace. Its own test binary: the hook and the global
 //! subscriber are process-wide.
+#![expect(
+    clippy::unwrap_used,
+    reason = "test code: a failed unwrap, expect or panic is a failed test (clippy's test exemption covers #[test] fns and #[cfg(test)] modules, not the helpers of an integration-test crate)"
+)]
 
 use fc_common::diagnostics;
 use std::io;

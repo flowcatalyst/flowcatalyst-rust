@@ -24,12 +24,20 @@ use crate::record::{Body, StepRecord, CONTENT_TYPE, RETRY_AFTER, SET_COOKIE};
 use crate::vars::Vars;
 
 /// Rule 3: RFC 3339, whole-string match only.
+#[expect(
+    clippy::expect_used,
+    reason = "a regex literal that is valid by inspection"
+)]
 static RFC3339: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$")
         .expect("rfc3339 regex")
 });
 
 /// The `Expires` cookie attribute (an RFC 1123 date, so rule 3 never reaches it).
+#[expect(
+    clippy::expect_used,
+    reason = "a regex literal that is valid by inspection"
+)]
 static EXPIRES_ATTR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)(Expires=)[^;]*").expect("expires regex"));
 

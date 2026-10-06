@@ -62,6 +62,10 @@ pub(super) struct MediatorInner {
 /// (`HttpVersion::Http1`) is unaffected: `.http1_only()` still wins
 /// outright regardless of scheme, so a developer's plaintext target never
 /// needs to speak h2c.
+#[expect(
+    clippy::expect_used,
+    reason = "a reqwest client built from fixed options fails only if the TLS backend cannot initialise: a start-up failure, not a runtime one"
+)]
 pub(super) fn make_client_builder(
     config: &HttpMediatorConfig,
 ) -> Arc<dyn Fn(&HostKey) -> Client + Send + Sync> {

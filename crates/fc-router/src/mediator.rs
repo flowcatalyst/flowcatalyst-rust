@@ -238,6 +238,10 @@ impl HttpMediator {
         Self::build(config, warning_service, breakers)
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "serialising a struct holding one string cannot fail"
+    )]
     async fn mediate_once(&self, message: &Message) -> MediationOutcome {
         // Ledger R-06/A-11: a pre-flight rejection — no network call was
         // made — must raise a CONFIGURATION warning (same class as a real

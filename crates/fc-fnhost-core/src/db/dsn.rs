@@ -202,6 +202,10 @@ impl Dsn {
         Self::build(host, port, database, user, Some(password), BTreeMap::new())
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "a constant base URL; the base URL has a host, so url accepts a port, a user and a password"
+    )]
     fn build(
         host: String,
         port: u16,

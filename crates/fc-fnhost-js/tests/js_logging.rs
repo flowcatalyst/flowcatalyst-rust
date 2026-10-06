@@ -2,6 +2,12 @@
 //! invocation's span (the JS counterpart of `wasm_logging.rs`), and a
 //! secret never on any line. Its own test binary: functions run on the
 //! JS workers' threads, so the capture is the process-wide subscriber.
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code: a failed unwrap, expect or panic is a failed test (clippy's test exemption covers #[test] fns and #[cfg(test)] modules, not the helpers of an integration-test crate)"
+)]
 
 mod support;
 

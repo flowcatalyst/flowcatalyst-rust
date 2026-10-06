@@ -234,6 +234,10 @@ impl LoginAttemptRepository {
 const PARTITION_PREFIX: &str = "iam_login_attempts_";
 
 /// The first instant of `at`'s calendar quarter (UTC).
+#[expect(
+    clippy::expect_used,
+    reason = "a first-of-quarter date built from a valid month is in range"
+)]
 fn quarter_start(at: DateTime<Utc>) -> chrono::NaiveDate {
     use chrono::Datelike;
     let month = ((at.month() - 1) / 3) * 3 + 1;
@@ -283,6 +287,10 @@ impl LoginAttemptRepository {
     /// Create the partition covering `at`'s calendar quarter unless it
     /// exists (Go `EnsureQuarterlyPartition`). A no-op on an unpartitioned
     /// table.
+    #[expect(
+        clippy::expect_used,
+        reason = "adding three months to a valid date stays within chrono's range"
+    )]
     pub async fn ensure_quarterly_partition(&self, at: DateTime<Utc>) -> Result<()> {
         if !self.is_partitioned().await? {
             return Ok(());

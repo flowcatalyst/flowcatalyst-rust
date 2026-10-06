@@ -30,6 +30,11 @@
 //! route change, regenerate it with
 //! `UPDATE_ROUTE_SNAPSHOT=1 cargo test -p fc-platform --test route_table_snapshot_test`
 //! and review the diff.
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "test code: a failed unwrap, expect or panic is a failed test (clippy's test exemption covers #[test] fns and #[cfg(test)] modules, not the helpers of an integration-test crate)"
+)]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};

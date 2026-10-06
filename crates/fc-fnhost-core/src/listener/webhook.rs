@@ -52,6 +52,10 @@ pub fn verify(
 }
 
 /// The platform's signature (Java `WebhookSigner.sign`): lower-case hex.
+#[expect(
+    clippy::expect_used,
+    reason = "HMAC accepts a key of any length, so new_from_slice cannot fail"
+)]
 pub fn sign(secret: &str, timestamp: &str, body: &[u8]) -> String {
     let mut mac =
         Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC takes a key of any length");

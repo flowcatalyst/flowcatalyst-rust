@@ -414,6 +414,10 @@ impl Manifest {
 
     /// Every independent problem in the document, each with a pointer, or
     /// the manifest when there are none. `None` is an absent manifest.
+    #[expect(
+        clippy::expect_used,
+        reason = "a field that failed to parse always recorded a problem, and the problem list was empty just above"
+    )]
     pub fn check(
         root: Option<&JsonNode>,
         function_runtime: Runtime,
@@ -561,6 +565,10 @@ impl Manifest {
 
     /// The normalised stored form, as a tree (see the [`serde::Serialize`]
     /// impl for the JSON).
+    #[expect(
+        clippy::expect_used,
+        reason = "serialising this value to JSON cannot fail"
+    )]
     pub fn to_json(&self) -> JsonNode {
         let text = serde_json::to_string(self).expect("a manifest always serialises");
         JsonNode::parse(&text).expect("serde_json writes valid JSON")
@@ -1667,6 +1675,10 @@ fn parse_public_route(
     })
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "a constant route pattern, valid by inspection"
+)]
 fn default_path_prefix() -> RoutePattern {
     RoutePattern::try_parse("/").expect("/ is a route pattern")
 }

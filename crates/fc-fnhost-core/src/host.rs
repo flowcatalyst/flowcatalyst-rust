@@ -102,6 +102,10 @@ pub struct FnHost {
 impl FnHost {
     /// The production assembly: token source, the `file`/`oci`/`platform`
     /// stores over one cache, the HTTP control plane.
+    #[expect(
+        clippy::expect_used,
+        reason = "a reqwest client built from fixed options fails only if the TLS backend cannot initialise: a start-up failure, not a runtime one"
+    )]
     pub fn new(
         env: HostEnv,
         loaders: Loaders,
@@ -409,6 +413,10 @@ pub async fn run_wasm_host(
 /// SIGTERM or Ctrl-C. The handlers are installed when this is called (not
 /// when the future is first polled), so a signal during start-up is not
 /// lost. Call it inside the runtime.
+#[expect(
+    clippy::expect_used,
+    reason = "installing a signal handler at start-up: the process cannot shut down cleanly without it"
+)]
 pub fn shutdown_signal() -> impl Future<Output = ()> {
     #[cfg(unix)]
     let mut term = unix::signal(SignalKind::terminate()).expect("installing the SIGTERM handler");

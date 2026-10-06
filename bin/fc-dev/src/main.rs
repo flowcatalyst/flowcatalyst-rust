@@ -348,6 +348,10 @@ mod upgrade;
 mod version_check;
 
 #[tokio::main]
+#[expect(
+    clippy::expect_used,
+    reason = "start-up: fc-dev cannot run without its auth keys"
+)]
 async fn main() -> Result<()> {
     // Load .env BEFORE Cli::parse() so clap's `#[arg(env = "…")]` fallbacks
     // pick up values from the project's `.env.development` / `.env`. Without
@@ -1458,14 +1462,23 @@ async fn embedded_asset_handler(uri: Uri) -> impl IntoResponse {
 
 /// An embedded file other than the shell: hashed `/assets/*` are
 /// immutable; anything else keeps default caching.
+#[expect(
+    clippy::expect_used,
+    reason = "mime_guess yields registered MIME types, which are always valid header values"
+)]
 fn embedded_file_response(path: &str, data: Vec<u8>) -> Response {
     let mime = mime_guess::from_path(path).first_or_octet_stream();
     let mut headers = HeaderMap::new();
-    headers.insert(header::CONTENT_TYPE, mime.as_ref().parse().unwrap());
+    headers.insert(
+        header::CONTENT_TYPE,
+        mime.as_ref()
+            .parse()
+            .expect("a MIME type is a valid header value"),
+    );
     if path.starts_with("assets/") {
         headers.insert(
             header::CACHE_CONTROL,
-            "public, max-age=31536000, immutable".parse().unwrap(),
+            HeaderValue::from_static("public, max-age=31536000, immutable"),
         );
     }
     (headers, data).into_response()
@@ -1484,7 +1497,7 @@ fn embedded_shell_response(html: Vec<u8>) -> Response {
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_TYPE,
-        "text/html; charset=utf-8".parse().unwrap(),
+        HeaderValue::from_static("text/html; charset=utf-8"),
     );
     headers.insert(
         header::CACHE_CONTROL,

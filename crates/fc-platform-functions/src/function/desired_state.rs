@@ -188,6 +188,10 @@ pub struct Document {
 impl Document {
     /// The response body: serialised once, so the `ETag` hashes exactly
     /// the bytes a 200 returns.
+    #[expect(
+        clippy::expect_used,
+        reason = "serialising this value to JSON cannot fail"
+    )]
     pub fn to_bytes(&self) -> Vec<u8> {
         serde_json::to_vec(self).expect("a desired-state document always serialises")
     }

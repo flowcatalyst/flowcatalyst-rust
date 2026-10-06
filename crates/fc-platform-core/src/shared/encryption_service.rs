@@ -140,6 +140,10 @@ fn decode_key(key_base64: &str) -> Result<(Aes256Gcm, Vec<u8>), EncryptionError>
 }
 
 /// HMAC-SHA256(key, plaintext).
+#[expect(
+    clippy::expect_used,
+    reason = "HMAC accepts a key of any length, so new_from_slice cannot fail"
+)]
 fn mac_for(key: &[u8], plaintext: &str) -> Vec<u8> {
     // HMAC accepts a key of any length; this cannot fail.
     let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(key).expect("HMAC takes any key length");
@@ -267,6 +271,10 @@ impl EncryptionService {
 
     /// Decrypt a value. Tries current key first, then falls back to previous keys.
     /// Supports both versioned (v1), legacy (v0), and TypeScript `encrypted:` prefix formats.
+    #[expect(
+        clippy::expect_used,
+        reason = "the slice length was checked against the format just above"
+    )]
     pub fn decrypt(&self, encrypted: &str) -> Result<String, EncryptionError> {
         // Handle TypeScript encryption format: "encrypted:BASE64(iv || ciphertext || tag)"
         let raw = encrypted.strip_prefix("encrypted:").unwrap_or(encrypted);
@@ -282,7 +290,7 @@ impl EncryptionService {
         // Check if versioned format (first byte is version)
         // Versioned: version(1) || nonce(12) || at least 1 byte ciphertext
         if data[0] == CURRENT_VERSION && data.len() >= 14 {
-            let nonce_bytes: [u8; 12] = data[1..13].try_into().unwrap();
+            let nonce_bytes: [u8; 12] = data[1..13].try_into().expect("length checked above");
             let nonce = Nonce::from(nonce_bytes);
             if let Ok(plaintext) = self.try_decrypt_with_fallback(&nonce, &data[13..]) {
                 return Ok(plaintext);
@@ -297,7 +305,7 @@ impl EncryptionService {
         if data.len() < 13 {
             return Err(EncryptionError::TooShort);
         }
-        let nonce_bytes: [u8; 12] = data[..12].try_into().unwrap();
+        let nonce_bytes: [u8; 12] = data[..12].try_into().expect("length checked above");
         let nonce = Nonce::from(nonce_bytes);
         let ciphertext = &data[12..];
         self.try_decrypt_with_fallback(&nonce, ciphertext)
@@ -333,6 +341,10 @@ impl EncryptionService {
     }
 
     /// Check if a value needs re-encryption (encrypted with old key or legacy format).
+    #[expect(
+        clippy::expect_used,
+        reason = "the slice length was checked against the format just above"
+    )]
     pub fn needs_re_encryption(&self, encrypted: &str) -> bool {
         let data = match BASE64.decode(encrypted) {
             Ok(d) => d,
@@ -348,7 +360,7 @@ impl EncryptionService {
         if data.len() < 14 {
             return true;
         }
-        let nonce_bytes: [u8; 12] = data[1..13].try_into().unwrap();
+        let nonce_bytes: [u8; 12] = data[1..13].try_into().expect("length checked above");
         let nonce = Nonce::from(nonce_bytes);
         let ciphertext = &data[13..];
         self.current.decrypt(&nonce, ciphertext).is_err()

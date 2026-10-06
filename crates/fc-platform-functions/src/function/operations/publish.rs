@@ -369,6 +369,10 @@ async fn check_artifact_kind(
 /// no signer. `Required` demands a bundle, verifies it against the digest
 /// and the trust root, then requires the owner's policy to permit that
 /// signer for this runtime; an absent policy permits nothing.
+#[expect(
+    clippy::expect_used,
+    reason = "a platform digest is a valid signing digest by construction"
+)]
 fn resolve_signer(
     signatures: &Signatures,
     bundle: Option<&str>,

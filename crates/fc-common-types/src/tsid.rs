@@ -134,6 +134,10 @@ fn generate_raw() -> String {
 /// The next `(millisecond, sequence)` pair (Go `nextMsSeq`): a new
 /// millisecond starts at a random sequence; within one the sequence
 /// increments; an exhausted sequence borrows the next millisecond.
+#[expect(
+    clippy::expect_used,
+    reason = "a system clock before 1970 is not a state this process supports"
+)]
 fn next_ms_seq() -> (u64, u64) {
     loop {
         let now = SystemTime::now()
@@ -217,7 +221,8 @@ fn encode_crockford(mut value: u64) -> String {
         value >>= 5;
     }
 
-    String::from_utf8(result.to_vec()).unwrap()
+    // Every byte is from the ASCII alphabet (or the '0' fill), so each is its own char.
+    result.iter().map(|&b| char::from(b)).collect()
 }
 
 /// Decode a Crockford Base32 string to 64-bit value.
@@ -245,10 +250,14 @@ fn decode_crockford(s: &str) -> Option<u64> {
 }
 
 /// Simple random u16 using system time and counter.
+#[expect(
+    clippy::expect_used,
+    reason = "a system clock before 1970 is not a state this process supports"
+)]
 fn rand_u16() -> u16 {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .expect("the system clock is after the Unix epoch")
         .as_nanos() as u64;
     let counter = COUNTER.load(Ordering::Relaxed) as u64;
     ((now ^ (counter.wrapping_mul(0x5851F42D4C957F2D))) & 0xFFFF) as u16

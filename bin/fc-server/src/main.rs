@@ -125,6 +125,7 @@ use std::collections::HashSet;
 use std::env;
 use std::path::Path;
 use std::process;
+use std::sync::PoisonError;
 use std::sync::RwLock;
 use tokio::sync::oneshot;
 use tokio::sync::oneshot::Sender;
@@ -243,6 +244,10 @@ async fn backfill_secrets(args: &[String]) -> Result<()> {
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 #[tokio::main]
+#[expect(
+    clippy::expect_used,
+    reason = "start-up wiring: the dependency is built whenever a subsystem that needs it is enabled (needs_db above)"
+)]
 async fn main() -> Result<()> {
     // Both rustls crypto backends are compiled into this binary (the AWS SDK
     // brings aws-lc-rs, others ring), so a client that asks rustls for "the
@@ -848,7 +853,12 @@ async fn init_platform(
     {
         match repos.cors_repo.get_allowed_origins().await {
             Ok(origins) => {
-                let mut cache = cors_origins_cache.write().unwrap();
+                // A poisoned lock only means another thread panicked mid-refresh; the
+                // set is cleared and refilled whole, so keep serving rather than
+                // fail every request.
+                let mut cache = cors_origins_cache
+                    .write()
+                    .unwrap_or_else(PoisonError::into_inner);
                 for origin in origins {
                     cache.insert(origin);
                 }
@@ -867,7 +877,7 @@ async fn init_platform(
                 interval.tick().await;
                 match cors_repo_bg.get_allowed_origins().await {
                     Ok(origins) => {
-                        let mut c = cache.write().unwrap();
+                        let mut c = cache.write().unwrap_or_else(PoisonError::into_inner);
                         c.clear();
                         for origin in origins {
                             c.insert(origin);
@@ -1075,7 +1085,7 @@ fn build_platform_app(
                             Ok(s) => s,
                             Err(_) => return false,
                         };
-                        let origins = cache.read().unwrap();
+                        let origins = cache.read().unwrap_or_else(PoisonError::into_inner);
                         if origins.contains(origin_str) {
                             return true;
                         }

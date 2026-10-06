@@ -237,6 +237,10 @@ pub struct DispatchProcessState {
 /// two-minute outer ceiling; each delivery sets its own per-job timeout. Names
 /// resolve through `policy`, so a webhook host that resolves to an address it
 /// forbids is never connected to (Go's `guardedTransport`).
+#[expect(
+    clippy::expect_used,
+    reason = "a reqwest client built from fixed options fails only if the TLS backend cannot initialise: a start-up failure, not a runtime one"
+)]
 pub fn delivery_http_client(policy: &'static Policy) -> reqwest::Client {
     netguard::http::guard(reqwest::Client::builder(), policy)
         .redirect(RedirectPolicy::none())

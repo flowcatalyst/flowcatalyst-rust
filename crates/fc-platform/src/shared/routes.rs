@@ -239,6 +239,10 @@ fn read_aliases_state(ctx: &PlatformContext) -> ReadAliasesState {
     }
 }
 
+#[expect(
+    clippy::panic,
+    reason = "start-up configuration: the platform refuses to boot on bad dispatch queue settings, as Go does"
+)]
 fn router_config_state_for(ctx: &PlatformContext) -> RouterConfigState {
     // Go resolves the queue settings once at boot and refuses to start on a
     // bad SQS configuration (internal/server/run.go:69).

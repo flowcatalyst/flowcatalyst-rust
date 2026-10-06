@@ -29,6 +29,10 @@ pub(super) struct MediationPayload<'a> {
 }
 
 /// Sign a webhook body. Returns `(signature_hex_lowercase, iso8601_timestamp)`.
+#[expect(
+    clippy::expect_used,
+    reason = "HMAC accepts a key of any length, so new_from_slice cannot fail"
+)]
 pub(super) fn sign_webhook(payload: &str, signing_secret: &str) -> (String, String) {
     let timestamp = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
     let signature_payload = format!("{}{}", timestamp, payload);

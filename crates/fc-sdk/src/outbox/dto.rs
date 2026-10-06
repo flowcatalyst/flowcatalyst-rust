@@ -127,6 +127,10 @@ impl CreateEventDto {
     }
 
     /// Build the event payload JSON for the outbox.
+    #[expect(
+        clippy::expect_used,
+        reason = "json! of an object literal is always an object"
+    )]
     pub fn to_payload(&self) -> serde_json::Value {
         let mut payload = serde_json::json!({
             "specVersion": "1.0",
@@ -135,7 +139,9 @@ impl CreateEventDto {
             "data": self.data.to_string(),
         });
 
-        let obj = payload.as_object_mut().unwrap();
+        let obj = payload
+            .as_object_mut()
+            .expect("json! of an object literal is an object");
         if let Some(ref v) = self.source {
             obj.insert("source".into(), serde_json::json!(v));
         }
@@ -358,6 +364,10 @@ impl CreateDispatchJobDto {
     }
 
     /// Build the dispatch job payload JSON for the outbox.
+    #[expect(
+        clippy::expect_used,
+        reason = "json! of an object literal is always an object"
+    )]
     pub fn to_payload(&self) -> serde_json::Value {
         let mut payload = serde_json::json!({
             "source": self.source,
@@ -371,7 +381,9 @@ impl CreateDispatchJobDto {
             "maxRetries": self.max_retries,
         });
 
-        let obj = payload.as_object_mut().unwrap();
+        let obj = payload
+            .as_object_mut()
+            .expect("json! of an object literal is an object");
         if let Some(ref v) = self.subject {
             obj.insert("subject".into(), serde_json::json!(v));
         }
@@ -505,6 +517,10 @@ impl CreateAuditLogDto {
     }
 
     /// Build the audit log payload JSON for the outbox.
+    #[expect(
+        clippy::expect_used,
+        reason = "json! of an object literal is always an object"
+    )]
     pub fn to_payload(&self) -> serde_json::Value {
         let performed = self.performed_at.unwrap_or_else(Utc::now).to_rfc3339();
 
@@ -515,7 +531,9 @@ impl CreateAuditLogDto {
             "performedAt": performed,
         });
 
-        let obj = payload.as_object_mut().unwrap();
+        let obj = payload
+            .as_object_mut()
+            .expect("json! of an object literal is an object");
         if let Some(ref v) = self.operation_data {
             // Redacted before it is serialised (owner spec
             // docs/spec/audit-redaction.md, Java repo).

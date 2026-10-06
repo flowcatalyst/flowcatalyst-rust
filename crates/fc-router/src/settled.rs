@@ -91,6 +91,10 @@ pub struct HttpSettledReporter {
 impl HttpSettledReporter {
     /// A reporter for the platform at `platform_base_url`, each chunk
     /// bounded by `timeout` ([`DEFAULT_SETTLED_TIMEOUT`] when `None`).
+    #[expect(
+        clippy::expect_used,
+        reason = "a reqwest client built from fixed options fails only if the TLS backend cannot initialise: a start-up failure, not a runtime one"
+    )]
     pub fn new(platform_base_url: &str, timeout: Option<Duration>) -> Self {
         let client = reqwest::Client::builder()
             .timeout(timeout.unwrap_or(DEFAULT_SETTLED_TIMEOUT))

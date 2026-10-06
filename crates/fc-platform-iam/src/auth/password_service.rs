@@ -192,6 +192,10 @@ impl Argon2Config {
         }
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "the Argon2 parameters were validated when the service was configured"
+    )]
     fn to_params(&self) -> Params {
         Params::new(
             self.memory_cost,
@@ -251,6 +255,10 @@ impl PasswordService {
     /// Generate a random password that satisfies the configured strict policy.
     /// Used when an internal-auth user is created without a password — the user
     /// will reset it via the password-reset flow before first login.
+    #[expect(
+        clippy::expect_used,
+        reason = "every character class is a non-empty constant; every pushed byte comes from them, so the result is ASCII"
+    )]
     pub fn generate_password(&self) -> String {
         use rand::seq::IndexedRandom;
         use rand::Rng;
@@ -264,12 +272,31 @@ impl PasswordService {
         let mut rng = rand::rng();
         let len = self.policy.min_length.max(16);
         let mut chars: Vec<u8> = Vec::with_capacity(len);
-        chars.push(*UPPER.choose(&mut rng).unwrap());
-        chars.push(*LOWER.choose(&mut rng).unwrap());
-        chars.push(*DIGIT.choose(&mut rng).unwrap());
-        chars.push(*SPECIAL.choose(&mut rng).unwrap());
+        chars.push(
+            *UPPER
+                .choose(&mut rng)
+                .expect("the character classes are non-empty"),
+        );
+        chars.push(
+            *LOWER
+                .choose(&mut rng)
+                .expect("the character classes are non-empty"),
+        );
+        chars.push(
+            *DIGIT
+                .choose(&mut rng)
+                .expect("the character classes are non-empty"),
+        );
+        chars.push(
+            *SPECIAL
+                .choose(&mut rng)
+                .expect("the character classes are non-empty"),
+        );
         while chars.len() < len {
-            chars.push(*ALL.choose(&mut rng).unwrap());
+            chars.push(
+                *ALL.choose(&mut rng)
+                    .expect("the character classes are non-empty"),
+            );
         }
         for i in (1..chars.len()).rev() {
             let j = rng.random_range(0..=i);

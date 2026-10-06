@@ -7,6 +7,10 @@
 //! repo's copy of it. Each SDK carries its own copy because the SDKs are
 //! split into their own repos, so a copy that drifts would let one language
 //! pass a rule the others fail.
+#![expect(
+    clippy::expect_used,
+    reason = "test code: a failed unwrap, expect or panic is a failed test (clippy's test exemption covers #[test] fns and #[cfg(test)] modules, not the helpers of an integration-test crate)"
+)]
 
 use std::fs;
 use std::path::{Path, PathBuf};

@@ -90,6 +90,10 @@ pub trait DispatchPublisher: Send + Sync {
 
 /// The queue message body exactly as Go's `json.Marshal(common.Message)`
 /// renders it: empty optional fields are omitted, not `null`.
+#[expect(
+    clippy::expect_used,
+    reason = "serialising this struct of strings and enums cannot fail"
+)]
 pub fn wire_body(message: &Message) -> String {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]

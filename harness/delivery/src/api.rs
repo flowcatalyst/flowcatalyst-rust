@@ -40,6 +40,10 @@ pub struct Response {
 }
 
 impl Api {
+    #[expect(
+        clippy::expect_used,
+        reason = "a reqwest client built from fixed options fails only if the TLS backend cannot initialise: a start-up failure, not a runtime one"
+    )]
     pub fn new(base: &str) -> Api {
         Api {
             base: base.trim_end_matches('/').to_string(),

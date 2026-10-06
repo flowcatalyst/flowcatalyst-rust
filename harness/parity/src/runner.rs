@@ -39,6 +39,10 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// Members that are per-side by construction (ids, secrets, tokens, cursors,
 /// links that carry a token) anywhere in a 2xx body, captured quietly under
 /// `auto:<member>` so a later response carrying the same value is masked.
+#[expect(
+    clippy::expect_used,
+    reason = "a regex literal that is valid by inspection"
+)]
 static AUTO_CAPTURE_NAME: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(id|.*Id|.*Secret|.*SecretRef|.*Cursor|.*Token|.*Url|.*Link|challenge)$")
         .expect("auto-capture regex")

@@ -97,9 +97,11 @@ fn host(state: &OpState) -> Rc<HostState> {
     state.borrow::<Rc<HostState>>().clone()
 }
 
-fn during_request(host: &HostState, api: &str) -> Result<(), JsErrorBox> {
-    match host.invocation {
-        Some(_) => Ok(()),
+/// The invocation being handled, or the error a call made outside a request
+/// (a bundle's top-level code) gets.
+fn during_request<'a>(host: &'a HostState, api: &str) -> Result<&'a InvocationState, JsErrorBox> {
+    match &host.invocation {
+        Some(invocation) => Ok(invocation),
         None => Err(JsErrorBox::generic(format!(
             "{api} is available only while a request is handled, not in a bundle's top-level code"
         ))),
@@ -245,12 +247,8 @@ impl ContextOut {
 #[serde]
 fn op_fc_invocation(state: &mut OpState) -> Result<ContextOut, JsErrorBox> {
     let host = host(state);
-    during_request(&host, "invocation.context")?;
-    Ok(host
-        .invocation
-        .as_ref()
-        .map(|i| i.context.clone())
-        .expect("checked above"))
+    let invocation = during_request(&host, "invocation.context")?;
+    Ok(invocation.context.clone())
 }
 
 // ── events ──────────────────────────────────────────────────────────────
@@ -305,8 +303,7 @@ async fn op_fc_emit(
 ) -> Result<EmitOut, JsErrorBox> {
     let (version, defaults) = {
         let host = host(&state.borrow());
-        during_request(&host, "events.emit")?;
-        let invocation = host.invocation.as_ref().expect("checked above");
+        let invocation = during_request(&host, "events.emit")?;
         (host.version.clone(), invocation.defaults.clone())
     };
     let event = OutboundEvent {
@@ -406,8 +403,7 @@ async fn op_fc_fetch(
 ) -> Result<FetchOut, JsErrorBox> {
     let (version, deadline) = {
         let host = host(&state.borrow());
-        during_request(&host, "fetch")?;
-        let invocation = host.invocation.as_ref().expect("checked above");
+        let invocation = during_request(&host, "fetch")?;
         (host.version.clone(), invocation.deadline)
     };
     let url = match url::Url::parse(&request.url) {

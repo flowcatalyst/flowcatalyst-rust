@@ -69,6 +69,20 @@ absolute_paths = "warn"
 # `#[expect(clippy::wildcard_enum_match_arm, reason = "...")]` is for foreign
 # or `#[non_exhaustive]` enums only.
 wildcard_enum_match_arm = "warn"
+# A panic is a decision to crash the process. Propagate the error; keep an
+# `expect("why this cannot fail")` only for start-up invariants and
+# statically valid constants, with `#[expect(clippy::expect_used, reason = "...")]`.
+# Tests may unwrap (clippy.toml).
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+# Never hold a lock guard across an `.await`.
+await_holding_lock = "warn"
+await_holding_refcell_ref = "warn"
+# No leftovers.
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
 
 [workspace.dependencies]
 # Global allocator for fc-server (owner decision 2026-10-04). The system allocator (glibc)

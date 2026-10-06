@@ -248,6 +248,10 @@ impl DispatchJobPayload {
     /// `mode` is sent upper-case (`IMMEDIATE`, `NEXT_ON_ERROR`,
     /// `BLOCK_ON_ERROR`) and `retry_strategy` in the platform's spelling
     /// (`exponential_backoff` → `exponential`, `fixed_delay` → `fixed`).
+    #[expect(
+        clippy::expect_used,
+        reason = "json! of an object literal is always an object"
+    )]
     pub fn to_outbox_payload(&self, id: &str) -> serde_json::Value {
         let payload = match &self.payload {
             serde_json::Value::String(s) => s.clone(),

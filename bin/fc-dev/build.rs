@@ -11,6 +11,12 @@
 //! Escape hatch: set `FC_SKIP_FRONTEND_BUILD=1` to skip entirely — useful
 //! when the frontend has already been built in a prior CI step and you
 //! just want to link the Rust binary against the existing `dist/`.
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "a build script reports failure by panicking, which fails the build with the message"
+)]
 
 use std::env;
 use std::path::PathBuf;

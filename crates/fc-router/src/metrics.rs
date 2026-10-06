@@ -85,6 +85,7 @@ impl PoolMetricsCollector {
         Self::with_config(MetricsConfig::default())
     }
 
+    #[expect(clippy::expect_used, reason = "invariant: valid histogram bounds")]
     pub fn with_config(config: MetricsConfig) -> Self {
         // 1ms to 900_000ms (15 minutes) with 3 significant digits
         let histogram = Histogram::new_with_bounds(1, 900_000, 3).expect("valid histogram bounds");
@@ -237,6 +238,7 @@ impl PoolMetricsCollector {
     }
 
     /// Build a temporary histogram from a slice of samples (for windowed percentiles)
+    #[expect(clippy::expect_used, reason = "invariant: valid histogram bounds")]
     fn windowed_processing_time(samples: &[&MetricSample]) -> ProcessingTimeMetrics {
         if samples.is_empty() {
             return ProcessingTimeMetrics::default();

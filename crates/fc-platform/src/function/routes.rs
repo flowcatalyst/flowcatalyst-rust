@@ -62,6 +62,10 @@ pub fn routes(ctx: &PlatformContext) -> AggregateRoutes {
     }
 }
 
+#[expect(
+    clippy::panic,
+    reason = "start-up configuration: the platform refuses to boot on an invalid FC_FN_* setting, as Java does"
+)]
 pub fn functions_state(ctx: &PlatformContext) -> FunctionsState {
     let repos = &ctx.repos;
     // Java reads the FC_FN_DEFAULT_* limits once at startup and refuses to

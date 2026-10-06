@@ -7,6 +7,10 @@
 //! `FC_OUTBOX_BACKEND=mysql` against a MySQL 8 container and a fake platform,
 //! and waits for a row written in the SDK's table shape to be delivered
 //! (`cargo test -p fc-outbox-processor -- --ignored` with Docker running).
+#![expect(
+    clippy::unwrap_used,
+    reason = "test code: a failed unwrap, expect or panic is a failed test (clippy's test exemption covers #[test] fns and #[cfg(test)] modules, not the helpers of an integration-test crate)"
+)]
 
 use std::net::TcpListener as StdListener;
 use std::process::{Child, Command, Stdio};

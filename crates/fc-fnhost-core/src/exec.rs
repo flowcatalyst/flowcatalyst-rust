@@ -287,6 +287,10 @@ impl Admission {
 /// One permit of `semaphore`: at once if one is free and nobody is queued
 /// (tokio hands released permits to the queue first), else through `slot`,
 /// which keeps the queue position. `counted` counts the wait in `waiting`.
+#[expect(
+    clippy::expect_used,
+    reason = "the slot was filled just above; the budget's semaphores are never closed while it lives"
+)]
 fn acquire(
     semaphore: &Arc<Semaphore>,
     slot: &mut Option<Acquiring>,
@@ -366,6 +370,10 @@ pub struct Until<F: Future> {
 impl<F: Future> Future for Until<F> {
     type Output = Result<F::Output, Stopped<F>>;
 
+    #[expect(
+        clippy::expect_used,
+        reason = "the poll contract: a future is not polled again after it returns Ready; the same Option was checked Some earlier in this function"
+    )]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
         let metered = this.metered.as_mut().expect("polled after it finished");

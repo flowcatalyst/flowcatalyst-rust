@@ -48,6 +48,10 @@ impl Digest {
     }
 
     /// The 32 raw bytes.
+    #[expect(
+        clippy::expect_used,
+        reason = "the hex was validated when the Digest was constructed"
+    )]
     pub fn bytes(&self) -> [u8; 32] {
         let mut out = [0u8; 32];
         hex::decode_to_slice(self.hex(), &mut out).expect("validated at construction");

@@ -30,6 +30,12 @@
 //! temporary data directory on a free port. It sets process environment
 //! (the platform reads its function settings from it once), which no
 //! other test in this binary reads.
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test harness code: a failed unwrap is a failed test (the module's cfg is all(test, ..), which clippy's test exemption does not recognise)"
+)]
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};

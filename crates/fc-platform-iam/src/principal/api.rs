@@ -1073,6 +1073,10 @@ pub async fn create_principal(
 
 /// Go's email check for a created principal (principal/operations/
 /// create.go `emailPattern`).
+#[expect(
+    clippy::expect_used,
+    reason = "a regex literal that is valid by inspection"
+)]
 fn go_email_pattern() -> &'static regex::Regex {
     static PATTERN: OnceLock<regex::Regex> = OnceLock::new();
     PATTERN.get_or_init(|| {

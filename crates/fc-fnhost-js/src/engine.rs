@@ -247,6 +247,10 @@ impl Workers {
     /// robin); `lane` is that worker's, for metering the future on
     /// ([`ExecBudget::run_on`]). `false` when the workers are gone (the
     /// engine is shutting down).
+    #[expect(
+        clippy::expect_used,
+        reason = "the engine starts with at least one worker"
+    )]
     pub fn run<F, Fut>(&self, make: F) -> bool
     where
         F: FnOnce(Lane) -> Fut + Send + 'static,

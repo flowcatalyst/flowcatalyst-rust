@@ -586,6 +586,10 @@ pub async fn portal_oidc_login(
 /// The per-IP quota on the portal routes: Go mounts them in the OIDC
 /// bridge's governor group, `FC_OIDC_RATE_PER_MIN` (60) and `FC_OIDC_BURST`
 /// (30) (`ratelimit.OIDCBridgeGovernorFromEnv`).
+#[expect(
+    clippy::expect_used,
+    reason = "the defaults passed by the callers are the non-zero constants 60 and 30"
+)]
 pub fn portal_ip_rate_config() -> RateLimitConfig {
     let read = |name: &str, default: u32| {
         env::var(name)

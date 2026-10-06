@@ -36,6 +36,10 @@ use tokio::net::TcpListener;
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
 
+#[expect(
+    clippy::expect_used,
+    reason = "a reqwest client built from fixed options fails only if the TLS backend cannot initialise: a start-up failure, not a runtime one"
+)]
 fn build_server(config: &Config) -> FcMcpServer {
     let http = reqwest::Client::builder()
         .user_agent(concat!("fc-mcp/", env!("CARGO_PKG_VERSION")))

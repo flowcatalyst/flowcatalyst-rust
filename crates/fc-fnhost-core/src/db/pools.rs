@@ -384,6 +384,10 @@ impl PoolEntry {
         self.pool.read().set_connect_options(options);
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "the user was inserted into the map just above, under the same lock"
+    )]
     fn add_user(&self, token: u64, address: &FunctionAddress, pool_size: u32) -> Arc<ShareGate> {
         let mut state = self.state.lock();
         state.users.insert(token, (address.clone(), pool_size));
@@ -543,6 +547,10 @@ impl ShareGate {
     }
 
     /// Waits for a permit (cancel-safe).
+    #[expect(
+        clippy::expect_used,
+        reason = "the share semaphore is never closed while the gate lives"
+    )]
     pub async fn acquire(self: &Arc<Self>) -> SharePermit {
         let permit = self
             .semaphore

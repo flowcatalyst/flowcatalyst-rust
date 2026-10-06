@@ -22,9 +22,13 @@ use std::sync::OnceLock;
 
 /// Subscription code pattern (Go `validate.CodePattern`): a lowercase
 /// letter, then lowercase alphanumerics and hyphens.
+#[expect(
+    clippy::expect_used,
+    reason = "a regex literal that is valid by inspection"
+)]
 fn code_pattern() -> &'static Regex {
     static PATTERN: OnceLock<Regex> = OnceLock::new();
-    PATTERN.get_or_init(|| Regex::new(r"^[a-z][a-z0-9-]*$").unwrap())
+    PATTERN.get_or_init(|| Regex::new(r"^[a-z][a-z0-9-]*$").expect("a valid regex literal"))
 }
 
 /// Go `dispatchqueue.Parse`: the dispatch priority in its canonical form,

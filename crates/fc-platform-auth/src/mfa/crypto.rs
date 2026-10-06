@@ -92,6 +92,10 @@ fn decode_secret(secret: &str) -> Option<Vec<u8>> {
 }
 
 /// RFC 4226 HOTP for `counter`, zero-padded to six digits.
+#[expect(
+    clippy::expect_used,
+    reason = "HMAC accepts a key of any length, so new_from_slice cannot fail"
+)]
 fn hotp(key: &[u8], counter: u64) -> String {
     let mut mac = Hmac::<Sha1>::new_from_slice(key).expect("HMAC takes any key length");
     mac.update(&counter.to_be_bytes());

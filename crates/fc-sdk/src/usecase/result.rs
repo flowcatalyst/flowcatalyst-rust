@@ -82,6 +82,10 @@ impl<T> UseCaseResult<T> {
         self.0.as_ref()
     }
 
+    #[expect(
+        clippy::panic,
+        reason = "mirrors Result::unwrap: the caller asked for a panic on the wrong variant"
+    )]
     pub fn unwrap(self) -> T {
         match self.0 {
             Ok(v) => v,
@@ -100,6 +104,10 @@ impl<T> UseCaseResult<T> {
         self.0.unwrap_or_else(f)
     }
 
+    #[expect(
+        clippy::panic,
+        reason = "mirrors Result::unwrap: the caller asked for a panic on the wrong variant"
+    )]
     pub fn unwrap_err(self) -> UseCaseError {
         match self.0 {
             Ok(_) => panic!("Called unwrap_err on a Success"),

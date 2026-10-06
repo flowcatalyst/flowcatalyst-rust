@@ -78,6 +78,10 @@ fn gap_bucket(ms: u64) -> &'static str {
     }
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "HMAC accepts a key of any length, so new_from_slice cannot fail"
+)]
 pub fn summarise(run: &SideRun, signing_secret: Option<&str>) -> Summary {
     let mut per_hk: BTreeMap<String, Vec<&Delivery>> = BTreeMap::new();
     for d in &run.deliveries {

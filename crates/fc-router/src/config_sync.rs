@@ -305,6 +305,10 @@ pub struct ConfigSyncService {
 }
 
 impl ConfigSyncService {
+    #[expect(
+        clippy::expect_used,
+        reason = "a reqwest client built from fixed options fails only if the TLS backend cannot initialise: a start-up failure, not a runtime one"
+    )]
     pub fn new(
         config: ConfigSyncConfig,
         queue_manager: Arc<QueueManager>,

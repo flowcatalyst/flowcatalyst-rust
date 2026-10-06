@@ -21,9 +21,16 @@ use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase
 use std::sync::OnceLock;
 
 /// Email validation pattern
+#[expect(
+    clippy::expect_used,
+    reason = "a regex literal that is valid by inspection"
+)]
 fn email_pattern() -> &'static Regex {
     static PATTERN: OnceLock<Regex> = OnceLock::new();
-    PATTERN.get_or_init(|| Regex::new(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$").unwrap())
+    PATTERN.get_or_init(|| {
+        Regex::new(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+            .expect("a valid regex literal")
+    })
 }
 
 /// Command for creating a new user.

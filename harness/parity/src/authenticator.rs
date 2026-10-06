@@ -118,6 +118,10 @@ impl SoftAuthenticator {
     }
 
     /// COSE_Key `{1: 2 (EC2), 3: -7 (ES256), -1: 1 (P-256), -2: x, -3: y}`.
+    #[expect(
+        clippy::expect_used,
+        reason = "an uncompressed SEC1 point carries both coordinates"
+    )]
     fn cose_key(&self) -> Vec<u8> {
         let point = self.key.verifying_key().to_encoded_point(false);
         let x = point.x().expect("uncompressed point has x");

@@ -1437,6 +1437,10 @@ pub async fn pending_backlog(pool: &sqlx::PgPool) -> Result<PendingBacklog, Erro
 /// `claim_for_delivery` or `schedule_retry`. With `analyze` the statement
 /// RUNS (EXPLAIN ANALYZE): pass a transaction and roll it back.
 #[doc(hidden)]
+#[expect(
+    clippy::panic,
+    reason = "plan-test helper: an unknown statement name is a bug in the test that passed it"
+)]
 pub async fn explain_statement<'e, E>(
     ex: E,
     which: &str,

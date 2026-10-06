@@ -82,6 +82,7 @@ impl RateLimitConfig {
     }
 }
 
+#[expect(clippy::expect_used, reason = "v.max(1) is at least 1")]
 fn parse_nz(name: &str, default: u32) -> NonZeroU32 {
     let v: u32 = env::var(name)
         .ok()

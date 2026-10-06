@@ -29,6 +29,10 @@ pub fn routes(ctx: &PlatformContext) -> AggregateRoutes {
     }
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "start-up configuration: the platform refuses to boot when the WebAuthn settings are invalid"
+)]
 pub fn webauthn_state(ctx: &PlatformContext) -> WebauthnApiState {
     let repos = &ctx.repos;
     WebauthnApiState {

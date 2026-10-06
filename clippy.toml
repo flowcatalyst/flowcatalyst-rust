@@ -15,3 +15,8 @@ absolute-paths-max-segments = 2
 # helper fires; boxing the response would change each caller's `?`/`return`.
 # 160 stays well under what a genuinely oversized error enum would weigh.
 large-error-threshold = 160
+
+# Tests may unwrap, expect and panic: a failed assertion is the point.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true

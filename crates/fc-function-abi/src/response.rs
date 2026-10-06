@@ -68,6 +68,10 @@ impl Response {
     /// `{"error":"<reason>"}`.
     ///
     /// Errors when `reason` is blank (Java's `String.isBlank`).
+    #[expect(
+        clippy::expect_used,
+        reason = "serialising a struct holding one string cannot fail"
+    )]
     pub fn fail(reason: &str) -> Result<Self, InvalidArgument> {
         if java::is_blank(reason) {
             return Err(InvalidArgument("reason must not be blank".into()));

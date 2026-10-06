@@ -265,6 +265,10 @@ impl OidcValidator {
     /// both forms (`https://idp.example.com` and `https://idp.example.com/`).
     /// IdPs are inconsistent about which form they emit in `iss` claims;
     /// normalizing on the consumer side avoids config-drift 401s.
+    #[expect(
+        clippy::expect_used,
+        reason = "a reqwest client built from fixed options fails only if the TLS backend cannot initialise: a start-up failure, not a runtime one"
+    )]
     pub fn new(issuer: String, audience: String) -> Self {
         Self {
             issuer: issuer.trim_end_matches('/').to_string(),

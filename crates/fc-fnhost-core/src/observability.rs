@@ -56,6 +56,10 @@ impl Observability {
     /// Called from the host's runtime, whose tokio figures `/metrics` then
     /// reports (this listener runs on a runtime of its own, so it can still
     /// describe a main runtime that is stuck).
+    #[expect(
+        clippy::expect_used,
+        reason = "building a current-thread runtime fails only on OS resource exhaustion, at start-up"
+    )]
     pub fn start(port: u16, probes: Probes) -> io::Result<Self> {
         let state = ObsState {
             probes,

@@ -228,6 +228,7 @@ impl Isolate {
         clippy::wildcard_enum_match_arm,
         reason = "Poll<Result<..>>: Pending and Ready(Ok) both mean the loop has no error to report"
     )]
+    #[expect(clippy::expect_used, reason = "a constant module specifier")]
     pub async fn start(&mut self) -> Result<ModuleId, StartError> {
         let raw = self.raw;
         let specifier =
@@ -327,6 +328,10 @@ impl Isolate {
     /// Calls the main module's `invoke` with the request, and drives the
     /// event loop until its promise settles. `Ok` is the dispatcher's
     /// `[status, headers, body]`. [`Isolate::start`] must have run.
+    #[expect(
+        clippy::expect_used,
+        reason = "V8 allocates a constant short string; failure is out-of-memory"
+    )]
     pub async fn call(
         &mut self,
         method: &str,

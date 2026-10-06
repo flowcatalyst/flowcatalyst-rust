@@ -198,6 +198,10 @@ impl JsonNode {
 
     /// The compact JSON text of this tree (see the [`serde::Serialize`]
     /// impl).
+    #[expect(
+        clippy::expect_used,
+        reason = "serialising this value to JSON cannot fail"
+    )]
     pub fn to_json_string(&self) -> String {
         serde_json::to_string(self).expect("a JsonNode always serialises")
     }

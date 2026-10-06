@@ -135,6 +135,10 @@ impl RowWriter {
         self.push_object(row_json(row))
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "serialising this value to JSON cannot fail"
+    )]
     fn push_object(&mut self, object: Map<String, Value>) -> bool {
         if self.count == self.max_rows {
             self.truncated = true;
@@ -155,6 +159,10 @@ impl RowWriter {
         true
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "serialising this value to JSON cannot fail"
+    )]
     pub fn finish(mut self) -> RowsAnswer {
         self.out.push(b']');
         RowsAnswer {
@@ -380,6 +388,10 @@ fn uuid_text(b: &[u8]) -> Option<String> {
 
 // ── dates and times (PostgreSQL's epoch is 2000-01-01) ───────────────────
 
+#[expect(
+    clippy::expect_used,
+    reason = "a date built from validated or constant components is always in range"
+)]
 fn pg_epoch() -> NaiveDateTime {
     NaiveDate::from_ymd_opt(2000, 1, 1)
         .expect("a valid date")
@@ -453,6 +465,10 @@ fn date_iso(bytes: &[u8]) -> Option<String> {
     }
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "micros is clamped to within one day just above"
+)]
 fn time_of(micros: i64) -> NaiveTime {
     // 24:00:00 is a legal PostgreSQL time; NaiveTime tops out just below.
     let micros = micros.clamp(0, 86_400_000_000 - 1);

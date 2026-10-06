@@ -111,6 +111,10 @@ fn parse_pool(raw: Option<&str>) -> Result<DnsLabel, UseCaseError> {
 /// The pool's document, serialised once: the `ETag` is the sha256 of
 /// exactly the bytes a 200 returns. A matching `If-None-Match` is a 304
 /// with the `ETag` and no body.
+#[expect(
+    clippy::expect_used,
+    reason = "a quoted hex digest is ASCII, so a valid header value"
+)]
 pub async fn desired_state(
     State(state): State<FunctionControlState>,
     auth: Authenticated,

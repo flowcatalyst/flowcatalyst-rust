@@ -77,6 +77,10 @@ pub struct OciSource {
 }
 
 impl OciSource {
+    #[expect(
+        clippy::expect_used,
+        reason = "a reqwest client built from fixed options fails only if the TLS backend cannot initialise: a start-up failure, not a runtime one"
+    )]
     pub fn new(credentials: RegistryCredentials) -> Self {
         let client = Client::builder()
             .connect_timeout(CONNECT_TIMEOUT)

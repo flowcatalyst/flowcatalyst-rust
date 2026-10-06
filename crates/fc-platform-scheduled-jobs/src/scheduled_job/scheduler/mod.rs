@@ -39,6 +39,10 @@ pub struct ScheduledJobSchedulerService {
 }
 
 impl ScheduledJobSchedulerService {
+    #[expect(
+        clippy::expect_used,
+        reason = "a reqwest client built from fixed options fails only if the TLS backend cannot initialise: a start-up failure, not a runtime one"
+    )]
     pub fn new(
         config: ScheduledJobSchedulerConfig,
         repo: Arc<ScheduledJobRepository>,

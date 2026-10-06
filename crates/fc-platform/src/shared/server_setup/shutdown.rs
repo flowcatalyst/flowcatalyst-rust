@@ -5,6 +5,10 @@ use tracing::info;
 
 /// Wait for ctrl_c or SIGTERM, logging which was received.
 /// Shared across fc-server and fc-dev.
+#[expect(
+    clippy::expect_used,
+    reason = "installing a signal handler at start-up: the process cannot shut down cleanly without it"
+)]
 pub async fn wait_for_shutdown_signal() {
     let ctrl_c = async {
         signal::ctrl_c()

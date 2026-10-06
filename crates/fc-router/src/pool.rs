@@ -2467,6 +2467,10 @@ impl ProcessPool {
     }
 
     /// Helper to acquire multiple permits (needed for concurrency decrease)
+    #[expect(
+        clippy::expect_used,
+        reason = "the pool's semaphore is never closed while the pool lives"
+    )]
     async fn acquire_permits(&self, count: usize) -> Vec<SemaphorePermit<'_>> {
         let mut permits = Vec::with_capacity(count);
         for _ in 0..count {

@@ -6,6 +6,11 @@
 //! tracing's callsite interest cache is process-wide, so a test running
 //! beside it on another thread could register the dispatch span's callsite
 //! first and leave it disabled here.
+#![expect(
+    clippy::unwrap_used,
+    clippy::panic,
+    reason = "test code: a failed unwrap, expect or panic is a failed test (clippy's test exemption covers #[test] fns and #[cfg(test)] modules, not the helpers of an integration-test crate)"
+)]
 
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};

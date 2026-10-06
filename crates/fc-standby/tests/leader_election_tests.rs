@@ -3,6 +3,10 @@
 //!
 //! Requires Docker; ignored by default:
 //!   cargo test -p fc-standby --test leader_election_tests -- --ignored
+#![expect(
+    clippy::unwrap_used,
+    reason = "test code: a failed unwrap, expect or panic is a failed test (clippy's test exemption covers #[test] fns and #[cfg(test)] modules, not the helpers of an integration-test crate)"
+)]
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

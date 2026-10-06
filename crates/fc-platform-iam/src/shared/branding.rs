@@ -26,6 +26,10 @@ pub const DEFAULT_ACCENT_COLOR: &str = "#0967d2";
 /// Hex (`#rgb` … `#rrggbbaa`) or `rgb()` / `rgba()` only, so a configured
 /// colour can't break out of the inline style it is placed in (Go
 /// `colorPattern`).
+#[expect(
+    clippy::expect_used,
+    reason = "a regex literal that is valid by inspection"
+)]
 static COLOR: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::Regex::new(r"(?i)^#[0-9a-f]{3,8}$|^rgba?\([0-9.,%\s]+\)$").expect("colour pattern")
 });

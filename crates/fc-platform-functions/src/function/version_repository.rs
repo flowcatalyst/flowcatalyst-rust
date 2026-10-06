@@ -371,6 +371,10 @@ impl Persist<FunctionVersion> for FunctionVersionRepository {
     /// version's content is write-once. `ready_at` and `retired_at` are
     /// written only when the new state carries them, so a retired version
     /// keeps the `ready_at` it had.
+    #[expect(
+        clippy::expect_used,
+        reason = "serialising this value to JSON cannot fail"
+    )]
     async fn persist(&self, v: &FunctionVersion, tx: &mut DbTx<'_>) -> Result<()> {
         let (issuer, subject) = match &v.signer {
             Some(s) => (Some(s.issuer.as_str()), Some(s.subject.as_str())),

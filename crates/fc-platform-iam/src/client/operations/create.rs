@@ -14,10 +14,16 @@ use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase
 use std::sync::OnceLock;
 
 /// Identifier format: lowercase alphanumeric with hyphens, 2-50 chars
+#[expect(
+    clippy::expect_used,
+    reason = "a regex literal that is valid by inspection"
+)]
 fn identifier_pattern() -> &'static Regex {
     static PATTERN: OnceLock<Regex> = OnceLock::new();
     // Go's identifierPattern (client/operations/create.go:14).
-    PATTERN.get_or_init(|| Regex::new(r"^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$").unwrap())
+    PATTERN.get_or_init(|| {
+        Regex::new(r"^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$").expect("a valid regex literal")
+    })
 }
 
 /// Command for creating a new client.

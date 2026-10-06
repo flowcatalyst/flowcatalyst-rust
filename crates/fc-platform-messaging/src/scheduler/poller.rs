@@ -764,6 +764,10 @@ impl PendingJobPoller {
         self.run_with(pipeline, interval, is_leader, cancel).await;
     }
 
+    #[expect(
+        clippy::panic,
+        reason = "deliberate: the supervisor restarts this loop with fresh lanes when it panics"
+    )]
     async fn run_with(
         &self,
         pipeline: Arc<Pipeline>,

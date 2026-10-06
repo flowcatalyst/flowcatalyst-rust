@@ -296,6 +296,10 @@ impl WasmRuntime {
 struct GuestRuntime(Option<Runtime>);
 
 impl GuestRuntime {
+    #[expect(
+        clippy::expect_used,
+        reason = "the Option is Some for the WasmRuntime's lifetime and taken only by its Drop"
+    )]
     fn spawn<F>(&self, future: F) -> JoinHandle<F::Output>
     where
         F: Future + Send + 'static,

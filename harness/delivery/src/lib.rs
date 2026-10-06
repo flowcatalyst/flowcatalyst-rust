@@ -201,6 +201,10 @@ fn create_report_dir(dir: PathBuf) -> anyhow::Result<PathBuf> {
 }
 
 /// Run the harness; returns the report (already written to disk).
+#[expect(
+    clippy::expect_used,
+    reason = "the Go binary was resolved earlier whenever a Go side was requested"
+)]
 pub async fn run(opts: Options) -> anyhow::Result<Report> {
     let scenarios = select(scenario::load_dir(&opts.scenarios_dir)?, &opts.only);
     if scenarios.is_empty() {

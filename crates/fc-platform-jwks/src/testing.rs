@@ -3,6 +3,10 @@
 //! the `platformUrl`; the discovery document's `issuer` is deliberately
 //! something else, as in production (a Service Connect alias vs the
 //! external URL).
+#![expect(
+    clippy::unwrap_used,
+    reason = "test support: a failed unwrap is a failed test"
+)]
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};

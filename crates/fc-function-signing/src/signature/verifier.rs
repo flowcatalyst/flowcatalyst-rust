@@ -718,6 +718,10 @@ enum ChainOutcome {
 /// constraints (non-leaf), signature, validity at the date, name chaining
 /// and unrecognised critical extensions, in that order. The anchor's own
 /// validity is not checked, as in the JDK.
+#[expect(
+    clippy::expect_used,
+    reason = "the chain handed to this function always holds at least the anchor"
+)]
 fn validate_chain(
     leaf: &Certificate,
     leaf_der: &[u8],

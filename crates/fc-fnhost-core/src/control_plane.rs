@@ -115,6 +115,10 @@ struct WireEmit<'a> {
 }
 
 impl EmitRequest {
+    #[expect(
+        clippy::expect_used,
+        reason = "serialising this value to JSON cannot fail"
+    )]
     pub fn to_json(&self) -> String {
         serde_json::to_string(&WireEmit {
             host_id: &self.host_id,
@@ -168,6 +172,10 @@ impl HttpControlPlane {
     }
 
     /// A client with Java's control-plane timeouts: 5 s connect, 30 s request.
+    #[expect(
+        clippy::expect_used,
+        reason = "a reqwest client built from fixed options fails only if the TLS backend cannot initialise: a start-up failure, not a runtime one"
+    )]
     pub fn default_client() -> Client {
         Client::builder()
             .connect_timeout(CONNECT_TIMEOUT)

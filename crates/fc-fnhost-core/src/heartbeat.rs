@@ -59,6 +59,10 @@ struct WireEntry<'a> {
 }
 
 impl HeartbeatReport {
+    #[expect(
+        clippy::expect_used,
+        reason = "serialising this value to JSON cannot fail"
+    )]
     pub fn to_json(&self) -> String {
         let wire = WireReport {
             host_id: &self.host_id,

@@ -34,6 +34,10 @@ impl RawResponse {
     }
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "a reqwest client built from fixed options fails only if the TLS backend cannot initialise: a start-up failure, not a runtime one"
+)]
 pub fn http_client() -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))

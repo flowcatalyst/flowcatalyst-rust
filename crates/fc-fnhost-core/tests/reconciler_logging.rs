@@ -3,6 +3,12 @@
 //! refused; and a first-call load of a refused version is not recompiled on
 //! every call within a cycle. Its own test binary: a thread-local
 //! subscriber shares callsite interest with any test running beside it.
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code: a failed unwrap, expect or panic is a failed test (clippy's test exemption covers #[test] fns and #[cfg(test)] modules, not the helpers of an integration-test crate)"
+)]
 
 mod support;
 

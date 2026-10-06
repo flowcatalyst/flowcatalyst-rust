@@ -13,6 +13,10 @@
 //! the rate, under two logging setups: none, and the production JSON layer
 //! at INFO writing to a sink (spans enabled and formatted, as fc-server
 //! runs). `FC_BENCH_RECORDER=0` turns the flight recorder off.
+#![expect(
+    clippy::unwrap_used,
+    reason = "test code: a failed unwrap, expect or panic is a failed test (clippy's test exemption covers #[test] fns and #[cfg(test)] modules, not the helpers of an integration-test crate)"
+)]
 
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicU64, Ordering};

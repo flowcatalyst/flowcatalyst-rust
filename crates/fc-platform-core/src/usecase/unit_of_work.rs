@@ -1339,6 +1339,10 @@ impl Default for InMemoryUnitOfWork {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+#[expect(
+    clippy::unwrap_used,
+    reason = "in-memory test double: a poisoned recorder means a test already panicked"
+)]
 impl InMemoryUnitOfWork {
     pub fn new() -> Self {
         Self {

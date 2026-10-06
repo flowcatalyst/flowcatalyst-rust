@@ -988,6 +988,10 @@ pub struct InMemoryUnitOfWork {
     committed_events: sync::Mutex<Vec<String>>,
 }
 
+#[expect(
+    clippy::unwrap_used,
+    reason = "in-memory test double: a poisoned recorder means a test already panicked"
+)]
 impl InMemoryUnitOfWork {
     pub fn new() -> Self {
         Self {
@@ -1018,6 +1022,10 @@ impl Default for InMemoryUnitOfWork {
 }
 
 #[async_trait]
+#[expect(
+    clippy::unwrap_used,
+    reason = "in-memory test double: a poisoned recorder means a test already panicked"
+)]
 impl UnitOfWork for InMemoryUnitOfWork {
     async fn commit<E, T, C>(&self, _aggregate: &T, event: E, _command: &C) -> UseCaseResult<E>
     where

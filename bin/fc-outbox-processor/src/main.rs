@@ -215,6 +215,10 @@ async fn ready_handler() -> Json<serde_json::Value> {
     }))
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "installing a signal handler at start-up: the process cannot shut down cleanly without it"
+)]
 async fn shutdown_signal() {
     let ctrl_c = async {
         signal::ctrl_c()

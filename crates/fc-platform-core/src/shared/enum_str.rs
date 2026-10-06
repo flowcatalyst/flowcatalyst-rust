@@ -149,6 +149,10 @@ pub use crate::str_enum;
 /// matches the serde spelling, so the hand-listed strings and the serde
 /// derive can't drift apart. Call as `assert_str_enum(X::ALL, X::as_str)`.
 #[cfg(any(test, feature = "test-support"))]
+#[expect(
+    clippy::unwrap_used,
+    reason = "test-support assertion helper: an unserialisable variant is the failure it reports"
+)]
 pub fn assert_str_enum<T>(all: &[T], as_str: fn(&T) -> &'static str)
 where
     T: PartialEq

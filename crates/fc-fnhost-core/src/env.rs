@@ -113,6 +113,10 @@ pub struct TrustedProxies {
 
 impl TrustedProxies {
     /// RFC 1918 + loopback + IPv6 ULA/loopback.
+    #[expect(
+        clippy::expect_used,
+        reason = "a constant CIDR list, valid by inspection"
+    )]
     pub fn default_list() -> Self {
         Self::parse_csv("127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,::1/128,fc00::/7")
             .expect("the default list parses")

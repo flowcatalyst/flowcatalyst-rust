@@ -2,6 +2,12 @@
 //! any line (Java `WasmFunctionListenerTest`'s log and secret tests). Its own
 //! test binary: guests run on the guest runtime's threads, so the capture is
 //! the process-wide subscriber, at TRACE.
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test code: a failed unwrap, expect or panic is a failed test (clippy's test exemption covers #[test] fns and #[cfg(test)] modules, not the helpers of an integration-test crate)"
+)]
 
 mod support;
 

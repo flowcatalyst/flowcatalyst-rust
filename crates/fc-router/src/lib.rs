@@ -96,6 +96,10 @@ pub type Result<T> = result::Result<T, RouterError>;
 /// the same handle, so every listener that serves `/metrics` (the router
 /// API, fc-server's metrics port) renders one registry: the router's, the
 /// scheduler's and the stream processor's series alike.
+#[expect(
+    clippy::expect_used,
+    reason = "start-up: the recorder is installed once; failing means another global recorder exists"
+)]
 pub fn init_prometheus_recorder() -> metrics_exporter_prometheus::PrometheusHandle {
     static HANDLE: OnceLock<metrics_exporter_prometheus::PrometheusHandle> = OnceLock::new();
     HANDLE
