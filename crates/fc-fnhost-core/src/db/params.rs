@@ -156,14 +156,17 @@ fn integer(index: usize, v: i64, target: u32) -> Result<Vec<u8>, String> {
     let out_of_range = || format!("params[{index}] is out of range for the column's integer type");
     Ok(match target {
         oid::INT2 => i16::try_from(v)
+            // Guest ABI: the failure text is the fixed out-of-range message; TryFromIntError adds nothing.
             .map_err(|_| out_of_range())?
             .to_be_bytes()
             .to_vec(),
         oid::INT4 => i32::try_from(v)
+            // Guest ABI: the failure text is the fixed out-of-range message; TryFromIntError adds nothing.
             .map_err(|_| out_of_range())?
             .to_be_bytes()
             .to_vec(),
         oid::OID => u32::try_from(v)
+            // Guest ABI: the failure text is the fixed out-of-range message; TryFromIntError adds nothing.
             .map_err(|_| out_of_range())?
             .to_be_bytes()
             .to_vec(),
@@ -206,6 +209,7 @@ fn text_as(
         }
         oid::BOOL => vec![u8::from(parse_bool(trimmed).ok_or_else(|| invalid("boolean"))?)],
         oid::INT2 | oid::INT4 | oid::INT8 | oid::OID => {
+            // Guest ABI: the failure text names the expected type; the parse error is not part of it.
             let v: i64 = trimmed.parse().map_err(|_| invalid("integer"))?;
             integer(index, v, target)?
         }
@@ -247,6 +251,7 @@ fn text_as(
             .to_be_bytes()
             .to_vec(),
         oid::BYTEA => match trimmed.strip_prefix("\\x") {
+            // Guest ABI: the failure text names the expected type; the parse error is not part of it.
             Some(hex_text) => hex::decode(hex_text).map_err(|_| invalid("bytea hex string"))?,
             None => text.as_bytes().to_vec(),
         },

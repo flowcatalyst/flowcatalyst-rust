@@ -89,6 +89,7 @@ impl TokenSource {
             .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
             .timeout(MINT_TIMEOUT)
             .body(form);
+        // Fixed message by design: reqwest's text can carry the token endpoint and the request.
         let response = request.send().await.map_err(|_| {
             ControlPlaneError::new(
                 ControlPlaneErrorReason::Unavailable,
@@ -102,6 +103,7 @@ impl TokenSource {
                 format!("token endpoint returned {}", status.as_u16()),
             ));
         }
+        // Fixed message by design: the decode error can quote the token response.
         let body: Value = response.json().await.map_err(|_| {
             ControlPlaneError::new(
                 ControlPlaneErrorReason::Unavailable,

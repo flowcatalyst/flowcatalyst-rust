@@ -136,6 +136,7 @@ impl Dsn {
             }
             _ => return Err("unsupported or malformed database url".to_owned()),
         }
+        // The error never carries the DSN (it can hold the password), as `Dsn::parse` documents.
         .map_err(|_| "unsupported or malformed database url".to_owned())?;
         let jdbc = scheme.to_ascii_lowercase().starts_with("jdbc:");
         let mut params: BTreeMap<String, String> = url
@@ -145,6 +146,7 @@ impl Dsn {
         let decode = |s: &str| {
             urlencoding::decode(s)
                 .map(|c| c.into_owned())
+                // The error never carries the DSN (it can hold the password), as `Dsn::parse` documents.
                 .map_err(|_| "unsupported or malformed database url".to_owned())
         };
         let mut user = decode(url.username())?;
@@ -175,6 +177,7 @@ impl Dsn {
     /// (default 5432), `dbname` (or `database`).
     fn from_secret_json(raw: &str) -> Result<Dsn, String> {
         let value: serde_json::Value =
+            // The error never carries the DSN (it can hold the password), as `Dsn::parse` documents.
             serde_json::from_str(raw).map_err(|_| "the database secret is not JSON".to_owned())?;
         let field = |k: &str| {
             value[k]
@@ -218,6 +221,7 @@ impl Dsn {
         // parameters (sslmode, options, application_name, …) from.
         let mut url = url::Url::parse("postgresql://placeholder/").expect("a valid base");
         url.set_host(Some(&host))
+            // The error never carries the DSN (it can hold the password), as `Dsn::parse` documents.
             .map_err(|_| "the database url's host is malformed".to_owned())?;
         url.set_port(Some(port))
             .expect("a postgresql url takes a port");
@@ -237,6 +241,7 @@ impl Dsn {
             }
         }
         let mut options = PgConnectOptions::from_str(url.as_str())
+            // The error never carries the DSN (it can hold the password), as `Dsn::parse` documents.
             .map_err(|_| "unsupported database url parameters".to_owned())?
             // DISCARD ALL on every release deallocates server-side prepared
             // statements, so the statement cache is per borrow: see

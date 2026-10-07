@@ -209,6 +209,7 @@ impl HttpControlPlane {
 }
 
 async fn send(what: &str, request: reqwest::RequestBuilder) -> Result<Response, ControlPlaneError> {
+    // Fixed message by design: reqwest's text can carry the endpoint URL and is not for the caller.
     request.send().await.map_err(|_| {
         ControlPlaneError::unavailable(format!("control plane request failed: {what}"))
     })
@@ -254,9 +255,11 @@ impl ControlPlane for HttpControlPlane {
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned)
             .ok_or_else(|| unavailable("desired-state response carried no ETag", status))?;
+        // Fixed message by design: the read error is not for the caller.
         let body = response.text().await.map_err(|_| {
             ControlPlaneError::unavailable("desired-state response body could not be read")
         })?;
+        // Fixed message by design: the parse text can quote the document.
         let document = DesiredDocument::parse(&body).map_err(|_| {
             ControlPlaneError::unavailable("desired-state response was not a readable document")
         })?;

@@ -139,11 +139,13 @@ impl TrustedProxies {
             };
             let address: IpAddr = host
                 .parse()
+                // The message names the offending entry; the parse error adds nothing to it.
                 .map_err(|_| format!("not a valid CIDR/address: '{entry}'"))?;
             let max = if address.is_ipv4() { 32 } else { 128 };
             let prefix = match prefix {
                 Some(p) => p
                     .parse::<i32>()
+                    // The message names the offending entry; the parse error adds nothing to it.
                     .map_err(|_| format!("not a valid CIDR prefix length: '{entry}'"))?,
                 None => max,
             };

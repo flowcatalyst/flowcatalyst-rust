@@ -189,6 +189,7 @@ impl Database {
         let deadline = time::Instant::from_std(self.deadline);
         let share = time::timeout_at(deadline, self.lease.share().acquire())
             .await
+            // `Elapsed` carries nothing; the failure is the fixed `no_connection_in_time`.
             .map_err(|_| DbFailure::no_connection_in_time())?;
         let entry = self.lease.entry();
         let pool = entry.pool();

@@ -86,6 +86,7 @@ impl Emitter {
         }
         let data = match &event.data {
             None => Value::Null,
+            // Guest ABI: the answer is the fixed `INVALID_EVENT_DATA_NOT_JSON` code, not serde's text.
             Some(text) => serde_json::from_str(text).map_err(|_| {
                 EmitFailure::Invalid(emit_error::INVALID_EVENT_DATA_NOT_JSON.to_owned())
             })?,
