@@ -10,6 +10,8 @@
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+
+use crate::error::{Error, Result};
 use serde::Deserialize;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -19,7 +21,7 @@ use tokio::sync::Mutex;
 #[async_trait]
 pub trait TokenSource: Send + Sync {
     /// A valid token, minted or cached.
-    async fn token(&self) -> anyhow::Result<String>;
+    async fn token(&self) -> Result<String>;
     /// Drop any cached token (called after a 401) so the next call mints.
     fn invalidate(&self) {}
 }
@@ -71,7 +73,7 @@ impl ClientCredentialsTokenSource {
         }
     }
 
-    async fn mint(&self) -> anyhow::Result<(String, Duration)> {
+    async fn mint(&self) -> Result<(String, Duration)> {
         #[derive(Deserialize)]
         struct TokenResponse {
             #[serde(default)]
@@ -94,17 +96,16 @@ impl ClientCredentialsTokenSource {
             .form(&form)
             .send()
             .await
-            .map_err(|e| anyhow::anyhow!("token request: {e}"))?;
+            .map_err(Error::TokenRequest)?;
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
         if !status.is_success() {
             let body: String = body.chars().take(200).collect();
-            anyhow::bail!("token endpoint {status}: {body}");
+            return Err(Error::TokenEndpoint { status, body });
         }
-        let parsed: TokenResponse = serde_json::from_str(&body)
-            .map_err(|e| anyhow::anyhow!("decode token response: {e}"))?;
+        let parsed: TokenResponse = serde_json::from_str(&body).map_err(Error::TokenDecode)?;
         if parsed.access_token.is_empty() {
-            anyhow::bail!("token endpoint returned no access_token");
+            return Err(Error::TokenMissing);
         }
         let ttl = match parsed.expires_in {
             0 => DEFAULT_TTL,
@@ -116,7 +117,7 @@ impl ClientCredentialsTokenSource {
 
 #[async_trait]
 impl TokenSource for ClientCredentialsTokenSource {
-    async fn token(&self) -> anyhow::Result<String> {
+    async fn token(&self) -> Result<String> {
         let mut cached = self.cached.lock().await;
         if self.invalidated.swap(false, Ordering::SeqCst) {
             *cached = None;

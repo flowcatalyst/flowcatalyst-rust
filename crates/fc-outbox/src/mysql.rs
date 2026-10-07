@@ -7,10 +7,10 @@
 //! Columns are read as text or integers, so each SDK's column types read the
 //! same way.
 
+use crate::error::Result;
 use crate::repository::{
     checked_table_name, parse_text_timestamp, ClaimedBatch, OutboxRepository, OutboxTableConfig,
 };
-use anyhow::Result;
 use async_trait::async_trait;
 use fc_common::{OutboxItemType, OutboxStatus};
 use sqlx::{MySqlPool, Row};

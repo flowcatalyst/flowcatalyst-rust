@@ -23,7 +23,7 @@
 //! `message_group`, `payload`, `status`, `retry_count`, `error_message`,
 //! `created_at`, `updated_at`), as Go does.
 
-use anyhow::Result;
+use crate::error::{Error, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use fc_common::{OutboxItem, OutboxItemType, OutboxStatus};
@@ -242,7 +242,9 @@ pub fn checked_table_name(table: &str) -> Result<&str> {
     if valid {
         Ok(table)
     } else {
-        Err(anyhow::anyhow!("invalid outbox table name {table:?}"))
+        Err(Error::InvalidTableName {
+            table: table.to_string(),
+        })
     }
 }
 

@@ -15,10 +15,10 @@
 
 use std::sync::Arc;
 
-use anyhow::Result;
 use fc_common::config::{env_first, env_first_opt, env_or, env_or_parse};
 use tracing::info;
 
+use crate::error::{Error, Result};
 #[cfg(feature = "mongo")]
 use crate::mongo::MongoOutboxRepository;
 #[cfg(any(feature = "mysql", test))]
@@ -112,14 +112,16 @@ pub async fn connect(
             ))
         }
         #[allow(unreachable_patterns)]
-        other => anyhow::bail!(
-            "the {other} outbox backend is not built into this binary (fc-outbox-processor has \
-             every backend)"
-        ),
+        other => backend_not_built(other)?,
     };
     repo.init_schema().await?;
     info!(backend = %backend, "Outbox repository initialized");
     Ok(repo)
+}
+
+/// The error for a backend this build was compiled without.
+fn backend_not_built(backend: OutboxBackend) -> Result<Arc<dyn OutboxRepository>> {
+    Err(Error::BackendNotBuilt { backend })
 }
 
 /// A Postgres outbox on a pool the caller already holds (Go's fc-server
@@ -160,6 +162,7 @@ mod admin {
     use axum::{Json, Router};
     use tracing::info;
 
+    use crate::error::Result;
     use crate::EnhancedOutboxProcessor;
     use tokio::net::TcpListener;
     use tokio::task::JoinHandle;
@@ -184,7 +187,7 @@ mod admin {
         port: u16,
         processor: Processor,
         shutdown: impl Future<Output = ()> + Send + 'static,
-    ) -> anyhow::Result<JoinHandle<()>> {
+    ) -> Result<JoinHandle<()>> {
         let addr = SocketAddr::from(([127, 0, 0, 1], port));
         let listener = TcpListener::bind(addr).await?;
         info!("Outbox admin API listening on http://{}", addr);
@@ -259,6 +262,7 @@ mod admin {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use crate::error::Result;
         use crate::repository::{ClaimedBatch, OutboxRepository, OutboxTableConfig};
         use crate::{DispatchOutcome, EnhancedProcessorConfig, OutboxDispatcher};
         use async_trait::async_trait;
@@ -280,7 +284,7 @@ mod admin {
 
         #[async_trait]
         impl OutboxRepository for OneItem {
-            async fn claim_pending(&self, _limit: u32) -> anyhow::Result<ClaimedBatch> {
+            async fn claim_pending(&self, _limit: u32) -> Result<ClaimedBatch> {
                 let mut claimed = self.claimed.lock().unwrap();
                 let mut batch = ClaimedBatch::default();
                 if !*claimed {
@@ -299,7 +303,7 @@ mod admin {
                 }
                 Ok(batch)
             }
-            async fn mark_success(&self, _: OutboxItemType, _: &[String]) -> anyhow::Result<()> {
+            async fn mark_success(&self, _: OutboxItemType, _: &[String]) -> Result<()> {
                 Ok(())
             }
             async fn mark_failed(
@@ -309,20 +313,20 @@ mod admin {
                 _: OutboxStatus,
                 _: &str,
                 _: bool,
-            ) -> anyhow::Result<()> {
+            ) -> Result<()> {
                 Ok(())
             }
-            async fn release(&self, _: OutboxItemType, _: &[String]) -> anyhow::Result<()> {
+            async fn release(&self, _: OutboxItemType, _: &[String]) -> Result<()> {
                 Ok(())
             }
-            async fn requeue(&self, _: OutboxItemType, ids: &[String]) -> anyhow::Result<()> {
+            async fn requeue(&self, _: OutboxItemType, ids: &[String]) -> Result<()> {
                 self.requeued.lock().unwrap().extend(ids.iter().cloned());
                 Ok(())
             }
-            async fn recover_stuck(&self, _: Duration) -> anyhow::Result<u64> {
+            async fn recover_stuck(&self, _: Duration) -> Result<u64> {
                 Ok(0)
             }
-            async fn init_schema(&self) -> anyhow::Result<()> {
+            async fn init_schema(&self) -> Result<()> {
                 Ok(())
             }
             fn table_config(&self) -> &OutboxTableConfig {

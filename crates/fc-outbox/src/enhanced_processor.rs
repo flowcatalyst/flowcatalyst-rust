@@ -30,6 +30,7 @@
 //! The database is the only state that matters: a restart loses nothing,
 //! because every row in memory is also a claimed row the recovery returns.
 
+use crate::error::Result;
 use async_trait::async_trait;
 use fc_common::config::{env_bool, env_first};
 use fc_common::{OutboxItem, OutboxItemType, OutboxStatus};
@@ -228,7 +229,7 @@ impl EnhancedOutboxProcessor {
     pub fn new(
         config: EnhancedProcessorConfig,
         repository: Arc<dyn OutboxRepository>,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self> {
         let dispatcher = Arc::new(HttpDispatcher::new(config.http_config.clone())?);
         Ok(Self::with_dispatcher(config, repository, dispatcher))
     }
@@ -361,12 +362,12 @@ impl EnhancedOutboxProcessor {
 
     /// Runs one poll: claim and hand out. Exposed for tests and callers
     /// driving their own loop; [`Self::start`] calls it every poll interval.
-    pub async fn poll_once(&self) -> anyhow::Result<()> {
+    pub async fn poll_once(&self) -> Result<()> {
         Arc::clone(&self.core).poll().await
     }
 
     /// Runs one recovery pass: returns rows stuck IN_PROGRESS to PENDING.
-    pub async fn recover_once(&self) -> anyhow::Result<u64> {
+    pub async fn recover_once(&self) -> Result<u64> {
         self.core.recover().await
     }
 
@@ -539,7 +540,7 @@ impl Core {
         status.is_retryable() && (item.retry_count as i64) + 1 < self.max_retries()
     }
 
-    async fn recover(&self) -> anyhow::Result<u64> {
+    async fn recover(&self) -> Result<u64> {
         let threshold = if self.config.processing_timeout_seconds == 0 {
             Duration::from_secs(300)
         } else {
@@ -556,7 +557,7 @@ impl Core {
     /// Go's `tick`: claim, then hand grouped items to their groups and send
     /// ungrouped items as one batch per type.
     #[tracing::instrument(name = "outbox.poll", skip_all, fields(claimed = Empty))]
-    async fn poll(self: Arc<Self>) -> anyhow::Result<()> {
+    async fn poll(self: Arc<Self>) -> Result<()> {
         if self.in_flight_count() >= self.config.max_in_flight {
             debug!("Outbox poll skipped: max in flight");
             return Ok(());

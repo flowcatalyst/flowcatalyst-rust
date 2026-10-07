@@ -34,6 +34,7 @@
 //!
 //! Requests never carry more than [`MAX_PLATFORM_BATCH`] items.
 
+use crate::error::Result;
 use crate::token::TokenSource;
 use async_trait::async_trait;
 use fc_common::{OutboxItem, OutboxItemType, OutboxStatus};
@@ -198,7 +199,7 @@ pub struct HttpDispatcher {
 }
 
 impl HttpDispatcher {
-    pub fn new(config: HttpDispatcherConfig) -> anyhow::Result<Self> {
+    pub fn new(config: HttpDispatcherConfig) -> Result<Self> {
         let client = reqwest::Client::builder()
             .connect_timeout(config.connect_timeout)
             .timeout(config.request_timeout)
@@ -443,6 +444,7 @@ fn truncate(s: &str, max: usize) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::Error;
     use crate::token::TokenSource;
     use axum::extract::State;
     use axum::http::HeaderMap;
@@ -825,7 +827,7 @@ mod tests {
 
     #[async_trait]
     impl TokenSource for Rotating {
-        async fn token(&self) -> anyhow::Result<String> {
+        async fn token(&self) -> Result<String> {
             Ok(if self.0.load(Ordering::SeqCst) {
                 "good".into()
             } else {
@@ -841,8 +843,11 @@ mod tests {
 
     #[async_trait]
     impl TokenSource for Failing {
-        async fn token(&self) -> anyhow::Result<String> {
-            anyhow::bail!("token endpoint 503")
+        async fn token(&self) -> Result<String> {
+            Err(Error::TokenEndpoint {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                body: String::new(),
+            })
         }
     }
 

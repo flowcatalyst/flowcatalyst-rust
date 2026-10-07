@@ -3352,7 +3352,6 @@ dependencies = [
 name = "fc-outbox"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "axum",
  "bson",

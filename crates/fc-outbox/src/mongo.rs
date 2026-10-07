@@ -8,8 +8,8 @@
 //! document is claimed with `findOneAndUpdate` (PENDING → IN_PROGRESS in one
 //! step), so two processors never claim the same document.
 
+use crate::error::Result;
 use crate::repository::{parse_text_timestamp, ClaimedBatch, OutboxRepository, OutboxTableConfig};
-use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{SecondsFormat, Utc};
 use fc_common::{OutboxItemType, OutboxStatus};

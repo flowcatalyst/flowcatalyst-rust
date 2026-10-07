@@ -6,10 +6,10 @@
 //! accepted in RFC 3339 or SQL form. The claim is one `UPDATE … RETURNING`
 //! statement, which SQLite runs atomically.
 
+use crate::error::Result;
 use crate::repository::{
     checked_table_name, parse_text_timestamp, ClaimedBatch, OutboxRepository, OutboxTableConfig,
 };
-use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
 use fc_common::{OutboxItemType, OutboxStatus};

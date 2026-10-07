@@ -10,8 +10,8 @@
 //! The claim is Go's: one `UPDATE … FROM (SELECT … FOR UPDATE SKIP LOCKED)
 //! RETURNING`, so concurrent processors never claim the same row.
 
+use crate::error::Result;
 use crate::repository::{checked_table_name, ClaimedBatch, OutboxRepository, OutboxTableConfig};
-use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use fc_common::{OutboxItemType, OutboxStatus};

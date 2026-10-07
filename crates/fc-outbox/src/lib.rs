@@ -4,6 +4,7 @@
 
 pub mod backend;
 pub mod enhanced_processor;
+pub mod error;
 pub mod group_distributor;
 pub mod group_state;
 pub mod http_dispatcher;
@@ -27,6 +28,7 @@ mod processor_tests;
 // Re-export key types
 pub use backend::{OutboxBackend, UnknownOutboxBackend};
 pub use enhanced_processor::{EnhancedOutboxProcessor, EnhancedProcessorConfig, ProcessorMetrics};
+pub use error::{Error, Result};
 pub use group_distributor::{DistributorStats, GroupDistributor, GroupHandler};
 pub use group_state::{GroupInfo, GroupStateManager, GroupStatus};
 pub use http_dispatcher::{
