@@ -52,9 +52,23 @@ pub fn env_bool_alias(primary: &str, alias: &str, default: bool) -> bool {
         .unwrap_or(default)
 }
 
+/// A required environment variable is missing or is not valid Unicode.
+#[derive(Debug, thiserror::Error)]
+#[error("{key} environment variable is required")]
+pub struct MissingEnvError {
+    /// The variable that was asked for.
+    pub key: String,
+    /// Why `std::env::var` refused it.
+    #[source]
+    pub source: env::VarError,
+}
+
 /// Read a required env var, returning an error if missing.
-pub fn env_required(key: &str) -> anyhow::Result<String> {
-    env::var(key).map_err(|_| anyhow::anyhow!("{} environment variable is required", key))
+pub fn env_required(key: &str) -> Result<String, MissingEnvError> {
+    env::var(key).map_err(|source| MissingEnvError {
+        key: key.to_string(),
+        source,
+    })
 }
 
 // ── env_first: N-way priority alias resolution ─────────────────────────────
@@ -155,6 +169,23 @@ pub fn env_first_parse<T: FromStr>(keys: &[&str], default: T) -> T {
         }
     }
     default
+}
+
+#[cfg(test)]
+mod env_required_tests {
+    use super::env_required;
+    use std::error::Error;
+
+    #[test]
+    fn missing_variable_keeps_its_text_and_cause() {
+        let err = env_required("FC_COMMON_TEST_SURELY_UNSET_VAR").unwrap_err();
+        // The text the `anyhow!` version produced.
+        assert_eq!(
+            err.to_string(),
+            "FC_COMMON_TEST_SURELY_UNSET_VAR environment variable is required"
+        );
+        assert!(err.source().is_some());
+    }
 }
 
 #[cfg(test)]
