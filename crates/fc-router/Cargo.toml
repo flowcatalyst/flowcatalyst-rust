@@ -16,7 +16,6 @@ fc-platform-jwks = { path = "../fc-platform-jwks" }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 async-trait = { workspace = true }
-anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 metrics = { workspace = true }

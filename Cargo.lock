@@ -3692,7 +3692,6 @@ dependencies = [
 name = "fc-queue"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-nats",
  "async-trait",
  "aws-config",
@@ -3723,7 +3722,6 @@ dependencies = [
 name = "fc-router"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "arc-swap",
  "async-trait",
  "aws-config",
