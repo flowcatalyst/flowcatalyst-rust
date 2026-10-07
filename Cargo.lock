@@ -3888,12 +3888,12 @@ dependencies = [
 name = "fc-stream"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "chrono",
  "fc-common",
  "serde",
  "serde_json",
  "sqlx",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-util",
  "tracing",

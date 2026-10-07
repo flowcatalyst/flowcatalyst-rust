@@ -1,3 +1,4 @@
+use crate::error::{Error, Result};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -63,7 +64,7 @@ pub async fn run(
     info!("Dispatch job projection stopped");
 }
 
-async fn poll_once(pool: &PgPool, batch_size: u32) -> anyhow::Result<u32> {
+async fn poll_once(pool: &PgPool, batch_size: u32) -> Result<u32> {
     // Pick up dispatch jobs that are new (projected_at IS NULL) or updated
     // since last projection (updated_at > projected_at). Upsert into read
     // model and stamp projected_at.
@@ -140,7 +141,7 @@ async fn poll_once(pool: &PgPool, batch_size: u32) -> anyhow::Result<u32> {
     .bind(batch_size as i64)
     .fetch_all(pool)
     .await
-    .map_err(|e| anyhow::anyhow!("dispatch job projection query failed: {}", e))?;
+    .map_err(Error::DispatchJobProjection)?;
 
     Ok(rows.len() as u32)
 }

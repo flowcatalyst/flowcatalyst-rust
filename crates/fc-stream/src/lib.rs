@@ -1,11 +1,13 @@
 pub mod config;
 pub mod dispatch_job_projection;
+pub mod error;
 pub mod event_fan_out;
 pub mod event_projection;
 pub mod health;
 pub mod partition_manager;
 
 pub use config::StreamProcessorConfig;
+pub use error::{Error, Result};
 pub use event_fan_out::EventFanOutConfig;
 pub use health::{
     AggregatedHealth, StreamHealth, StreamHealthService, StreamHealthSnapshot, StreamHealthStatus,

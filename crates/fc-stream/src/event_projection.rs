@@ -1,3 +1,4 @@
+use crate::error::{Error, Result};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -60,7 +61,7 @@ pub async fn run(
     info!("Event projection stopped");
 }
 
-async fn poll_once(pool: &PgPool, batch_size: u32) -> anyhow::Result<u32> {
+async fn poll_once(pool: &PgPool, batch_size: u32) -> Result<u32> {
     // Select unprojected events, insert into read model, and stamp projected_at
     // in a single atomic CTE. The RETURNING clause gives us the count.
     let rows = sqlx::query_as::<_, (i32,)>(
@@ -110,7 +111,7 @@ async fn poll_once(pool: &PgPool, batch_size: u32) -> anyhow::Result<u32> {
     .bind(batch_size as i64)
     .fetch_all(pool)
     .await
-    .map_err(|e| anyhow::anyhow!("event projection query failed: {}", e))?;
+    .map_err(Error::EventProjection)?;
 
     Ok(rows.len() as u32)
 }

@@ -21,6 +21,7 @@
 //! are written through `fc_common::dispatch_lifecycle`, the one owner of
 //! the table's writes, inside the fan-out transaction.
 
+use crate::error::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -141,7 +142,7 @@ async fn poll_once(
     pool: &PgPool,
     subscriptions: &[CachedSubscription],
     config: &EventFanOutConfig,
-) -> anyhow::Result<CycleReport> {
+) -> Result<CycleReport> {
     if subscriptions.is_empty() {
         // Nothing to fan out to. Still claim and stamp events so they
         // don't accumulate forever in the partial index.
@@ -209,7 +210,7 @@ struct EventClaimRow {
 async fn claim_events(
     tx: &mut Transaction<'_, Postgres>,
     batch_size: u32,
-) -> anyhow::Result<Vec<EventClaimRow>> {
+) -> Result<Vec<EventClaimRow>> {
     let rows = sqlx::query_as::<_, EventClaimRow>(
         r#"
         WITH batch AS (
@@ -239,7 +240,7 @@ async fn claim_events(
 
 /// Fast path when there are no subscriptions: stamp events as fanned-out
 /// without producing any jobs. Avoids holding a transaction open.
-async fn claim_events_no_subs(pool: &PgPool, batch_size: u32) -> anyhow::Result<u32> {
+async fn claim_events_no_subs(pool: &PgPool, batch_size: u32) -> Result<u32> {
     let row: (i64,) = sqlx::query_as(
         r#"
         WITH batch AS (
@@ -330,7 +331,7 @@ struct SubsRow {
     event_type_code: Option<String>,
 }
 
-async fn load_active_subscriptions(pool: &PgPool) -> anyhow::Result<Vec<CachedSubscription>> {
+async fn load_active_subscriptions(pool: &PgPool) -> Result<Vec<CachedSubscription>> {
     let rows: Vec<SubsRow> = sqlx::query_as::<_, SubsRow>(
         r#"
         SELECT

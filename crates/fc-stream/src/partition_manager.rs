@@ -25,6 +25,7 @@
 //! Ticks once on startup, then daily. Idempotent — safe to run any number
 //! of times.
 
+use crate::error::Result;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -141,7 +142,7 @@ pub async fn run(
 /// One full pass: create missing forward partitions, drop expired ones.
 /// Returns `(created_count, dropped_count)` summed across all parents. The
 /// same pass [`run`] repeats; public so a test can drive it.
-pub async fn tick(pool: &PgPool, config: &PartitionManagerConfig) -> anyhow::Result<(u32, u32)> {
+pub async fn tick(pool: &PgPool, config: &PartitionManagerConfig) -> Result<(u32, u32)> {
     let now = Utc::now();
     let mut created_total = 0u32;
     let mut dropped_total = 0u32;
@@ -172,7 +173,7 @@ async fn ensure_forward_partitions(
     parent: &str,
     now: DateTime<Utc>,
     months_forward: u32,
-) -> anyhow::Result<u32> {
+) -> Result<u32> {
     let mut created = 0u32;
     for offset in 0..=months_forward as i32 {
         let start = month_start(now, offset);
@@ -210,7 +211,7 @@ async fn drop_old_partitions(
     parent: &str,
     now: DateTime<Utc>,
     retention_days: u32,
-) -> anyhow::Result<u32> {
+) -> Result<u32> {
     let cutoff = now - chrono::Duration::days(retention_days as i64);
 
     let rows: Vec<(String,)> = sqlx::query!(
@@ -251,7 +252,7 @@ async fn drop_old_partitions(
     Ok(dropped)
 }
 
-async fn partition_exists(pool: &PgPool, name: &str) -> anyhow::Result<bool> {
+async fn partition_exists(pool: &PgPool, name: &str) -> Result<bool> {
     let row = sqlx::query_scalar!(
         "SELECT COUNT(*) AS \"count!\" FROM pg_class WHERE relname = $1",
         name
@@ -262,7 +263,7 @@ async fn partition_exists(pool: &PgPool, name: &str) -> anyhow::Result<bool> {
 }
 
 /// True if `table` is a declarative-partitioned table.
-async fn is_partitioned(pool: &PgPool, table: &str) -> anyhow::Result<bool> {
+async fn is_partitioned(pool: &PgPool, table: &str) -> Result<bool> {
     let row = sqlx::query_scalar!(
         r#"
         SELECT EXISTS (
