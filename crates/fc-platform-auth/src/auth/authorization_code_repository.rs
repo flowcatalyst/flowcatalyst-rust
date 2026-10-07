@@ -42,6 +42,7 @@ impl TryFrom<PayloadRow> for AuthorizationCode {
                 .map(String::from),
             method,
         )
+        // `corrupt_value` logs the offending value itself, which is all the error holds.
         .map_err(|_| {
             corrupt_value(
                 "oauth_oidc_payloads",

@@ -194,6 +194,7 @@ pub(crate) fn too_many_requests(retry_after_secs: u32) -> Response {
 
 /// Go `decodeJSON`: a malformed body is 400 `INVALID_JSON`.
 pub(crate) fn decode<T: for<'de> Deserialize<'de>>(body: &Bytes) -> Result<T, Box<Response>> {
+    // Wire contract: a fixed 400 body (Go `decodeJSON`); serde's text is not for the client.
     serde_json::from_slice(body).map_err(|_| {
         Box::new(coded(
             StatusCode::BAD_REQUEST,

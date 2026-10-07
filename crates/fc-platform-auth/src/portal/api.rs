@@ -12,6 +12,7 @@ use fc_platform_core::shared::id::OAuthClientId;
 use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::shared::id::PortalAppId;
 use std::collections::HashMap;
+use tracing::warn;
 
 use axum::{
     body::Bytes,
@@ -75,6 +76,7 @@ impl<S: Send + Sync> FromRequest<S> for RawBody {
         Bytes::from_request(req, state)
             .await
             .map(RawBody)
+            // Wire contract: a fixed 400 body; the rejection's text is not for the client.
             .map_err(|_| PlatformError::bad_request_code("INVALID_BODY", "malformed request body"))
     }
 }
@@ -352,7 +354,11 @@ pub async fn ensure_portal_user(
                 .passwords
                 .portal_invite_link(&ident.id, redirect_uri.as_deref())
                 .await
-                .map_err(|_| internal("INVITE_LINK", "could not mint the invite link"))?;
+                .map_err(|e| {
+                    // The response is a fixed 500 body; the cause goes to the log.
+                    warn!(error = %e, "could not mint the portal invite link");
+                    internal("INVITE_LINK", "could not mint the invite link")
+                })?;
             resp.invite_url = Some(link);
             expires
         } else {
@@ -360,7 +366,11 @@ pub async fn ensure_portal_user(
                 .passwords
                 .send_portal_invite(&ident.id, &ident.email, redirect_uri.as_deref())
                 .await
-                .map_err(|_| internal("INVITE_EMAIL", "could not send the invite email"))?;
+                .map_err(|e| {
+                    // The response is a fixed 500 body; the cause goes to the log.
+                    warn!(error = %e, "could not send the portal invite email");
+                    internal("INVITE_EMAIL", "could not send the invite email")
+                })?;
             resp.invited = true;
             expires
         };
@@ -519,6 +529,7 @@ pub struct ListQuery {
 fn int_param(v: Option<&str>) -> ApiResult<i64> {
     match v.map(str::trim).filter(|s| !s.is_empty()) {
         None => Ok(0),
+        // The client message names the offending text; ParseIntError adds nothing to it.
         Some(s) => s.parse().map_err(|_| {
             PlatformError::bad_request_code("INVALID_PARAM", format!("not an integer: {s}"))
         }),

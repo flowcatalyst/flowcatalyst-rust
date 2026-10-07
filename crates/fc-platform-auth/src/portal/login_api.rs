@@ -477,6 +477,8 @@ pub async fn issue_code(
             Some(challenge.clone()),
             flow.code_challenge_method.as_deref(),
         )
+        // The only information in the error is the unknown method text; the
+        // 500 names the field and the cause stays out of the response.
         .map_err(|_| PlatformError::internal("stored code_challenge_method is not S256"))?,
         None => None,
     };

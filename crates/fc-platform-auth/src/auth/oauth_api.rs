@@ -727,6 +727,7 @@ async fn authenticate_client(
         .and_then(|v| v.strip_prefix("Basic "))
     {
         // Decode Basic auth: base64(client_id:client_secret)
+        // Authentication failure: the 401 body is fixed and says nothing about why.
         let decoded = general_purpose::STANDARD.decode(basic).map_err(|_| {
             (
                 StatusCode::UNAUTHORIZED,
@@ -737,6 +738,7 @@ async fn authenticate_client(
             )
                 .into_response()
         })?;
+        // Authentication failure: the 401 body is fixed and says nothing about why.
         let decoded_str = String::from_utf8(decoded).map_err(|_| {
             (
                 StatusCode::UNAUTHORIZED,
@@ -2167,6 +2169,7 @@ pub async fn issue_code(
     };
 
     let method = pending.code_challenge_method.as_deref();
+    // `corrupt_value` logs the offending value itself, which is all the error holds.
     let pkce = Pkce::from_parts(pending.code_challenge.clone(), method).map_err(|_| {
         enum_str::corrupt_value(
             "oauth_oidc_payloads",
@@ -2364,6 +2367,7 @@ fn extract_and_validate_token(
             .into_response()
     })?;
 
+    // Authentication failure: the 401 body is fixed; the token error is not for the client.
     auth_service.validate_token(token).map_err(|_| {
         (
             StatusCode::UNAUTHORIZED,
