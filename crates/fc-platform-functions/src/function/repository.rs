@@ -319,6 +319,7 @@ fn push_filter(qb: &mut QueryBuilder<'_, Postgres>, filter: &FunctionListFilter)
 }
 
 fn to_entity(row: FunctionRow, aliases: Vec<FunctionAlias>) -> Result<Function> {
+    // `corrupt_value` logs the offending value itself, which is all the error holds.
     let address = FunctionAddress::new(&row.application_code, &row.service_name, &row.name)
         .map_err(|_| {
             corrupt_value(
@@ -328,6 +329,7 @@ fn to_entity(row: FunctionRow, aliases: Vec<FunctionAlias>) -> Result<Function> 
                 row.id.as_str(),
             )
         })?;
+    // `corrupt_value` logs the offending value itself, which is all the error holds.
     let owner = FunctionOwner::of_client_id(row.client_id.as_id_str()).map_err(|_| {
         corrupt_value(
             "fnr_functions",

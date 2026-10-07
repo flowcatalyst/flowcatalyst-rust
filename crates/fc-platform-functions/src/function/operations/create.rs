@@ -132,6 +132,7 @@ impl<U: UnitOfWork> UseCase for CreateFunctionUseCase<U> {
 
         // R1: the application's stored code must itself be a DNS label.
         let application_label =
+            // Wire contract: a fixed code; the message names the application code.
             DnsLabel::parse("applicationCode", &application.code).map_err(|_| {
                 UseCaseError::validation(
                     "APPLICATION_CODE_NOT_ADDRESSABLE",

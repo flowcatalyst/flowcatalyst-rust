@@ -672,7 +672,7 @@ fn report_and_guard_corrupt(
     }
     for c in live {
         if c.pool.as_ref().is_none_or(|p| p == pool) {
-            return Err(corrupt_row(&c.version_id, &c.cause));
+            return Err(corrupt_row(&c.version_id, &c.cause.to_string()));
         }
     }
     Ok(())

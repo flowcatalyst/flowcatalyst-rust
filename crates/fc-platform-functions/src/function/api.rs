@@ -440,6 +440,7 @@ pub async fn list_functions(
         .transpose()?;
     let status = query_param(&params, "status")
         .map(|raw| {
+            // Wire contract: a fixed code and message.
             raw.parse::<FunctionStatus>().map_err(|_| {
                 UseCaseError::validation("STATUS_INVALID", "status must be ACTIVE or DISABLED")
             })

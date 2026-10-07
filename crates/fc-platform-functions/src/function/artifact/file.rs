@@ -20,6 +20,15 @@ use tokio::fs::remove_file;
 use tokio::fs::rename;
 use tokio::fs::File;
 
+/// The store's directory could not be created.
+#[derive(Debug, thiserror::Error)]
+#[error("cannot create artifact directory {}: {source}", dir.display())]
+pub struct ArtifactDirError {
+    pub dir: PathBuf,
+    #[source]
+    pub source: io::Error,
+}
+
 #[derive(Debug)]
 pub struct FileArtifactBlobStore {
     dir: PathBuf,
@@ -32,9 +41,11 @@ fn transport(e: io::Error) -> ArtifactError {
 impl FileArtifactBlobStore {
     /// Creates `dir` when missing; a directory that cannot be created fails
     /// startup.
-    pub fn new(dir: PathBuf) -> Result<FileArtifactBlobStore, String> {
-        fs::create_dir_all(&dir)
-            .map_err(|e| format!("cannot create artifact directory {}: {e}", dir.display()))?;
+    pub fn new(dir: PathBuf) -> Result<FileArtifactBlobStore, ArtifactDirError> {
+        fs::create_dir_all(&dir).map_err(|source| ArtifactDirError {
+            dir: dir.clone(),
+            source,
+        })?;
         Ok(FileArtifactBlobStore { dir })
     }
 

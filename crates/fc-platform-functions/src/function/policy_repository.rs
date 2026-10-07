@@ -65,6 +65,7 @@ impl ClientPolicyRepository {
 }
 
 fn to_entity(row: PolicyRow) -> Result<ClientPolicy> {
+    // `corrupt_value` logs the offending value itself, which is all the error holds.
     let owner = FunctionOwner::from_key(&row.client_id).map_err(|_| {
         corrupt_value(
             "fnr_client_policies",

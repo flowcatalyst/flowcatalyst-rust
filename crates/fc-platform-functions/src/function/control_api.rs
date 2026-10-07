@@ -105,6 +105,7 @@ fn gate(auth: &AuthContext) -> Result<(), PlatformError> {
 }
 
 fn parse_pool(raw: Option<&str>) -> Result<DnsLabel, UseCaseError> {
+    // Wire contract: a fixed code and message; the parse error is not for the client.
     DnsLabel::parse("pool", raw.unwrap_or(""))
         .map_err(|_| UseCaseError::validation("POOL_INVALID", "pool must be a DNS label"))
 }
@@ -337,7 +338,7 @@ async fn mark_ready(
         {
             return Err(super::desired_state::corrupt_row(
                 &corrupt.version_id,
-                &corrupt.cause,
+                &corrupt.cause.to_string(),
             ));
         }
         let Some(v) = batch
@@ -444,6 +445,7 @@ async fn resolve_served(
     raw_address: Option<&str>,
     version: Option<i64>,
 ) -> Result<(Function, FunctionVersion), PlatformError> {
+    // A host asking for an address it cannot parse is told only that it is not served.
     let address = FunctionAddress::parse(raw_address.unwrap_or("")).map_err(|_| not_served())?;
     let f = state
         .functions
@@ -520,6 +522,7 @@ pub async fn emit_events(
             )
         };
         let raw = item.data.as_ref().ok_or_else(invalid)?;
+        // The message names the event index; the parser's text could quote the payload.
         let node = JsonNode::parse(raw.get()).map_err(|_| invalid())?;
         if !node.is_object() {
             return Err(invalid().into());

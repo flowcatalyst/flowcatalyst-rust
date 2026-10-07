@@ -33,7 +33,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-pub use file::FileArtifactBlobStore;
+pub use file::{ArtifactDirError, FileArtifactBlobStore};
 pub use platform_ref::PlatformArtifactRef;
 pub use s3::S3ArtifactBlobStore;
 
@@ -43,6 +43,7 @@ use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::usecase::UseCaseError;
 use std::env;
 use std::path::PathBuf;
+use std::string::FromUtf8Error;
 use tokio::io::AsyncRead;
 
 /// The upload cap: 256 MiB, the same constant the fetch side uses (Java
@@ -96,18 +97,39 @@ pub trait ArtifactBlobStore: Send + Sync {
     async fn delete_all(&self, function_id: &str) -> Result<(), ArtifactError>;
 }
 
+/// Why `FC_FN_ARTIFACT_STORE` cannot be turned into a store. `Display` is the
+/// text the start-up refusal printed before this type.
+#[derive(Debug, thiserror::Error)]
+pub enum ArtifactStoreSpecError {
+    #[error("FC_FN_ARTIFACT_STORE must be file:///abs/dir or s3://bucket[/prefix], got: {spec}")]
+    Unrecognised { spec: String },
+    #[error("FC_FN_ARTIFACT_STORE file:// must not carry a host: {spec}")]
+    FileHost { spec: String },
+    #[error("FC_FN_ARTIFACT_STORE file:// path is not valid UTF-8: {spec}")]
+    FilePathNotUtf8 {
+        spec: String,
+        #[source]
+        source: FromUtf8Error,
+    },
+    #[error("FC_FN_ARTIFACT_STORE file:// must be an absolute path: {spec}")]
+    FilePathNotAbsolute { spec: String },
+    #[error("FC_FN_ARTIFACT_STORE s3:// must name a bucket: {spec}")]
+    S3NoBucket { spec: String },
+    #[error("FC_FN_ARTIFACT_STORE: {0}")]
+    Directory(#[from] ArtifactDirError),
+}
+
 /// `FC_FN_ARTIFACT_STORE` (Java `ArtifactBlobStores.configure`): blank is
 /// no store; `file:///abs/dir` and `s3://bucket[/prefix]` are the two
 /// stores; anything else fails startup, naming the variable, never a silent
 /// default.
-pub fn configure(spec: &str) -> Result<Option<Arc<dyn ArtifactBlobStore>>, String> {
+pub fn configure(spec: &str) -> Result<Option<Arc<dyn ArtifactBlobStore>>, ArtifactStoreSpecError> {
     if super::java_is_blank(spec) {
         return Ok(None);
     }
     if let Some(rest) = spec.strip_prefix("file://") {
         let dir = file_dir(spec, rest)?;
-        let store =
-            FileArtifactBlobStore::new(dir).map_err(|e| format!("FC_FN_ARTIFACT_STORE: {e}"))?;
+        let store = FileArtifactBlobStore::new(dir)?;
         return Ok(Some(Arc::new(store)));
     }
     if let Some(rest) = spec.strip_prefix("s3://") {
@@ -116,14 +138,14 @@ pub fn configure(spec: &str) -> Result<Option<Arc<dyn ArtifactBlobStore>>, Strin
             bucket, prefix,
         ))));
     }
-    Err(format!(
-        "FC_FN_ARTIFACT_STORE must be file:///abs/dir or s3://bucket[/prefix], got: {spec}"
-    ))
+    Err(ArtifactStoreSpecError::Unrecognised {
+        spec: spec.to_string(),
+    })
 }
 
 /// The store `FC_FN_ARTIFACT_STORE` names (Java `Env.java:609`, no default;
 /// fc-dev sets its own).
-pub fn store_from_env() -> Result<Option<Arc<dyn ArtifactBlobStore>>, String> {
+pub fn store_from_env() -> Result<Option<Arc<dyn ArtifactBlobStore>>, ArtifactStoreSpecError> {
     configure(&env::var("FC_FN_ARTIFACT_STORE").unwrap_or_default())
 }
 
@@ -153,22 +175,25 @@ fn java_env_bool(raw: &str) -> Option<bool> {
 /// `file:///abs/dir`, read as an operator writes it: a literal space
 /// (macOS's `Application Support`) and its percent-encoded form both name
 /// the same directory. No host, and an absolute path.
-fn file_dir(spec: &str, rest: &str) -> Result<PathBuf, String> {
+fn file_dir(spec: &str, rest: &str) -> Result<PathBuf, ArtifactStoreSpecError> {
     let (host, path) = match rest.find('/') {
         Some(slash) => (&rest[..slash], &rest[slash..]),
         None => (rest, ""),
     };
     if !host.is_empty() {
-        return Err(format!(
-            "FC_FN_ARTIFACT_STORE file:// must not carry a host: {spec}"
-        ));
+        return Err(ArtifactStoreSpecError::FileHost {
+            spec: spec.to_string(),
+        });
     }
-    let path = urlencoding::decode(path)
-        .map_err(|_| format!("FC_FN_ARTIFACT_STORE file:// path is not valid UTF-8: {spec}"))?;
+    let path =
+        urlencoding::decode(path).map_err(|source| ArtifactStoreSpecError::FilePathNotUtf8 {
+            spec: spec.to_string(),
+            source,
+        })?;
     if path.is_empty() || !path.starts_with('/') {
-        return Err(format!(
-            "FC_FN_ARTIFACT_STORE file:// must be an absolute path: {spec}"
-        ));
+        return Err(ArtifactStoreSpecError::FilePathNotAbsolute {
+            spec: spec.to_string(),
+        });
     }
     // `file:///C:/dir` names `C:/dir` on Windows.
     #[cfg(windows)]
@@ -181,7 +206,7 @@ fn file_dir(spec: &str, rest: &str) -> Result<PathBuf, String> {
 /// `s3://bucket[/prefix]`: the bucket is the URI's host (Java reads
 /// `URI.getHost`, which is absent for anything but a hostname), the prefix
 /// the path with its slashes trimmed.
-fn s3_location(spec: &str, rest: &str) -> Result<(String, String), String> {
+fn s3_location(spec: &str, rest: &str) -> Result<(String, String), ArtifactStoreSpecError> {
     let (bucket, path) = match rest.find('/') {
         Some(slash) => (&rest[..slash], &rest[slash..]),
         None => (rest, ""),
@@ -191,9 +216,9 @@ fn s3_location(spec: &str, rest: &str) -> Result<(String, String), String> {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.');
     if !hostname {
-        return Err(format!(
-            "FC_FN_ARTIFACT_STORE s3:// must name a bucket: {spec}"
-        ));
+        return Err(ArtifactStoreSpecError::S3NoBucket {
+            spec: spec.to_string(),
+        });
     }
     Ok((bucket.to_string(), path.trim_matches('/').to_string()))
 }
@@ -328,22 +353,64 @@ mod tests {
 
     #[test]
     fn an_unrecognised_scheme_fails_startup_naming_the_variable() {
-        let err = configure("ftp://x").err().unwrap();
+        let err = configure("ftp://x").err().unwrap().to_string();
         assert!(err.contains("FC_FN_ARTIFACT_STORE"), "{err}");
         assert!(err.contains("ftp://x"), "{err}");
     }
 
     #[test]
     fn a_file_uri_with_a_host_or_a_relative_path_is_rejected() {
-        let err = configure("file://host/some/path").err().unwrap();
+        let err = configure("file://host/some/path")
+            .err()
+            .unwrap()
+            .to_string();
         assert!(err.contains("FC_FN_ARTIFACT_STORE"), "{err}");
         assert!(configure("file://relative/path").is_err());
         assert!(configure("file://").is_err());
     }
 
+    // The expected strings are the `format!` texts the start-up refusal
+    // printed before it had an error type.
+    #[test]
+    fn the_refusal_texts_are_unchanged() {
+        assert_eq!(
+            configure("ftp://x").err().unwrap().to_string(),
+            "FC_FN_ARTIFACT_STORE must be file:///abs/dir or s3://bucket[/prefix], got: ftp://x"
+        );
+        assert_eq!(
+            configure("file://host/some/path")
+                .err()
+                .unwrap()
+                .to_string(),
+            "FC_FN_ARTIFACT_STORE file:// must not carry a host: file://host/some/path"
+        );
+        assert_eq!(
+            configure("file://").err().unwrap().to_string(),
+            "FC_FN_ARTIFACT_STORE file:// must be an absolute path: file://"
+        );
+        assert_eq!(
+            configure("s3:///no-bucket").err().unwrap().to_string(),
+            "FC_FN_ARTIFACT_STORE s3:// must name a bucket: s3:///no-bucket"
+        );
+        let dir = env::temp_dir().join(format!("fc-blob-cfg-{}", tsid::generate_untyped()));
+        fs::write(&dir, b"a file where the directory should go").unwrap();
+        let err = configure(&format!("file://{}", dir.display()))
+            .err()
+            .unwrap();
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "FC_FN_ARTIFACT_STORE: cannot create artifact directory {}: {}",
+                dir.display(),
+                fs::create_dir_all(&dir).unwrap_err()
+            )
+        );
+        fs::remove_file(&dir).unwrap();
+    }
+
     #[test]
     fn an_s3_uri_with_no_bucket_is_rejected() {
-        let err = configure("s3:///no-bucket").err().unwrap();
+        let err = configure("s3:///no-bucket").err().unwrap().to_string();
         assert!(err.contains("bucket"), "{err}");
         assert_eq!(
             s3_location("", "my-bucket/fn-artifacts/").unwrap(),

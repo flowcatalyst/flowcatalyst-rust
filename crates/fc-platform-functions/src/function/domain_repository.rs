@@ -123,6 +123,7 @@ impl FunctionDomainRepository {
 }
 
 fn to_entity(row: DomainRow) -> Result<FunctionDomain> {
+    // `corrupt_value` logs the offending value itself, which is all the error holds.
     let owner = FunctionOwner::of_client_id(row.client_id.as_id_str()).map_err(|_| {
         corrupt_value(
             "fnr_domains",

@@ -256,6 +256,7 @@ fn non_negative_int(token: &str) -> Result<i64, String> {
     }
     let n: i32 = token
         .parse()
+        // The message is the text of Go's error, which the check reproduces; ParseIntError adds nothing.
         .map_err(|_| format!("failed to parse int from {token}"))?;
     if n < 0 {
         return Err(format!("negative number ({n}) not allowed: {token}"));

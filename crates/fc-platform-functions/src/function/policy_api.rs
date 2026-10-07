@@ -25,6 +25,7 @@ fn owner_from_path(raw: &str) -> Result<FunctionOwner, PlatformError> {
     if java_is_blank(raw) {
         return Err(UseCaseError::validation("OWNER_REQUIRED", "owner is required").into());
     }
+    // Wire contract: a fixed code and message; the parse error is not for the client.
     FunctionOwner::from_wire(raw)
         .map_err(|_| UseCaseError::validation("OWNER_REQUIRED", "owner is required").into())
 }

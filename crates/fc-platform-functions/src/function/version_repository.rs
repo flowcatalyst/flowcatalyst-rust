@@ -21,7 +21,9 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
 use super::entity::{FunctionVersion, SignerIdentity, VersionState, VersionStateKind};
-use super::{Digest, DnsLabel, JsonNode, Manifest, LIVE_ALIAS};
+use super::{
+    Digest, DnsLabel, JsonNode, Manifest, UnreadableManifest, ValidationError, LIVE_ALIAS,
+};
 use axum::http::StatusCode;
 use fc_platform_core::shared::enum_str::Stored;
 use fc_platform_core::shared::error::{PlatformError, Result};
@@ -51,7 +53,29 @@ pub struct CorruptVersion {
     pub function_id: FunctionId,
     pub version: i32,
     pub pool: Option<DnsLabel>,
-    pub cause: String,
+    pub cause: UnreadableVersion,
+}
+
+/// Why a stored `fnr_versions` row cannot be read. Never carries manifest
+/// content. `Display` is the text the row's `cause` string held: it is logged
+/// and reaches the host as the `CORRUPT_ROW` message.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum UnreadableVersion {
+    /// The manifest column is not JSON. The parser's error is dropped on
+    /// purpose: it quotes the text around the fault, and the manifest may hold
+    /// secrets.
+    #[error("fnr_versions.manifest is not valid JSON")]
+    ManifestNotJson,
+    /// The manifest is JSON the tolerant reader cannot use.
+    #[error(transparent)]
+    Manifest(#[from] UnreadableManifest),
+    /// The state column holds a spelling no state has, or a state without the
+    /// time it needs.
+    #[error("unrecognised fnr_versions.state: {0}")]
+    UnrecognisedState(String),
+    /// The digest column is not a `sha256:` digest.
+    #[error("{}", .0.message())]
+    Digest(#[source] ValidationError),
 }
 
 /// A batch read's answer (Java `VersionBatch`): the readable versions under
@@ -231,7 +255,7 @@ impl FunctionVersionRepository {
         let mut count = 0;
         for (version_id, function_id, text) in rows {
             let manifest = JsonNode::parse(&text)
-                .map_err(|_| "fnr_versions.manifest is not valid JSON".to_string())
+                .map_err(|_| UnreadableVersion::ManifestNotJson)
                 .and_then(|json| read_stored_manifest(&json, &version_id));
             match manifest {
                 Ok(m) if m.warm && &m.pool == pool => count += 1,
@@ -526,8 +550,8 @@ impl Persist<FunctionVersion> for FunctionVersionRepository {
 fn read_stored_manifest(
     json: &JsonNode,
     version_id: &FunctionVersionId,
-) -> result::Result<Manifest, String> {
-    let (manifest, dropped) = Manifest::read_stored_reporting(json).map_err(|e| e.to_string())?;
+) -> result::Result<Manifest, UnreadableVersion> {
+    let (manifest, dropped) = Manifest::read_stored_reporting(json)?;
     if !dropped.is_empty() {
         static DROPPED_LOG: LogThrottle = LogThrottle::new(Duration::from_secs(60));
         if let Some(suppressed) = DROPPED_LOG.admit() {
@@ -554,26 +578,24 @@ fn to_entity_or_corrupt(row: VersionRow) -> Result<FunctionVersion> {
 }
 
 /// Why a stored row cannot be read. Never carries manifest content.
-fn to_entity(row: VersionRow) -> result::Result<FunctionVersion, String> {
-    let json = JsonNode::parse(&row.manifest)
-        .map_err(|_| "fnr_versions.manifest is not valid JSON".to_string())?;
+fn to_entity(row: VersionRow) -> result::Result<FunctionVersion, UnreadableVersion> {
+    let json = JsonNode::parse(&row.manifest).map_err(|_| UnreadableVersion::ManifestNotJson)?;
     let manifest = read_stored_manifest(&json, &row.id)?;
     let kind = row
         .state
         .into_result()
-        .map_err(|raw| format!("unrecognised fnr_versions.state: {raw}"))?;
+        .map_err(UnreadableVersion::UnrecognisedState)?;
     let state = match (kind, row.ready_at, row.retired_at) {
         (VersionStateKind::Published, _, _) => VersionState::Published,
         (VersionStateKind::Ready, Some(at), _) => VersionState::Ready(at),
         (VersionStateKind::Retired, _, Some(at)) => VersionState::Retired(at),
         (kind @ (VersionStateKind::Ready | VersionStateKind::Retired), _, _) => {
-            return Err(format!(
-                "unrecognised fnr_versions.state: {}",
-                kind.as_str()
+            return Err(UnreadableVersion::UnrecognisedState(
+                kind.as_str().to_string(),
             ))
         }
     };
-    let digest = Digest::parse(&row.digest).map_err(|e| e.message().to_string())?;
+    let digest = Digest::parse(&row.digest).map_err(UnreadableVersion::Digest)?;
     let signer = match (row.signer_issuer, row.signer_subject) {
         (Some(issuer), Some(subject)) => Some(SignerIdentity { issuer, subject }),
         _ => None,
@@ -704,7 +726,10 @@ mod tests {
             let err = to_entity(row_in_state(state, ready, retired))
                 .err()
                 .unwrap();
-            assert_eq!(err, format!("unrecognised fnr_versions.state: {named}"));
+            assert_eq!(
+                err.to_string(),
+                format!("unrecognised fnr_versions.state: {named}")
+            );
         }
     }
 }
