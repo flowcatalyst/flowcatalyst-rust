@@ -9,6 +9,6 @@ pub mod housekeeping;
 pub mod shutdown;
 
 pub use crate::shared::platform_context::{PlatformContext, PlatformRoutesConfig};
-pub use auth_init::{init_auth_services, AuthInitConfig, AuthServices};
+pub use auth_init::{init_auth_services, AuthInitConfig, AuthInitError, AuthServices};
 pub use housekeeping::spawn_auth_purger;
 pub use shutdown::wait_for_shutdown_signal;

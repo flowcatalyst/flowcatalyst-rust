@@ -3421,7 +3421,6 @@ dependencies = [
 name = "fc-platform"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "aws-config",
  "aws-sdk-sqs",
@@ -3460,6 +3459,7 @@ dependencies = [
  "tempfile",
  "testcontainers",
  "testcontainers-modules",
+ "thiserror 2.0.18",
  "time",
  "tokio",
  "tokio-test",

@@ -46,7 +46,7 @@ utoipa-axum = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 tracing = { workspace = true }
-anyhow = { workspace = true }
+thiserror = { workspace = true }
 time = "0.3"
 async-trait = { workspace = true }
 

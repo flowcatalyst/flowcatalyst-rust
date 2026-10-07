@@ -12,6 +12,7 @@ use crate::repository::Repositories;
 use crate::service::{
     AuthConfig, AuthService, AuthorizationService, OidcSyncService, PasswordService,
 };
+use crate::shared::error::PlatformError;
 use fc_common::config;
 use std::env;
 use std::fs;
@@ -127,6 +128,21 @@ fn ttl_from_env(names: &[&str], default: i64) -> i64 {
     }
 }
 
+/// Why the auth services could not be built at start-up. Each `Display` is
+/// the text the start-up error printed before this type.
+#[derive(Debug, thiserror::Error)]
+pub enum AuthInitError {
+    /// The RSA key pair could not be loaded or generated.
+    #[error(transparent)]
+    Keys(PlatformError),
+    /// The signing key is not a usable RSA key.
+    #[error("JWT signing key: {0}")]
+    SigningKey(#[source] PlatformError),
+    /// The previous public key is not a usable RSA key.
+    #[error("FLOWCATALYST_JWT_PREVIOUS_PUBLIC_KEY: {0}")]
+    PreviousPublicKey(#[source] PlatformError),
+}
+
 /// Build the full auth service bundle from configuration + repos.
 ///
 /// Loads or generates RSA keys, then wires up the `AuthService`,
@@ -134,11 +150,12 @@ fn ttl_from_env(names: &[&str], default: i64) -> i64 {
 pub fn init_auth_services(
     repos: &Repositories,
     config: AuthInitConfig,
-) -> anyhow::Result<AuthServices> {
+) -> Result<AuthServices, AuthInitError> {
     let (private_key, public_key) = AuthConfig::load_or_generate_rsa_keys(
         config.private_key_path.as_deref(),
         config.public_key_path.as_deref(),
-    )?;
+    )
+    .map_err(AuthInitError::Keys)?;
 
     let config_refresh_ttl = config.refresh_token_expiry_secs;
     let auth_config = AuthConfig {
@@ -158,11 +175,11 @@ pub fn init_auth_services(
     // empty secret (which would make every token forgeable).
     let mut auth_service =
         AuthService::new_with_rsa(auth_config.clone(), &private_key, &public_key)
-            .map_err(|e| anyhow::anyhow!("JWT signing key: {e}"))?;
+            .map_err(AuthInitError::SigningKey)?;
     if let Some(previous) = auth_config.rsa_public_key_previous.as_deref() {
         auth_service
             .add_previous_rsa_key(previous)
-            .map_err(|e| anyhow::anyhow!("FLOWCATALYST_JWT_PREVIOUS_PUBLIC_KEY: {e}"))?;
+            .map_err(AuthInitError::PreviousPublicKey)?;
     }
     // Go stamps this lifetime on each freshly issued refresh token, and it is
     // the family's absolute cap (rotation carries the first deadline forward).
@@ -184,4 +201,28 @@ pub fn init_auth_services(
         password,
         oidc_sync,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AuthInitError;
+    use crate::shared::error::PlatformError;
+    use std::error::Error as _;
+
+    // The expected strings are what the replaced `anyhow!("...: {e}")` calls
+    // printed (the cause's own Display after the prefix).
+    #[test]
+    fn the_start_up_messages_are_unchanged() {
+        let cause = || PlatformError::internal("bad pem");
+        let inner = cause().to_string();
+        let e = AuthInitError::SigningKey(cause());
+        assert_eq!(e.to_string(), format!("JWT signing key: {inner}"));
+        assert!(e.source().is_some());
+        let e = AuthInitError::PreviousPublicKey(cause());
+        assert_eq!(
+            e.to_string(),
+            format!("FLOWCATALYST_JWT_PREVIOUS_PUBLIC_KEY: {inner}")
+        );
+        assert_eq!(AuthInitError::Keys(cause()).to_string(), inner);
+    }
 }
