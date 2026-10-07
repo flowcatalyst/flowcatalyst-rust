@@ -11,6 +11,7 @@ use axum::{
 use chrono::Utc;
 use serde::Serialize;
 use std::env;
+use std::error::Error;
 use tracing::{error, info, warn};
 use utoipa::ToSchema;
 
@@ -21,16 +22,17 @@ use utoipa::ToSchema;
 pub trait ConfigReloader: Send + Sync {
     /// Fetch and apply. `Ok` when what is running now matches the source
     /// (whether or not anything changed).
-    async fn reload(&self) -> Result<(), String>;
+    async fn reload(&self) -> Result<(), ReloadError>;
 }
+
+/// Why a reload failed. Any error will do for the implementor; the handler
+/// answers with its `Display` (`reload: {e}`) and logs it.
+pub type ReloadError = Box<dyn Error + Send + Sync>;
 
 #[async_trait::async_trait]
 impl ConfigReloader for crate::ConfigSyncService {
-    async fn reload(&self) -> Result<(), String> {
-        self.apply_latest()
-            .await
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+    async fn reload(&self) -> Result<(), ReloadError> {
+        self.apply_latest().await.map(|_| ()).map_err(Into::into)
     }
 }
 
@@ -351,10 +353,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl ConfigReloader for StubReloader {
-        async fn reload(&self) -> Result<(), String> {
+        async fn reload(&self) -> Result<(), ReloadError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             if self.fail {
-                Err("config: all 1 source(s) failed".to_string())
+                Err("config: all 1 source(s) failed".into())
             } else {
                 Ok(())
             }

@@ -88,6 +88,16 @@ pub struct HttpSettledReporter {
     client: reqwest::Client,
 }
 
+/// Why one chunk of a settled report was not accepted. `Display` is the
+/// text that goes into the aggregated report error.
+#[derive(Debug, thiserror::Error)]
+enum ChunkError {
+    #[error("do: {0}")]
+    Send(#[source] reqwest::Error),
+    #[error("settled hook returned {status}: {body}")]
+    Status { status: u16, body: String },
+}
+
 impl HttpSettledReporter {
     /// A reporter for the platform at `platform_base_url`, each chunk
     /// bounded by `timeout` ([`DEFAULT_SETTLED_TIMEOUT`] when `None`).
@@ -111,23 +121,22 @@ impl HttpSettledReporter {
         &self.url
     }
 
-    async fn post_chunk(&self, reason: &str, jobs: &[SettledJob]) -> Result<(), String> {
+    async fn post_chunk(&self, reason: &str, jobs: &[SettledJob]) -> Result<(), ChunkError> {
         let response = self
             .client
             .post(&self.url)
             .json(&SettledRequest { reason, jobs })
             .send()
             .await
-            .map_err(|e| format!("do: {e}"))?;
+            .map_err(ChunkError::Send)?;
         let status = response.status();
         if status != reqwest::StatusCode::OK {
             let body = response.text().await.unwrap_or_default();
             let body: String = body.chars().take(4096).collect();
-            return Err(format!(
-                "settled hook returned {}: {}",
-                status.as_u16(),
-                body.trim()
-            ));
+            return Err(ChunkError::Status {
+                status: status.as_u16(),
+                body: body.trim().to_string(),
+            });
         }
         Ok(())
     }
@@ -141,6 +150,8 @@ impl SettledReporter for HttpSettledReporter {
         let mut errors = Vec::new();
         for (i, chunk) in report.jobs.chunks(SETTLED_CHUNK_SIZE).enumerate() {
             if let Err(e) = self.post_chunk(&report.reason, chunk).await {
+                // The reporter trait's error is one message naming every
+                // failed chunk, so each chunk's error is flattened here.
                 let start = i * SETTLED_CHUNK_SIZE;
                 errors.push(format!(
                     "settled report chunk [{start}:{}]: {e}",
@@ -195,6 +206,17 @@ pub fn spawn_report(reporter: Arc<dyn SettledReporter>, report: SettledReport) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The text of the old `format!("settled hook returned {}: {}", ..)`; it
+    // is joined into the aggregated report error.
+    #[test]
+    fn a_rejected_chunk_keeps_its_message() {
+        let e = ChunkError::Status {
+            status: 503,
+            body: "busy".to_string(),
+        };
+        assert_eq!(e.to_string(), "settled hook returned 503: busy");
+    }
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 

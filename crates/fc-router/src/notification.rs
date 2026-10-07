@@ -18,7 +18,11 @@ use fc_common::diagnostics;
 use fc_common::diagnostics::OnPanic;
 use fc_common::{Warning, WarningSeverity};
 #[cfg(feature = "email")]
+use lettre::address::AddressError;
+#[cfg(feature = "email")]
 use lettre::message::Mailbox;
+#[cfg(feature = "email")]
+use lettre::transport::smtp::Error as SmtpError;
 use std::mem;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
@@ -387,37 +391,71 @@ pub struct EmailNotificationService {
     enabled: bool,
 }
 
+/// Why an [`EmailNotificationService`] could not be built. `Display` is the
+/// text the start-up warning logged before this type existed.
+#[cfg(feature = "email")]
+#[derive(Debug, thiserror::Error)]
+pub enum EmailSetupError {
+    /// `from_address` is not a mailbox.
+    #[error("Invalid from_address '{address}': {source}")]
+    InvalidFromAddress {
+        address: String,
+        #[source]
+        source: AddressError,
+    },
+    /// An entry of `to_addresses` is not a mailbox.
+    #[error("Invalid to_address '{address}': {source}")]
+    InvalidToAddress {
+        address: String,
+        #[source]
+        source: AddressError,
+    },
+    /// `to_addresses` is empty.
+    #[error("At least one recipient address is required")]
+    NoRecipients,
+    /// The STARTTLS relay for `smtp_host` could not be set up.
+    #[error("Failed to create STARTTLS transport: {0}")]
+    StartTls(#[source] SmtpError),
+}
+
 #[cfg(feature = "email")]
 impl EmailNotificationService {
     /// Create a new `EmailNotificationService` from the given configuration.
     ///
     /// Returns `Err` if the SMTP transport cannot be built or addresses are
     /// unparseable.
-    pub fn new(config: EmailConfig) -> Result<Self, String> {
+    pub fn new(config: EmailConfig) -> Result<Self, EmailSetupError> {
         use lettre::transport::smtp::authentication::Credentials;
         use lettre::AsyncSmtpTransport;
 
-        let from: Mailbox = config
-            .from_address
-            .parse()
-            .map_err(|e| format!("Invalid from_address '{}': {}", config.from_address, e))?;
+        let from: Mailbox =
+            config
+                .from_address
+                .parse()
+                .map_err(|source| EmailSetupError::InvalidFromAddress {
+                    address: config.from_address.clone(),
+                    source,
+                })?;
 
         let to: Vec<Mailbox> = config
             .to_addresses
             .iter()
             .map(|addr| {
                 addr.parse()
-                    .map_err(|e| format!("Invalid to_address '{}': {}", addr, e))
+                    .map_err(|source| EmailSetupError::InvalidToAddress {
+                        address: addr.clone(),
+                        source,
+                    })
             })
             .collect::<Result<Vec<_>, _>>()?;
 
         if to.is_empty() {
-            return Err("At least one recipient address is required".to_string());
+            return Err(EmailSetupError::NoRecipients);
         }
 
         let mut builder = if config.smtp_tls {
             AsyncSmtpTransport::<lettre::Tokio1Executor>::starttls_relay(&config.smtp_host)
-                .map_err(|e| format!("Failed to create STARTTLS transport: {}", e))?
+                .map_err(EmailSetupError::StartTls)?
         } else {
             AsyncSmtpTransport::<lettre::Tokio1Executor>::builder_dangerous(&config.smtp_host)
         };

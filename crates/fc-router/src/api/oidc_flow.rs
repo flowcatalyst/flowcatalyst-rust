@@ -257,11 +257,38 @@ pub fn extract_session_cookie(headers: &HeaderMap) -> Option<String> {
         })
 }
 
+/// What can go wrong talking to the issuer or reading its tokens. Each
+/// `Display` is the message the flow answered with before this type; the
+/// handlers put `e.to_string()` in the JSON `message`.
+#[derive(Debug, thiserror::Error)]
+enum OidcFlowError {
+    #[error("Failed to fetch OIDC discovery: {0}")]
+    DiscoveryFetch(#[source] reqwest::Error),
+    #[error("OIDC discovery returned status: {0}")]
+    DiscoveryStatus(reqwest::StatusCode),
+    #[error("Failed to parse OIDC discovery: {0}")]
+    DiscoveryParse(#[source] reqwest::Error),
+    #[error("ID token is not a valid JWT (expected 3 parts)")]
+    IdTokenNotJwt,
+    #[error("Failed to base64url-decode ID token payload: {0}")]
+    IdTokenPayloadEncoding(#[source] base64::DecodeError),
+    #[error("Failed to parse ID token payload as JSON: {0}")]
+    IdTokenPayloadJson(#[source] serde_json::Error),
+    #[error("Nonce mismatch: expected {expected}, got {got}")]
+    NonceMismatch { expected: String, got: String },
+    #[error("Token is not a valid JWT (expected 3 parts)")]
+    TokenNotJwt,
+    #[error("Failed to base64url-decode token payload: {0}")]
+    TokenPayloadEncoding(#[source] base64::DecodeError),
+    #[error("Failed to parse token claims: {0}")]
+    TokenClaimsParse(#[source] serde_json::Error),
+}
+
 /// Fetch the OIDC discovery document from the issuer.
 async fn fetch_discovery(
     http_client: &reqwest::Client,
     issuer_url: &str,
-) -> Result<OidcDiscoveryDoc, String> {
+) -> Result<OidcDiscoveryDoc, OidcFlowError> {
     let url = format!(
         "{}/.well-known/openid-configuration",
         issuer_url.trim_end_matches('/')
@@ -273,19 +300,16 @@ async fn fetch_discovery(
         .get(&url)
         .send()
         .await
-        .map_err(|e| format!("Failed to fetch OIDC discovery: {}", e))?;
+        .map_err(OidcFlowError::DiscoveryFetch)?;
 
     if !response.status().is_success() {
-        return Err(format!(
-            "OIDC discovery returned status: {}",
-            response.status()
-        ));
+        return Err(OidcFlowError::DiscoveryStatus(response.status()));
     }
 
     response
         .json::<OidcDiscoveryDoc>()
         .await
-        .map_err(|e| format!("Failed to parse OIDC discovery: {}", e))
+        .map_err(OidcFlowError::DiscoveryParse)
 }
 
 // ---------------------------------------------------------------------------
@@ -327,7 +351,7 @@ async fn login_handler(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
                     "error": "oidc_discovery_failed",
-                    "message": e,
+                    "message": e.to_string(),
                 })),
             )
                 .into_response();
@@ -391,7 +415,7 @@ async fn callback_handler(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
                     "error": "oidc_discovery_failed",
-                    "message": e,
+                    "message": e.to_string(),
                 })),
             )
                 .into_response();
@@ -543,7 +567,7 @@ async fn callback_handler(
                     StatusCode::BAD_GATEWAY,
                     Json(serde_json::json!({
                         "error": "token_decode_failed",
-                        "message": e,
+                        "message": e.to_string(),
                     })),
                 )
                     .into_response();
@@ -560,7 +584,7 @@ async fn callback_handler(
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({
                 "error": "nonce_mismatch",
-                "message": e,
+                "message": e.to_string(),
             })),
         )
             .into_response();
@@ -624,10 +648,10 @@ async fn logout_handler(State(state): State<Arc<OidcFlowState>>, headers: Header
 
 /// Validate the nonce in the ID token matches what we sent.
 /// Decodes the JWT payload (without signature verification) to extract the nonce claim.
-fn validate_nonce(id_token: &str, expected_nonce: &str) -> Result<(), String> {
+fn validate_nonce(id_token: &str, expected_nonce: &str) -> Result<(), OidcFlowError> {
     let parts: Vec<&str> = id_token.split('.').collect();
     if parts.len() != 3 {
-        return Err("ID token is not a valid JWT (expected 3 parts)".to_string());
+        return Err(OidcFlowError::IdTokenNotJwt);
     }
 
     let payload_bytes = BASE64URL
@@ -636,17 +660,17 @@ fn validate_nonce(id_token: &str, expected_nonce: &str) -> Result<(), String> {
             // Try with padding
             general_purpose::URL_SAFE.decode(parts[1])
         })
-        .map_err(|e| format!("Failed to base64url-decode ID token payload: {}", e))?;
+        .map_err(OidcFlowError::IdTokenPayloadEncoding)?;
 
-    let payload: serde_json::Value = serde_json::from_slice(&payload_bytes)
-        .map_err(|e| format!("Failed to parse ID token payload as JSON: {}", e))?;
+    let payload: serde_json::Value =
+        serde_json::from_slice(&payload_bytes).map_err(OidcFlowError::IdTokenPayloadJson)?;
 
     if let Some(nonce) = payload.get("nonce").and_then(|v| v.as_str()) {
         if nonce != expected_nonce {
-            return Err(format!(
-                "Nonce mismatch: expected {}, got {}",
-                expected_nonce, nonce
-            ));
+            return Err(OidcFlowError::NonceMismatch {
+                expected: expected_nonce.to_string(),
+                got: nonce.to_string(),
+            });
         }
     }
     // If no nonce claim in the token, that's acceptable for some providers
@@ -655,19 +679,18 @@ fn validate_nonce(id_token: &str, expected_nonce: &str) -> Result<(), String> {
 }
 
 /// Decode token claims without signature verification (fallback).
-fn decode_claims_insecure(token: &str) -> Result<TokenClaims, String> {
+fn decode_claims_insecure(token: &str) -> Result<TokenClaims, OidcFlowError> {
     let parts: Vec<&str> = token.split('.').collect();
     if parts.len() != 3 {
-        return Err("Token is not a valid JWT (expected 3 parts)".to_string());
+        return Err(OidcFlowError::TokenNotJwt);
     }
 
     let payload_bytes = BASE64URL
         .decode(parts[1])
         .or_else(|_| general_purpose::URL_SAFE.decode(parts[1]))
-        .map_err(|e| format!("Failed to base64url-decode token payload: {}", e))?;
+        .map_err(OidcFlowError::TokenPayloadEncoding)?;
 
-    serde_json::from_slice::<TokenClaims>(&payload_bytes)
-        .map_err(|e| format!("Failed to parse token claims: {}", e))
+    serde_json::from_slice::<TokenClaims>(&payload_bytes).map_err(OidcFlowError::TokenClaimsParse)
 }
 
 // ---------------------------------------------------------------------------
@@ -866,5 +889,55 @@ mod tests {
         let token = format!("{}.{}.{}", header, payload, signature);
 
         assert!(validate_nonce(&token, "any-nonce").is_ok());
+    }
+
+    // The expected strings are the `format!` texts the flow answered with
+    // before it had an error type; they reach the client as JSON `message`.
+    #[test]
+    fn the_client_messages_are_unchanged() {
+        let header = BASE64URL.encode(r#"{"alg":"RS256"}"#);
+        let payload = BASE64URL.encode(r#"{"nonce":"other"}"#);
+        let token = format!("{header}.{payload}.sig");
+        assert_eq!(
+            validate_nonce(&token, "mine").unwrap_err().to_string(),
+            "Nonce mismatch: expected mine, got other"
+        );
+        assert_eq!(
+            validate_nonce("a.b", "n").unwrap_err().to_string(),
+            "ID token is not a valid JWT (expected 3 parts)"
+        );
+        assert_eq!(
+            decode_claims_insecure("a.b").unwrap_err().to_string(),
+            "Token is not a valid JWT (expected 3 parts)"
+        );
+        let err = decode_claims_insecure("a.!!!.c").unwrap_err();
+        assert!(
+            err.to_string()
+                .starts_with("Failed to base64url-decode token payload: "),
+            "{err}"
+        );
+        let err = validate_nonce("a.!!!.c", "n").unwrap_err();
+        assert!(
+            err.to_string()
+                .starts_with("Failed to base64url-decode ID token payload: "),
+            "{err}"
+        );
+        let payload = BASE64URL.encode("not json");
+        let err = validate_nonce(&format!("a.{payload}.c"), "n").unwrap_err();
+        assert!(
+            err.to_string()
+                .starts_with("Failed to parse ID token payload as JSON: "),
+            "{err}"
+        );
+        let err = decode_claims_insecure(&format!("a.{payload}.c")).unwrap_err();
+        assert!(
+            err.to_string()
+                .starts_with("Failed to parse token claims: "),
+            "{err}"
+        );
+        assert_eq!(
+            OidcFlowError::DiscoveryStatus(reqwest::StatusCode::BAD_GATEWAY).to_string(),
+            "OIDC discovery returned status: 502 Bad Gateway"
+        );
     }
 }

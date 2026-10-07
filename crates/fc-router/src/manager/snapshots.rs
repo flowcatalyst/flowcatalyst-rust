@@ -240,7 +240,7 @@ impl QueueManager {
         let (broker_acked, broker_ack_error) = match consumer {
             Some(c) => match ack_bounded(&*c, &entry.receipt_handle).await {
                 Ok(()) => (true, None),
-                Err(e) => (false, Some(e)),
+                Err(e) => (false, Some(e.to_string())),
             },
             None => (
                 false,

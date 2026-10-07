@@ -14,7 +14,7 @@ use dashmap::DashMap;
 use fc_common::{
     BatchMessage, InFlightMessage, MessageCallback, QueuedMessage, WarningCategory, WarningSeverity,
 };
-use fc_queue::QueueConsumer;
+use fc_queue::{QueueConsumer, QueueError};
 
 use crate::error::RouterError;
 use crate::flight_recorder::{EventContext, EventKind, Facts, FlightRecorder};
@@ -79,18 +79,31 @@ fn scope_key_into(buf: &mut String, queue_identifier: &str, broker_id: &str) {
 /// to the broker's own visibility timeout. Go sets no such bound.
 const BROKER_OP_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Why a bounded ack or nack did not happen. `Display` is the text recorded
+/// in the flight recorder's `AckFailed` / `NackFailed` facts and the logs.
+#[derive(Debug, thiserror::Error)]
+pub(super) enum BrokerOpError {
+    /// The broker call was still pending after [`BROKER_OP_TIMEOUT`].
+    #[error("{op} did not complete within {after:?}")]
+    TimedOut { op: &'static str, after: Duration },
+    /// The broker refused or failed the call.
+    #[error(transparent)]
+    Broker(#[from] QueueError),
+}
+
 /// Nack `handle` under `BROKER_OP_TIMEOUT`; a hung broker call must not stall
 /// the poll loop. A failed nack is left to the broker's visibility timeout.
 pub(super) async fn nack_bounded(
     consumer: &dyn QueueConsumer,
     handle: &str,
     delay: Option<u32>,
-) -> StdResult<(), String> {
+) -> StdResult<(), BrokerOpError> {
     match time::timeout(BROKER_OP_TIMEOUT, consumer.nack(handle, delay)).await {
-        Ok(r) => r.map_err(|e| e.to_string()),
-        Err(_) => Err(format!(
-            "nack did not complete within {BROKER_OP_TIMEOUT:?}"
-        )),
+        Ok(r) => Ok(r?),
+        Err(_) => Err(BrokerOpError::TimedOut {
+            op: "nack",
+            after: BROKER_OP_TIMEOUT,
+        }),
     }
 }
 
@@ -124,10 +137,13 @@ async fn nack_recorded(
 pub(super) async fn ack_bounded(
     consumer: &dyn QueueConsumer,
     handle: &str,
-) -> StdResult<(), String> {
+) -> StdResult<(), BrokerOpError> {
     match time::timeout(BROKER_OP_TIMEOUT, consumer.ack(handle)).await {
-        Ok(r) => r.map_err(|e| e.to_string()),
-        Err(_) => Err(format!("ack did not complete within {BROKER_OP_TIMEOUT:?}")),
+        Ok(r) => Ok(r?),
+        Err(_) => Err(BrokerOpError::TimedOut {
+            op: "ack",
+            after: BROKER_OP_TIMEOUT,
+        }),
     }
 }
 
@@ -310,8 +326,11 @@ impl MessageCallback for QueueMessageCallback {
             }
         };
         let acked = match time::timeout(BROKER_OP_TIMEOUT, ack).await {
-            Ok(r) => r.map_err(|e| e.to_string()),
-            Err(_) => Err(format!("ack did not complete within {BROKER_OP_TIMEOUT:?}")),
+            Ok(r) => r.map_err(BrokerOpError::from),
+            Err(_) => Err(BrokerOpError::TimedOut {
+                op: "ack",
+                after: BROKER_OP_TIMEOUT,
+            }),
         };
         match &acked {
             Ok(()) => self
@@ -320,7 +339,7 @@ impl MessageCallback for QueueMessageCallback {
             Err(e) => self.recorder.record(
                 EventKind::AckFailed,
                 &self.event_ctx,
-                Facts::text(e.clone()),
+                Facts::text(e.to_string()),
             ),
         }
         if let Err(e) = acked {
@@ -383,8 +402,11 @@ impl MessageCallback for QueueMessageCallback {
                 ),
                 Err(e) => {
                     warn!(app_message_id = %self.app_message_id, error = %e, "NACK failed; the broker redelivers at its own timeout");
-                    self.recorder
-                        .record(EventKind::NackFailed, &self.event_ctx, Facts::text(e));
+                    self.recorder.record(
+                        EventKind::NackFailed,
+                        &self.event_ctx,
+                        Facts::text(e.to_string()),
+                    );
                 }
             }
         }
@@ -617,7 +639,7 @@ impl QueueManager {
                                 if let Some(key) = scope_key {
                                     pending_delete.insert(key, Instant::now());
                                 }
-                                recorder.record(EventKind::AckFailed, &ctx, Facts::text(e));
+                                recorder.record(EventKind::AckFailed, &ctx, Facts::text(e.to_string()));
                             }
                         }
                     }
@@ -674,7 +696,7 @@ impl QueueManager {
                     match ack_bounded(consumer.as_ref(), &handle).await {
                         Ok(()) => recorder.record(EventKind::DuplicateAcked, &ctx, Facts::text("a new copy of a message already in the pipeline; acked".to_string())),
                         // The broker redelivers this copy and it is filtered again.
-                        Err(e) => recorder.record(EventKind::AckFailed, &ctx, Facts::text(e)),
+                        Err(e) => recorder.record(EventKind::AckFailed, &ctx, Facts::text(e.to_string())),
                     }
                 }
             }).collect();
@@ -1338,6 +1360,31 @@ struct DuplicateMessage {
     message: QueuedMessage,
     /// The pipeline key of the original message being processed
     existing_pipeline_key: String,
+}
+
+#[cfg(test)]
+mod broker_op_error_tests {
+    use super::*;
+
+    // The recorded `AckFailed` / `NackFailed` facts carry these texts: the
+    // timeout string the old `format!` built and the broker error verbatim.
+    #[test]
+    fn the_recorded_texts_are_unchanged() {
+        let ack = BrokerOpError::TimedOut {
+            op: "ack",
+            after: BROKER_OP_TIMEOUT,
+        };
+        assert_eq!(ack.to_string(), "ack did not complete within 30s");
+        let nack = BrokerOpError::TimedOut {
+            op: "nack",
+            after: BROKER_OP_TIMEOUT,
+        };
+        assert_eq!(nack.to_string(), "nack did not complete within 30s");
+        assert_eq!(
+            BrokerOpError::from(QueueError::Stopped).to_string(),
+            QueueError::Stopped.to_string()
+        );
+    }
 }
 
 #[cfg(test)]

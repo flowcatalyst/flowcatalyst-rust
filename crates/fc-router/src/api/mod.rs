@@ -51,7 +51,7 @@ use utoipa_swagger_ui::SwaggerUi;
 
 pub mod auth;
 pub(crate) mod config;
-pub use config::ConfigReloader;
+pub use config::{ConfigReloader, ReloadError};
 pub(crate) mod dashboard;
 pub mod dashboard_sign_in;
 pub mod diagnostics;
