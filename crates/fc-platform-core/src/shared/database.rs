@@ -13,7 +13,8 @@
 //! refresh) but takes advantage of sqlx's in-place options update so we don't
 //! need to swap pool handles or refactor every repository.
 
-use aws_sdk_secretsmanager::error::DisplayErrorContext;
+use aws_sdk_secretsmanager::error::{DisplayErrorContext, SdkError};
+use aws_sdk_secretsmanager::operation::get_secret_value::GetSecretValueError;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use std::env;
 use std::str::FromStr;
@@ -133,12 +134,39 @@ async fn create_pool_with(opts: PgConnectOptions, cfg: PoolConfig) -> Result<PgP
 
 // ── Secret provider ──────────────────────────────────────────────────────────
 
+/// Why the database source could not be resolved, or the secret it names
+/// could not be turned into a connection URL. Each `Display` is the text the
+/// startup error and the refresh task's warning logged before this type.
+#[derive(Debug, thiserror::Error)]
+pub enum DatabaseConfigError {
+    /// `DB_SECRET_PROVIDER` names a provider other than `aws`.
+    #[error("DB_SECRET_PROVIDER {provider:?} not supported (only \"aws\")")]
+    UnsupportedSecretProvider { provider: String },
+    /// Secrets Manager refused or failed the `GetSecretValue` call.
+    #[error("Failed to get DB secret from Secrets Manager: {}", secret_fetch_text(.0))]
+    SecretFetch(#[source] Box<SdkError<GetSecretValueError>>),
+    /// The secret has no string value.
+    #[error("DB secret has no string value")]
+    SecretHasNoString,
+    /// The secret's string is not JSON.
+    #[error("Failed to parse DB secret JSON: {0}")]
+    SecretNotJson(#[source] serde_json::Error),
+    /// The secret's JSON lacks a username or password.
+    #[error("DB secret is missing username/password")]
+    SecretIncomplete,
+}
+
+/// The SDK's full error text, with its causes (what the log line showed).
+fn secret_fetch_text(e: &SdkError<GetSecretValueError>) -> String {
+    DisplayErrorContext(e).to_string()
+}
+
 /// A source for the database connection URL. Implementations are async because
 /// cloud providers (Secrets Manager, GCP Secret Manager) require network calls.
 #[async_trait::async_trait]
 pub trait SecretProvider: Send + Sync {
     fn name(&self) -> &'static str;
-    async fn get_db_url(&self) -> Result<String, anyhow::Error>;
+    async fn get_db_url(&self) -> Result<String, DatabaseConfigError>;
 }
 
 /// Where the platform database connection comes from, with Go's precedence
@@ -164,7 +192,7 @@ pub enum DatabaseSource {
 pub const DEFAULT_DATABASE_URL: &str = "postgresql://postgres@localhost:5432/flowcatalyst";
 
 /// [`database_source`] over the process environment.
-pub fn database_source_from_env() -> Result<DatabaseSource, anyhow::Error> {
+pub fn database_source_from_env() -> Result<DatabaseSource, DatabaseConfigError> {
     database_source(|k| env::var(k).ok())
 }
 
@@ -179,7 +207,7 @@ pub fn database_source_from_env() -> Result<DatabaseSource, anyhow::Error> {
 /// Blank values count as unset.
 pub fn database_source(
     get: impl Fn(&str) -> Option<String>,
-) -> Result<DatabaseSource, anyhow::Error> {
+) -> Result<DatabaseSource, DatabaseConfigError> {
     let get = |k: &str| get(k).filter(|v| !v.trim().is_empty());
     if let Some(url) = get("FC_DATABASE_URL").or_else(|| get("DATABASE_URL")) {
         return Ok(DatabaseSource::Url(url));
@@ -193,7 +221,7 @@ pub fn database_source(
     if let Some(secret_arn) = get("DB_SECRET_ARN") {
         let provider = get("DB_SECRET_PROVIDER").unwrap_or_else(|| "aws".to_string());
         if !provider.eq_ignore_ascii_case("aws") {
-            anyhow::bail!("DB_SECRET_PROVIDER {provider:?} not supported (only \"aws\")");
+            return Err(DatabaseConfigError::UnsupportedSecretProvider { provider });
         }
         return Ok(DatabaseSource::AwsSecretsManager {
             secret_arn,
@@ -249,12 +277,12 @@ pub fn db_url_from_secret_json(
     host: &str,
     db_name: &str,
     fallback_port: &str,
-) -> Result<String, anyhow::Error> {
-    let creds: serde_json::Value = serde_json::from_str(secret_json)
-        .map_err(|e| anyhow::anyhow!("Failed to parse DB secret JSON: {}", e))?;
+) -> Result<String, DatabaseConfigError> {
+    let creds: serde_json::Value =
+        serde_json::from_str(secret_json).map_err(DatabaseConfigError::SecretNotJson)?;
     let field = |k: &str| creds[k].as_str().filter(|v| !v.is_empty());
     let (Some(username), Some(password)) = (field("username"), field("password")) else {
-        anyhow::bail!("DB secret is missing username/password");
+        return Err(DatabaseConfigError::SecretIncomplete);
     };
     let port = creds["port"]
         .as_u64()
@@ -322,7 +350,7 @@ impl SecretProvider for AwsSecretProvider {
         "aws-secrets-manager"
     }
 
-    async fn get_db_url(&self) -> Result<String, anyhow::Error> {
+    async fn get_db_url(&self) -> Result<String, DatabaseConfigError> {
         let secret = self
             .client()
             .await
@@ -330,16 +358,11 @@ impl SecretProvider for AwsSecretProvider {
             .secret_id(&self.secret_arn)
             .send()
             .await
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    "Failed to get DB secret from Secrets Manager: {}",
-                    DisplayErrorContext(&e)
-                )
-            })?;
+            .map_err(|e| DatabaseConfigError::SecretFetch(Box::new(e)))?;
 
         let secret_string = secret
             .secret_string()
-            .ok_or_else(|| anyhow::anyhow!("DB secret has no string value"))?;
+            .ok_or(DatabaseConfigError::SecretHasNoString)?;
 
         db_url_from_secret_json(
             secret_string,
@@ -447,8 +470,9 @@ fn start_secret_refresh_with(
 mod database_source_tests {
     use super::*;
     use std::collections::HashMap;
+    use std::error::Error as _;
 
-    fn source(vars: &[(&str, &str)]) -> Result<DatabaseSource, anyhow::Error> {
+    fn source(vars: &[(&str, &str)]) -> Result<DatabaseSource, DatabaseConfigError> {
         let map: HashMap<String, String> = vars
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -537,6 +561,39 @@ mod database_source_tests {
         assert_eq!(url, "postgresql://u:p@db:7000/fc");
         assert!(
             db_url_from_secret_json(r#"{"username":"u","password":""}"#, "db", "fc", "1").is_err()
+        );
+    }
+
+    // The expected strings are what the replaced `anyhow` errors printed.
+    #[test]
+    fn the_messages_are_unchanged() {
+        let err = source(&[
+            ("DB_SECRET_PROVIDER", "gcp"),
+            ("DB_SECRET_ARN", "x"),
+            ("DB_HOST", "h"),
+        ])
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            r#"DB_SECRET_PROVIDER "gcp" not supported (only "aws")"#
+        );
+        assert_eq!(
+            db_url_from_secret_json(r#"{"username":"u"}"#, "db", "fc", "1")
+                .unwrap_err()
+                .to_string(),
+            "DB secret is missing username/password"
+        );
+        let parse = db_url_from_secret_json("not json", "db", "fc", "1").unwrap_err();
+        assert!(
+            parse
+                .to_string()
+                .starts_with("Failed to parse DB secret JSON: "),
+            "{parse}"
+        );
+        assert!(parse.source().is_some());
+        assert_eq!(
+            DatabaseConfigError::SecretHasNoString.to_string(),
+            "DB secret has no string value"
         );
     }
 
