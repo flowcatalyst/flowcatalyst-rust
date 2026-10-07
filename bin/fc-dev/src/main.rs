@@ -425,7 +425,8 @@ async fn main() -> Result<()> {
                 Some(bind) => {
                     fc_mcp::run_http(config, fc_mcp::resolve_bind(bind, DEV_MCP_PORT)?).await
                 }
-            };
+            }
+            .map_err(Into::into);
         }
         Some(Command::Init(args)) => {
             logging::init_logging("fc-dev init");

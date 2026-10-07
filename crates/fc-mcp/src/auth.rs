@@ -1,10 +1,10 @@
-use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, Duration, Utc};
 use reqwest::Client;
 use serde::Deserialize;
 use tokio::sync::Mutex;
 
 use crate::config::Config;
+use crate::error::{Error, Result};
 
 /// 60-second buffer before the actual expiry — covers clock skew and avoids
 /// shipping a token that the platform will reject mid-request.
@@ -66,12 +66,12 @@ impl TokenManager {
             ])
             .send()
             .await
-            .map_err(|e| anyhow!("token request failed: {e}"))?;
+            .map_err(Error::TokenRequest)?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            bail!("token fetch failed ({status}): {body}");
+            return Err(Error::TokenRejected { status, body });
         }
 
         let parsed: TokenResponse = resp.json().await?;

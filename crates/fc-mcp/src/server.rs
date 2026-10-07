@@ -422,6 +422,6 @@ fn json_text(value: serde_json::Value) -> CallToolResult {
     CallToolResult::success(vec![Content::text(text)])
 }
 
-fn error_text(e: anyhow::Error) -> CallToolResult {
+fn error_text(e: crate::Error) -> CallToolResult {
     CallToolResult::error(vec![Content::text(e.to_string())])
 }

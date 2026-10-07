@@ -16,7 +16,7 @@
 
 use std::path::PathBuf;
 
-use anyhow::{anyhow, Context, Result};
+use crate::error::{Error, Result};
 use serde::Deserialize;
 use std::env;
 use std::fs;
@@ -105,29 +105,20 @@ fn read_credentials_file() -> Result<Option<CredentialsFile>> {
     if !path.exists() {
         return Ok(None);
     }
-    let bytes = fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
-    let parsed: CredentialsFile = serde_json::from_slice(&bytes).with_context(|| {
-        format!(
-            "parsing {} (regenerate with `fc-dev` restart)",
-            path.display()
-        )
+    let bytes = fs::read(&path).map_err(|source| Error::CredentialsRead {
+        path: path.clone(),
+        source,
     })?;
+    let parsed: CredentialsFile = serde_json::from_slice(&bytes)
+        .map_err(|source| Error::CredentialsParse { path, source })?;
     Ok(Some(parsed))
 }
 
-fn missing_creds_error() -> anyhow::Error {
+fn missing_creds_error() -> Error {
     let hint = credentials_path()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "<unknown>".to_string());
-    anyhow!(
-        "no MCP credentials found.\n\n\
-         Start the fc-dev server in another terminal first:\n  \
-           ./fc-dev\n\n\
-         It will provision credentials at {hint} and the MCP server will pick \
-         them up automatically on the next launch.\n\n\
-         Alternatively, set FLOWCATALYST_CLIENT_ID and FLOWCATALYST_CLIENT_SECRET \
-         (and optionally FLOWCATALYST_URL) directly.",
-    )
+    Error::MissingCredentials { hint }
 }
 
 /// The MCP HTTP listener's address: `bind` as a full `host:port`, or a bare
@@ -139,9 +130,10 @@ pub fn resolve_bind(bind: &str, port: u16) -> Result<SocketAddr> {
         return Ok(addr);
     }
     let host = bind.trim_start_matches('[').trim_end_matches(']');
-    let ip: IpAddr = host
-        .parse()
-        .with_context(|| format!("MCP bind address {bind:?} is not an IP or IP:port"))?;
+    let ip: IpAddr = host.parse().map_err(|source| Error::BindAddress {
+        bind: bind.to_string(),
+        source,
+    })?;
     Ok(SocketAddr::new(ip, port))
 }
 

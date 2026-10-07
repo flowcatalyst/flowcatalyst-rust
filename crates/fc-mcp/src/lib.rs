@@ -11,11 +11,11 @@
 mod api_client;
 mod auth;
 mod config;
+mod error;
 mod server;
 
 use std::sync::Arc;
 
-use anyhow::Result;
 use rmcp::{
     transport::{
         stdio,
@@ -28,6 +28,7 @@ use rmcp::{
 
 use axum::routing;
 pub use config::{resolve_bind, Config};
+pub use error::{Error, Result};
 pub use server::FcMcpServer;
 use std::future::Future;
 use std::net::SocketAddr;
@@ -67,14 +68,14 @@ async fn assert_platform_reachable(base_url: &str) -> Result<()> {
 
     match client.get(&url).send().await {
         Ok(resp) if resp.status().is_success() => Ok(()),
-        Ok(resp) => Err(anyhow::anyhow!(
-            "FlowCatalyst at {base_url} replied {} to /q/ready — the platform is reachable but not ready",
-            resp.status()
-        )),
-        Err(e) => Err(anyhow::anyhow!(
-            "Cannot reach FlowCatalyst at {base_url}: {e}\n\n\
-             Start the dev server in another terminal first:\n  ./fc-dev",
-        )),
+        Ok(resp) => Err(Error::PlatformNotReady {
+            base_url: base_url.to_string(),
+            status: resp.status(),
+        }),
+        Err(source) => Err(Error::PlatformUnreachable {
+            base_url: base_url.to_string(),
+            source,
+        }),
     }
 }
 

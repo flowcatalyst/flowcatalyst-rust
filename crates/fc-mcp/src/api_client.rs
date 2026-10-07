@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
 use reqwest::Client;
 use serde_json::Value;
 
 use crate::auth::TokenManager;
 use crate::config::Config;
+use crate::error::{Error, Result};
 
 /// Thin HTTP wrapper. Responses come back as `serde_json::Value` so the MCP
 /// tools can round-trip them as JSON text without re-modelling every DTO; the
@@ -118,7 +118,9 @@ impl ApiClient {
         let app_id = app
             .get("id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("application '{application_code}' has no id"))?
+            .ok_or_else(|| Error::ApplicationHasNoId {
+                code: application_code.to_string(),
+            })?
             .to_string();
         let url = format!(
             "{}/bff/developer/applications/{}/openapi/current",
@@ -161,7 +163,9 @@ impl ApiClient {
         let app_id = app
             .get("id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("application '{application_code}' has no id"))?
+            .ok_or_else(|| Error::ApplicationHasNoId {
+                code: application_code.to_string(),
+            })?
             .to_string();
 
         let openapi_url = format!(
@@ -215,7 +219,7 @@ impl ApiClient {
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(anyhow!("platform request failed ({status}): {body}"));
+            return Err(Error::PlatformRejected { status, body });
         }
         Ok(resp.json::<Value>().await?)
     }
