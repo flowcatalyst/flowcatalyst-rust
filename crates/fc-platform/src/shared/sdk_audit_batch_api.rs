@@ -3,7 +3,7 @@
 //! `POST /api/audit-logs/batch`, the SDK/outbox audit-ingest endpoint. It
 //! matches the Go platform (`internal/platform/shared/sdk/audit_batch.go`):
 //!
-//! - authentication only; each item whose client the caller cannot access is
+//! - authentication only (no permission check, as in Go); each item whose client the caller cannot access is
 //!   `SKIPPED`, as is an item naming an unknown application or client code;
 //! - an item without a `principalId` is refused in its own slot
 //!   (`BAD_REQUEST`, `principalId is required`) and the rest still land;
@@ -35,10 +35,11 @@ use crate::application::repository::ApplicationRepository;
 use crate::audit::entity::AuditLog;
 use crate::audit::repository::AuditLogRepository;
 use crate::client::repository::ClientRepository;
-use crate::shared::authorization_service::AuthContext;
+use crate::shared::authorization_service::{ApplicationScope, AuthContext};
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 use fc_common::audit_redaction;
+use fc_platform_core::directory::ApplicationAccess;
 
 /// Largest batch accepted, as in Go.
 const MAX_BATCH: usize = 100;
@@ -126,6 +127,9 @@ pub struct SdkAuditBatchState {
     pub audit_log_repo: Arc<AuditLogRepository>,
     pub application_repo: Arc<ApplicationRepository>,
     pub client_repo: Arc<ClientRepository>,
+    /// The caller's application scope: an application-scoped caller may only
+    /// write audit rows attributed to an application it can access.
+    pub app_access: Arc<dyn ApplicationAccess>,
 }
 
 // ── Handler ─────────────────────────────────────────────────────────────
@@ -169,12 +173,36 @@ fn plan_batch(
     app_ids: &HashMap<String, ApplicationId>,
     client_ids: &HashMap<String, ClientId>,
     auth: &AuthContext,
+    scope: &ApplicationScope,
     now: DateTime<Utc>,
 ) -> (Vec<AuditLog>, Vec<BatchAuditLogResult>) {
     let mut logs = Vec::with_capacity(items.len());
     let mut results = Vec::with_capacity(items.len());
 
     for item in items {
+        // Application confinement: an application-scoped caller may only
+        // write audit rows attributed to an application it can access, and
+        // may not omit the application (an unattributed row would escape the
+        // confinement). Refused per item; unknown and inaccessible alike.
+        if scope.is_application_scoped() {
+            match item.application_code.as_deref().filter(|c| !c.is_empty()) {
+                None => {
+                    results.push(BatchAuditLogResult::bad_request(
+                        "applicationCode is required for an application-scoped credential",
+                    ));
+                    continue;
+                }
+                Some(code) => {
+                    if !app_ids.get(code).is_some_and(|id| scope.allows(id)) {
+                        results.push(BatchAuditLogResult::bad_request(
+                            "audit entry belongs to an application this credential cannot write for",
+                        ));
+                        continue;
+                    }
+                }
+            }
+        }
+
         // An empty code is no code, as in Go.
         let application_id = match item.application_code.as_deref() {
             Some(code) if !code.is_empty() => match app_ids.get(code) {
@@ -281,7 +309,15 @@ pub(crate) async fn batch_audit_logs(
         state.client_repo.find_ids_by_identifiers(&client_codes),
     )?;
 
-    let (logs, results) = plan_batch(req.items, &app_ids, &client_ids, &auth.0, Utc::now());
+    let scope = state.app_access.scope_for(&auth.0.principal_id).await?;
+    let (logs, results) = plan_batch(
+        req.items,
+        &app_ids,
+        &client_ids,
+        &auth.0,
+        &scope,
+        Utc::now(),
+    );
 
     // One statement: the batch lands or fails as a whole.
     state.audit_log_repo.insert_batch(&logs).await?;
@@ -347,6 +383,7 @@ mod tests {
             &HashMap::new(),
             &clients,
             &ctx(UserScope::Client, &["clt_mine"]),
+            &ApplicationScope::All,
             Utc::now(),
         );
 
@@ -379,6 +416,7 @@ mod tests {
             )]),
             &HashMap::new(),
             &ctx(UserScope::Anchor, &["*"]),
+            &ApplicationScope::All,
             Utc::now(),
         );
 
@@ -407,6 +445,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &ctx(UserScope::Anchor, &["*"]),
+            &ApplicationScope::All,
             now,
         );
 
@@ -430,6 +469,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &ctx(UserScope::Anchor, &["*"]),
+            &ApplicationScope::All,
             Utc::now(),
         );
 
@@ -455,12 +495,75 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &ctx(UserScope::Anchor, &["*"]),
+            &ApplicationScope::All,
             Utc::now(),
         );
         assert_eq!(
             logs[0].operation_json,
             Some(json!({ "password": "***", "name": "kept" }))
         );
+    }
+
+    #[test]
+    fn an_application_scoped_caller_writes_only_its_own_applications() {
+        let own = ApplicationId::parse("app_own").unwrap();
+        let other = ApplicationId::parse("app_other").unwrap();
+        let scope = ApplicationScope::Only(HashSet::from([own.clone()]));
+        let batch = items(json!({ "items": [
+            { "entityType": "Order", "entityId": "o1", "operation": "CREATE",
+              "principalId": "prn_a", "applicationCode": "own" },
+            { "entityType": "Order", "entityId": "o2", "operation": "CREATE",
+              "principalId": "prn_a", "applicationCode": "other" },
+            { "entityType": "Order", "entityId": "o3", "operation": "CREATE",
+              "principalId": "prn_a" },
+            { "entityType": "Order", "entityId": "o4", "operation": "CREATE",
+              "principalId": "prn_a", "applicationCode": "nosuchapp" },
+        ]}));
+        let apps = HashMap::from([("own".to_string(), own), ("other".to_string(), other)]);
+        let (logs, results) = plan_batch(
+            batch,
+            &apps,
+            &HashMap::new(),
+            &ctx(UserScope::Anchor, &["*"]),
+            &scope,
+            Utc::now(),
+        );
+        assert_eq!(
+            statuses(&results),
+            ["SUCCESS", "BAD_REQUEST", "BAD_REQUEST", "BAD_REQUEST"]
+        );
+        assert_eq!(
+            results[1].error.as_deref(),
+            Some("audit entry belongs to an application this credential cannot write for")
+        );
+        assert_eq!(
+            results[2].error.as_deref(),
+            Some("applicationCode is required for an application-scoped credential")
+        );
+        assert_eq!(
+            results[3].error.as_deref(),
+            Some("audit entry belongs to an application this credential cannot write for")
+        );
+        assert_eq!(logs.len(), 1);
+
+        // Not application-scoped: unchanged (other ok, none ok, unknown SKIPPED).
+        let batch = items(json!({ "items": [
+            { "entityType": "Order", "entityId": "o1", "operation": "CREATE",
+              "principalId": "prn_a", "applicationCode": "other" },
+            { "entityType": "Order", "entityId": "o2", "operation": "CREATE",
+              "principalId": "prn_a" },
+            { "entityType": "Order", "entityId": "o3", "operation": "CREATE",
+              "principalId": "prn_a", "applicationCode": "nosuchapp" },
+        ]}));
+        let (_, results) = plan_batch(
+            batch,
+            &apps,
+            &HashMap::new(),
+            &ctx(UserScope::Anchor, &["*"]),
+            &ApplicationScope::All,
+            Utc::now(),
+        );
+        assert_eq!(statuses(&results), ["SUCCESS", "SUCCESS", "SKIPPED"]);
     }
 
     #[test]

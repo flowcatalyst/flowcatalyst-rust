@@ -339,6 +339,13 @@ fn core_migrations() -> &'static [(&'static str, &'static str)] {
             "066_drop_dispatch_queue",
             include_str!("../../../migrations/066_drop_dispatch_queue.sql"),
         ),
+        // Each application delivers its own outbox: the built-in
+        // application-service role gains the three batch-ingest permissions
+        // (the seeder never rewrites an existing role).
+        (
+            "067_application_service_batch_permissions",
+            include_str!("../../../migrations/067_application_service_batch_permissions.sql"),
+        ),
     ]
 }
 

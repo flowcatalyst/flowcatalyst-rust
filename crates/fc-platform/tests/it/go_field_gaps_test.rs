@@ -287,7 +287,7 @@ async fn project_events(pool: &sqlx::PgPool) {
 #[ignore = "requires Docker"]
 async fn event_detail_answers_the_events_context_data() {
     let app = setup().await;
-    let token = app.anchor_admin_token().await;
+    let token = app.anchor_admin_token_all_applications().await;
     let entries = json!([{"key": "orderId", "value": "ord_42"}, {"key": "region", "value": "eu"}]);
     let with = assert_status(
         app.post(
@@ -699,7 +699,7 @@ async fn project_dispatch_jobs(pool: &sqlx::PgPool) {
 #[ignore = "requires Docker"]
 async fn dispatch_job_rows_answer_the_jobs_own_priority() {
     let app = setup().await;
-    let token = app.anchor_admin_token().await;
+    let token = app.anchor_admin_token_all_applications().await;
     let item = |code: &str, queue: Option<&str>| {
         let mut item = json!({
             "source": "gaps",
@@ -768,7 +768,7 @@ fn assert_no_nulls(row: &Value) {
 #[ignore = "requires Docker"]
 async fn debug_raw_reads_answer_gos_raw_shapes() {
     let app = setup().await;
-    let token = app.anchor_admin_token().await;
+    let token = app.anchor_admin_token_all_applications().await;
     sqlx::query(
         "INSERT INTO msg_events (id, type, source, time, data, context_data) VALUES \
          ('evtraw0000001', 'gaps:orders:order:placed', 'urn:gaps', NOW(), '{\"n\":1}', \

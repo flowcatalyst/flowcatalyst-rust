@@ -15,6 +15,7 @@ use crate::dispatch_job::signing_guard::SigningGuard;
 use crate::event::entity::{ContextData, Event, EventRead};
 use crate::event::repository::EventReadDetail;
 use crate::event::repository::EventRepository;
+use crate::shared::app_scope::{first_segment, AppScopeGuard, EVENT_TYPE_APP_REFUSED};
 use axum::http::StatusCode;
 use fc_platform_core::permissions;
 use fc_platform_core::shared::authorization_service::checks;
@@ -278,6 +279,9 @@ pub struct EventsState {
     /// Refuses an application's event types from a caller that may not
     /// sign as that application (S6, ruling 17a).
     pub signing: Arc<SigningGuard>,
+    /// Confines an application-scoped caller to its own applications' event
+    /// types.
+    pub app_scope: Arc<AppScopeGuard>,
 }
 
 /// Create a new event
@@ -333,6 +337,21 @@ pub async fn create_event(
         return Err(PlatformError::bad_request_code(
             "VALIDATION",
             "data is required",
+        ));
+    }
+
+    // Application confinement: an application-scoped caller may only ingest
+    // events of its own applications (first segment of the event type).
+    if !state
+        .app_scope
+        .for_request(&auth.0)
+        .await?
+        .can_access_code(first_segment(&req.event_type))
+        .await?
+    {
+        return Err(PlatformError::forbidden_code(
+            "FORBIDDEN",
+            EVENT_TYPE_APP_REFUSED,
         ));
     }
 

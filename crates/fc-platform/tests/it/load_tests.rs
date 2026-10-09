@@ -363,6 +363,8 @@ async fn test_api_batch_events_throughput() {
     use fc_platform::api::{sdk_events_batch_router, AppState, AuthLayer, SdkEventsState};
     use fc_platform::auth::auth_service::{AuthConfig, AuthService};
     use fc_platform::domain::{Principal, UserScope};
+    use fc_platform::shared::app_scope::AppScopeGuard;
+    use fc_platform::shared::authorization_service::ApplicationAccessService;
     use fc_platform::{AuthorizationService, RoleRepository};
     use tower::ServiceExt;
 
@@ -398,6 +400,17 @@ async fn test_api_batch_events_throughput() {
             Arc::new(fc_platform::ApplicationRepository::new(&pool)),
             Arc::new(fc_platform::PrincipalRepository::new(&pool)),
         )),
+        app_scope: {
+            let applications = Arc::new(fc_platform::ApplicationRepository::new(&pool));
+            Arc::new(AppScopeGuard::new(
+                applications.clone(),
+                Arc::new(ApplicationAccessService::new(
+                    Arc::new(fc_platform::PrincipalRepository::new(&pool)),
+                    applications,
+                )),
+                Arc::new(fc_platform::SubscriptionRepository::new(&pool)),
+            ))
+        },
     };
     let app: Router = Router::new()
         .nest("/api/events", sdk_events_batch_router(sdk_events_state))

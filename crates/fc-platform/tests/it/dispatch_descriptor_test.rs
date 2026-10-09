@@ -62,8 +62,9 @@ async fn project(pool: &PgPool) {
         .unwrap();
 }
 
-fn ingest_token(app: &TestApp) -> String {
+async fn ingest_token(app: &TestApp) -> String {
     let caller = Principal::new_user("anchor@flowcatalyst.test", UserScope::Anchor);
+    app.persist_all_applications(&caller).await;
     app.auth_service
         .generate_access_token_with_scope(
             &caller,
@@ -213,7 +214,7 @@ async fn a_fanned_out_job_carries_its_subscription_name_and_its_events_context()
 async fn a_directly_created_job_carries_the_descriptor_and_metadata_it_is_sent() {
     let app = TestApp::setup().await;
     let pool = &app.pool;
-    let token = ingest_token(&app);
+    let token = ingest_token(&app).await;
     let item = |code: &str| {
         json!({
             "source": "integral",

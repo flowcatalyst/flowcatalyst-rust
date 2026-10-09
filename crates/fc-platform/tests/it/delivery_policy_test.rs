@@ -25,15 +25,16 @@ const FORBIDDEN_TARGETS: [&str; 7] = [
     "not a url",
 ];
 
-fn token_with(app: &TestApp, permission: &str) -> String {
+async fn token_with(app: &TestApp, permission: &str) -> String {
     let caller = Principal::new_user("anchor@flowcatalyst.test", UserScope::Anchor);
+    app.persist_all_applications(&caller).await;
     app.auth_service
         .generate_access_token_with_scope(&caller, &[permission.to_string()], None)
         .expect("token")
 }
 
-fn ingest_token(app: &TestApp) -> String {
-    token_with(app, permissions::admin::BATCH_DISPATCH_JOBS_WRITE)
+async fn ingest_token(app: &TestApp) -> String {
+    token_with(app, permissions::admin::BATCH_DISPATCH_JOBS_WRITE).await
 }
 
 fn job(code: &str, target: &str) -> Value {
@@ -56,7 +57,7 @@ async fn job_count(app: &TestApp) -> i64 {
 #[ignore = "requires Docker"]
 async fn the_single_create_refuses_a_target_the_policy_forbids() {
     let app = TestApp::setup().await;
-    let token = ingest_token(&app);
+    let token = ingest_token(&app).await;
 
     for target in FORBIDDEN_TARGETS {
         let (status, body) = read_json(
@@ -97,7 +98,7 @@ async fn the_single_create_refuses_a_target_the_policy_forbids() {
 #[ignore = "requires Docker"]
 async fn the_single_create_requires_a_code_and_a_target() {
     let app = TestApp::setup().await;
-    let token = ingest_token(&app);
+    let token = ingest_token(&app).await;
 
     let (status, body) = read_json(
         app.post(
@@ -126,7 +127,7 @@ async fn the_single_create_requires_a_code_and_a_target() {
 #[ignore = "requires Docker"]
 async fn one_forbidden_target_refuses_the_whole_batch() {
     let app = TestApp::setup().await;
-    let token = ingest_token(&app);
+    let token = ingest_token(&app).await;
 
     let (status, body) = read_json(
         app.post(
@@ -167,8 +168,8 @@ async fn one_forbidden_target_refuses_the_whole_batch() {
 #[ignore = "requires Docker"]
 async fn the_ingest_routes_check_the_permission_before_the_body() {
     let app = TestApp::setup().await;
-    let without = token_with(&app, permissions::admin::CLIENT_READ);
-    let with = ingest_token(&app);
+    let without = token_with(&app, permissions::admin::CLIENT_READ).await;
+    let with = ingest_token(&app).await;
 
     for path in ["/api/dispatch-jobs", "/api/dispatch-jobs/batch"] {
         let (status, body) =

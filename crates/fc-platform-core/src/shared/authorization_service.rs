@@ -222,6 +222,12 @@ impl ApplicationScope {
         }
     }
 
+    /// Whether this scope is confined to a set of applications (anything but
+    /// [`ApplicationScope::All`]).
+    pub fn is_application_scoped(&self) -> bool {
+        !matches!(self, Self::All)
+    }
+
     pub fn allows(&self, application_id: &ApplicationId) -> bool {
         match self {
             Self::All => true,

@@ -31,6 +31,7 @@ pub fn routes(ctx: &PlatformContext) -> AggregateRoutes {
             sdk_dispatch_jobs_batch_router(SdkDispatchJobsState {
                 dispatch_job_repo: ctx.repos.dispatch_job_repo.clone(),
                 signing: ctx.signing_guard.clone(),
+                app_scope: ctx.app_scope_guard.clone(),
             }),
         ),
     }
@@ -41,6 +42,7 @@ pub fn dispatch_jobs_state(ctx: &PlatformContext) -> DispatchJobsState {
         dispatch_job_repo: ctx.repos.dispatch_job_repo.clone(),
         client_repo: ctx.repos.client_repo.clone(),
         signing: ctx.signing_guard.clone(),
+        app_scope: ctx.app_scope_guard.clone(),
     }
 }
 

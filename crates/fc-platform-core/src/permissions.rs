@@ -437,6 +437,13 @@ pub mod application_service {
         PROCESS_SYNC,
         APPLICATION_READ,
         APPLICATION_OPENAPI_SYNC,
+        // Each application delivers its own outbox with its own
+        // service-account credentials. The batch endpoints confine an
+        // application-scoped caller to items belonging to its own
+        // applications, so these grants do not widen reach.
+        super::admin::BATCH_EVENTS_WRITE,
+        super::admin::BATCH_DISPATCH_JOBS_WRITE,
+        super::admin::BATCH_AUDIT_LOGS_WRITE,
     ];
 }
 

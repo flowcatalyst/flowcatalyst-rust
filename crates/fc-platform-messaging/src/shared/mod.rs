@@ -2,6 +2,7 @@
 //! ingest, the dispatch-processing callback, the dispatch queue, the read
 //! projections.
 
+pub mod app_scope;
 pub mod batch_api;
 pub mod dispatch_process_api;
 pub mod dispatch_queue;

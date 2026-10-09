@@ -15,6 +15,7 @@ use crate::dispatch_job::signing_guard::SigningGuard;
 use crate::event::api::ContextDataDto;
 use crate::event::entity::{ContextData, Event};
 use crate::event::repository::EventRepository;
+use crate::shared::app_scope::{first_segment, AppScopeGuard, EVENT_TYPE_APP_REFUSED};
 use fc_platform_core::directory::ClientDirectory;
 use fc_platform_core::permissions;
 use fc_platform_core::shared::authorization_service::checks;
@@ -197,6 +198,9 @@ pub struct SdkEventsState {
     /// Refuses an application's event types from a caller that may not
     /// sign as that application (S6, ruling 17a).
     pub signing: Arc<SigningGuard>,
+    /// Confines an application-scoped caller to its own applications' event
+    /// types.
+    pub app_scope: Arc<AppScopeGuard>,
 }
 
 /// Ingest a batch of events (SDK)
@@ -255,6 +259,7 @@ pub async fn batch_events(
 
     let mut inserted_events = Vec::with_capacity(req.items.len());
     let mut results = Vec::with_capacity(req.items.len());
+    let mut app_scope = state.app_scope.for_request(&auth.0).await?;
 
     // The whole batch is checked before anything is written: one item the
     // caller may not write refuses the request.
@@ -266,6 +271,20 @@ pub async fn batch_events(
                 id: item.id.clone().unwrap_or_default(),
                 status: "BAD_REQUEST".to_string(),
                 error: Some(error.to_string()),
+            });
+            continue;
+        }
+        // Application confinement (application-scoped callers only): the
+        // event's application is the first segment of its type. Refused per
+        // item; the rest of the batch still lands.
+        if !app_scope
+            .can_access_code(first_segment(&item.r#type))
+            .await?
+        {
+            results.push(BatchResultItem {
+                id: item.id.clone().unwrap_or_default(),
+                status: "BAD_REQUEST".to_string(),
+                error: Some(EVENT_TYPE_APP_REFUSED.to_string()),
             });
             continue;
         }

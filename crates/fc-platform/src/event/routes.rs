@@ -31,6 +31,7 @@ pub fn routes(ctx: &PlatformContext) -> AggregateRoutes {
                 event_repo: ctx.repos.event_repo.clone(),
                 client_repo: ctx.repos.client_repo.clone(),
                 signing: ctx.signing_guard.clone(),
+                app_scope: ctx.app_scope_guard.clone(),
             }),
         ),
     }
@@ -40,6 +41,7 @@ pub fn events_state(ctx: &PlatformContext) -> EventsState {
     EventsState {
         event_repo: ctx.repos.event_repo.clone(),
         signing: ctx.signing_guard.clone(),
+        app_scope: ctx.app_scope_guard.clone(),
     }
 }
 

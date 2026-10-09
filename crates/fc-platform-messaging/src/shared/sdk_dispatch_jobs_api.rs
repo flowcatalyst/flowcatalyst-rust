@@ -15,6 +15,7 @@ use crate::dispatch_job::{
     entity::{DispatchJob, DispatchKind, RetryStrategy},
     repository::DispatchJobRepository,
 };
+use crate::shared::app_scope::AppScopeGuard;
 use crate::shared::batch_api::{job_ids_taken, BatchResponse, BatchResultItem, SuppliedJobIds};
 use fc_platform_core::permissions;
 use fc_platform_core::shared::authorization_service::checks;
@@ -29,6 +30,8 @@ pub struct SdkDispatchJobsState {
     pub dispatch_job_repo: Arc<DispatchJobRepository>,
     /// Refuses a job signed by an identity the caller may not use (S5).
     pub signing: Arc<SigningGuard>,
+    /// Confines an application-scoped caller to its own applications' jobs.
+    pub app_scope: Arc<AppScopeGuard>,
 }
 
 /// SDK batch dispatch-jobs request. The wrapper key is `items` (1:1 with the
@@ -69,8 +72,9 @@ pub async fn sdk_batch_create_dispatch_jobs(
     let mut created_jobs: Vec<DispatchJob> = Vec::new();
     // Supplied ids (Go honours them): each valid and named once in the batch.
     let mut supplied = SuppliedJobIds::default();
+    let mut app_scope = state.app_scope.for_request(&auth.0).await?;
 
-    for job_req in req.items {
+    for (index, job_req) in req.items.into_iter().enumerate() {
         // The client the job is written under (owner decision #24): a
         // single-client caller's absent client is its client; any other
         // non-anchor must name one it can access.
@@ -82,6 +86,18 @@ pub async fn sdk_batch_create_dispatch_jobs(
         // Go's `jobFromItem`: the target against the delivery policy, after
         // the kind. One refused item refuses the whole batch (400).
         check_target_url(&job_req.target_url)?;
+
+        // Application confinement (application-scoped callers only): any
+        // offending item refuses the whole batch, naming its index.
+        if let Some(refusal) = app_scope
+            .job_refusal(&job_req.code, job_req.subscription_id.as_deref())
+            .await?
+        {
+            return Err(PlatformError::forbidden_code(
+                "FORBIDDEN",
+                format!("items[{index}]: {refusal}"),
+            ));
+        }
 
         let mode = parse_dispatch_mode(job_req.mode.as_deref());
 

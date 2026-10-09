@@ -185,6 +185,25 @@ impl TestApp {
             .expect("anchor token")
     }
 
+    /// Persist `principal` as a bare row with the all-applications flag
+    /// (what a user has by default), so the ingest endpoints' application
+    /// confinement of application-scoped callers does not apply to it. A
+    /// principal that is not stored reaches no application. Idempotent.
+    pub async fn persist_all_applications(&self, principal: &Principal) {
+        sqlx::query(
+            "INSERT INTO iam_principals (id, type, scope, name, active, all_applications) \
+             VALUES ($1, $2, $3, $4, true, true) \
+             ON CONFLICT (id) DO UPDATE SET all_applications = true",
+        )
+        .bind(principal.id.as_str())
+        .bind(principal.principal_type.as_str())
+        .bind(principal.scope.as_str())
+        .bind(&principal.name)
+        .execute(&self.pool)
+        .await
+        .expect("persist principal");
+    }
+
     /// Token for an anchor-scoped principal with the `platform:*:*:*`
     /// wildcard permission. Seeds a role on first call; the token carries
     /// the role name so the authz middleware resolves it to ADMIN_ALL.
@@ -218,6 +237,40 @@ impl TestApp {
 
         let mut principal = Principal::new_user("admin@flowcatalyst.test", UserScope::Anchor);
         principal.roles = vec![RoleAssignment::new(role_code)];
+        self.auth_service
+            .generate_access_token(&principal)
+            .expect("anchor-admin token")
+    }
+
+    /// [`TestApp::anchor_admin_token`] for a caller that is also stored with
+    /// the all-applications flag: the ingest endpoints confine a caller that
+    /// is not (a principal that is not stored reaches no application). Stores
+    /// a bare row, so a test that lists principals uses the plain token.
+    pub async fn anchor_admin_token_all_applications(&self) -> String {
+        use fc_platform::role::entity::{permissions, AuthRole};
+        use fc_platform::service_account::entity::RoleAssignment;
+
+        let role_code = "platform:test-admin";
+        if self
+            .repos
+            .role_repo
+            .find_by_name(role_code)
+            .await
+            .ok()
+            .flatten()
+            .is_none()
+        {
+            let role = AuthRole::new("platform", "test-admin", "Test Admin")
+                .with_permission(permissions::ADMIN_ALL);
+            self.repos
+                .role_repo
+                .insert(&role)
+                .await
+                .expect("insert test-admin role");
+        }
+        let mut principal = Principal::new_user("admin@flowcatalyst.test", UserScope::Anchor);
+        principal.roles = vec![RoleAssignment::new(role_code)];
+        self.persist_all_applications(&principal).await;
         self.auth_service
             .generate_access_token(&principal)
             .expect("anchor-admin token")

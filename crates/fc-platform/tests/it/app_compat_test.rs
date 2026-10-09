@@ -466,7 +466,7 @@ fn hr_outbox_item(event_id: &str, client_code: &str) -> Value {
 #[ignore = "requires Docker"]
 async fn hr_outbox_events_are_linked_to_their_client_by_code() {
     let app = TestApp::setup().await;
-    let token = app.anchor_admin_token().await;
+    let token = app.anchor_admin_token_all_applications().await;
     let inhance = create_client(&app, "inhance").await;
     let other = create_client(&app, "other").await;
 
@@ -669,7 +669,7 @@ async fn auth_me_lists_the_effective_permissions() {
 #[ignore = "requires Docker"]
 async fn replayed_events_are_stored_once_and_acknowledged() {
     let app = TestApp::setup().await;
-    let token = app.anchor_admin_token().await;
+    let token = app.anchor_admin_token_all_applications().await;
     create_client(&app, "inhance").await;
 
     let batch = json!({"items": [

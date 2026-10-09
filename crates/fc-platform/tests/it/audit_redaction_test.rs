@@ -165,7 +165,7 @@ async fn a_secret_config_value_never_reaches_the_audit_log() {
 #[ignore = "requires Docker"]
 async fn ingested_audit_logs_are_redacted_before_they_are_stored() {
     let app = setup().await;
-    let token = app.anchor_admin_token().await;
+    let token = app.anchor_admin_token_all_applications().await;
 
     let resp = app
         .post(

@@ -21,6 +21,7 @@ use crate::dispatch_job::repository::DispatchJobRepository;
 use crate::dispatch_job::repository::RecordedAttempt;
 use crate::dispatch_job::signing_guard::SigningGuard;
 use crate::dispatch_job_actions::api::RequestSummary;
+use crate::shared::app_scope::AppScopeGuard;
 use crate::shared::batch_api;
 use crate::shared::batch_api::SuppliedJobIds;
 use crate::subscription::operations::create;
@@ -374,6 +375,8 @@ pub struct DispatchJobsState {
     pub client_repo: Arc<dyn ClientDirectory>,
     /// Refuses a job signed by an identity the caller may not use (S5).
     pub signing: Arc<SigningGuard>,
+    /// Confines an application-scoped caller to its own applications' jobs.
+    pub app_scope: Arc<AppScopeGuard>,
 }
 
 // ============================================================================
@@ -856,6 +859,19 @@ pub async fn create_dispatch_job(
         ));
     }
     check_target_url(&req.target_url)?;
+
+    // Application confinement (application-scoped callers only): the job's
+    // code names its application, and a subscription must be that
+    // caller's too.
+    if let Some(refusal) = state
+        .app_scope
+        .for_request(&auth.0)
+        .await?
+        .job_refusal(&req.code, req.subscription_id.as_deref())
+        .await?
+    {
+        return Err(PlatformError::forbidden_code("FORBIDDEN", refusal));
+    }
 
     // Go's single create requires the account (dispatch_job_create.go:92-94).
     let Some(service_account_id) = caller_reach::non_blank(req.service_account_id) else {

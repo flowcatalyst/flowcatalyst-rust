@@ -11,7 +11,27 @@ use chrono::{DateTime, Duration, Utc};
 use serde_json::json;
 
 use fc_platform::client::entity::Client;
+use fc_platform::domain::{Principal, UserScope};
+use fc_platform_core::shared::id::ClientId;
 use support::{assert_status, read_json, TestApp};
+
+/// A persisted service principal with the all-applications flag (the audit
+/// ingest confines application-scoped callers; these tests are not about it).
+async fn all_apps_token(app: &TestApp, scope: UserScope, client_id: Option<&str>) -> String {
+    let mut principal = Principal::new_service("svc-test", "Test Service", scope);
+    if let Some(client_id) = client_id {
+        principal = principal.with_client_id(ClientId::parse(client_id).unwrap());
+    }
+    principal.all_applications = true;
+    app.repos
+        .principal_repo
+        .insert(&principal)
+        .await
+        .expect("insert principal");
+    app.auth_service
+        .generate_access_token(&principal)
+        .expect("svc token")
+}
 
 async fn stored(app: &TestApp, entity_id: &str) -> Vec<(Option<String>, DateTime<Utc>)> {
     sqlx::query_as::<_, (Option<String>, DateTime<Utc>)>(
@@ -31,7 +51,7 @@ async fn ingest_skips_inaccessible_clients_and_honours_performed_at() {
     let theirs = Client::new("Theirs", "theirs");
     app.repos.client_repo.insert(&mine).await.expect("client");
     app.repos.client_repo.insert(&theirs).await.expect("client");
-    let token = app.service_account_token(mine.id.as_str());
+    let token = all_apps_token(&app, UserScope::Client, Some(mine.id.as_str())).await;
 
     let before = Utc::now();
     let resp = app
@@ -114,8 +134,7 @@ async fn ingest_skips_inaccessible_clients_and_honours_performed_at() {
 #[ignore = "requires Docker"]
 async fn ingest_takes_a_full_batch_and_rejects_bad_bodies_like_go() {
     let app = TestApp::setup().await;
-    // A USER with no role at all is confined to its profile; the admin is not.
-    let token = app.anchor_admin_token().await;
+    let token = all_apps_token(&app, UserScope::Anchor, None).await;
 
     let items: Vec<_> = (0..100)
         .map(|i| {

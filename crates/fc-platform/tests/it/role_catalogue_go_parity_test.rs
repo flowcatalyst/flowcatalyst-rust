@@ -303,6 +303,10 @@ const GO_ROLES: &[(&str, &str, &str, &[&str])] = &[
             "platform:application-service:process:sync",
             "platform:application-service:application:view",
             "platform:application-service:application-openapi:sync",
+            // Go 9c9986a: each application delivers its own outbox.
+            "platform:messaging:batch:events-write",
+            "platform:messaging:batch:dispatch-jobs-write",
+            "platform:admin:batch:audit-logs-write",
         ],
     ),
 ];

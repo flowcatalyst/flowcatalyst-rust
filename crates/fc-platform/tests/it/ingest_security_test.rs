@@ -20,7 +20,28 @@ const JOBS_WRITE: &str = permissions::admin::BATCH_DISPATCH_JOBS_WRITE;
 
 /// A token for `principal` granting exactly `perms` on its `scope` claim
 /// (none: the principal's roles, of which it has none).
-fn token_for(app: &TestApp, principal: &Principal, perms: &[&str]) -> String {
+///
+/// The principal is persisted with the all-applications flag (so the ingest
+/// confinement of application-scoped callers does not apply; these tests are
+/// about signing and tenancy). [`scoped_token_for`] leaves it unstored.
+async fn token_for(app: &TestApp, principal: &Principal, perms: &[&str]) -> String {
+    sqlx::query(
+        "INSERT INTO iam_principals (id, type, scope, name, active, all_applications) \
+         VALUES ($1, $2, $3, $4, true, true) \
+         ON CONFLICT (id) DO UPDATE SET all_applications = true",
+    )
+    .bind(principal.id.as_str())
+    .bind(principal.principal_type.as_str())
+    .bind(principal.scope.as_str())
+    .bind(&principal.name)
+    .execute(&app.pool)
+    .await
+    .expect("persist principal");
+    scoped_token_for(app, principal, perms)
+}
+
+/// A token for a principal that is not stored, so it reaches no application.
+fn scoped_token_for(app: &TestApp, principal: &Principal, perms: &[&str]) -> String {
     let granted: Vec<String> = perms.iter().map(|p| p.to_string()).collect();
     app.auth_service
         .generate_access_token_with_scope(principal, &granted, None)
@@ -182,12 +203,13 @@ async fn ingest_routes_require_the_batch_write_permissions() {
     let app = TestApp::setup().await;
     // An unrelated permission, so the route's own check answers (a USER with
     // none at all is refused earlier, NO_PLATFORM_ROLE).
-    let none = token_for(&app, &anchor_user(), &[permissions::admin::EVENT_READ]);
+    let none = token_for(&app, &anchor_user(), &[permissions::admin::EVENT_READ]).await;
     let app_event_create = token_for(
         &app,
         &anchor_user(),
         &[permissions::application_service::EVENT_CREATE],
-    );
+    )
+    .await;
 
     let event = json!({"eventType": "x:y:z:created", "source": "t", "data": {}});
     for (path, body, needs) in [
@@ -222,7 +244,7 @@ async fn ingest_routes_require_the_batch_write_permissions() {
     );
 
     // With the permissions, the same requests are written.
-    let ingest = token_for(&app, &anchor_user(), &[EVENTS_WRITE, JOBS_WRITE]);
+    let ingest = token_for(&app, &anchor_user(), &[EVENTS_WRITE, JOBS_WRITE]).await;
     let (status, body) = post(
         &app,
         "/api/events/batch",
@@ -257,12 +279,14 @@ async fn a_non_anchor_ingests_only_under_a_client_it_can_access() {
         &app,
         &client_user(&acme, "acme"),
         &[EVENTS_WRITE, JOBS_WRITE],
-    );
+    )
+    .await;
     let partner = token_for(
         &app,
         &partner_user(&[&acme, &other]),
         &[EVENTS_WRITE, JOBS_WRITE],
-    );
+    )
+    .await;
 
     // A single-client caller's absent client is its client, for both events
     // and jobs, and on the single-event route too.
@@ -392,7 +416,7 @@ async fn a_non_anchor_ingests_only_under_a_client_it_can_access() {
 
     // An anchor keeps today's behaviour: no client is platform-scoped, and
     // an unknown code leaves the event unlinked.
-    let anchor = token_for(&app, &anchor_user(), &[EVENTS_WRITE]);
+    let anchor = token_for(&app, &anchor_user(), &[EVENTS_WRITE]).await;
     let mut unknown = event_item("t:a:b:anchor");
     unknown["clientCode"] = json!("no-such-tenant");
     let (status, body) = post(
@@ -420,7 +444,7 @@ async fn a_non_anchor_ingests_only_under_a_client_it_can_access() {
 #[ignore = "requires Docker"]
 async fn supplied_dispatch_job_ids_are_honoured_and_never_reused() {
     let app = TestApp::setup().await;
-    let token = token_for(&app, &anchor_user(), &[JOBS_WRITE]);
+    let token = token_for(&app, &anchor_user(), &[JOBS_WRITE]).await;
     let with_id = |id: &str, code: &str| {
         let mut j = job_item(code);
         j["id"] = json!(id);
@@ -500,7 +524,7 @@ async fn supplied_dispatch_job_ids_are_honoured_and_never_reused() {
 #[ignore = "requires Docker"]
 async fn supplied_event_ids_are_honoured_and_idempotent() {
     let app = TestApp::setup().await;
-    let token = token_for(&app, &anchor_user(), &[EVENTS_WRITE]);
+    let token = token_for(&app, &anchor_user(), &[EVENTS_WRITE]).await;
     let mut item = event_item("t:e:a:supplied");
     item["id"] = json!("0EVENTSUPP001");
 
@@ -549,7 +573,7 @@ async fn supplied_event_ids_are_honoured_and_idempotent() {
 #[ignore = "requires Docker"]
 async fn a_batched_dispatch_job_needs_no_service_account() {
     let app = TestApp::setup().await;
-    let token = token_for(&app, &anchor_user(), &[JOBS_WRITE]);
+    let token = token_for(&app, &anchor_user(), &[JOBS_WRITE]).await;
     let laravel_item = json!({
         "source": "integral",
         "code": "t:laravel:job:run",
@@ -607,8 +631,8 @@ async fn only_the_application_may_ingest_a_job_its_account_signs() {
     let billing = create_application(&app, "billing").await;
     let (_, billing_prn) = seed_account(&app, "billing-svc", Some(&billing), &[]).await;
 
-    let client_admin = token_for(&app, &client_user(&acme, "acme"), &[JOBS_WRITE]);
-    let anchor = token_for(&app, &anchor_user(), &[JOBS_WRITE]);
+    let client_admin = token_for(&app, &client_user(&acme, "acme"), &[JOBS_WRITE]).await;
+    let anchor = token_for(&app, &anchor_user(), &[JOBS_WRITE]).await;
     for token in [&client_admin, &anchor] {
         let (status, body) = post_job(&app, token, job_item("billing:invoice:sent")).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
@@ -628,10 +652,11 @@ async fn only_the_application_may_ingest_a_job_its_account_signs() {
         &app,
         &service_caller(&billing_prn, UserScope::Anchor),
         &[JOBS_WRITE],
-    );
+    )
+    .await;
     let (status, body) = post_job(&app, &own, job_item("billing:invoice:sent")).await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
-    let root = token_for(&app, &anchor_user(), &[JOBS_WRITE, permissions::ADMIN_ALL]);
+    let root = token_for(&app, &anchor_user(), &[JOBS_WRITE, permissions::ADMIN_ALL]).await;
     let (status, body) = post_job(&app, &root, job_item("billing:invoice:sent")).await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
 
@@ -661,7 +686,7 @@ async fn a_job_signs_only_with_an_account_the_caller_may_use() {
     // provisioning stores it.
     let app_sub = create_subscription(&app, "app-sub", Some(&acme), Some(&billing_prn)).await;
 
-    let client_admin = token_for(&app, &client_user(&acme, "acme"), &[JOBS_WRITE]);
+    let client_admin = token_for(&app, &client_user(&acme, "acme"), &[JOBS_WRITE]).await;
     let with_sub = |sub: &str| {
         let mut j = job_item("zzz:x:y");
         j["subscriptionId"] = json!(sub);
@@ -705,7 +730,7 @@ async fn a_job_signs_only_with_an_account_the_caller_may_use() {
 
     // An anchor may name any client's subscription and reaches every
     // client-linked account.
-    let anchor = token_for(&app, &anchor_user(), &[JOBS_WRITE]);
+    let anchor = token_for(&app, &anchor_user(), &[JOBS_WRITE]).await;
     let mut job = with_sub(&shared_sub);
     job["clientId"] = json!(acme);
     let (status, body) = post_job(&app, &anchor, job).await;
@@ -744,39 +769,60 @@ async fn only_a_caller_that_may_sign_as_the_application_ingests_its_events() {
     .await
     .unwrap();
 
-    let client_admin = token_for(&app, &client_user(&acme, "acme"), &[EVENTS_WRITE]);
-    let plain_anchor = token_for(&app, &anchor_user(), &[EVENTS_WRITE]);
+    // Callers reaching no application (unstored principals): the signing
+    // guard refuses them an application's event type on every route that
+    // does not confine them first. On `/api/events/batch` the application
+    // confinement answers per item (201, BAD_REQUEST in the item's slot); on
+    // `/api/events` it answers 403 first.
+    let client_admin = scoped_token_for(&app, &client_user(&acme, "acme"), &[EVENTS_WRITE]);
+    let plain_anchor = scoped_token_for(&app, &anchor_user(), &[EVENTS_WRITE]);
     let billing_type = "billing:invoices:invoice:paid";
 
     for token in [&client_admin, &plain_anchor] {
-        for (path, body) in [
-            (
-                "/api/events/batch",
-                json!({"items": [event_item("zzz:a:b:c"), event_item(billing_type)]}),
+        let (status, body) = post(
+            &app,
+            "/api/events/batch",
+            token,
+            json!({"items": [event_item("zzz:a:b:c"), event_item(billing_type)]}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["results"][1]["status"], "BAD_REQUEST", "{body}");
+
+        let (status, body) = post(
+            &app,
+            "/api/events",
+            token,
+            json!({"eventType": billing_type, "source": "t", "data": {}}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+
+        let (status, body) = post(
+            &app,
+            "/bff/events/batch",
+            token,
+            json!({"events": [{"eventType": billing_type, "source": "t", "data": {}}]}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(
+            body["message"],
+            format!(
+                "an event of type '{billing_type}' may be delivered signed by its application, \
+                 which the caller may not sign as: application billing signs only its own jobs; \
+                 the caller is not that application"
             ),
-            (
-                "/api/events",
-                json!({"eventType": billing_type, "source": "t", "data": {}}),
-            ),
-            (
-                "/bff/events/batch",
-                json!({"events": [{"eventType": billing_type, "source": "t", "data": {}}]}),
-            ),
-        ] {
-            let (status, body) = post(&app, path, token, body).await;
-            assert_eq!(status, StatusCode::FORBIDDEN, "{path}: {body}");
-            assert_eq!(
-                body["message"],
-                format!(
-                    "an event of type '{billing_type}' may be delivered signed by its application, \
-                     which the caller may not sign as: application billing signs only its own jobs; \
-                     the caller is not that application"
-                ),
-                "{path}"
-            );
-        }
+        );
     }
-    assert_eq!(count(&app, "SELECT COUNT(*) FROM msg_events").await, 0);
+    assert_eq!(
+        count(
+            &app,
+            "SELECT COUNT(*) FROM msg_events WHERE type = 'billing:invoices:invoice:paid'"
+        )
+        .await,
+        0
+    );
 
     // The application's own account, an anchor with access to it, and a
     // super-admin are admitted.
@@ -785,13 +831,15 @@ async fn only_a_caller_that_may_sign_as_the_application_ingests_its_events() {
             &app,
             &service_caller(&billing_prn, UserScope::Anchor),
             &[EVENTS_WRITE],
-        ),
-        token_for(&app, &staff, &[EVENTS_WRITE]),
+        )
+        .await,
+        scoped_token_for(&app, &staff, &[EVENTS_WRITE]),
         token_for(
             &app,
             &anchor_user(),
             &[EVENTS_WRITE, permissions::ADMIN_ALL],
-        ),
+        )
+        .await,
     ] {
         let (status, body) = post(
             &app,
@@ -811,11 +859,13 @@ async fn only_a_caller_that_may_sign_as_the_application_ingests_its_events() {
         3
     );
 
-    // A type naming no known application signs nothing and passes.
+    // A type naming no known application signs nothing and passes (for a
+    // caller that reaches every application).
+    let client_all_apps = token_for(&app, &client_user(&acme, "acme"), &[EVENTS_WRITE]).await;
     let (status, body) = post(
         &app,
         "/api/events/batch",
-        &client_admin,
+        &client_all_apps,
         json!({"items": [event_item("zzz:a:b:c")]}),
     )
     .await;
@@ -873,7 +923,8 @@ async fn subscriptions_and_connections_name_only_accounts_the_caller_may_use() {
             permissions::admin::SUBSCRIPTION_CREATE,
             permissions::admin::SUBSCRIPTION_UPDATE,
         ],
-    );
+    )
+    .await;
     let create = |code: &str, extra: Value| {
         let mut body = subscription_body(code, &acme);
         for (k, v) in extra.as_object().unwrap() {
@@ -969,7 +1020,8 @@ async fn subscriptions_and_connections_name_only_accounts_the_caller_may_use() {
         &app,
         &anchor_user(),
         &[permissions::admin::CONNECTION_CREATE],
-    );
+    )
+    .await;
     let (status, body) = post(
         &app,
         "/api/connections",
@@ -1014,7 +1066,8 @@ async fn subscription_sync_refuses_a_client_scoped_connection() {
         &app,
         &service_caller(&billing_prn, UserScope::Anchor),
         &[permissions::admin::SUBSCRIPTION_SYNC],
-    );
+    )
+    .await;
     let sync = |connection: &str| {
         json!({"subscriptions": [{
             "code": "synced",

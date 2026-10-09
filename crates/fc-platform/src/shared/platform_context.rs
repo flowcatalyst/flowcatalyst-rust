@@ -35,6 +35,7 @@ use crate::portal::PortalDeps;
 use crate::portal::PortalState;
 use crate::repository::Repositories;
 use crate::service_account::outbound_credentials::OutboundCredentialsResolver;
+use crate::shared::app_scope::AppScopeGuard;
 use crate::shared::authorization_service::ApplicationAccessService;
 use crate::shared::email_service;
 use crate::shared::email_service::EmailService;
@@ -105,6 +106,9 @@ pub struct PlatformContext {
     /// The one ingest signing guard: dispatch-job (S5) and event (S6)
     /// ingest on every route.
     pub signing_guard: Arc<SigningGuard>,
+    /// Confines an application-scoped caller on the SDK ingest endpoints to
+    /// its own applications' items.
+    pub app_scope_guard: Arc<AppScopeGuard>,
     /// Every handler that sets or clears the OIDC session cookie shares it.
     pub session_cookie: SessionCookieConfig,
     pub backoff_policy: Arc<BackoffPolicy>,
@@ -205,7 +209,16 @@ impl PlatformContext {
             )
             .with_secret_resolver(secret_resolver.clone()),
         );
+        let app_access = Arc::new(ApplicationAccessService::new(
+            repos.principal_repo.clone(),
+            repos.application_repo.clone(),
+        ));
         Self {
+            app_scope_guard: Arc::new(AppScopeGuard::new(
+                repos.application_repo.clone(),
+                app_access.clone(),
+                repos.subscription_repo.clone(),
+            )),
             signing_guard: Arc::new(SigningGuard::new(
                 repos.subscription_repo.clone(),
                 repos.connection_repo.clone(),
@@ -213,10 +226,7 @@ impl PlatformContext {
                 repos.application_repo.clone(),
                 repos.principal_repo.clone(),
             )),
-            app_access: Arc::new(ApplicationAccessService::new(
-                repos.principal_repo.clone(),
-                repos.application_repo.clone(),
-            )),
+            app_access,
             jwks_cache: Arc::new(JwksCache::default()),
             auth_ip_limit: IpRateLimiterState::new(&RateLimitConfig::auth_default_from_env()),
             oauth_ip_limit: IpRateLimiterState::new(

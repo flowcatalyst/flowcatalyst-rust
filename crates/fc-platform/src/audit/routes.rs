@@ -47,6 +47,7 @@ pub fn routes(ctx: &PlatformContext) -> AggregateRoutes {
                     audit_log_repo: repos.audit_log_repo.clone(),
                     application_repo: repos.application_repo.clone(),
                     client_repo: repos.client_repo.clone(),
+                    app_access: ctx.app_access.clone(),
                 }),
             ),
     }

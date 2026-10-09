@@ -17,7 +17,8 @@ pub use fc_platform_iam::shared::{authorization_service, branding, middleware, r
 pub use fc_platform_auth::shared::{client_selection_api, me_api};
 // fc-platform-messaging's.
 pub use fc_platform_messaging::shared::{
-    batch_api, dispatch_process_api, dispatch_queue, projections_service, sdk_dispatch_jobs_api,
+    app_scope, batch_api, dispatch_process_api, dispatch_queue, projections_service,
+    sdk_dispatch_jobs_api,
 };
 
 // The assembly's: cross-aggregate endpoints, the context and server setup,

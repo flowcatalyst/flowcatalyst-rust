@@ -17,6 +17,7 @@ use support::{read_json, TestApp};
 async fn a_batched_dispatch_job_is_inserted_pending() {
     let app = TestApp::setup().await;
     let caller = Principal::new_user("anchor@flowcatalyst.test", UserScope::Anchor);
+    app.persist_all_applications(&caller).await;
     let token = app
         .auth_service
         .generate_access_token_with_scope(
@@ -61,6 +62,7 @@ async fn a_batched_dispatch_job_is_inserted_pending() {
 async fn a_created_job_carries_its_own_queue_priority() {
     let app = TestApp::setup().await;
     let caller = Principal::new_user("anchor@flowcatalyst.test", UserScope::Anchor);
+    app.persist_all_applications(&caller).await;
     let token = app
         .auth_service
         .generate_access_token_with_scope(

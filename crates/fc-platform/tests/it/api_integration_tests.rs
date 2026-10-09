@@ -12,6 +12,8 @@
 //!   cargo test -p fc-platform --test it api_integration_tests:: -- --include-ignored
 
 use axum::{body::Body, http::Request, Router};
+use fc_platform::shared::app_scope::AppScopeGuard;
+use fc_platform::shared::authorization_service::ApplicationAccessService;
 use http_body_util::BodyExt; // for collect
 use std::sync::Arc;
 use tower::ServiceExt; // for oneshot
@@ -104,6 +106,19 @@ fn ingest_signing_guard(pool: &sqlx::PgPool) -> Arc<SigningGuard> {
     ))
 }
 
+/// The ingest application-scope guard over the test database.
+fn ingest_app_scope_guard(pool: &sqlx::PgPool) -> Arc<AppScopeGuard> {
+    let applications = Arc::new(ApplicationRepository::new(pool));
+    Arc::new(AppScopeGuard::new(
+        applications.clone(),
+        Arc::new(ApplicationAccessService::new(
+            Arc::new(fc_platform::PrincipalRepository::new(pool)),
+            applications,
+        )),
+        Arc::new(fc_platform::SubscriptionRepository::new(pool)),
+    ))
+}
+
 /// Build a minimal Axum router wired to the test database, returning the
 /// router and the AuthService (for token generation).
 fn build_test_router(pool: &sqlx::PgPool) -> (Router, Arc<AuthService>) {
@@ -170,11 +185,13 @@ fn build_test_router(pool: &sqlx::PgPool) -> (Router, Arc<AuthService>) {
         event_repo: Arc::new(EventRepository::new(pool)),
         client_repo: Arc::new(fc_platform::ClientRepository::new(pool)),
         signing: ingest_signing_guard(pool),
+        app_scope: ingest_app_scope_guard(pool),
     };
 
     let sdk_dispatch_jobs_state = SdkDispatchJobsState {
         dispatch_job_repo: Arc::new(DispatchJobRepository::new(pool)),
         signing: ingest_signing_guard(pool),
+        app_scope: ingest_app_scope_guard(pool),
     };
 
     let router: Router = Router::new()
@@ -207,8 +224,15 @@ fn generate_anchor_token(auth_service: &AuthService) -> String {
 
 /// An anchor token granted the two ingest permissions on its `scope`
 /// (Go's `platform:messaging:batch:{events,dispatch-jobs}-write`).
-fn generate_ingest_token(auth_service: &AuthService) -> String {
+async fn generate_ingest_token(auth_service: &AuthService, pool: &sqlx::PgPool) -> String {
     let principal = Principal::new_user("ingest@flowcatalyst.local", UserScope::Anchor);
+    // Persisted with the all-applications flag (users, by default): ingest
+    // confines application-scoped callers, and a principal that is not
+    // stored reaches no application.
+    fc_platform::PrincipalRepository::new(pool)
+        .insert(&principal)
+        .await
+        .expect("insert principal");
     auth_service
         .generate_access_token_with_scope(
             &principal,
@@ -408,7 +432,7 @@ async fn test_unauthorized_request() {
 async fn test_batch_events_via_api() {
     let (pool, _container) = setup_test_db().await;
     let (app, auth_service) = build_test_router(&pool);
-    let token = generate_ingest_token(&auth_service);
+    let token = generate_ingest_token(&auth_service, &pool).await;
 
     let response = app
         .clone()
@@ -463,7 +487,7 @@ async fn test_batch_events_via_api() {
 async fn test_batch_events_exceeds_limit() {
     let (pool, _container) = setup_test_db().await;
     let (app, auth_service) = build_test_router(&pool);
-    let token = generate_ingest_token(&auth_service);
+    let token = generate_ingest_token(&auth_service, &pool).await;
 
     // Build a batch with 1001 items (Go's limit is 1000)
     let items: Vec<serde_json::Value> = (0..1001)
@@ -503,7 +527,7 @@ async fn test_batch_events_exceeds_limit() {
 async fn test_batch_dispatch_jobs_via_api() {
     let (pool, _container) = setup_test_db().await;
     let (app, auth_service) = build_test_router(&pool);
-    let token = generate_ingest_token(&auth_service);
+    let token = generate_ingest_token(&auth_service, &pool).await;
 
     let response = app
         .clone()

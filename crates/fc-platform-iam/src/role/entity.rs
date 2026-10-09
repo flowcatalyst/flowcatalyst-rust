@@ -807,6 +807,18 @@ mod tests {
             assert!(!role.has_permission(permissions::admin::SERVICE_ACCOUNT_UPDATE));
         }
 
+        // Each application delivers its own outbox with its own
+        // service-account credentials: the role holds the three batch-ingest
+        // permissions (existing deployments get them from migration 067).
+        let app_service = roles::application_service();
+        for p in [
+            permissions::admin::BATCH_EVENTS_WRITE,
+            permissions::admin::BATCH_DISPATCH_JOBS_WRITE,
+            permissions::admin::BATCH_AUDIT_LOGS_WRITE,
+        ] {
+            assert!(app_service.permissions.contains(p), "{p}");
+        }
+
         // Owner ruling 2: the router's API.
         let view = permissions::admin::ROUTER_VIEW;
         let operate = permissions::admin::ROUTER_OPERATE;
