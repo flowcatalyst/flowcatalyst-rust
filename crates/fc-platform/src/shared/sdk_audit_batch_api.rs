@@ -3,8 +3,11 @@
 //! `POST /api/audit-logs/batch`, the SDK/outbox audit-ingest endpoint. It
 //! matches the Go platform (`internal/platform/shared/sdk/audit_batch.go`):
 //!
-//! - authentication only (no permission check, as in Go); each item whose client the caller cannot access is
-//!   `SKIPPED`, as is an item naming an unknown application or client code;
+//! - the caller must hold `platform:admin:batch:audit-logs-write` (403
+//!   `PERMISSION_REQUIRED` before the body is read, as the events and
+//!   dispatch-jobs batch endpoints do for theirs); each item whose client the
+//!   caller cannot access is `SKIPPED`, as is an item naming an unknown
+//!   application or client code;
 //! - an item without a `principalId` is refused in its own slot
 //!   (`BAD_REQUEST`, `principalId is required`) and the rest still land;
 //! - `performedAt` is RFC 3339 and falls back to now when absent or
@@ -40,6 +43,8 @@ use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 use fc_common::audit_redaction;
 use fc_platform_core::directory::ApplicationAccess;
+use fc_platform_core::permissions;
+use fc_platform_core::shared::authorization_service::checks;
 
 /// Largest batch accepted, as in Go.
 const MAX_BATCH: usize = 100;
@@ -291,6 +296,8 @@ pub(crate) async fn batch_audit_logs(
     auth: Authenticated,
     body: Bytes,
 ) -> Result<Response, PlatformError> {
+    // The batch-write permission, checked before the body is looked at.
+    checks::require_permission(&auth.0, permissions::admin::BATCH_AUDIT_LOGS_WRITE)?;
     let req = match decode_request(&body) {
         Ok(req) => req,
         Err(e) => return Ok(bad_request("INVALID_JSON", e)),

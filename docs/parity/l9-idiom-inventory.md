@@ -444,18 +444,16 @@ Final state after the 2026-09-25 re-check. Function-runner behaviour follows Jav
 | Missing routes | `connections/sync`, `docs/sync`, `POST /api/processes/sync`, subscription-sync `clientId`, `GET /api/dispatch/router-config` | present (`sdksync/api.go:97-110`, `dispatch/api.go:30-49`) | Lane L4d. The published Laravel SDK's definition sync calls `connections/sync` when definitions declare connections; the `router` role exists for `router-config` |
 | `client-admin` / `portal-administrator` enforcement | roles exist; no client-confined user admin, no portal-user routes | `auth.RequireUserAdmin`, `/api/portal-users` | Principal-routes work (another lane) |
 
-### To tighten later (owner note, 2026-09-24)
+### Audit-log ingest permission (owner ruling, 2026-10-09)
 
-- **Audit-log ingest** (`POST /api/audit-logs/batch`) matches Go (`7bdb5112`): authentication, then a per-item client-access
-  check that skips items. There is no permission gate, in Go as well. Tighten it by requiring
-  `platform:admin:batch:audit-logs-write` or an application-service audit permission, in Rust, Go and Java
-  together, and give the application-service role that permission so SDK service accounts keep working.
+`POST /api/audit-logs/batch` now requires `platform:admin:batch:audit-logs-write` (403 `PERMISSION_REQUIRED`
+before the body is read), like the events and dispatch-jobs batch endpoints. The application-service role holds it
+(migration 067); super-admin holds it by wildcard. Go makes the same change in parallel.
 
 ### Go security concerns found
 
 - A CLIENT or PARTNER service account requested with **no clients** becomes ANCHOR, because the tier is derived
   from client links. Rust matches this (with a code comment); the UI guards against it.
 - A bound service account with `all_applications = true` reaches **every** application. Production has 6 of these.
-- Audit-log ingest has no permission gate (above).
 - Go's audit sink still writes plaintext passwords. `Principal/*Command` rows kept arriving until 2026-09-16
   (A19); it needs the redaction rule.

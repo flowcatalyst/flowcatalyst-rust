@@ -9,16 +9,36 @@ use crate::support;
 use axum::http::StatusCode;
 use chrono::{DateTime, Duration, Utc};
 use serde_json::json;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use fc_platform::client::entity::Client;
 use fc_platform::domain::{Principal, UserScope};
+use fc_platform::permissions;
 use fc_platform_core::shared::id::ClientId;
 use support::{assert_status, read_json, TestApp};
 
 /// A persisted service principal with the all-applications flag (the audit
-/// ingest confines application-scoped callers; these tests are not about it).
+/// ingest confines application-scoped callers; these tests are not about it)
+/// holding the audit batch-write permission the endpoint requires.
 async fn all_apps_token(app: &TestApp, scope: UserScope, client_id: Option<&str>) -> String {
-    let mut principal = Principal::new_service("svc-test", "Test Service", scope);
+    token_with_perms(
+        app,
+        scope,
+        client_id,
+        &[permissions::admin::BATCH_AUDIT_LOGS_WRITE],
+    )
+    .await
+}
+
+async fn token_with_perms(
+    app: &TestApp,
+    scope: UserScope,
+    client_id: Option<&str>,
+    perms: &[&str],
+) -> String {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let mut principal = Principal::new_service(format!("svc-test-{n}"), "Test Service", scope);
     if let Some(client_id) = client_id {
         principal = principal.with_client_id(ClientId::parse(client_id).unwrap());
     }
@@ -28,8 +48,9 @@ async fn all_apps_token(app: &TestApp, scope: UserScope, client_id: Option<&str>
         .insert(&principal)
         .await
         .expect("insert principal");
+    let granted: Vec<String> = perms.iter().map(|p| p.to_string()).collect();
     app.auth_service
-        .generate_access_token(&principal)
+        .generate_access_token_with_scope(&principal, &granted, None)
         .expect("svc token")
 }
 
@@ -189,4 +210,63 @@ async fn ingest_takes_a_full_batch_and_rejects_bad_bodies_like_go() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["error"], "INVALID_JSON", "{body}");
+}
+
+/// The endpoint needs `platform:admin:batch:audit-logs-write`: a caller
+/// without it (no permissions, or only the other two batch permissions) is
+/// refused 403 `PERMISSION_REQUIRED` before the body is read (a malformed
+/// body is still a 403, not a 400) and nothing is stored; a holder of the
+/// permission, and a holder of the platform wildcard, are accepted.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn ingest_requires_the_audit_batch_write_permission() {
+    let app = TestApp::setup().await;
+    let item = |eid: &str| {
+        json!({ "items": [{
+            "entityType": "Order", "entityId": eid, "operation": "CREATE",
+            "principalId": "prn_sdk",
+        }]})
+    };
+
+    for perms in [
+        &[][..],
+        &[
+            permissions::admin::BATCH_EVENTS_WRITE,
+            permissions::admin::BATCH_DISPATCH_JOBS_WRITE,
+        ][..],
+    ] {
+        let token = token_with_perms(&app, UserScope::Anchor, None, perms).await;
+        let (status, body) = read_json(
+            app.post("/api/audit-logs/batch", &token, item("perm_denied"))
+                .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["error"], "PERMISSION_REQUIRED", "{body}");
+
+        let (status, body) = read_json(
+            app.post("/api/audit-logs/batch", &token, json!({ "items": "nope" }))
+                .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    }
+    assert!(stored(&app, "perm_denied").await.is_empty());
+
+    let holder = all_apps_token(&app, UserScope::Anchor, None).await;
+    let resp = app
+        .post("/api/audit-logs/batch", &holder, item("perm_holder"))
+        .await;
+    let body = assert_status(resp, StatusCode::OK).await;
+    assert_eq!(body["results"][0]["status"], "SUCCESS", "{body}");
+    assert_eq!(stored(&app, "perm_holder").await.len(), 1);
+
+    // The platform wildcard (super-admin) covers the permission.
+    let admin = app.anchor_admin_token_all_applications().await;
+    let resp = app
+        .post("/api/audit-logs/batch", &admin, item("perm_admin"))
+        .await;
+    let body = assert_status(resp, StatusCode::OK).await;
+    assert_eq!(body["results"][0]["status"], "SUCCESS", "{body}");
+    assert_eq!(stored(&app, "perm_admin").await.len(), 1);
 }
