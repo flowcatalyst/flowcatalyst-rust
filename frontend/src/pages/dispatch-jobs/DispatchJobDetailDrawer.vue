@@ -10,6 +10,9 @@ import {
 	type DispatchJobDetail,
 } from "@/api/dispatch-jobs";
 import { toast } from "@/utils/errorBus";
+import { useAuthStore } from "@/stores/auth";
+import { userHasPermission } from "@/stores/permissions";
+import { DISPATCH_JOB_VIEW_RAW } from "@/utils/dispatch-job-permissions";
 
 // Read-only working panel: the job, its payload, and every attempt with
 // what was SENT (signing account, headers) beside what came BACK (status,
@@ -18,6 +21,11 @@ import { toast } from "@/utils/errorBus";
 // operator can hand timestamp + signature + body to the subscriber's
 // verify command and see which side holds the wrong secret.
 const { id, goToList } = useDrawerRoute({ listPath: "/dispatch-jobs" });
+
+// Sign (POST /api/dispatch-jobs/{id}/sign) needs the raw-view permission;
+// without it the API answers 403, so the button is not shown.
+const authStore = useAuthStore();
+const canSign = computed(() => userHasPermission(authStore.user, DISPATCH_JOB_VIEW_RAW));
 
 const job = ref<DispatchJobDetail | null>(null);
 const attempts = ref<DispatchJobAttempt[]>([]);
@@ -159,6 +167,7 @@ function statusSeverity(status: string | undefined) {
         <Tag :value="job.status" :severity="statusSeverity(job.status)" />
         <span class="spacer" />
         <Button
+          v-if="canSign"
           label="Sign"
           icon="pi pi-key"
           size="small"
