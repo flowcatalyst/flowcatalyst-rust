@@ -62,6 +62,18 @@ async fn toggle(
     assert_eq!(resp.status(), StatusCode::NO_CONTENT, "{action}");
 }
 
+/// An active application is not deleted (Go bug 14): deactivate first.
+async fn deactivate(app: &TestApp, admin: &str, application: &Application) {
+    let resp = app
+        .post(
+            &format!("/api/applications/{}/deactivate", application.id),
+            admin,
+            json!({}),
+        )
+        .await;
+    assert_eq!(resp.status(), StatusCode::OK, "deactivate");
+}
+
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn a_disabled_client_config_no_longer_blocks_the_delete_and_goes_with_it() {
@@ -80,6 +92,7 @@ async fn a_disabled_client_config_no_longer_blocks_the_delete_and_goes_with_it()
         1,
         "disable keeps the row"
     );
+    deactivate(&app, &admin, &freed).await;
     let (status, body) = read_json(
         app.delete(&format!("/api/applications/{}", freed.id), &admin)
             .await,
@@ -101,6 +114,7 @@ async fn a_disabled_client_config_no_longer_blocks_the_delete_and_goes_with_it()
     toggle(&app, &admin, &held, &client_a, "enable").await;
     toggle(&app, &admin, &held, &client_b, "enable").await;
     toggle(&app, &admin, &held, &client_b, "disable").await;
+    deactivate(&app, &admin, &held).await;
     let (status, body) = read_json(
         app.delete(&format!("/api/applications/{}", held.id), &admin)
             .await,

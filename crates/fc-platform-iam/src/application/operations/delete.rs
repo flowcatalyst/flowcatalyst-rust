@@ -78,6 +78,15 @@ impl<U: UnitOfWork> UseCase for DeleteApplicationUseCase<U> {
                 format!("Application with ID '{}' not found", command.application_id),
             )?;
 
+        // An active application is refused: deactivate it first (the SPA's
+        // rule, enforced here since Go bug 14), before the reference check.
+        if application.active {
+            return Err(UseCaseError::business_rule(
+                "APPLICATION_ACTIVE",
+                "Deactivate the application first.",
+            ));
+        }
+
         // Business rules: refuse deletion while any code-enforced reference
         // still points at this application. None of these columns have
         // DB-level FKs — each one is a place where the app must be

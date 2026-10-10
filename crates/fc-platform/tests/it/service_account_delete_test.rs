@@ -89,6 +89,15 @@ async fn deleting_a_service_account_removes_its_grants_and_frees_the_application
     assert!(resp.status().is_success(), "{}", resp.status());
     assert_eq!(grant_counts(&app, &principal_id).await, (0, 0));
 
+    // An active application is not deleted (Go bug 14): deactivate first.
+    let resp = app
+        .post(
+            &format!("/api/applications/{}/deactivate", application.id),
+            &admin,
+            json!({}),
+        )
+        .await;
+    assert_eq!(resp.status(), StatusCode::OK, "deactivate");
     let (status, body) = read_json(
         app.delete(&format!("/api/applications/{}", application.id), &admin)
             .await,

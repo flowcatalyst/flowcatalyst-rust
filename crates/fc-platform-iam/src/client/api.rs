@@ -28,6 +28,7 @@ use crate::client::access;
 use crate::client::operations::ActivateClientUseCase;
 use crate::client::operations::AddClientNoteUseCase;
 use crate::client::operations::CreateClientUseCase;
+use crate::client::operations::DeactivateClientUseCase;
 use crate::client::operations::DeleteClientUseCase;
 use crate::client::operations::SuspendClientUseCase;
 use crate::client::operations::UpdateClientUseCase;
@@ -231,6 +232,7 @@ pub struct ClientsState {
     pub create_use_case: Arc<CreateClientUseCase<PgUnitOfWork>>,
     pub update_use_case: Arc<UpdateClientUseCase<PgUnitOfWork>>,
     pub delete_use_case: Arc<DeleteClientUseCase<PgUnitOfWork>>,
+    pub deactivate_use_case: Arc<DeactivateClientUseCase<PgUnitOfWork>>,
     pub activate_use_case: Arc<ActivateClientUseCase<PgUnitOfWork>>,
     pub suspend_use_case: Arc<SuspendClientUseCase<PgUnitOfWork>>,
     pub add_note_use_case: Arc<AddClientNoteUseCase<PgUnitOfWork>>,
@@ -536,7 +538,7 @@ pub async fn suspend_client(
 
 /// Deactivate a client (soft delete)
 ///
-/// Deactivates/soft-deletes a client. Requires a reason.
+/// Sets the client INACTIVE with the reason; it can be reactivated.
 #[utoipa::path(
     post,
     path = "/{id}/deactivate",
@@ -560,27 +562,24 @@ pub async fn deactivate_client(
     Json(req): Json<StatusChangeRequest>,
 ) -> Result<Json<StatusChangeResponse>, PlatformError> {
     let id = ClientId::from_wire(id);
-    // Deactivation is a soft delete — `DeleteClientUseCase` handles it.
-    // The reason string is retained in logs; the use case emits the
-    // `ClientDeleted` domain event + audit record.
-    use crate::client::operations::DeleteClientCommand;
+    // Deactivation is the soft delete: the client is set INACTIVE with the
+    // reason and can be reactivated; DELETE removes it (Go bug 15: this ran
+    // the delete, which removed the row).
+    use crate::client::operations::DeactivateClientCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
     checks::can_deactivate_clients(&auth.0)?;
 
-    let reason_for_log = req.reason.clone();
-    let cmd = DeleteClientCommand {
-        client_id: id.clone(),
+    let cmd = DeactivateClientCommand {
+        client_id: id,
+        reason: req.reason,
     };
     let ctx = ExecutionContext::from_auth(&auth.0);
-    state.delete_use_case.run(cmd, ctx).await.into_result()?;
-
-    tracing::info!(
-        client_id = %id,
-        principal_id = %auth.0.principal_id,
-        reason = %reason_for_log,
-        "Client deactivated"
-    );
+    state
+        .deactivate_use_case
+        .run(cmd, ctx)
+        .await
+        .into_result()?;
 
     Ok(Json(StatusChangeResponse {
         message: "Client deactivated".to_string(),

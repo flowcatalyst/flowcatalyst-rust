@@ -122,6 +122,32 @@ impl ClientSuspended {
     }
 }
 
+/// `{clientId, reason}`, the reason omitted when none was given: the client
+/// was set INACTIVE, a soft delete (Go `ClientDeactivated`, bug 15).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientDeactivated {
+    #[serde(skip)]
+    pub metadata: EventMetadata,
+    pub client_id: ClientId,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub reason: String,
+}
+
+impl_domain_event!(ClientDeactivated);
+
+impl ClientDeactivated {
+    pub const EVENT_TYPE: &'static str = "platform:admin:client:deactivated";
+
+    pub fn new(ctx: &ExecutionContext, client_id: &ClientId, reason: &str) -> Self {
+        Self {
+            metadata: metadata(ctx, Self::EVENT_TYPE, client_id),
+            client_id: client_id.clone(),
+            reason: reason.to_string(),
+        }
+    }
+}
+
 /// `{clientId, identifier}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

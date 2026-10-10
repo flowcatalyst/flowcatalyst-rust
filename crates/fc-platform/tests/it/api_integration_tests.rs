@@ -34,6 +34,7 @@ use fc_platform::auth::auth_service::{AuthConfig, AuthService};
 use fc_platform::client::operations::ActivateClientUseCase;
 use fc_platform::client::operations::AddClientNoteUseCase;
 use fc_platform::client::operations::CreateClientUseCase;
+use fc_platform::client::operations::DeactivateClientUseCase;
 use fc_platform::client::operations::DeleteClientUseCase;
 use fc_platform::client::operations::SuspendClientUseCase;
 use fc_platform::client::operations::UpdateClientUseCase;
@@ -148,6 +149,10 @@ fn build_test_router(pool: &sqlx::PgPool) -> (Router, Arc<AuthService>) {
             unit_of_work.clone(),
         )),
         delete_use_case: Arc::new(DeleteClientUseCase::new(
+            client_repo.clone(),
+            unit_of_work.clone(),
+        )),
+        deactivate_use_case: Arc::new(DeactivateClientUseCase::new(
             client_repo.clone(),
             unit_of_work.clone(),
         )),

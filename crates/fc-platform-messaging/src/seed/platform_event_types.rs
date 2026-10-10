@@ -227,6 +227,7 @@ pub fn definitions() -> Vec<SyncEventTypeInput> {
             "updated",
             "activated",
             "suspended",
+            "deactivated",
             "deleted",
             "note-added",
         ],

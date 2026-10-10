@@ -20,6 +20,7 @@ mod support;
 mod api_integration_tests;
 mod api_tests;
 mod app_compat_test;
+mod application_client_lifecycle_test;
 mod application_delete_client_configs_test;
 mod application_scope_test;
 mod audit_ingest_test;

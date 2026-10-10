@@ -597,6 +597,10 @@ fn emitted_beyond_go_catalogue(m: &mut HashMap<&'static str, Value>) {
         id_and("clientId", &[req_str("reason")]),
     );
     m.insert(
+        "platform:admin:client:deactivated",
+        id_and("clientId", &[opt_str("reason")]),
+    );
+    m.insert(
         "platform:admin:client:deleted",
         id_and("clientId", &[req_str("identifier")]),
     );

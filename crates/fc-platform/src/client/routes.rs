@@ -13,8 +13,8 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 use super::api::{ClientSearchState, ClientsState};
 use super::operations::{
-    ActivateClientUseCase, AddClientNoteUseCase, CreateClientUseCase, DeleteClientUseCase,
-    SuspendClientUseCase, UpdateClientUseCase,
+    ActivateClientUseCase, AddClientNoteUseCase, CreateClientUseCase, DeactivateClientUseCase,
+    DeleteClientUseCase, SuspendClientUseCase, UpdateClientUseCase,
 };
 use crate::application::operations::{
     DisableApplicationForClientUseCase, EnableApplicationForClientUseCase,
@@ -49,6 +49,10 @@ pub fn clients_state(ctx: &PlatformContext) -> ClientsState {
             uow.clone(),
         )),
         delete_use_case: Arc::new(DeleteClientUseCase::new(
+            repos.client_repo.clone(),
+            uow.clone(),
+        )),
+        deactivate_use_case: Arc::new(DeactivateClientUseCase::new(
             repos.client_repo.clone(),
             uow.clone(),
         )),
