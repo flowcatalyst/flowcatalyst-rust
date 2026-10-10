@@ -124,9 +124,7 @@ impl<U: UnitOfWork> UseCase for SyncEventTypesUseCase<U> {
         let mut updated_count = 0u32;
         let mut deleted_count = 0u32;
         let mut synced_codes: Vec<String> = Vec::new();
-        let mut schemas_created = 0u32;
-        let mut schemas_updated = 0u32;
-        let mut schemas_unchanged = 0u32;
+        let mut schemas = SchemaTally::default();
         let mut saves: Vec<EventType> = Vec::new();
         let mut deletes: Vec<EventType> = Vec::new();
         let mut rows: Vec<RecordedEvent> = Vec::new();
@@ -137,14 +135,24 @@ impl<U: UnitOfWork> UseCase for SyncEventTypesUseCase<U> {
         for input in &command.event_types {
             synced_codes.push(input.code.clone());
 
-            let mut et = match existing.iter().find(|et| et.code == input.code) {
-                Some(et) => {
+            match existing.iter().find(|et| et.code == input.code) {
+                Some(current) => {
                     // As Go (eventtype/operations/sync.go): a listed code
-                    // that already exists has its name and description
-                    // updated, whatever its source.
-                    let mut updated = et.clone();
+                    // that already exists has its name, description and
+                    // schema brought to the listing, whatever its source; one
+                    // that already matches is left alone, neither saved nor
+                    // counted as updated (Go bug 6).
+                    let mut updated = current.clone();
+                    let mut changed =
+                        updated.name != input.name || updated.description != input.description;
                     updated.name = input.name.clone();
                     updated.description = input.description.clone();
+                    if apply_sync_schema(&mut updated, input.schema.as_ref(), &mut schemas) {
+                        changed = true;
+                    }
+                    if !changed {
+                        continue;
+                    }
                     updated.updated_at = chrono::Utc::now();
                     rows.push(RecordedEvent::of(&EventTypeUpdated::new(
                         &ctx,
@@ -153,7 +161,7 @@ impl<U: UnitOfWork> UseCase for SyncEventTypesUseCase<U> {
                         updated.description.as_deref(),
                     ))?);
                     updated_count += 1;
-                    updated
+                    saves.push(updated);
                 }
                 None => {
                     let code = EventTypeCode::parse(&input.code).map_err(invalid_sync_code)?;
@@ -162,28 +170,10 @@ impl<U: UnitOfWork> UseCase for SyncEventTypesUseCase<U> {
                     et.description = input.description.clone();
                     rows.push(RecordedEvent::of(&EventTypeCreated::new(&ctx, &et))?);
                     created_count += 1;
-                    et
+                    apply_sync_schema(&mut et, input.schema.as_ref(), &mut schemas);
+                    saves.push(et);
                 }
-            };
-
-            // The schema, if sent, is the type's spec version "1.0".
-            match &input.schema {
-                Some(schema) => match et.spec_versions.iter_mut().find(|sv| sv.version == "1.0") {
-                    Some(sv) if sv.schema_content.as_ref() != Some(schema) => {
-                        sv.schema_content = Some(schema.clone());
-                        sv.updated_at = chrono::Utc::now();
-                        schemas_updated += 1;
-                    }
-                    Some(_) => schemas_unchanged += 1,
-                    None => {
-                        let sv = SpecVersion::new(et.id.clone(), "1.0", Some(schema.clone()));
-                        et.spec_versions.push(sv);
-                        schemas_created += 1;
-                    }
-                },
-                None => schemas_unchanged += 1,
             }
-            saves.push(et);
         }
 
         // Remove unlisted API-sourced event types.
@@ -208,9 +198,9 @@ impl<U: UnitOfWork> UseCase for SyncEventTypesUseCase<U> {
             updated: updated_count,
             deleted: deleted_count,
             synced_codes,
-            schemas_created,
-            schemas_updated,
-            schemas_unchanged,
+            schemas_created: schemas.created,
+            schemas_updated: schemas.updated,
+            schemas_unchanged: schemas.unchanged,
         };
 
         // Go's usecaseop.Sync: the rows, a created/updated/deleted event per
@@ -225,6 +215,47 @@ impl<U: UnitOfWork> UseCase for SyncEventTypesUseCase<U> {
                 &command,
             )
             .await
+    }
+}
+
+/// The schema counts a sync reports (Go `schemaTally`).
+#[derive(Default)]
+struct SchemaTally {
+    created: u32,
+    updated: u32,
+    unchanged: u32,
+}
+
+/// Go `schemaTally.apply`: the schema, if sent, is the type's spec version
+/// "1.0", minted when absent, rewritten when its content differs (by value),
+/// left alone when the same; a type sent without one is unchanged. Reports
+/// whether it changed the event type.
+fn apply_sync_schema(
+    et: &mut EventType,
+    schema: Option<&serde_json::Value>,
+    tally: &mut SchemaTally,
+) -> bool {
+    let Some(schema) = schema else {
+        tally.unchanged += 1;
+        return false;
+    };
+    match et.spec_versions.iter_mut().find(|sv| sv.version == "1.0") {
+        Some(sv) if sv.schema_content.as_ref() != Some(schema) => {
+            sv.schema_content = Some(schema.clone());
+            sv.updated_at = chrono::Utc::now();
+            tally.updated += 1;
+            true
+        }
+        Some(_) => {
+            tally.unchanged += 1;
+            false
+        }
+        None => {
+            let sv = SpecVersion::new(et.id.clone(), "1.0", Some(schema.clone()));
+            et.spec_versions.push(sv);
+            tally.created += 1;
+            true
+        }
     }
 }
 

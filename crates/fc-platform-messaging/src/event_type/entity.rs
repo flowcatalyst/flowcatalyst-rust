@@ -73,6 +73,44 @@ fc_platform_core::shared::enum_str::str_enum!(SchemaType, "schema type", {
     Proto => "PROTO" | "PROTOBUF",
 });
 
+impl SchemaType {
+    /// The MIME type a schema version of this type gets when none is given
+    /// (Go `DefaultMimeType`).
+    pub fn default_mime_type(self) -> &'static str {
+        match self {
+            SchemaType::JsonSchema => "application/schema+json",
+            SchemaType::Xsd => "application/xml",
+            SchemaType::Proto => "application/x-protobuf",
+        }
+    }
+
+    /// The stored form of a schema of this type (Go
+    /// `NormaliseSchemaContent`). A JSON Schema is the JSON document itself:
+    /// a JSON string holding a document (an object or an array) is unwrapped,
+    /// so a schema typed into a text field is not stored double-encoded; any
+    /// other string is refused. XSD and PROTO schemas are text and must
+    /// arrive as a JSON string. The error is the refusal's message.
+    pub fn normalise_content(
+        self,
+        schema: serde_json::Value,
+    ) -> Result<serde_json::Value, &'static str> {
+        match (self, schema) {
+            (SchemaType::Xsd | SchemaType::Proto, text @ serde_json::Value::String(_)) => Ok(text),
+            (SchemaType::Xsd | SchemaType::Proto, _) => {
+                Err("an XSD or PROTO schema is text: send it as a JSON string")
+            }
+            (SchemaType::JsonSchema, serde_json::Value::String(text)) => {
+                let inner = text.trim();
+                if !(inner.starts_with('{') || inner.starts_with('[')) {
+                    return Err("a JSON Schema must be a JSON document");
+                }
+                serde_json::from_str(inner).map_err(|_| "a JSON Schema must be a JSON document")
+            }
+            (SchemaType::JsonSchema, document) => Ok(document),
+        }
+    }
+}
+
 /// Schema version stored in msg_event_type_spec_versions
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -250,6 +288,13 @@ impl<'de> Deserialize<'de> for EventTypeCode {
     }
 }
 
+/// The lifecycle rules' messages (archive and delete use cases), the ones the
+/// UIs show beside the disabled actions (Go `CannotArchiveReason`,
+/// `CannotDeleteReason`).
+pub const CANNOT_ARCHIVE_REASON: &str = "Deprecate every schema version first.";
+pub const CANNOT_DELETE_REASON: &str =
+    "Only an archived event type, or one whose schema versions are all still finalising, can be deleted.";
+
 impl EventType {
     /// Create from a parsed code (application:subdomain:aggregate:event) and name.
     pub fn new(code: EventTypeCode, name: impl Into<String>) -> Self {
@@ -290,6 +335,30 @@ impl EventType {
     pub fn archive(&mut self) {
         self.status = EventTypeStatus::Archived;
         self.updated_at = Utc::now();
+    }
+
+    /// Whether the event type may be archived (Go `CanArchive`, the SPA
+    /// drawer's rule): it is CURRENT and every schema version (if any) is
+    /// DEPRECATED.
+    pub fn can_archive(&self) -> bool {
+        self.status == EventTypeStatus::Current
+            && self
+                .spec_versions
+                .iter()
+                .all(|sv| sv.status == SpecVersionStatus::Deprecated)
+    }
+
+    /// Whether the event type may be deleted (Go `CanDelete`): it is
+    /// ARCHIVED, or CURRENT with every schema version (if any) still
+    /// FINALISING (never published).
+    pub fn can_delete(&self) -> bool {
+        match self.status {
+            EventTypeStatus::Archived => true,
+            EventTypeStatus::Current => self
+                .spec_versions
+                .iter()
+                .all(|sv| sv.status == SpecVersionStatus::Finalising),
+        }
     }
 
     pub fn add_schema_version(&mut self, version: SpecVersion) {
@@ -483,5 +552,70 @@ mod tests {
         assert_eq!(SchemaType::from_str("PROTOBUF"), Ok(SchemaType::Proto));
         // Unknown values are rejected (X-06)
         assert!(SchemaType::from_str("UNKNOWN").is_err());
+    }
+
+    // ── Add-schema normalisation (Go bug 3) ───────────────────────────────
+
+    #[test]
+    fn a_json_schema_sent_as_text_is_stored_as_the_document() {
+        let text = serde_json::json!("  {\"type\": \"object\"} ");
+        assert_eq!(
+            SchemaType::JsonSchema.normalise_content(text),
+            Ok(serde_json::json!({"type": "object"}))
+        );
+        let doc = serde_json::json!([{"type": "string"}]);
+        assert_eq!(
+            SchemaType::JsonSchema.normalise_content(doc.clone()),
+            Ok(doc)
+        );
+        assert!(SchemaType::JsonSchema
+            .normalise_content(serde_json::json!("not a document"))
+            .is_err());
+        assert!(SchemaType::JsonSchema
+            .normalise_content(serde_json::json!("{broken"))
+            .is_err());
+    }
+
+    #[test]
+    fn xsd_and_proto_schemas_are_text() {
+        let text = serde_json::json!("<xs:schema/>");
+        assert_eq!(SchemaType::Xsd.normalise_content(text.clone()), Ok(text));
+        assert!(SchemaType::Proto
+            .normalise_content(serde_json::json!({"a": 1}))
+            .is_err());
+        assert_eq!(SchemaType::Xsd.default_mime_type(), "application/xml");
+        assert_eq!(
+            SchemaType::Proto.default_mime_type(),
+            "application/x-protobuf"
+        );
+        assert_eq!(
+            SchemaType::JsonSchema.default_mime_type(),
+            "application/schema+json"
+        );
+    }
+
+    // ── Lifecycle rules (Go bug 5) ────────────────────────────────────────
+
+    #[test]
+    fn archive_needs_every_version_deprecated_and_delete_an_archived_or_unpublished_type() {
+        let code = EventTypeCode::parse("rules:orders:order:created").unwrap();
+        let mut et = EventType::new(code, "Created");
+        assert!(et.can_archive(), "no versions");
+        assert!(et.can_delete(), "no versions");
+        let mut sv = SpecVersion::new(et.id.clone(), "1.0", None);
+        et.spec_versions.push(sv.clone());
+        assert!(!et.can_archive(), "finalising");
+        assert!(et.can_delete(), "finalising");
+        sv.status = SpecVersionStatus::Current;
+        et.spec_versions = vec![sv.clone()];
+        assert!(!et.can_archive(), "current");
+        assert!(!et.can_delete(), "current");
+        sv.status = SpecVersionStatus::Deprecated;
+        et.spec_versions = vec![sv];
+        assert!(et.can_archive(), "deprecated");
+        assert!(!et.can_delete(), "deprecated, not archived");
+        et.archive();
+        assert!(!et.can_archive(), "already archived");
+        assert!(et.can_delete(), "archived");
     }
 }

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::EventTypeArchived;
-use crate::event_type::entity::EventTypeStatus;
+use crate::event_type::entity::{EventTypeStatus, CANNOT_ARCHIVE_REASON};
 use crate::event_type::repository::EventTypeRepository;
 use fc_platform_core::shared::caller_reach;
 use fc_platform_core::usecase::AuditMasked;
@@ -93,6 +93,15 @@ impl<U: UnitOfWork> UseCase for ArchiveEventTypeUseCase<U> {
             return Err(UseCaseError::business_rule(
                 "ALREADY_ARCHIVED",
                 "Event type is already archived",
+            ));
+        }
+
+        // Every schema version deprecated first (Go bug 5: the SPA drawer's
+        // rule, enforced here so every caller gets it).
+        if !event_type.can_archive() {
+            return Err(UseCaseError::business_rule(
+                "SCHEMAS_NOT_DEPRECATED",
+                CANNOT_ARCHIVE_REASON,
             ));
         }
 

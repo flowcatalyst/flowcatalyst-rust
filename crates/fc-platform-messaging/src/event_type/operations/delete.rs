@@ -6,8 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::EventTypeDeleted;
-use crate::event_type::entity::EventTypeStatus;
-use crate::event_type::entity::SpecVersionStatus;
+use crate::event_type::entity::CANNOT_DELETE_REASON;
 use crate::event_type::repository::EventTypeRepository;
 use fc_platform_core::shared::caller_reach;
 use fc_platform_core::usecase::AuditMasked;
@@ -92,16 +91,12 @@ impl<U: UnitOfWork> UseCase for DeleteEventTypeUseCase<U> {
                 format!("Event type with ID '{}' not found", command.event_type_id),
             )?;
 
-        // Business rule: can only delete if ARCHIVED or all versions are FINALISING
-        let all_finalising = event_type
-            .spec_versions
-            .iter()
-            .all(|sv| sv.status == SpecVersionStatus::Finalising);
-
-        if event_type.status != EventTypeStatus::Archived && !all_finalising {
+        // Only an archived event type, or one never published (every version
+        // still FINALISING): Go `CanDelete`, 409 `DELETE_NOT_ALLOWED`.
+        if !event_type.can_delete() {
             return Err(UseCaseError::business_rule(
-                "CANNOT_DELETE",
-                "Can only delete archived event types or those with all versions in FINALISING status",
+                "DELETE_NOT_ALLOWED",
+                CANNOT_DELETE_REASON,
             ));
         }
 

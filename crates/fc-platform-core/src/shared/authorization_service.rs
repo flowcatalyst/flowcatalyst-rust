@@ -1093,6 +1093,21 @@ pub mod checks {
         }
     }
 
+    /// "Sync Platform Events" (`POST /bff/event-types/sync-platform`), which
+    /// rewrites the platform's own event-type catalogue: anchor reach, then
+    /// `event-type:sync` or `:manage` (Go `CanSyncPlatformEventTypes`,
+    /// a3414cc). Anchor scope alone is reach, not authority.
+    pub fn can_sync_platform_event_types(context: &impl Authority) -> Result<()> {
+        require_anchor_scope(context)?;
+        require_any_permission(
+            context,
+            &[
+                permissions::admin::EVENT_TYPE_SYNC,
+                permissions::admin::EVENT_TYPE_MANAGE,
+            ],
+        )
+    }
+
     /// Check write access to event types (create, update, or delete)
     pub fn can_write_event_types(context: &impl Authority) -> Result<()> {
         // Go `CanWriteEventTypes`: 403 `PERMISSION_REQUIRED`, `one of: …`.

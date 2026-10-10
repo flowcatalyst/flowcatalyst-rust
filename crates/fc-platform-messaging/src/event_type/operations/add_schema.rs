@@ -16,6 +16,14 @@ use fc_platform_core::usecase::{
 };
 
 /// Command for adding a new schema version to an event type.
+///
+/// `schema_type` (JSON_SCHEMA, XSD, PROTO; the legacy XML_SCHEMA and PROTOBUF
+/// accepted, any case) and `mime_type` are optional: absent or blank means
+/// JSON_SCHEMA and the schema type's default MIME type (Go `AddSchemaCommand`,
+/// bug 3). A JSON Schema is stored as the JSON document; a schema sent as a
+/// JSON string holding the document (the SPA sends its textarea's text this
+/// way) is stored as the document it holds. XSD and PROTO schemas are text,
+/// stored as a JSON string.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AddSchemaCommand {
@@ -25,23 +33,51 @@ pub struct AddSchemaCommand {
     /// Schema version (MAJOR.MINOR format, e.g. "1.0")
     pub version: String,
 
-    /// MIME type (e.g. "application/schema+json")
-    #[serde(default = "default_mime_type")]
-    pub mime_type: String,
+    /// MIME type (e.g. "application/schema+json"); absent or blank: the
+    /// schema type's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
 
     /// Schema content
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema_content: Option<serde_json::Value>,
 
-    /// Schema type
-    #[serde(default)]
-    pub schema_type: Option<SchemaType>,
+    /// Schema type as sent; absent or blank: JSON_SCHEMA.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_type: Option<String>,
 }
 
 impl AuditMasked for AddSchemaCommand {}
 
-fn default_mime_type() -> String {
-    "application/schema+json".to_string()
+/// `msg_event_type_spec_versions.mime_type`'s width.
+const MAX_MIME_TYPE_LEN: usize = 100;
+
+/// The command's schema type: absent or blank is JSON_SCHEMA, anything
+/// unknown 400 `INVALID_SCHEMA_TYPE` (Go `schemaTypeOf`).
+fn schema_type_of(raw: Option<&str>) -> Result<SchemaType, UseCaseError> {
+    match raw.map(str::trim).filter(|v| !v.is_empty()) {
+        None => Ok(SchemaType::JsonSchema),
+        Some(v) => v.to_uppercase().parse().map_err(|_| {
+            UseCaseError::validation(
+                "INVALID_SCHEMA_TYPE",
+                "schemaType must be JSON_SCHEMA, XSD or PROTO",
+            )
+        }),
+    }
+}
+
+/// The stored schema content, or 400 `INVALID_SCHEMA` (Go
+/// `NormaliseSchemaContent`).
+fn normalised_content(
+    schema_type: SchemaType,
+    content: &Option<serde_json::Value>,
+) -> Result<serde_json::Value, UseCaseError> {
+    let content = content
+        .clone()
+        .ok_or_else(|| UseCaseError::validation("SCHEMA_REQUIRED", "schema payload is required"))?;
+    schema_type
+        .normalise_content(content)
+        .map_err(|message| UseCaseError::validation("INVALID_SCHEMA", message))
 }
 
 /// Use case for adding a new spec version to an event type.
@@ -86,6 +122,18 @@ impl<U: UnitOfWork> UseCase for AddSchemaUseCase<U> {
                 "Version must be in MAJOR.MINOR format (e.g. 1.0)",
             ));
         }
+        if command
+            .mime_type
+            .as_deref()
+            .is_some_and(|m| m.trim().len() > MAX_MIME_TYPE_LEN)
+        {
+            return Err(UseCaseError::validation(
+                "INVALID_MIME_TYPE",
+                "mimeType is longer than 100 characters",
+            ));
+        }
+        let schema_type = schema_type_of(command.schema_type.as_deref())?;
+        normalised_content(schema_type, &command.schema_content)?;
 
         Ok(())
     }
@@ -149,16 +197,19 @@ impl<U: UnitOfWork> UseCase for AddSchemaUseCase<U> {
             ));
         }
 
-        // Create spec version
-        let mut spec_version = SpecVersion::new(
-            event_type.id.clone(),
-            version,
-            command.schema_content.clone(),
-        );
-        spec_version.mime_type = command.mime_type.clone();
-        if let Some(st) = command.schema_type {
-            spec_version.schema_type = st;
-        }
+        // Create spec version: the normalised content, the schema type, and
+        // the MIME type sent or the type's default.
+        let schema_type = schema_type_of(command.schema_type.as_deref())?;
+        let content = normalised_content(schema_type, &command.schema_content)?;
+        let mut spec_version = SpecVersion::new(event_type.id.clone(), version, Some(content));
+        spec_version.schema_type = schema_type;
+        spec_version.mime_type = command
+            .mime_type
+            .as_deref()
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+            .unwrap_or(schema_type.default_mime_type())
+            .to_string();
 
         // Add to event type
         event_type.add_schema_version(spec_version);
@@ -181,7 +232,7 @@ mod tests {
         let cmd = AddSchemaCommand {
             event_type_id: EventTypeId::from_wire("et-123"),
             version: "1.0".to_string(),
-            mime_type: "application/schema+json".to_string(),
+            mime_type: None,
             schema_content: Some(serde_json::json!({"type": "object"})),
             schema_type: None,
         };

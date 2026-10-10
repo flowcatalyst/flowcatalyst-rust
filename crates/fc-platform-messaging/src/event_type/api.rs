@@ -627,7 +627,7 @@ pub(crate) async fn add_schema(
             AddSchemaCommand {
                 event_type_id: id.clone(),
                 version: req.version.trim().to_string(),
-                mime_type: "application/schema+json".to_string(),
+                mime_type: None,
                 schema_content: Some(schema),
                 schema_type: None,
             },

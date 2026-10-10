@@ -44,6 +44,7 @@ mod dispatch_scheduler_test;
 mod dispatch_schema_test;
 mod enum_roundtrip_test;
 mod event_type_app_scope_test;
+mod event_type_bug_fixes_test;
 mod function_api_test;
 mod function_catalogue_test;
 mod function_control_test;

@@ -30,7 +30,6 @@ use crate::event_type::operations::{
 use crate::event_type::repository::EventTypeRepository;
 use crate::seed::platform_event_types;
 use fc_platform_core::shared::authorization_service::checks;
-use fc_platform_core::shared::enum_str;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::jsonb_text;
 use fc_platform_core::shared::middleware::Authenticated;
@@ -171,15 +170,12 @@ pub struct BffAddSchemaRequest {
     pub version: String,
     /// Schema content
     pub schema: serde_json::Value,
-    /// MIME type (defaults to "application/schema+json")
-    #[serde(default = "default_mime_type")]
+    /// MIME type (absent or blank: the schema type's default,
+    /// "application/schema+json" for a JSON Schema)
+    #[serde(default)]
     pub mime_type: String,
     /// Schema type (defaults to "JSON_SCHEMA")
     pub schema_type: Option<String>,
-}
-
-fn default_mime_type() -> String {
-    "application/schema+json".to_string()
 }
 
 // ── Query parameters ──────────────────────────────────────────────────────
@@ -299,55 +295,89 @@ pub struct BffSyncPlatformResponse {
 pub async fn list_event_types(
     State(state): State<BffEventTypesState>,
     auth: Authenticated,
-    Query(query): Query<BffEventTypesQuery>,
+    Query(params): Query<QueryPairs>,
 ) -> Result<Json<BffEventTypeListResponse>, PlatformError> {
-    checks::can_read_event_types(&auth.0)?;
-
-    // Start with status-based or full list
-    let event_types = if let Some(ref status) = query.status {
-        let s: EventTypeStatus = status.parse()?;
-        state.event_type_repo.find_by_status(s).await?
-    } else if let Some(ref app) = query.application {
-        state.event_type_repo.find_by_application(app).await?
-    } else {
-        state.event_type_repo.find_all().await?
-    };
-
-    // Apply in-memory filters for subdomain/aggregate and client access
-    let items: Vec<BffEventTypeResponse> = event_types
-        .into_iter()
-        .filter(|et| {
-            // Filter by application if we fetched by status
-            if query.status.is_some() {
-                if let Some(ref app) = query.application {
-                    if &et.application != app {
-                        return false;
-                    }
-                }
-            }
-            // Filter by subdomain
-            if let Some(ref sub) = query.subdomain {
-                if &et.subdomain != sub {
-                    return false;
-                }
-            }
-            // Filter by aggregate
-            if let Some(ref agg) = query.aggregate {
-                if &et.aggregate != agg {
-                    return false;
-                }
-            }
-            // Client access filtering
-            match &et.client_id {
-                Some(cid) => auth.0.can_access_client(cid),
-                None => true,
-            }
-        })
-        .map(|et| et.into())
-        .collect();
+    // Go `list` (bugs 1, 2): GET /api/event-types's checks, then the facets,
+    // each matching any of its (repeatable) values.
+    let status = first_value(&params, "status")
+        .map(str::parse::<EventTypeStatus>)
+        .transpose()?;
+    let items: Vec<BffEventTypeResponse> =
+        visible_event_types(&state.event_type_repo, &auth, status)
+            .await?
+            .into_iter()
+            .filter(|et| {
+                match_any(
+                    et,
+                    &values(&params, "application"),
+                    &values(&params, "subdomain"),
+                    &values(&params, "aggregate"),
+                )
+            })
+            .map(|et| et.into())
+            .collect();
 
     let total = items.len();
     Ok(Json(BffEventTypeListResponse { items, total }))
+}
+
+/// A query string's parameters, in order; a repeated name keeps every value
+/// (the SPA's multi-selects send `application=a&application=b`).
+type QueryPairs = Vec<(String, String)>;
+
+/// Every value of the parameter `name`, in order.
+fn values<'a>(params: &'a QueryPairs, name: &str) -> Vec<&'a str> {
+    params
+        .iter()
+        .filter(|(k, _)| k == name)
+        .map(|(_, v)| v.as_str())
+        .collect()
+}
+
+/// The first value of `name`, an empty one being absent (Go `q.Get` read
+/// through `strPtr`).
+fn first_value<'a>(params: &'a QueryPairs, name: &str) -> Option<&'a str> {
+    values(params, name)
+        .into_iter()
+        .next()
+        .filter(|v| !v.is_empty())
+}
+
+/// Go `eventtype.MatchAny`: the event type's application, subdomain and
+/// aggregate are each one of the chosen values; an empty choice does not
+/// filter.
+fn match_any(
+    et: &EventType,
+    applications: &[&str],
+    subdomains: &[&str],
+    aggregates: &[&str],
+) -> bool {
+    let within = |set: &[&str], v: &str| set.is_empty() || set.contains(&v);
+    within(applications, &et.application)
+        && within(subdomains, &et.subdomain)
+        && within(aggregates, &et.aggregate)
+}
+
+/// Go `visibleEventTypes`: the read permission, then every event type of
+/// `status` (any when `None`) the caller may read. The BFF admits only the
+/// messaging view permission ([`checks::can_read_event_types`]), whose
+/// holders read every application's event types, so the application
+/// confinement of `GET /api/event-types` has nothing to remove here; the
+/// client scoping applies.
+async fn visible_event_types(
+    repo: &EventTypeRepository,
+    auth: &Authenticated,
+    status: Option<EventTypeStatus>,
+) -> Result<Vec<EventType>, PlatformError> {
+    checks::can_read_event_types(&auth.0)?;
+    let rows = match status {
+        Some(s) => repo.find_by_status(s).await?,
+        None => repo.find_all().await?,
+    };
+    Ok(rows
+        .into_iter()
+        .filter(|et| access::ensure_visible(&auth.0, et).is_ok())
+        .collect())
 }
 
 /// Get event type by ID
@@ -433,7 +463,7 @@ pub async fn create_event_type(
         let schema_cmd = AddSchemaCommand {
             event_type_id: id.clone(),
             version: "1.0".to_string(),
-            mime_type: "application/schema+json".to_string(),
+            mime_type: None,
             schema_content: Some(schema),
             schema_type: None,
         };
@@ -644,9 +674,9 @@ pub async fn add_schema(
     let cmd = AddSchemaCommand {
         event_type_id: id.clone(),
         version,
-        mime_type: req.mime_type,
+        mime_type: Some(req.mime_type),
         schema_content: Some(req.schema),
-        schema_type: enum_str::parse_opt(req.schema_type.as_deref())?,
+        schema_type: req.schema_type,
     };
 
     let use_case = AddSchemaUseCase::new(state.event_type_repo.clone(), state.unit_of_work.clone());
@@ -790,7 +820,7 @@ pub async fn sync_platform(
     auth: Authenticated,
     body: Option<Json<BffSyncPlatformRequest>>,
 ) -> Result<Json<BffSyncPlatformResponse>, PlatformError> {
-    checks::can_write_event_types(&auth.0)?;
+    checks::can_sync_platform_event_types(&auth.0)?;
 
     sync_platform_target(body.map(|b| b.0))?;
     let cmd = platform_sync_command();
@@ -847,19 +877,27 @@ pub fn platform_sync_command() -> SyncEventTypesCommand {
 )]
 pub async fn get_filter_applications(
     State(state): State<BffEventTypesState>,
-    _auth: Authenticated,
+    auth: Authenticated,
 ) -> Result<Json<BffFilterOptionsResponse>, PlatformError> {
-    let event_types = state.event_type_repo.find_active().await?;
+    // Every event type the caller may read, of any status (Go
+    // `eventTypeApplications`, bug 1).
+    let event_types = visible_event_types(&state.event_type_repo, &auth, None).await?;
+    Ok(Json(distinct_options(&event_types, |et| &et.application)))
+}
 
-    let mut options: Vec<String> = event_types
+/// The sorted distinct values of one facet, as the filter-options envelope.
+fn distinct_options(
+    rows: &[EventType],
+    facet: impl Fn(&EventType) -> &String,
+) -> BffFilterOptionsResponse {
+    let mut options: Vec<String> = rows
         .iter()
-        .map(|et| et.application.clone())
+        .map(|et| facet(et).clone())
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
     options.sort();
-
-    Ok(Json(BffFilterOptionsResponse { options }))
+    BffFilterOptionsResponse { options }
 }
 
 /// Get distinct subdomains (with optional application filter)
@@ -876,29 +914,17 @@ pub async fn get_filter_applications(
 )]
 pub async fn get_filter_subdomains(
     State(state): State<BffEventTypesState>,
-    _auth: Authenticated,
-    Query(query): Query<BffSubdomainFilterQuery>,
+    auth: Authenticated,
+    Query(params): Query<QueryPairs>,
 ) -> Result<Json<BffFilterOptionsResponse>, PlatformError> {
-    let event_types = state.event_type_repo.find_active().await?;
-
-    let filtered: Vec<_> = if let Some(ref app) = query.application {
-        event_types
-            .into_iter()
-            .filter(|et| &et.application == app)
-            .collect()
-    } else {
-        event_types
-    };
-
-    let mut options: Vec<String> = filtered
-        .iter()
-        .map(|et| et.subdomain.clone())
-        .collect::<HashSet<_>>()
+    // The subdomains of the visible event types of any of the chosen
+    // (repeatable) applications (Go `filterSubdomains`, bugs 1, 2).
+    let event_types: Vec<EventType> = visible_event_types(&state.event_type_repo, &auth, None)
+        .await?
         .into_iter()
+        .filter(|et| match_any(et, &values(&params, "application"), &[], &[]))
         .collect();
-    options.sort();
-
-    Ok(Json(BffFilterOptionsResponse { options }))
+    Ok(Json(distinct_options(&event_types, |et| &et.subdomain)))
 }
 
 /// Get distinct aggregates (with optional application and subdomain filters)
@@ -915,35 +941,24 @@ pub async fn get_filter_subdomains(
 )]
 pub async fn get_filter_aggregates(
     State(state): State<BffEventTypesState>,
-    _auth: Authenticated,
-    Query(query): Query<BffAggregateFilterQuery>,
+    auth: Authenticated,
+    Query(params): Query<QueryPairs>,
 ) -> Result<Json<BffFilterOptionsResponse>, PlatformError> {
-    let event_types = state.event_type_repo.find_active().await?;
-
-    let filtered: Vec<_> = event_types
+    // The aggregates of the visible event types of any of the chosen
+    // applications and subdomains (Go `filterAggregates`, bugs 1, 2).
+    let event_types: Vec<EventType> = visible_event_types(&state.event_type_repo, &auth, None)
+        .await?
         .into_iter()
         .filter(|et| {
-            let app_match = query
-                .application
-                .as_ref()
-                .is_none_or(|app| &et.application == app);
-            let sub_match = query
-                .subdomain
-                .as_ref()
-                .is_none_or(|sub| &et.subdomain == sub);
-            app_match && sub_match
+            match_any(
+                et,
+                &values(&params, "application"),
+                &values(&params, "subdomain"),
+                &[],
+            )
         })
         .collect();
-
-    let mut options: Vec<String> = filtered
-        .iter()
-        .map(|et| et.aggregate.clone())
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect();
-    options.sort();
-
-    Ok(Json(BffFilterOptionsResponse { options }))
+    Ok(Json(distinct_options(&event_types, |et| &et.aggregate)))
 }
 
 // ── Router ────────────────────────────────────────────────────────────────
