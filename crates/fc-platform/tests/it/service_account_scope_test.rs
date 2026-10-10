@@ -59,17 +59,19 @@ fn token(app: &TestApp, principal: &Principal) -> String {
         .expect("token")
 }
 
-/// The 403 code an anchor-gated write (creating another service account)
+/// The 403 code an anchor-gated write (regenerating an account's auth
+/// token, which asks anchor reach first, as Go's `RequireAnchor` there)
 /// made with `token` answers. The token's principal holds no permissions, so
 /// an anchor caller passes the anchor check and stops at the permission
 /// check (`PERMISSION_REQUIRED`); any other caller stops at the anchor check
-/// (`ANCHOR_REQUIRED`), as Go's bodies have it.
+/// (`ANCHOR_REQUIRED`), as Go's bodies have it. (Creating an account asks the
+/// permission first since Go b49b73a, so it cannot tell the two apart.)
 async fn anchor_only_status(app: &TestApp, token: &str, code: &str) -> String {
     let (status, body) = read_json(
         app.post(
-            "/api/service-accounts",
+            &format!("/api/service-accounts/{code}/regenerate-auth-token"),
             token,
-            json!({ "code": code, "name": code }),
+            json!({}),
         )
         .await,
     )
