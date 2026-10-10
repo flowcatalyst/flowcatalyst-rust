@@ -77,9 +77,10 @@ impl<U: UnitOfWork> UseCase for DeleteProcessUseCase<U> {
             )?;
 
         if process.status != ProcessStatus::Archived {
+            // Go's code and message (bug 23): the ones the UIs show.
             return Err(UseCaseError::business_rule(
-                "CANNOT_DELETE",
-                "Can only delete archived processes",
+                "PROCESS_NOT_ARCHIVED",
+                "Archive the process before deleting it.",
             ));
         }
 

@@ -78,6 +78,7 @@ mod permission_convention_test;
 mod portal_identity_test;
 mod postgres_integration_tests;
 mod principal_go_parity_test;
+mod process_lifecycle_test;
 mod profile_only_test;
 mod read_permissions_test;
 mod read_scope_bug_fixes_test;

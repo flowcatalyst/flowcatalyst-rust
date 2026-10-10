@@ -60,6 +60,12 @@ fn name_required() -> UseCaseError {
     UseCaseError::validation("NAME_REQUIRED", "Process name is required")
 }
 
+/// A blank description is stored as none (Go `optionalDescription`, bug 25:
+/// the SPA and /ui send "" for an emptied field).
+pub(crate) fn optional_description(description: Option<&String>) -> Option<String> {
+    description.filter(|d| !d.trim().is_empty()).cloned()
+}
+
 pub struct CreateProcessUseCase<U: UnitOfWork> {
     process_repo: Arc<ProcessRepository>,
     unit_of_work: Arc<U>,
@@ -115,7 +121,7 @@ impl<U: UnitOfWork> UseCase for CreateProcessUseCase<U> {
         }
 
         let mut process = Process::new(command.code.clone(), &command.name);
-        process.description = command.description.clone();
+        process.description = optional_description(command.description.as_ref());
         process.body = command.body.clone();
         if let Some(d) = &command.diagram_type {
             if !d.trim().is_empty() {

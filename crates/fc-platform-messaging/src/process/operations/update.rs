@@ -5,6 +5,7 @@ use fc_platform_core::shared::id::ProcessId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use super::create::optional_description;
 use super::events::ProcessUpdated;
 use crate::process::entity::ProcessStatus;
 use crate::process::repository::ProcessRepository;
@@ -98,9 +99,10 @@ impl<U: UnitOfWork> UseCase for UpdateProcessUseCase<U> {
             )?;
 
         if process.status == ProcessStatus::Archived {
+            // Go's code and message (bug 23): the ones the UIs show.
             return Err(UseCaseError::business_rule(
-                "CANNOT_UPDATE_ARCHIVED",
-                "Cannot update an archived process",
+                "PROCESS_ARCHIVED",
+                "Archived processes cannot be edited.",
             ));
         }
 
@@ -114,8 +116,11 @@ impl<U: UnitOfWork> UseCase for UpdateProcessUseCase<U> {
             }
         }
         if let Some(desc) = command.description.as_ref() {
-            if process.description.as_deref() != Some(desc.as_str()) {
-                process.description = Some(desc.clone());
+            // A blank description is none (Go bug 25: the SPA sends "" for an
+            // emptied field).
+            let desc = optional_description(Some(desc));
+            if process.description != desc {
+                process.description = desc;
                 any_change = true;
             }
         }
