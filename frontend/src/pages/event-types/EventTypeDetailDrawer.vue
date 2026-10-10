@@ -12,6 +12,11 @@ import SchemaViewerDialog from "./SchemaViewerDialog.vue";
 import EntityDrawer from "@/components/drawer/EntityDrawer.vue";
 import { useDrawerRoute } from "@/composables/useDrawerRoute";
 import { useDirtyForm } from "@/composables/useDirtyForm";
+import {
+	canArchiveEventType,
+	canDeleteEventType,
+	canEditEventType,
+} from "@/utils/event-type-rules";
 
 const emit = defineEmits<{
 	changed: [];
@@ -52,23 +57,8 @@ const { id, goToList } = useDrawerRoute({
 	dirty: computed(() => editing.value && dirty.value),
 });
 
-const canArchive = computed(() => {
-	const et = eventType.value;
-	if (!et || et.status !== "CURRENT") return false;
-	if (et.specVersions.length === 0) return true;
-	return et.specVersions.every((sv) => sv.status === "DEPRECATED");
-});
-
-const canDelete = computed(() => {
-	const et = eventType.value;
-	if (!et) return false;
-	if (et.status === "ARCHIVED") return true;
-	if (et.status === "CURRENT" && et.specVersions.length === 0) return true;
-	return (
-		et.status === "CURRENT" &&
-		et.specVersions.every((sv) => sv.status === "FINALISING")
-	);
-});
+const canArchive = computed(() => canArchiveEventType(eventType.value));
+const canDelete = computed(() => canDeleteEventType(eventType.value));
 
 // Reactive param: the drawer instance is reused when switching between rows.
 watch(
@@ -101,7 +91,8 @@ async function loadEventType(eventTypeId: string) {
 }
 
 function startEditing() {
-	if (eventType.value) {
+	// An archived event type is read-only (a stale ?edit=true link included).
+	if (canEditEventType(eventType.value) && eventType.value) {
 		editName.value = eventType.value.name;
 		editDescription.value = eventType.value.description || "";
 		editing.value = true;

@@ -7,6 +7,7 @@ import { useTableFilters } from "@/composables/useTableFilters";
 import { eventTypesApi } from "@/api/event-types";
 import type { EventType } from "@/api/event-types";
 import { exportSchemasAsZip } from "@/utils/schema-export";
+import { canEditEventType } from "@/utils/event-type-rules";
 
 const router = useRouter();
 const route = useRoute();
@@ -296,8 +297,10 @@ function getSchemaStatusSeverity(status: string) {
                 rounded
                 text
                 severity="secondary"
-                v-tooltip.left="'Edit'"
-                @click.stop="viewEventType(data, true)"
+                :disabled="!canEditEventType(data)"
+                :aria-label="canEditEventType(data) ? 'Edit' : 'Archived event types cannot be edited'"
+                v-tooltip.left="canEditEventType(data) ? 'Edit' : 'Archived event types cannot be edited'"
+                @click.stop="viewEventType(data, canEditEventType(data))"
               />
             </div>
           </template>
