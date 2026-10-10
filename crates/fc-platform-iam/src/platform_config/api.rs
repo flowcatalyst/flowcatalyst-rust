@@ -27,6 +27,7 @@ use crate::application::repository::ApplicationRepository;
 use crate::shared::authorization_service::ApplicationAccessService;
 use fc_platform_core::shared::api_common::CreatedResponse;
 use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::shared::authorization_service::ApplicationScope;
 use fc_platform_core::shared::authorization_service::AuthContext;
 use fc_platform_core::shared::encryption_service::{is_encrypted_ref, EncryptionService};
 use fc_platform_core::shared::enum_str::parse_opt;
@@ -556,17 +557,24 @@ async fn require_property_access(
     .await
 }
 
-/// Rust's application confinement on top of Go's gate: a code naming a
+/// The application confinement on top of Go's gate: a code naming a
 /// registered application must be one the caller reaches (404 otherwise,
 /// the owner's rule for an out-of-scope application), so an anchor service
-/// account of one application cannot rewrite another's configuration. A
-/// code no application has is not confined, as in Go.
+/// account of one application cannot read, rewrite or grant access to
+/// another's configuration. An anchor caller that does not reach every
+/// application is also refused a code no application has (Go fcce86c), so
+/// it cannot probe or squat codes it does not own; that answers the same
+/// 404. Any other caller with an unregistered code is not confined, as in Go
+/// (role grants and masked secrets already bound it).
 async fn require_application_access_if_registered(
     state: &GoPlatformConfigState,
     ctx: &AuthContext,
     app: &str,
 ) -> Result<(), PlatformError> {
-    if state.application_repo.find_by_code(app).await?.is_some() {
+    let confined = state.application_repo.find_by_code(app).await?.is_some()
+        || (ctx.is_anchor()
+            && state.app_access.scope_for(&ctx.principal_id).await? != ApplicationScope::All);
+    if confined {
         state
             .app_access
             .require_application_access(ctx, app)

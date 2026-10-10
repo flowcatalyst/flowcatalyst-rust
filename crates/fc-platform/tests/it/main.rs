@@ -76,6 +76,7 @@ mod password_flows_test;
 mod password_reset_rate_limit_test;
 mod per_operation_gate_test;
 mod permission_convention_test;
+mod platform_config_confinement_test;
 mod portal_identity_test;
 mod postgres_integration_tests;
 mod principal_go_parity_test;

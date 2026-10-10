@@ -542,7 +542,10 @@ fn role_holder_token(app: &TestApp, role: &str) -> String {
 #[ignore = "requires Docker"]
 async fn config_properties_are_set_read_and_deleted_as_go() {
     let app = setup().await;
-    let admin = app.anchor_admin_token().await;
+    // A caller reaching every application: an unregistered code is refused
+    // to an application-scoped anchor (Go fcce86c), and a principal that is
+    // not stored reaches no application.
+    let admin = app.anchor_admin_token_all_applications().await;
     let base = "/api/config/parity-unregistered/section-a";
 
     let set = assert_status(
