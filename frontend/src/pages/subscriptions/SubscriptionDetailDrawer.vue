@@ -11,6 +11,7 @@ import {
 import EntityDrawer from "@/components/drawer/EntityDrawer.vue";
 import { useDrawerRoute } from "@/composables/useDrawerRoute";
 import { useDirtyForm } from "@/composables/useDirtyForm";
+import { QUEUE_OPTIONS, queueFormValue } from "@/utils/subscription-queue";
 
 const emit = defineEmits<{
 	changed: [];
@@ -97,7 +98,7 @@ function startEditing() {
 		editDescription.value = subscription.value.description || "";
 		editEndpoint.value = subscription.value.endpoint || "";
 		editConnectionId.value = subscription.value.connectionId || "";
-		editQueue.value = subscription.value.queue || "";
+		editQueue.value = queueFormValue(subscription.value.queue);
 		editMaxAgeSeconds.value = subscription.value.maxAgeSeconds;
 		editDelaySeconds.value = subscription.value.delaySeconds;
 		editSequence.value = subscription.value.sequence;
@@ -296,7 +297,13 @@ function getScopeLabel(sub: Subscription) {
             </FcFormField>
             <FcFormField label="Queue">
               <template #default="{ id: fieldId }">
-                <InputText :id="fieldId" v-model="editQueue" />
+                <Select
+                  :id="fieldId"
+                  v-model="editQueue"
+                  :options="[...QUEUE_OPTIONS]"
+                  optionLabel="label"
+                  optionValue="value"
+                />
               </template>
             </FcFormField>
             <FcFormField label="Max Age (seconds)">

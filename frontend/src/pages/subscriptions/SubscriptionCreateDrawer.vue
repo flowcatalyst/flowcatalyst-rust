@@ -11,6 +11,7 @@ import { connectionsApi, type Connection } from "@/api/connections";
 import { eventTypesApi, type EventType } from "@/api/event-types";
 import ConnectionCreateDialog from "@/components/ConnectionCreateDialog.vue";
 import EntityDrawer from "@/components/drawer/EntityDrawer.vue";
+import { QUEUE_OPTIONS } from "@/utils/subscription-queue";
 import { useDrawerRoute } from "@/composables/useDrawerRoute";
 
 const emit = defineEmits<{
@@ -23,7 +24,7 @@ const name = ref("");
 const description = ref("");
 const endpoint = ref("");
 const connectionId = ref<string | null>(null);
-const queue = ref("");
+const queue = ref<string>("DEFAULT");
 const maxAgeSeconds = ref<number>(86400);
 const delaySeconds = ref<number>(0);
 const sequence = ref<number>(99);
@@ -42,7 +43,7 @@ const dirty = computed(
 		code.value !== "" ||
 		name.value !== "" ||
 		endpoint.value !== "" ||
-		queue.value !== "" ||
+		queue.value !== "DEFAULT" ||
 		selectedEventTypes.value.length > 0 ||
 		dispatchPoolId.value !== null,
 );
@@ -353,8 +354,14 @@ async function onSubmit() {
 
       <div class="form-field">
         <label>Queue <span class="required">*</span></label>
-        <InputText v-model="queue" placeholder="default" class="full-width" />
-        <small class="hint"> Queue name for routing dispatch jobs </small>
+        <Select
+          v-model="queue"
+          :options="[...QUEUE_OPTIONS]"
+          optionLabel="label"
+          optionValue="value"
+          class="full-width"
+        />
+        <small class="hint"> Dispatch priority for the jobs this subscription raises </small>
       </div>
 
       <div class="form-field">
