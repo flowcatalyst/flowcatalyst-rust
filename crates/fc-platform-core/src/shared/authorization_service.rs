@@ -722,25 +722,23 @@ pub mod checks {
         require_anchor_scope(context)
     }
 
-    /// Role administration through `/bff/roles`: anchor scope, as Go's BFF
-    /// asks (`RequireAnchor`, shared/bff/roles.go), then the role
-    /// permission (owner decision #25).
+    /// Role administration through `/bff/roles`: the role permission for the
+    /// operation, then anchor scope, in Go's order since 5b75de5 (its
+    /// `roleGate` runs before the handler's `RequireAnchor`; owner decision
+    /// #25 asked both before Go did).
     pub fn can_administer_bff_roles(context: &impl Authority, permission: &str) -> Result<()> {
-        anchor_with(context, permission)
+        require_permission(context, permission)?;
+        require_anchor_scope(context)
     }
 
-    /// Re-running the built-in role sync: anchor and any role write
-    /// permission (Java RolesBff sync-platform).
+    /// Re-running the built-in role sync, which creates, updates and removes
+    /// platform roles: role create, update and delete, all three, then
+    /// anchor scope (Go `/bff/roles/sync-platform` since 5b75de5).
     pub fn can_sync_platform_roles(context: &impl Authority) -> Result<()> {
-        require_anchor_scope(context)?;
-        require_any_permission(
-            context,
-            &[
-                permissions::iam::ROLE_CREATE,
-                permissions::iam::ROLE_UPDATE,
-                permissions::iam::ROLE_DELETE,
-            ],
-        )
+        require_permission(context, permissions::iam::ROLE_CREATE)?;
+        require_permission(context, permissions::iam::ROLE_UPDATE)?;
+        require_permission(context, permissions::iam::ROLE_DELETE)?;
+        require_anchor_scope(context)
     }
 
     /// Client-access grant and revoke: anchor reach and

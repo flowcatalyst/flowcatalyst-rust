@@ -28,6 +28,7 @@ mod audit_redaction_test;
 mod auth_and_list_test;
 mod auth_purger_test;
 mod auth_security_test;
+mod bff_roles_gate_test;
 mod bff_sync_platform_test;
 mod client_admin_test;
 mod delivery_policy_test;

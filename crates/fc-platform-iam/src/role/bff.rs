@@ -197,9 +197,11 @@ pub struct BffRolesState {
 )]
 pub async fn list_roles(
     State(state): State<BffRolesState>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Query(query): Query<BffRolesQuery>,
 ) -> Result<Json<BffRoleListResponse>, PlatformError> {
+    // Go 5b75de5: the /bff/roles reads need the role view permission.
+    checks::can_read_roles(&auth.0)?;
     // Go filters every role in memory: `application` exactly,
     // `source` case-insensitively, both when both are given.
     let application = query.application.as_deref().filter(|s| !s.is_empty());
@@ -233,8 +235,10 @@ pub async fn list_roles(
 )]
 pub async fn get_filter_applications(
     State(state): State<BffRolesState>,
-    _auth: Authenticated,
+    auth: Authenticated,
 ) -> Result<Json<BffApplicationOptionsResponse>, PlatformError> {
+    // Go 5b75de5: the /bff/roles reads need the role view permission.
+    checks::can_read_roles(&auth.0)?;
     // Go `FindActive`: active applications ordered by code.
     let mut apps = state.application_repo.find_active().await?;
     apps.sort_by(|a, b| a.code.cmp(&b.code));
@@ -363,9 +367,11 @@ async fn permission_catalog(
 )]
 pub async fn list_permissions(
     State(state): State<BffRolesState>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Query(query): Query<BffPermissionsQuery>,
 ) -> Result<Json<BffPermissionListResponse>, PlatformError> {
+    // Go 5b75de5: the /bff/roles reads need the role view permission.
+    checks::can_read_roles(&auth.0)?;
     let permissions =
         permission_catalog(&state, query.application.as_deref().unwrap_or("")).await?;
     let total = permissions.len();
@@ -392,9 +398,11 @@ pub async fn list_permissions(
 )]
 pub async fn get_permission(
     State(state): State<BffRolesState>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Path(permission): Path<String>,
 ) -> Result<Json<BffPermissionResponse>, PlatformError> {
+    // Go 5b75de5: the /bff/roles reads need the role view permission.
+    checks::can_read_roles(&auth.0)?;
     let found = permission_catalog(&state, "")
         .await?
         .into_iter()
@@ -421,9 +429,11 @@ pub async fn get_permission(
 )]
 pub async fn get_role(
     State(state): State<BffRolesState>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Path(role_name): Path<String>,
 ) -> Result<Json<BffRoleResponse>, PlatformError> {
+    // Go 5b75de5: the /bff/roles reads need the role view permission.
+    checks::can_read_roles(&auth.0)?;
     let role = if role_name.contains(':') {
         state.role_repo.find_by_name(&role_name).await?
     } else {
@@ -909,7 +919,8 @@ pub async fn bff_create_permission(
     auth: Authenticated,
     Json(body): Json<BffCreatePermissionRequest>,
 ) -> Result<(StatusCode, Json<BffPermissionResponse>), PlatformError> {
-    checks::require_anchor(&auth.0)?;
+    // Go 5b75de5: defining a permission is a role create, then anchor.
+    checks::can_administer_bff_roles(&auth.0, permissions::iam::ROLE_CREATE)?;
     let cmd = DefinePermissionCommand {
         application: body.application.trim().to_string(),
         context: body.context.trim().to_string(),
