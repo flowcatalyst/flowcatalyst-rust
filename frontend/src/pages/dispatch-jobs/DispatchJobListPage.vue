@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from "vue";
+import { computed, ref, onMounted, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useListState } from "@/composables/useListState";
 import { useTableFilters } from "@/composables/useTableFilters";
@@ -10,6 +10,7 @@ import {
 	type DispatchJobsListParams,
 } from "@/api/dispatch-jobs";
 import { toast } from "@/utils/errorBus";
+import { codeLevels } from "@/utils/code-facets";
 
 interface FilterOption {
 	label: string;
@@ -213,12 +214,25 @@ function metadataFull(job: DispatchJob): string {
 	return (job.metadata ?? []).map((m) => `${m.key}: ${m.value}`).join("\n");
 }
 
-// Filter options
-const applicationOptions = ref<FilterOption[]>([]);
-const subdomainOptions = ref<FilterOption[]>([]);
-const aggregateOptions = ref<FilterOption[]>([]);
-const codeOptions = ref<FilterOption[]>([]);
+// Filter options. The endpoint returns the distinct codes; the application,
+// subdomain and aggregate options are their segments, each narrowed by the
+// levels chosen above it (utils/code-facets.ts).
+const distinctCodes = ref<string[]>([]);
 const statusOptions = ref<FilterOption[]>([]);
+const toOptions = (values: string[]): FilterOption[] =>
+	values.map((v) => ({ label: v, value: v }));
+const levels = computed(() =>
+	codeLevels(
+		distinctCodes.value,
+		filters.applications.value,
+		filters.subdomains.value,
+		filters.aggregates.value,
+	),
+);
+const applicationOptions = computed(() => toOptions(levels.value.applications));
+const subdomainOptions = computed(() => toOptions(levels.value.subdomains));
+const aggregateOptions = computed(() => toOptions(levels.value.aggregates));
+const codeOptions = computed(() => toOptions(levels.value.codes));
 
 onMounted(async () => {
 	await loadFilterOptions();
@@ -229,16 +243,9 @@ async function loadFilterOptions() {
 	try {
 		const data = await dispatchJobsApi.filterOptions();
 		// The wire facets are plain string arrays (statuses/codes/clientIds/
-		// dispatchPoolIds/subscriptionIds/kinds); applications, subdomains and
-		// aggregates are not surfaced by this endpoint, so those selects stay
-		// empty (they were silently empty before, too — the old shape never
-		// matched the wire).
-		const toOptions = (values: string[]): FilterOption[] =>
-			values.map((v) => ({ label: v, value: v }));
-		applicationOptions.value = [];
-		subdomainOptions.value = [];
-		aggregateOptions.value = [];
-		codeOptions.value = toOptions(data.codes);
+		// dispatchPoolIds/subscriptionIds/kinds); the application, subdomain
+		// and aggregate options are derived from the codes (above).
+		distinctCodes.value = data.codes;
 		statusOptions.value = toOptions(data.statuses);
 	} catch (error) {
 		console.error("Failed to load filter options:", error);
