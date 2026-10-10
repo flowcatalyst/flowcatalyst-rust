@@ -8,6 +8,7 @@ use crate::support;
 
 use axum::http::StatusCode;
 use serde_json::Value;
+use std::slice::from_ref;
 
 use fc_platform::client::entity::Client;
 use fc_platform::domain::{Principal, UserScope};
@@ -84,9 +85,12 @@ fn values(v: &Value) -> Vec<String> {
         .as_array()
         .unwrap_or_else(|| panic!("not an array: {v}"))
         .iter()
-        .map(|x| match x {
-            Value::String(s) => s.clone(),
-            other => other["value"].as_str().unwrap().to_string(),
+        .map(|x| {
+            // A plain string, or a {label, value} option.
+            x.as_str()
+                .or_else(|| x["value"].as_str())
+                .unwrap()
+                .to_string()
         })
         .collect();
     out.sort();
@@ -131,7 +135,7 @@ async fn filter_options_are_scoped_to_the_callers_tenants() {
         ["mine:orders:order:created", "platform:iam:user:created"],
         "{jobs}"
     );
-    assert_eq!(values(&jobs["clientIds"]), [mine.clone()], "{jobs}");
+    assert_eq!(values(&jobs["clientIds"]), from_ref(&mine), "{jobs}");
 
     let events = assert_status(
         app.get("/api/events/filter-options", &token).await,

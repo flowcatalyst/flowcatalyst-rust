@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
 
+use crate::dispatch_job::api::list_limit;
 use crate::dispatch_job::signing_guard::SigningGuard;
 use crate::event::entity::{ContextData, Event, EventRead};
 use crate::event::repository::EventReadDetail;
@@ -628,7 +629,7 @@ pub async fn list_events_unchecked(
     };
     // `size` (SPA) wins over `limit` (SDK); above 1,000 is clamped to 1,000,
     // none (or not positive) is the default 100 (Go bug 21).
-    let limit = crate::dispatch_job::api::list_limit(query.size, query.limit);
+    let limit = list_limit(query.size, query.limit);
     fn non_empty(v: &Option<String>) -> Option<&str> {
         v.as_deref().filter(|v| !v.is_empty())
     }
