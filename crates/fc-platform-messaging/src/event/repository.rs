@@ -572,18 +572,32 @@ impl EventRepository {
 
     /// Distinct non-null values of one read-projection column, sorted, at
     /// most 200 (Go `DistinctValues`).
-    pub async fn distinct_read_values(&self, column: &str) -> Result<Vec<String>> {
+    pub async fn distinct_read_values(
+        &self,
+        column: &str,
+        accessible: Option<&[String]>,
+    ) -> Result<Vec<String>> {
         if !["application", "subdomain", "type"].contains(&column) {
             return Err(PlatformError::internal(format!(
                 "event repo: column {column:?} not allowed"
             )));
         }
-        Ok(sqlx::query_scalar::<_, String>(&format!(
-            "SELECT DISTINCT {column} FROM msg_events_read WHERE {column} IS NOT NULL \
-             ORDER BY 1 LIMIT 200"
-        ))
-        .fetch_all(&self.pool)
-        .await?)
+        // SECURITY: tenant scoping as the list's (`accessible`): a non-anchor
+        // caller sees the values of platform events and its own tenants'
+        // only (Go bug 18). `None` is an anchor: every event.
+        let mut qb = QueryBuilder::<Postgres>::new(format!(
+            "SELECT DISTINCT {column} FROM msg_events_read WHERE {column} IS NOT NULL"
+        ));
+        if let Some(ids) = accessible {
+            qb.push(" AND (client_id IS NULL OR client_id = ANY(")
+                .push_bind(ids.to_vec())
+                .push("))");
+        }
+        qb.push(" ORDER BY 1 LIMIT 200");
+        Ok(qb
+            .build_query_scalar::<String>()
+            .fetch_all(&self.pool)
+            .await?)
     }
 
     /// Cursor-paginated read of `msg_events_read`. Drops the

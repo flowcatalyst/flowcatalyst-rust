@@ -80,6 +80,7 @@ mod postgres_integration_tests;
 mod principal_go_parity_test;
 mod profile_only_test;
 mod read_permissions_test;
+mod read_scope_bug_fixes_test;
 mod role_catalogue_go_parity_test;
 mod route_auth_convention_test;
 mod route_wiring_convention_test;

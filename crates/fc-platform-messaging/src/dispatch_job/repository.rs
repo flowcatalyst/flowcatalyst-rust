@@ -932,7 +932,11 @@ impl DispatchJobRepository {
 
     /// Distinct non-null values of one whitelisted read-projection column,
     /// sorted, at most 200 (Go `DistinctValues`).
-    pub async fn distinct_read_values(&self, column: &str) -> Result<Vec<String>> {
+    pub async fn distinct_read_values(
+        &self,
+        column: &str,
+        accessible: Option<&[String]>,
+    ) -> Result<Vec<String>> {
         const ALLOWED: &[&str] = &[
             "status",
             "code",
@@ -946,12 +950,19 @@ impl DispatchJobRepository {
                 "dispatch_job repo: column {column:?} not allowed"
             )));
         }
-        let rows: Vec<(String,)> = sqlx::query_as(&format!(
-            "SELECT DISTINCT {column}::text FROM msg_dispatch_jobs_read \
-             WHERE {column} IS NOT NULL ORDER BY 1 LIMIT 200"
-        ))
-        .fetch_all(&self.pool)
-        .await?;
+        // SECURITY: tenant scoping as the list's (`accessible`): a non-anchor
+        // caller sees the values of platform jobs and its own tenants' only
+        // (Go bug 18). `None` is an anchor: every job.
+        let mut qb = QueryBuilder::<Postgres>::new(format!(
+            "SELECT DISTINCT {column}::text FROM msg_dispatch_jobs_read WHERE {column} IS NOT NULL"
+        ));
+        if let Some(ids) = accessible {
+            qb.push(" AND (client_id IS NULL OR client_id = ANY(")
+                .push_bind(ids.to_vec())
+                .push("))");
+        }
+        qb.push(" ORDER BY 1 LIMIT 200");
+        let rows: Vec<(String,)> = qb.build_query_as().fetch_all(&self.pool).await?;
         Ok(rows.into_iter().map(|(v,)| v).collect())
     }
 

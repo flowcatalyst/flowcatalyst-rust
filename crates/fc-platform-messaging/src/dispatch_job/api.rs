@@ -355,6 +355,17 @@ pub struct DispatchJobsQuery {
     pub source: Option<String>,
 }
 
+/// The row count a list answers (dispatch jobs and events): `size` (the
+/// SPA's) wins over `limit` (the SDK's); above 1,000 is clamped to 1,000,
+/// none or not positive is the default 100 (Go `FindWithFilters`, bug 21:
+/// above the cap used to fall back to 100).
+pub(crate) fn list_limit(size: Option<i64>, limit: Option<i64>) -> i64 {
+    match size.filter(|s| *s > 0).or(limit) {
+        Some(l) if l > 0 => l.min(1000),
+        _ => 100,
+    }
+}
+
 fn split_csv(input: Option<&str>) -> Vec<String> {
     input
         .map(|s| {
@@ -708,11 +719,9 @@ pub async fn list_dispatch_jobs_unchecked(
     fn non_empty(v: &Option<String>) -> Option<&str> {
         v.as_deref().filter(|v| !v.is_empty())
     }
-    // `size` (SPA) wins over `limit` (SDK); out of range is Go's 100.
-    let limit = match query.size.filter(|s| *s > 0).or(query.limit) {
-        Some(l) if (1..=1000).contains(&l) => l,
-        _ => 100,
-    };
+    // `size` (SPA) wins over `limit` (SDK); above 1,000 is clamped to 1,000,
+    // none (or not positive) is the default 100 (Go bug 21).
+    let limit = list_limit(query.size, query.limit);
     let filter = crate::dispatch_job::repository::DispatchJobReadFilter {
         status: non_empty(&query.status),
         statuses: &statuses,
@@ -1188,14 +1197,19 @@ pub async fn get_filter_options(
 ) -> Result<Json<DispatchJobFilterOptionsResponse>, PlatformError> {
     checks::can_read_dispatch_jobs(&auth.0)?;
 
+    // Scoped as the list is (Go bug 18): a client user sees the values of
+    // platform jobs and its own tenants' jobs only; an anchor every job.
+    let accessible: Option<Vec<String>> =
+        (!auth.0.is_anchor()).then(|| caller_reach::client_ids(&auth.0));
+    let scope = accessible.as_deref();
     let repo = &state.dispatch_job_repo;
     let (statuses, codes, client_ids, dispatch_pool_ids, subscription_ids, kinds) = tokio::try_join!(
-        repo.distinct_read_values("status"),
-        repo.distinct_read_values("code"),
-        repo.distinct_read_values("client_id"),
-        repo.distinct_read_values("dispatch_pool_id"),
-        repo.distinct_read_values("subscription_id"),
-        repo.distinct_read_values("kind"),
+        repo.distinct_read_values("status", scope),
+        repo.distinct_read_values("code", scope),
+        repo.distinct_read_values("client_id", scope),
+        repo.distinct_read_values("dispatch_pool_id", scope),
+        repo.distinct_read_values("subscription_id", scope),
+        repo.distinct_read_values("kind", scope),
     )?;
 
     Ok(Json(DispatchJobFilterOptionsResponse {
@@ -1280,7 +1294,20 @@ pub async fn list_dispatch_jobs_raw(
 
 #[cfg(test)]
 mod tests {
+    use super::list_limit;
     use super::priority_rank;
+
+    /// Go bug 21: above the cap is clamped to it, not reset to 100.
+    #[test]
+    fn a_list_size_above_the_cap_is_clamped() {
+        assert_eq!(list_limit(Some(1001), None), 1000);
+        assert_eq!(list_limit(Some(5000), Some(10)), 1000);
+        assert_eq!(list_limit(None, Some(2000)), 1000);
+        assert_eq!(list_limit(Some(250), None), 250);
+        assert_eq!(list_limit(Some(0), Some(30)), 30);
+        assert_eq!(list_limit(None, None), 100);
+        assert_eq!(list_limit(None, Some(-5)), 100);
+    }
 
     #[test]
     fn priority_ranks_the_jobs_own_claim_as_the_scheduler_reads_it() {

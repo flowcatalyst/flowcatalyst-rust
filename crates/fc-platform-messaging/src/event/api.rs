@@ -626,11 +626,9 @@ pub async fn list_events_unchecked(
             .and_then(|v| chrono::DateTime::parse_from_rfc3339(v).ok())
             .map(|t| t.with_timezone(&chrono::Utc))
     };
-    // `size` (SPA) wins over `limit` (SDK); out of range is Go's 100.
-    let limit = match query.size.filter(|s| *s > 0).or(query.limit) {
-        Some(l) if (1..=1000).contains(&l) => l,
-        _ => 100,
-    };
+    // `size` (SPA) wins over `limit` (SDK); above 1,000 is clamped to 1,000,
+    // none (or not positive) is the default 100 (Go bug 21).
+    let limit = crate::dispatch_job::api::list_limit(query.size, query.limit);
     fn non_empty(v: &Option<String>) -> Option<&str> {
         v.as_deref().filter(|v| !v.is_empty())
     }
@@ -914,11 +912,16 @@ pub async fn event_filter_options(
     auth: Authenticated,
 ) -> Result<Json<EventFilterOptionsResponse>, PlatformError> {
     checks::can_read_events(&auth.0)?;
+    // Scoped as the list is (Go bug 18): platform events plus the caller's
+    // own tenants; an anchor every event.
+    let accessible: Option<Vec<String>> =
+        (!auth.0.is_anchor()).then(|| caller_reach::client_ids(&auth.0));
+    let scope = accessible.as_deref();
     let repo = &state.event_repo;
     let (applications, subdomains, types) = tokio::try_join!(
-        repo.distinct_read_values("application"),
-        repo.distinct_read_values("subdomain"),
-        repo.distinct_read_values("type"),
+        repo.distinct_read_values("application", scope),
+        repo.distinct_read_values("subdomain", scope),
+        repo.distinct_read_values("type", scope),
     )?;
     let options = |values: Vec<String>| {
         values
