@@ -51,28 +51,14 @@ pub struct ResetApprovalListResponse {
     pub requests: Vec<ResetApprovalDto>,
 }
 
-/// Go `RequireUserAdmin`: an anchor reaches every target but still needs a
-/// user-write permission; anyone else only a user of a client they can
-/// access.
-fn can_write_principals_of_client(
+/// Go `RequireUserAdmin(…, CanUpdatePrincipals)`: an anchor reaches every
+/// target but still needs `platform:iam:user:update`; anyone else only a
+/// user of a client they can access.
+fn can_update_principals_of_client(
     ctx: &AuthContext,
     client_id: Option<&ClientId>,
 ) -> Result<(), PlatformError> {
-    if !ctx.is_anchor() {
-        let Some(client_id) = client_id else {
-            return Err(PlatformError::forbidden_code(
-                "ANCHOR_REQUIRED",
-                "anchor scope required for platform users",
-            ));
-        };
-        if !ctx.can_access_client(client_id) {
-            return Err(PlatformError::forbidden_code(
-                "SCOPE_FORBIDDEN",
-                "no access to this user's client",
-            ));
-        }
-    }
-    checks::can_write_principals(ctx)
+    checks::require_user_admin(ctx, client_id, checks::can_update_principals)
 }
 
 /// List pending lost-device reset requests for your client(s)
@@ -88,7 +74,7 @@ pub async fn list_reset_approvals(
     State(state): State<ResetApprovalsState>,
     auth: Authenticated,
 ) -> Result<Json<ResetApprovalListResponse>, PlatformError> {
-    checks::can_write_principals(&auth.0)?;
+    checks::can_update_principals(&auth.0)?;
     let scope = (!auth.0.is_anchor()).then_some(auth.0.accessible_clients.as_slice());
     let pending = state.approvals.list_pending(scope).await?;
     let ids: Vec<PrincipalId> = pending.iter().map(|r| r.principal_id().clone()).collect();
@@ -145,7 +131,7 @@ pub async fn approve_reset_approval(
     Path(id): Path<String>,
 ) -> Result<Json<StatusChangeResponse>, PlatformError> {
     let request = load(&state, &id).await?;
-    can_write_principals_of_client(&auth.0, request.client_id())?;
+    can_update_principals_of_client(&auth.0, request.client_id())?;
     if !state
         .approvals
         .decide(
@@ -196,7 +182,7 @@ pub async fn deny_reset_approval(
     Path(id): Path<String>,
 ) -> Result<Json<StatusChangeResponse>, PlatformError> {
     let request = load(&state, &id).await?;
-    can_write_principals_of_client(&auth.0, request.client_id())?;
+    can_update_principals_of_client(&auth.0, request.client_id())?;
     if !state
         .approvals
         .decide(request.id(), Decision::Denied, auth.0.principal_id.as_str())

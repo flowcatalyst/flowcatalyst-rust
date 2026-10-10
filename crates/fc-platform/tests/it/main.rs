@@ -70,6 +70,7 @@ mod oauth_secret_rotation_test;
 mod openapi_go_contract_test;
 mod password_flows_test;
 mod password_reset_rate_limit_test;
+mod per_operation_gate_test;
 mod permission_convention_test;
 mod portal_identity_test;
 mod postgres_integration_tests;

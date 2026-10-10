@@ -592,7 +592,7 @@ pub async fn create_service_account<U: UnitOfWork>(
     auth: Authenticated,
     Json(req): Json<CreateServiceAccountRequest>,
 ) -> Result<(StatusCode, Json<CreateServiceAccountResponse>), PlatformError> {
-    checks::can_write_service_accounts(&auth.0)?;
+    checks::can_create_service_accounts(&auth.0)?;
     // Go `WebhookCredentialsDTO.toEntity`: an unknown type is refused, never
     // coerced (empty means none). The rest of the members are not used: the
     // account is created with generated credentials, as Go creates it.
@@ -734,7 +734,7 @@ pub async fn update_service_account<U: UnitOfWork>(
     Json(req): Json<UpdateServiceAccountRequest>,
 ) -> Result<StatusCode, PlatformError> {
     let id = account_or_principal_id(id);
-    checks::can_write_service_accounts(&auth.0)?;
+    checks::can_update_service_account_details(&auth.0)?;
     let webhook_credentials = req
         .webhook_credentials
         .as_ref()
@@ -1118,7 +1118,7 @@ pub async fn deactivate_service_account(
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
     let id = account_or_principal_id(id);
-    checks::can_write_service_accounts(&auth.0)?;
+    checks::can_update_service_accounts(&auth.0)?;
     state
         .deactivate_use_case
         .run(

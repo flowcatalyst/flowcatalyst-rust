@@ -174,7 +174,7 @@ pub async fn create_dispatch_pool<U: UnitOfWork>(
     // Go `CanWriteDispatchPools` (dispatchpool/api/api.go): a pool
     // permission first; the use case then validates (400) and checks the
     // caller's reach into the requested client (403 SCOPE_FORBIDDEN).
-    checks::can_write_dispatch_pools(&auth.0)?;
+    checks::can_create_dispatch_pools(&auth.0)?;
 
     let command = CreateDispatchPoolCommand {
         code: req.code,
@@ -310,7 +310,7 @@ pub async fn update_dispatch_pool<U: UnitOfWork>(
     let id = DispatchPoolId::from_wire(id);
     // Go `CanWriteDispatchPools` (dispatchpool/api/api.go): a pool
     // permission first; client reach is checked below.
-    checks::can_write_dispatch_pools(&auth.0)?;
+    checks::can_update_dispatch_pools(&auth.0)?;
 
     // The use case validates, loads (404) and checks the caller's scope on
     // the pool (403 SCOPE_FORBIDDEN), in Go's order.
@@ -353,7 +353,7 @@ pub async fn archive_dispatch_pool<U: UnitOfWork>(
     let id = DispatchPoolId::from_wire(id);
     // Go `CanWriteDispatchPools` (dispatchpool/api/api.go): a pool
     // permission first; client reach is checked below.
-    checks::can_write_dispatch_pools(&auth.0)?;
+    checks::can_delete_dispatch_pools(&auth.0)?;
     // The use case loads the pool (404) and checks the caller's scope on it
     // (Go `CheckScopeAccess`).
 
@@ -391,7 +391,7 @@ pub async fn suspend_dispatch_pool<U: UnitOfWork>(
     let id = DispatchPoolId::from_wire(id);
     // Go `CanWriteDispatchPools` (dispatchpool/api/api.go): a pool
     // permission first; client reach is checked below.
-    checks::can_write_dispatch_pools(&auth.0)?;
+    checks::can_update_dispatch_pools(&auth.0)?;
     // The use case loads the pool (404) and checks the caller's scope on it
     // (Go `CheckScopeAccess`).
 
@@ -431,7 +431,7 @@ pub async fn activate_dispatch_pool<U: UnitOfWork>(
     let id = DispatchPoolId::from_wire(id);
     // Go `CanWriteDispatchPools` (dispatchpool/api/api.go): a pool
     // permission first; client reach is checked below.
-    checks::can_write_dispatch_pools(&auth.0)?;
+    checks::can_update_dispatch_pools(&auth.0)?;
     // The use case loads the pool (404) and checks the caller's scope on it
     // (Go `CheckScopeAccess`).
 

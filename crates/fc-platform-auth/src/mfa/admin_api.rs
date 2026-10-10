@@ -42,7 +42,7 @@ pub async fn reset_two_factor(
     Path(id): Path<String>,
 ) -> Result<Json<StatusChangeResponse>, PlatformError> {
     // Coarse permission gate before any load (Go PR-3(a)).
-    checks::can_write_principals(&auth.0)?;
+    checks::can_update_principals(&auth.0)?;
     Ok(Json(reset_user_two_factor(&state, &auth.0, &id).await?))
 }
 
@@ -54,7 +54,7 @@ pub async fn reset_user_two_factor(
     id: &str,
 ) -> Result<StatusChangeResponse, PlatformError> {
     // Coarse permission gate before any load (Go PR-3(a)).
-    checks::can_write_principals(ctx)?;
+    checks::can_update_principals(ctx)?;
     let p = state
         .principal_repo
         .find_by_id(&PrincipalId::from_wire(id))

@@ -1,7 +1,7 @@
 //! Resource-level access to subscriptions, shared by the `/api/subscriptions`
 //! handlers and the server-rendered `fc-web` UI. Permission checks
-//! (`checks::can_read_subscriptions` / `can_write_subscriptions` /
-//! `can_delete_subscriptions`) come first; these decide whether the caller
+//! (`checks::can_read_subscriptions` / `can_create_subscriptions` /
+//! `can_update_subscriptions` / `can_delete_subscriptions`) come first; these decide whether the caller
 //! may touch *this* subscription.
 
 use crate::subscription::entity::Subscription;

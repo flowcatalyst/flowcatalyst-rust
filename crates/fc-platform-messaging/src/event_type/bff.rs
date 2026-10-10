@@ -404,7 +404,7 @@ pub async fn create_event_type(
     auth: Authenticated,
     Json(req): Json<BffCreateEventTypeRequest>,
 ) -> Result<(StatusCode, Json<BffEventTypeResponse>), PlatformError> {
-    checks::can_write_event_types(&auth.0)?;
+    checks::can_create_event_types(&auth.0)?;
 
     // Validate client access if specified
     access::ensure_can_create(
@@ -475,7 +475,7 @@ pub async fn update_event_type(
     Json(req): Json<BffUpdateEventTypeRequest>,
 ) -> Result<StatusCode, PlatformError> {
     let id = EventTypeId::from_wire(id);
-    checks::can_write_event_types(&auth.0)?;
+    checks::can_update_event_types(&auth.0)?;
 
     // Fetch to check client access before calling the use case
     let event_type = state
@@ -523,7 +523,7 @@ pub async fn delete_event_type(
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
     let id = EventTypeId::from_wire(id);
-    checks::can_write_event_types(&auth.0)?;
+    checks::can_delete_event_types(&auth.0)?;
 
     // Fetch to check client access before calling the use case
     let event_type = state
@@ -565,7 +565,7 @@ pub async fn archive_event_type(
     Path(id): Path<String>,
 ) -> Result<Json<BffEventTypeResponse>, PlatformError> {
     let id = EventTypeId::from_wire(id);
-    checks::can_write_event_types(&auth.0)?;
+    checks::can_update_event_types(&auth.0)?;
 
     // Fetch to check client access before calling the use case
     let event_type = state
@@ -619,7 +619,7 @@ pub async fn add_schema(
     Json(req): Json<BffAddSchemaRequest>,
 ) -> Result<Json<BffEventTypeResponse>, PlatformError> {
     let id = EventTypeId::from_wire(id);
-    checks::can_write_event_types(&auth.0)?;
+    checks::can_update_event_types(&auth.0)?;
 
     // Fetch to check client access before calling the use case
     let event_type = state
@@ -685,7 +685,7 @@ pub async fn finalise_schema(
     Path((id, version)): Path<(String, String)>,
 ) -> Result<Json<BffEventTypeResponse>, PlatformError> {
     let id = EventTypeId::from_wire(id);
-    checks::can_write_event_types(&auth.0)?;
+    checks::can_update_event_types(&auth.0)?;
 
     // Fetch to check client access before calling the use case
     let event_type = state
@@ -739,7 +739,7 @@ pub async fn deprecate_schema(
     Path((id, version)): Path<(String, String)>,
 ) -> Result<Json<BffEventTypeResponse>, PlatformError> {
     let id = EventTypeId::from_wire(id);
-    checks::can_write_event_types(&auth.0)?;
+    checks::can_update_event_types(&auth.0)?;
 
     // Fetch to check client access before calling the use case
     let event_type = state

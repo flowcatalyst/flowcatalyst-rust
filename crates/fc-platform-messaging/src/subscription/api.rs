@@ -405,7 +405,7 @@ pub async fn create_subscription(
     use crate::subscription::operations::CreateSubscriptionCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    checks::can_write_subscriptions(&auth.0)?;
+    checks::can_create_subscriptions(&auth.0)?;
 
     // Ruling X-01: absent or unrecognised means NEXT_ON_ERROR (with a warning
     // for the unrecognised case), never a rejection.
@@ -557,7 +557,7 @@ pub async fn update_subscription(
     use crate::subscription::operations::UpdateSubscriptionCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    checks::can_write_subscriptions(&auth.0)?;
+    checks::can_update_subscriptions(&auth.0)?;
 
     // The use case validates, loads (404) and checks the caller's scope on
     // the loaded row (403 SCOPE_FORBIDDEN), in Go's order.
@@ -617,7 +617,7 @@ pub async fn pause_subscription(
     use crate::subscription::operations::PauseSubscriptionCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    checks::can_write_subscriptions(&auth.0)?;
+    checks::can_update_subscriptions(&auth.0)?;
 
     // The use case answers 404 for a missing subscription, then checks the
     // caller's scope on it (Go `CheckScopeAccess`).
@@ -656,7 +656,7 @@ pub async fn resume_subscription(
     use crate::subscription::operations::ResumeSubscriptionCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    checks::can_write_subscriptions(&auth.0)?;
+    checks::can_update_subscriptions(&auth.0)?;
 
     // The use case answers 404 for a missing subscription, then checks the
     // caller's scope on it (Go `CheckScopeAccess`).

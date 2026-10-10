@@ -124,19 +124,19 @@ pub async fn set_developer_credential(
     if auth.0.principal_id == id {
         checks::require_permission(&auth.0, permissions::developer::API_CREDENTIAL_MANAGE)?;
     } else {
-        checks::can_write_principals(&auth.0)?;
+        checks::can_update_principals(&auth.0)?;
     }
     Ok(Json(set_credential(&state, &auth.0, id.as_str()).await?))
 }
 
 /// The coarse gate before any load (Go `requireDeveloperCredentialAccess`):
 /// your own credential needs the self-service permission; someone else's
-/// needs the user-admin write permission.
+/// needs `platform:iam:user:update` (Go `CanUpdatePrincipals`).
 fn require_credential_access(ctx: &AuthContext, id: &str) -> Result<(), PlatformError> {
     if ctx.principal_id == PrincipalId::from_wire(id) {
         checks::require_permission(ctx, permissions::developer::API_CREDENTIAL_MANAGE)
     } else {
-        checks::can_write_principals(ctx)
+        checks::can_update_principals(ctx)
     }
 }
 
@@ -192,7 +192,7 @@ pub async fn revoke_developer_credential(
     if auth.0.principal_id == id {
         checks::require_permission(&auth.0, permissions::developer::API_CREDENTIAL_MANAGE)?;
     } else {
-        checks::can_write_principals(&auth.0)?;
+        checks::can_update_principals(&auth.0)?;
     }
     revoke_credential(&state, &auth.0, id.as_str()).await?;
     Ok(StatusCode::NO_CONTENT)

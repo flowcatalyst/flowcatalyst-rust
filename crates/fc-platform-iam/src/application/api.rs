@@ -404,7 +404,7 @@ pub async fn create_application<U: UnitOfWork>(
 ) -> Result<(StatusCode, Json<CreatedResponse>), PlatformError> {
     // Go's permission check first (PERMISSION_REQUIRED), then Rust's anchor
     // gate: only anchor users manage applications.
-    checks::can_write_applications(&auth.0)?;
+    checks::can_create_applications(&auth.0)?;
     checks::require_anchor(&auth.0)?;
 
     let command = CreateApplicationCommand {
@@ -550,7 +550,7 @@ pub async fn update_application<U: UnitOfWork>(
     Json(req): Json<UpdateApplicationRequest>,
 ) -> Result<StatusCode, PlatformError> {
     let id = ApplicationId::from_wire(id);
-    checks::can_write_applications(&auth.0)?;
+    checks::can_update_applications(&auth.0)?;
     checks::require_anchor(&auth.0)?;
 
     let command = UpdateApplicationCommand {
@@ -689,7 +689,7 @@ pub async fn activate_application<U: UnitOfWork>(
     Path(id): Path<String>,
 ) -> Result<Json<ApplicationResponse>, PlatformError> {
     let id = ApplicationId::from_wire(id);
-    checks::can_write_applications(&auth.0)?;
+    checks::can_update_applications(&auth.0)?;
     checks::require_anchor(&auth.0)?;
 
     let command = ActivateApplicationCommand { id: id.clone() };
@@ -734,7 +734,7 @@ pub async fn deactivate_application<U: UnitOfWork>(
     Path(id): Path<String>,
 ) -> Result<Json<ApplicationResponse>, PlatformError> {
     let id = ApplicationId::from_wire(id);
-    checks::can_write_applications(&auth.0)?;
+    checks::can_update_applications(&auth.0)?;
     checks::require_anchor(&auth.0)?;
 
     deactivate_application_cascade(

@@ -45,9 +45,9 @@ pub async fn create_user(
 ) -> Result<PrincipalResponse, PlatformError> {
     use crate::principal::operations::{CreateUserCommand, GrantClientAccessCommand};
 
-    // Go `createUser`: the user-write permission first; the tier bound once
+    // Go `createUser`: the user-create permission first; the tier bound once
     // the scope is derived below.
-    checks::can_write_principals(ctx)?;
+    checks::can_create_principals(ctx)?;
 
     let domain = req
         .email
@@ -97,7 +97,11 @@ pub async fn create_user(
             "Client administrators can only create client-scope users",
         ));
     }
-    checks::require_user_admin(ctx, primary_client_id.as_ref())?;
+    checks::require_user_admin(
+        ctx,
+        primary_client_id.as_ref(),
+        checks::can_create_principals,
+    )?;
     // Before anything is written: a rejected redirect must not leave a user
     // whose invite was never minted (Go createUser).
     let invite_redirect = resolve_invite_redirect(req.invite_redirect_uri.as_deref())?;
@@ -322,7 +326,7 @@ pub async fn update(
 
     // The permission before anything is loaded, as Go's `update`
     // (principal/api/api.go:1026-1032): without it, nothing is touched.
-    checks::can_write_principals(ctx)?;
+    checks::can_update_principals(ctx)?;
 
     // The use case applies the per-resource rules after loading the target
     // (Go `update`): the user's reach, and anchor-only scope/client changes.
@@ -635,7 +639,7 @@ pub async fn activate(
 ) -> Result<StatusChangeResponse, PlatformError> {
     use crate::principal::operations::ActivateUserCommand;
 
-    checks::can_write_principals(ctx)?;
+    checks::can_update_principals(ctx)?;
 
     let cmd = ActivateUserCommand {
         principal_id: id.clone(),
@@ -658,7 +662,7 @@ pub async fn deactivate(
 ) -> Result<StatusChangeResponse, PlatformError> {
     use crate::principal::operations::DeactivateUserCommand;
 
-    checks::can_write_principals(ctx)?;
+    checks::can_update_principals(ctx)?;
 
     let cmd = DeactivateUserCommand {
         principal_id: id.clone(),
@@ -688,7 +692,7 @@ pub async fn reset_password(
 ) -> Result<StatusChangeResponse, PlatformError> {
     use crate::principal::operations::ResetPasswordCommand;
 
-    checks::can_write_principals(ctx)?;
+    checks::can_update_principals(ctx)?;
 
     let cmd = ResetPasswordCommand {
         principal_id: id.clone(),
@@ -718,7 +722,7 @@ pub async fn send_password_reset(
     id: &PrincipalId,
     reset_2fa: bool,
 ) -> Result<StatusChangeResponse, PlatformError> {
-    checks::can_write_principals(ctx)?;
+    checks::can_update_principals(ctx)?;
 
     let emailer = &state.password_reset_emailer;
 
@@ -952,7 +956,7 @@ pub async fn set_application_access(
 ) -> Result<SetApplicationAccessResponse, PlatformError> {
     use crate::principal::operations::AssignApplicationAccessCommand;
 
-    checks::can_write_principals(ctx)?;
+    checks::can_update_principals(ctx)?;
 
     // Loaded to shape the set, as Go's controller does; the use case applies
     // the reach rule.

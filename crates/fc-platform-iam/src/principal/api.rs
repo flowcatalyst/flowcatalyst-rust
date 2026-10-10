@@ -699,7 +699,7 @@ pub async fn create_user(
 ) -> Result<Json<PrincipalResponse>, PlatformError> {
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
-    checks::can_write_principals(&auth.0)?;
+    checks::can_create_principals(&auth.0)?;
     Ok(Json(super::admin::create_user(&state, &auth.0, req).await?))
 }
 
@@ -950,7 +950,7 @@ pub struct CreatePrincipalResponse {
 /// The scope and client are taken as given (no email-domain derivation;
 /// that is `POST /api/principals/users`). Anchors create any scope; a
 /// non-anchor administrator only CLIENT users in a client it can access,
-/// and every caller needs a user-write permission (Go `RequireUserAdmin`).
+/// and every caller needs `platform:iam:user:create` (Go `RequireUserAdmin`).
 #[utoipa::path(
     post,
     path = "",
@@ -985,7 +985,7 @@ pub async fn create_principal(
         .map(str::trim)
         .filter(|c| !c.is_empty())
         .map(ClientId::from_wire);
-    require_user_admin(ctx, client_id.as_ref())?;
+    checks::require_user_admin(ctx, client_id.as_ref(), checks::can_create_principals)?;
     let invite_redirect = resolve_invite_redirect(req.invite_redirect_uri.as_deref())?;
 
     // Go's CreateUser validation (principal/operations/create.go:39-65),
@@ -1080,30 +1080,6 @@ fn go_email_pattern() -> &'static regex::Regex {
         regex::Regex::new(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
             .expect("static email pattern")
     })
-}
-
-/// Go `RequireUserAdmin` (shared/auth/auth.go:369-385): an anchor needs a
-/// user-write permission; anyone else also needs the target client, and
-/// may not create a clientless principal.
-fn require_user_admin(
-    ctx: &AuthContext,
-    target_client_id: Option<&ClientId>,
-) -> Result<(), PlatformError> {
-    if !ctx.is_anchor() {
-        let Some(client_id) = target_client_id else {
-            return Err(PlatformError::forbidden_code(
-                "ANCHOR_REQUIRED",
-                "anchor scope required for platform users",
-            ));
-        };
-        if !ctx.can_access_client(client_id) {
-            return Err(PlatformError::forbidden_code(
-                "SCOPE_FORBIDDEN",
-                "no access to this user's client",
-            ));
-        }
-    }
-    checks::can_write_principals(ctx)
 }
 
 /// Go `resolveInviteRedirect` (principal/api/api.go:756-767): absent or
@@ -1319,7 +1295,7 @@ pub async fn update_principal(
     let id = PrincipalId::from_wire(id);
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
-    checks::can_write_principals(&auth.0)?;
+    checks::can_update_principals(&auth.0)?;
     Ok(Json(super::admin::update(&state, &auth.0, &id, req).await?))
 }
 
@@ -1702,7 +1678,7 @@ pub async fn activate_principal(
     let id = PrincipalId::from_wire(id);
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
-    checks::can_write_principals(&auth.0)?;
+    checks::can_update_principals(&auth.0)?;
     Ok(Json(super::admin::activate(&state, &auth.0, &id).await?))
 }
 
@@ -1732,7 +1708,7 @@ pub async fn deactivate_principal(
     let id = PrincipalId::from_wire(id);
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
-    checks::can_write_principals(&auth.0)?;
+    checks::can_update_principals(&auth.0)?;
     Ok(Json(super::admin::deactivate(&state, &auth.0, &id).await?))
 }
 
@@ -1765,7 +1741,7 @@ pub async fn reset_password(
     let id = PrincipalId::from_wire(id);
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
-    checks::can_write_principals(&auth.0)?;
+    checks::can_update_principals(&auth.0)?;
     Ok(Json(
         super::admin::reset_password(&state, &auth.0, &id, req).await?,
     ))
@@ -1824,7 +1800,7 @@ pub async fn send_password_reset(
     };
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
-    checks::can_write_principals(&auth.0)?;
+    checks::can_update_principals(&auth.0)?;
     Ok(Json(
         super::admin::send_password_reset(&state, &auth.0, &id, reset_2fa).await?,
     ))
@@ -1919,7 +1895,7 @@ pub async fn set_application_access(
     let id = PrincipalId::from_wire(id);
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
-    checks::can_write_principals(&auth.0)?;
+    checks::can_update_principals(&auth.0)?;
     Ok(Json(
         super::admin::set_application_access(&state, &auth.0, &id, req).await?,
     ))
@@ -2052,7 +2028,7 @@ fn row(n: usize, email: &str, status: &str, message: Option<String>) -> BulkImpo
 }
 
 /// Import users into one client (Go `bulkImportPrincipals`). Anchor callers
-/// need a user-write permission; a client administrator also needs access
+/// need `platform:iam:user:create`; a client administrator also needs access
 /// to the client and may hand out only roles of applications the client
 /// has enabled. Rows are independent: an existing email is skipped, an
 /// email whose domain is registered to another client is dropped.
@@ -2089,7 +2065,7 @@ pub async fn bulk_import_principals(
             "no access to this user's client",
         ));
     }
-    checks::can_write_principals(&auth.0)?;
+    checks::can_create_principals(&auth.0)?;
     if req.users.is_empty() {
         return Err(PlatformError::bad_request_code(
             "NO_ROWS",

@@ -220,7 +220,7 @@ pub async fn create_event_type(
     use crate::event_type::operations::CreateEventTypeCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    checks::can_write_event_types(&auth.0)?;
+    checks::can_create_event_types(&auth.0)?;
 
     let cmd = CreateEventTypeCommand {
         code: CreateEventTypeCommand::parse_code(&req.code, &req.name)?,
@@ -429,7 +429,7 @@ pub async fn update_event_type(
     use crate::event_type::operations::UpdateEventTypeCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    checks::can_write_event_types(&auth.0)?;
+    checks::can_update_event_types(&auth.0)?;
 
     // Go `UpdateEventType.Validate`: the name is required.
     if req.name.trim().is_empty() {
@@ -515,7 +515,7 @@ pub async fn delete_event_type(
     use crate::event_type::operations::DeleteEventTypeCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    checks::can_write_event_types(&auth.0)?;
+    checks::can_delete_event_types(&auth.0)?;
 
     // The use case loads the type (404) and checks the caller's scope on it.
     let cmd = DeleteEventTypeCommand { event_type_id: id };

@@ -438,9 +438,22 @@ pub mod checks {
         require_permission(context, permissions::admin::CONNECTION_DELETE)
     }
 
-    /// Dispatch pools, any write (create, update, archive, suspend,
-    /// activate): one of the pool create/update/delete permissions (Go
-    /// `CanWriteDispatchPools`, auth.go:561).
+    /// Dispatch pools, create: `platform:messaging:dispatch-pool:create` (Go
+    /// `CanCreateDispatchPools`).
+    pub fn can_create_dispatch_pools(context: &impl Authority) -> Result<()> {
+        require_permission(context, permissions::admin::DISPATCH_POOL_CREATE)
+    }
+
+    /// Dispatch pools, update, suspend and activate:
+    /// `platform:messaging:dispatch-pool:update` (Go `CanUpdateDispatchPools`).
+    pub fn can_update_dispatch_pools(context: &impl Authority) -> Result<()> {
+        require_permission(context, permissions::admin::DISPATCH_POOL_UPDATE)
+    }
+
+    /// Dispatch pools, any of create/update/delete (Go
+    /// `CanWriteDispatchPools`). No `/api` write uses it since Go `c59e246`:
+    /// each write checks the permission for its operation. The
+    /// server-rendered UI still does.
     pub fn can_write_dispatch_pools(context: &impl Authority) -> Result<()> {
         require_any_permission(
             context,
@@ -504,22 +517,24 @@ pub mod checks {
         )
     }
 
-    /// Service accounts, create and update: any of the service-account
-    /// create/update/delete permissions, as Go's `CanWriteServiceAccounts`
-    /// (auth.go:691-693), and anchor scope on top. Go has no anchor check
-    /// here; Rust keeps one because an account's tier follows its client
-    /// links, so a non-anchor holder could otherwise create or relink a
-    /// client-less account, which is ANCHOR tier.
-    pub fn can_write_service_accounts(context: &impl Authority) -> Result<()> {
-        require_anchor_scope(context)?;
-        require_any_permission(
-            context,
-            &[
-                permissions::admin::SERVICE_ACCOUNT_CREATE,
-                permissions::admin::SERVICE_ACCOUNT_UPDATE,
-                permissions::admin::SERVICE_ACCOUNT_DELETE,
-            ],
-        )
+    /// Service accounts, create: `platform:iam:service-account:create`, then
+    /// anchor scope (Go `requireAnchorWriter(CanCreateServiceAccounts)`,
+    /// serviceaccount/api/api.go, owner decision #19): an account's tier
+    /// follows its client links, so a non-anchor holder could otherwise
+    /// create a client-less account, which is ANCHOR tier.
+    pub fn can_create_service_accounts(context: &impl Authority) -> Result<()> {
+        require_permission(context, permissions::admin::SERVICE_ACCOUNT_CREATE)?;
+        require_anchor_scope(context)
+    }
+
+    /// Service accounts, update (`PUT /api/service-accounts/{id}`):
+    /// `platform:iam:service-account:update`, then anchor scope (Go
+    /// `requireAnchorWriter(CanUpdateServiceAccounts)`). The credential
+    /// writes keep [`can_update_service_accounts`], which asks anchor first
+    /// as Go's `RequireAnchor` there does.
+    pub fn can_update_service_account_details(context: &impl Authority) -> Result<()> {
+        require_permission(context, permissions::admin::SERVICE_ACCOUNT_UPDATE)?;
+        require_anchor_scope(context)
     }
 
     /// Service accounts, what issues authority or a credential to an
@@ -532,12 +547,12 @@ pub mod checks {
         anchor_with(context, permissions::admin::SERVICE_ACCOUNT_UPDATE)
     }
 
-    /// Service accounts, delete: `platform:iam:service-account:delete`, as
-    /// Go's `CanDeleteServiceAccounts` (auth.go:687-689), with the same
-    /// anchor requirement as [`can_write_service_accounts`].
+    /// Service accounts, delete: `platform:iam:service-account:delete`, then
+    /// anchor scope, as Go's `requireAnchorWriter(CanDeleteServiceAccounts)`
+    /// (the same order as [`can_create_service_accounts`]).
     pub fn can_delete_service_accounts(context: &impl Authority) -> Result<()> {
-        require_anchor_scope(context)?;
-        require_permission(context, permissions::admin::SERVICE_ACCOUNT_DELETE)
+        require_permission(context, permissions::admin::SERVICE_ACCOUNT_DELETE)?;
+        require_anchor_scope(context)
     }
 
     // ── Platform-owner routes: anchor reach plus the permission ─────────
@@ -665,9 +680,22 @@ pub mod checks {
         anchor_with(context, permissions::admin::CORS_ORIGIN_DELETE)
     }
 
-    /// Applications, create, update, activate, deactivate: any of the
-    /// application create/update/delete permissions (Go's
-    /// `CanWriteApplications`). The handlers keep their anchor check on top.
+    /// Applications, create: `platform:admin:application:create` (Go's
+    /// `CanCreateApplications`). The handler keeps its anchor check on top.
+    pub fn can_create_applications(context: &impl Authority) -> Result<()> {
+        require_permission(context, permissions::admin::APPLICATION_CREATE)
+    }
+
+    /// Applications, update, activate, deactivate:
+    /// `platform:admin:application:update` (Go's `CanUpdateApplications`).
+    /// The handlers keep their anchor check on top.
+    pub fn can_update_applications(context: &impl Authority) -> Result<()> {
+        require_permission(context, permissions::admin::APPLICATION_UPDATE)
+    }
+
+    /// Applications, any of create/update/delete (Go's
+    /// `CanWriteApplications`). No `/api` write uses it since Go `6be78ee`;
+    /// the server-rendered UI still does.
     pub fn can_write_applications(context: &impl Authority) -> Result<()> {
         require_any_permission(
             context,
@@ -701,22 +729,6 @@ pub mod checks {
         anchor_with(context, permission)
     }
 
-    /// Role create and update through `/api/roles`: any role write
-    /// permission, as Go's `CanWriteRoles` (`one of: …`), then anchor reach
-    /// (owner decision #25), in that order for the reason given on
-    /// [`can_administer_roles`].
-    pub fn can_write_roles(context: &impl Authority) -> Result<()> {
-        require_any_permission(
-            context,
-            &[
-                permissions::iam::ROLE_CREATE,
-                permissions::iam::ROLE_UPDATE,
-                permissions::iam::ROLE_DELETE,
-            ],
-        )?;
-        require_anchor_scope(context)
-    }
-
     /// Re-running the built-in role sync: anchor and any role write
     /// permission (Java RolesBff sync-platform).
     pub fn can_sync_platform_roles(context: &impl Authority) -> Result<()> {
@@ -743,12 +755,25 @@ pub mod checks {
         anchor_with(context, permissions::iam::CLIENT_ACCESS_REVOKE)
     }
 
-    /// Principals, the user-administration writes (create, update,
-    /// activate, deactivate, password reset, application access): any of the
-    /// user create/update/delete permissions, as Go's `CanWritePrincipals`
-    /// (shared/auth/auth.go, reached through `RequireUserAdmin`). Scope is
-    /// reach, never authority: an anchor needs the permission too. The
-    /// handler keeps its own tier check on top.
+    /// Principals, creating users (create, the SDK create, bulk import):
+    /// `platform:iam:user:create` (Go's `CanCreatePrincipals`).
+    pub fn can_create_principals(context: &impl Authority) -> Result<()> {
+        require_permission(context, permissions::iam::USER_CREATE)
+    }
+
+    /// Principals, every change to an existing user (edit, activate,
+    /// deactivate, passwords, 2FA reset, application access, someone else's
+    /// developer credential) and the reset-approval queue:
+    /// `platform:iam:user:update` (Go's `CanUpdatePrincipals`, since Go
+    /// `4c87621`). Scope is reach, never authority: an anchor needs the
+    /// permission too.
+    pub fn can_update_principals(context: &impl Authority) -> Result<()> {
+        require_permission(context, permissions::iam::USER_UPDATE)
+    }
+
+    /// Principals, any of the user create/update/delete permissions (Go's
+    /// `CanWritePrincipals`). No `/api` write uses it since Go `4c87621`;
+    /// the server-rendered UI still does.
     pub fn can_write_principals(context: &impl Authority) -> Result<()> {
         require_any_permission(
             context,
@@ -760,18 +785,20 @@ pub mod checks {
         )
     }
 
-    /// Go `RequireUserAdmin` (shared/auth/auth.go:369-385) for a user in
-    /// client `target_client_id`: an anchor needs a user-write permission;
-    /// anyone else also reaches that client (403 `SCOPE_FORBIDDEN`), and a
-    /// client-less (platform) user is an anchor's alone (403
-    /// `ANCHOR_REQUIRED`). A client administrator is confined to its own
-    /// clients this way.
-    pub fn require_user_admin(
-        context: &impl Authority,
+    /// Go `RequireUserAdmin` (shared/auth/auth.go) for a user in client
+    /// `target_client_id`: `can` is the permission check for the operation
+    /// ([`can_create_principals`], [`can_update_principals`]). An anchor
+    /// needs that permission; anyone else also reaches that client (403
+    /// `SCOPE_FORBIDDEN`), and a client-less (platform) user is an anchor's
+    /// alone (403 `ANCHOR_REQUIRED`). A client administrator is confined to
+    /// its own clients this way.
+    pub fn require_user_admin<A: Authority>(
+        context: &A,
         target_client_id: Option<&ClientId>,
+        can: impl Fn(&A) -> Result<()>,
     ) -> Result<()> {
         if context.is_anchor() {
-            return can_write_principals(context);
+            return can(context);
         }
         let Some(client_id) = target_client_id else {
             return Err(PlatformError::forbidden_code(
@@ -785,7 +812,7 @@ pub mod checks {
                 "no access to this user's client",
             ));
         }
-        can_write_principals(context)
+        can(context)
     }
 
     /// Granting a principal every application (`allApplications`): only a
@@ -955,61 +982,47 @@ pub mod checks {
     }
 
     /// Guards adding a schema version to an event type (Go
-    /// `CanAddEventTypeSchema`): the messaging write permissions, and the
-    /// application-service create/update an SDK service account holds (the
-    /// SDK pushes its event schemas this way). A caller admitted only by the
-    /// latter is confined by the handler to the event types of the
-    /// applications it is bound to. Create, update and delete through the
-    /// plain endpoints stay messaging-only ([`can_write_event_types`]).
+    /// `CanAddEventTypeSchema`): adding a version updates the event type, so
+    /// the messaging grant is `event-type:update` (not any of
+    /// create/update/delete, since Go `1fa33ef`). The application-service
+    /// create/update an SDK service account holds are kept (the SDK pushes
+    /// its event schemas this way). A caller admitted only by the latter is
+    /// confined by the handler to the event types of the applications it is
+    /// bound to.
     pub fn can_add_event_type_schema(context: &impl Authority) -> Result<()> {
         require_any_permission(
             context,
             &[
-                permissions::admin::EVENT_TYPE_CREATE,
                 permissions::admin::EVENT_TYPE_UPDATE,
-                permissions::admin::EVENT_TYPE_DELETE,
                 permissions::application_service::EVENT_TYPE_CREATE,
                 permissions::application_service::EVENT_TYPE_UPDATE,
             ],
         )
     }
 
-    /// Whether the caller writes event types without the per-application
-    /// confinement: it holds a messaging write permission (Go
+    /// Whether the caller versions event types without the per-application
+    /// confinement: it holds the messaging `event-type:update` (Go
     /// `CanWriteAllEventTypes`).
     pub fn can_write_all_event_types(context: &impl Authority) -> bool {
-        context.has_any_permission(&[
-            permissions::admin::EVENT_TYPE_CREATE,
-            permissions::admin::EVENT_TYPE_UPDATE,
-            permissions::admin::EVENT_TYPE_DELETE,
-        ])
+        context.has_permission(permissions::admin::EVENT_TYPE_UPDATE)
     }
 
     /// Check create access to event types
     pub fn can_create_event_types(context: &impl Authority) -> Result<()> {
-        if context.has_permission(permissions::admin::EVENT_TYPE_CREATE) {
-            Ok(())
-        } else {
-            Err(PlatformError::forbidden("Cannot create event types"))
-        }
+        // Go `CanCreateEventTypes`: 403 `PERMISSION_REQUIRED`.
+        require_permission(context, permissions::admin::EVENT_TYPE_CREATE)
     }
 
     /// Check update access to event types
     pub fn can_update_event_types(context: &impl Authority) -> Result<()> {
-        if context.has_permission(permissions::admin::EVENT_TYPE_UPDATE) {
-            Ok(())
-        } else {
-            Err(PlatformError::forbidden("Cannot update event types"))
-        }
+        // Go `CanUpdateEventTypes`: 403 `PERMISSION_REQUIRED`.
+        require_permission(context, permissions::admin::EVENT_TYPE_UPDATE)
     }
 
     /// Check delete access to event types
     pub fn can_delete_event_types(context: &impl Authority) -> Result<()> {
-        if context.has_permission(permissions::admin::EVENT_TYPE_DELETE) {
-            Ok(())
-        } else {
-            Err(PlatformError::forbidden("Cannot delete event types"))
-        }
+        // Go `CanDeleteEventTypes`: 403 `PERMISSION_REQUIRED`.
+        require_permission(context, permissions::admin::EVENT_TYPE_DELETE)
     }
 
     /// Check read access to subscriptions
@@ -1023,29 +1036,20 @@ pub mod checks {
 
     /// Check create access to subscriptions
     pub fn can_create_subscriptions(context: &impl Authority) -> Result<()> {
-        if context.has_permission(permissions::admin::SUBSCRIPTION_CREATE) {
-            Ok(())
-        } else {
-            Err(PlatformError::forbidden("Cannot create subscriptions"))
-        }
+        // Go `CanCreateSubscriptions`: 403 `PERMISSION_REQUIRED`.
+        require_permission(context, permissions::admin::SUBSCRIPTION_CREATE)
     }
 
     /// Check update access to subscriptions
     pub fn can_update_subscriptions(context: &impl Authority) -> Result<()> {
-        if context.has_permission(permissions::admin::SUBSCRIPTION_UPDATE) {
-            Ok(())
-        } else {
-            Err(PlatformError::forbidden("Cannot update subscriptions"))
-        }
+        // Go `CanUpdateSubscriptions`: 403 `PERMISSION_REQUIRED`.
+        require_permission(context, permissions::admin::SUBSCRIPTION_UPDATE)
     }
 
     /// Check delete access to subscriptions
     pub fn can_delete_subscriptions(context: &impl Authority) -> Result<()> {
-        if context.has_permission(permissions::admin::SUBSCRIPTION_DELETE) {
-            Ok(())
-        } else {
-            Err(PlatformError::forbidden("Cannot delete subscriptions"))
-        }
+        // Go `CanDeleteSubscriptions`: 403 `PERMISSION_REQUIRED`.
+        require_permission(context, permissions::admin::SUBSCRIPTION_DELETE)
     }
 
     /// Check read access to dispatch jobs
@@ -1118,43 +1122,20 @@ pub mod checks {
 
     /// Check create access to processes
     pub fn can_create_processes(context: &impl Authority) -> Result<()> {
-        if context.has_permission(permissions::admin::PROCESS_CREATE) {
-            Ok(())
-        } else {
-            Err(PlatformError::forbidden("Cannot create processes"))
-        }
+        // Go `CanCreateProcesses`: 403 `PERMISSION_REQUIRED`.
+        require_permission(context, permissions::admin::PROCESS_CREATE)
     }
 
     /// Check update access to processes
     pub fn can_update_processes(context: &impl Authority) -> Result<()> {
-        if context.has_permission(permissions::admin::PROCESS_UPDATE) {
-            Ok(())
-        } else {
-            Err(PlatformError::forbidden("Cannot update processes"))
-        }
+        // Go `CanUpdateProcesses`: 403 `PERMISSION_REQUIRED`.
+        require_permission(context, permissions::admin::PROCESS_UPDATE)
     }
 
     /// Check delete access to processes
     pub fn can_delete_processes(context: &impl Authority) -> Result<()> {
-        if context.has_permission(permissions::admin::PROCESS_DELETE) {
-            Ok(())
-        } else {
-            Err(PlatformError::forbidden("Cannot delete processes"))
-        }
-    }
-
-    /// Check write access to processes (create, update, archive, or delete)
-    pub fn can_write_processes(context: &impl Authority) -> Result<()> {
-        if context.has_any_permission(&[
-            permissions::admin::PROCESS_CREATE,
-            permissions::admin::PROCESS_UPDATE,
-            permissions::admin::PROCESS_DELETE,
-            permissions::admin::PROCESS_ARCHIVE,
-        ]) {
-            Ok(())
-        } else {
-            Err(PlatformError::forbidden("Cannot write processes"))
-        }
+        // Go `CanDeleteProcesses`: 403 `PERMISSION_REQUIRED`.
+        require_permission(context, permissions::admin::PROCESS_DELETE)
     }
 
     /// Check sync access to processes (SDK push from an application)
@@ -1220,27 +1201,18 @@ pub mod checks {
     }
 
     pub fn can_create_scheduled_jobs(context: &impl Authority) -> Result<()> {
-        if context.has_permission(permissions::admin::SCHEDULED_JOB_CREATE) {
-            Ok(())
-        } else {
-            Err(PlatformError::forbidden("Cannot create scheduled jobs"))
-        }
+        // Go `CanCreateScheduledJobs`: 403 `PERMISSION_REQUIRED`.
+        require_permission(context, permissions::admin::SCHEDULED_JOB_CREATE)
     }
 
     pub fn can_update_scheduled_jobs(context: &impl Authority) -> Result<()> {
-        if context.has_permission(permissions::admin::SCHEDULED_JOB_UPDATE) {
-            Ok(())
-        } else {
-            Err(PlatformError::forbidden("Cannot update scheduled jobs"))
-        }
+        // Go `CanUpdateScheduledJobs`: 403 `PERMISSION_REQUIRED`.
+        require_permission(context, permissions::admin::SCHEDULED_JOB_UPDATE)
     }
 
     pub fn can_delete_scheduled_jobs(context: &impl Authority) -> Result<()> {
-        if context.has_permission(permissions::admin::SCHEDULED_JOB_DELETE) {
-            Ok(())
-        } else {
-            Err(PlatformError::forbidden("Cannot delete scheduled jobs"))
-        }
+        // Go `CanDeleteScheduledJobs`: 403 `PERMISSION_REQUIRED`.
+        require_permission(context, permissions::admin::SCHEDULED_JOB_DELETE)
     }
 
     pub fn can_pause_scheduled_jobs(context: &impl Authority) -> Result<()> {
@@ -1257,20 +1229,6 @@ pub mod checks {
         } else {
             Err(PlatformError::forbidden("Cannot fire scheduled jobs"))
         }
-    }
-
-    /// Go's `CanWriteScheduledJobs` (shared/auth/auth.go:881): any of
-    /// scheduled-job create, update or delete. Go gates update, pause,
-    /// resume, archive and the instance log/complete callbacks with it.
-    pub fn can_write_scheduled_jobs(context: &impl Authority) -> Result<()> {
-        require_any_permission(
-            context,
-            &[
-                permissions::admin::SCHEDULED_JOB_CREATE,
-                permissions::admin::SCHEDULED_JOB_UPDATE,
-                permissions::admin::SCHEDULED_JOB_DELETE,
-            ],
-        )
     }
 
     /// Go's `CheckScopeAccess` (shared/auth/auth.go:433-444): a

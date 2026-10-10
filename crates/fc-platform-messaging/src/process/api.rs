@@ -325,7 +325,7 @@ pub async fn archive_process(
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
     let id = ProcessId::from_wire(id);
-    checks::can_write_processes(&auth.0)?;
+    checks::can_update_processes(&auth.0)?;
 
     let _existing = state
         .process_repo

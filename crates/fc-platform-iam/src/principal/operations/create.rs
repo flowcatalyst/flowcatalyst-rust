@@ -139,7 +139,7 @@ impl<U: UnitOfWork> UseCase for CreateUserUseCase<U> {
 
     /// Go `RequireUserAdmin` for the new user's client: an anchor creates any
     /// scope; a client administrator only CLIENT-tier users, in a client it
-    /// reaches (403 `ANCHOR_REQUIRED` / `SCOPE_FORBIDDEN`), with a user-write
+    /// reaches (403 `ANCHOR_REQUIRED` / `SCOPE_FORBIDDEN`), with `user:create`
     /// permission. The handlers check this first too, because it gates their
     /// partner-merge branch and comes before their own 400s (Go's order).
     async fn authorize(
@@ -155,6 +155,7 @@ impl<U: UnitOfWork> UseCase for CreateUserUseCase<U> {
         Ok(checks::require_user_admin(
             ctx.caller(),
             command.client_id.as_ref(),
+            checks::can_create_principals,
         )?)
     }
 

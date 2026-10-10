@@ -671,7 +671,7 @@ pub async fn update_scheduled_job(
     Json(req): Json<UpdateScheduledJobRequest>,
 ) -> Result<StatusCode, PlatformError> {
     let id = ScheduledJobId::from_wire(id);
-    checks::can_write_scheduled_jobs(&auth.0)?;
+    checks::can_update_scheduled_jobs(&auth.0)?;
 
     // The use case answers 404 for a missing job, then checks the caller's
     // scope on it (Go `CheckScopeAccess`, post-load).
@@ -707,7 +707,7 @@ pub async fn pause_scheduled_job(
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
     let id = ScheduledJobId::from_wire(id);
-    checks::can_write_scheduled_jobs(&auth.0)?;
+    checks::can_update_scheduled_jobs(&auth.0)?;
     // The use case answers 404 for a missing job, then checks the caller's
     // scope on it (Go `CheckScopeAccess`, post-load).
 
@@ -732,7 +732,7 @@ pub async fn resume_scheduled_job(
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
     let id = ScheduledJobId::from_wire(id);
-    checks::can_write_scheduled_jobs(&auth.0)?;
+    checks::can_update_scheduled_jobs(&auth.0)?;
     // The use case answers 404 for a missing job, then checks the caller's
     // scope on it (Go `CheckScopeAccess`, post-load).
 
@@ -757,7 +757,7 @@ pub async fn archive_scheduled_job(
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
     let id = ScheduledJobId::from_wire(id);
-    checks::can_write_scheduled_jobs(&auth.0)?;
+    checks::can_update_scheduled_jobs(&auth.0)?;
     // The use case answers 404 for a missing job, then checks the caller's
     // scope on it (Go `CheckScopeAccess`, post-load).
 

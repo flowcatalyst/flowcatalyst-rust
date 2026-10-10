@@ -249,7 +249,7 @@ pub async fn create_role(
     use crate::role::operations::CreateRoleCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    checks::can_write_roles(&auth.0)?;
+    checks::can_administer_roles(&auth.0, permissions::iam::ROLE_CREATE)?;
 
     let cmd = CreateRoleCommand {
         application_code: req.application_code,
@@ -390,7 +390,7 @@ pub async fn update_role(
     use crate::role::operations::UpdateRoleCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    checks::can_write_roles(&auth.0)?;
+    checks::can_administer_roles(&auth.0, permissions::iam::ROLE_UPDATE)?;
 
     let role = resolve_role(&state.role_repo, &role_name).await?;
 
@@ -725,7 +725,7 @@ pub async fn grant_role_permission(
     auth: Authenticated,
     Path((role_name, permission)): Path<(String, String)>,
 ) -> Result<Json<RoleResponse>, PlatformError> {
-    checks::can_write_roles(&auth.0)?;
+    checks::can_administer_roles(&auth.0, permissions::iam::ROLE_UPDATE)?;
     grant(&state, &auth, role_name, permission).await
 }
 
@@ -750,7 +750,7 @@ pub async fn grant_role_permission_by_body(
     Path(role_name): Path<String>,
     Json(req): Json<GrantPermissionRequest>,
 ) -> Result<Json<RoleResponse>, PlatformError> {
-    checks::can_write_roles(&auth.0)?;
+    checks::can_administer_roles(&auth.0, permissions::iam::ROLE_UPDATE)?;
     grant(&state, &auth, role_name, req.permission).await
 }
 
@@ -776,7 +776,7 @@ pub async fn revoke_role_permission(
     auth: Authenticated,
     Path((role_name, permission)): Path<(String, String)>,
 ) -> Result<Json<RoleResponse>, PlatformError> {
-    checks::can_write_roles(&auth.0)?;
+    checks::can_administer_roles(&auth.0, permissions::iam::ROLE_UPDATE)?;
     // The use case applies the role ceiling (owner ruling 14).
     let cmd = RevokePermissionCommand {
         role_name: role_name.clone(),

@@ -1,6 +1,6 @@
 //! Resource-level access to an existing event type, shared by the BFF
 //! handlers and the server-rendered `fc-web` UI. Permission checks
-//! (`checks::can_read_event_types` / `can_write_event_types`) come first;
+//! (`checks::can_read_event_types` / the write checks) come first;
 //! these decide whether the caller may touch *this* event type.
 
 use std::collections::HashMap;
