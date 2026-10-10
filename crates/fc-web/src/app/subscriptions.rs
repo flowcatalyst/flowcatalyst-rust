@@ -775,6 +775,8 @@ async fn create_subscription(
                     delay_seconds: None,
                     max_age_seconds: None,
                     custom_config: None,
+                    client_scoped: None,
+                    sequence: None,
                 },
                 ExecutionContext::from_auth(auth),
             )

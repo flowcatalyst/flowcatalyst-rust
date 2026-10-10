@@ -66,6 +66,7 @@ mod ingest_security_test;
 mod junction_cascade_convention_test;
 mod load_tests;
 mod login_backoff_integration_tests;
+mod messaging_write_bug_fixes_test;
 mod oauth_api_tests;
 mod oauth_secret_rotation_test;
 mod openapi_go_contract_test;

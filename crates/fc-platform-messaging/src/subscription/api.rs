@@ -159,6 +159,14 @@ pub struct CreateSubscriptionRequest {
     /// Custom configuration entries
     #[serde(default)]
     pub custom_config: Option<Vec<ConfigEntryRequest>>,
+
+    /// Subscribes to client-scoped event types. Omitted means false.
+    #[serde(default)]
+    pub client_scoped: Option<bool>,
+
+    /// Orders this subscription's dispatch jobs within a message group, lower first. Omitted means 99. Not negative.
+    #[serde(default)]
+    pub sequence: Option<i32>,
 }
 
 /// Update subscription request
@@ -437,6 +445,8 @@ pub async fn create_subscription(
         delay_seconds: req.delay_seconds,
         max_age_seconds: req.max_age_seconds,
         custom_config: config_entries(req.custom_config),
+        client_scoped: req.client_scoped,
+        sequence: req.sequence,
     };
     let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state.create_use_case.run(cmd, ctx).await.into_result()?;

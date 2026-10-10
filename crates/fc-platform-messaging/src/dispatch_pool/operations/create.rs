@@ -155,6 +155,13 @@ impl<U: UnitOfWork> UseCase for CreateDispatchPoolUseCase<U> {
         if let Some(ref client_id) = command.client_id {
             pool = pool.with_client_id(parse_client_id(client_id.as_str())?);
         }
+        // The client's identifier beside its id (Go 60dc063): the scope the
+        // SPA shows and the router's processing-pool name. No client, or an
+        // id naming none: no identifier.
+        pool.client_identifier = self
+            .dispatch_pool_repo
+            .client_identifier(pool.client_id.as_ref())
+            .await?;
 
         pool.rate_limit = command.rate_limit;
         if let Some(conc) = command.concurrency {

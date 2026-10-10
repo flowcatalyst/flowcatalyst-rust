@@ -3045,6 +3045,10 @@
           "clientId": {
             "type": "string"
           },
+          "clientScoped": {
+            "description": "Subscribes to client-scoped event types. Omitted means false.",
+            "type": "boolean"
+          },
           "code": {
             "type": "string"
           },
@@ -3098,6 +3102,11 @@
           "queue": {
             "description": "Dispatch priority: DEFAULT or HIGH_PRIORITY (matched ignoring case). Selects which of the client's two dispatch queues jobs raised from this subscription publish to. Omitted or blank leaves it unset, which publishes as DEFAULT.",
             "type": "string"
+          },
+          "sequence": {
+            "description": "Orders this subscription's dispatch jobs within a message group, lower first. Omitted means 99. Not negative.",
+            "format": "int32",
+            "type": "integer"
           },
           "serviceAccountId": {
             "type": "string"
@@ -8495,12 +8504,14 @@
             "type": "integer"
           },
           "description": {
+            "description": "Omitted leaves it; blank clears it.",
             "type": "string"
           },
           "name": {
             "type": "string"
           },
           "rateLimit": {
+            "description": "Messages per minute. Omitted leaves it; 0 clears it (no limit).",
             "format": "int32",
             "type": "integer"
           }

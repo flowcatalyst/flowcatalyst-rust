@@ -65,6 +65,23 @@ impl DispatchPoolRepository {
         Self { pool: pool.clone() }
     }
 
+    /// The identifier of the client with this id, or `None` for no client (a
+    /// platform-wide pool) or an id that names no client (Go
+    /// `repocommon.ClientIdentifier`). Create stores it beside the id: the SPA
+    /// shows it as the scope, and the router names a client pool's
+    /// processing pool `{clientIdentifier}-{code}` from it.
+    pub async fn client_identifier(&self, client_id: Option<&ClientId>) -> Result<Option<String>> {
+        let Some(id) = client_id.filter(|id| !id.as_str().is_empty()) else {
+            return Ok(None);
+        };
+        Ok(sqlx::query_scalar!(
+            "SELECT identifier FROM tnt_clients WHERE id = $1",
+            id as &ClientId
+        )
+        .fetch_optional(&self.pool)
+        .await?)
+    }
+
     pub async fn insert(&self, pool: &DispatchPool) -> Result<()> {
         let now = Utc::now();
         sqlx::query!(

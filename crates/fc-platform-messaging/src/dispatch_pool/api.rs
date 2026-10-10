@@ -63,10 +63,10 @@ pub struct UpdateDispatchPoolRequest {
     /// Human-readable name
     pub name: Option<String>,
 
-    /// Description
+    /// Omitted leaves it; blank clears it.
     pub description: Option<String>,
 
-    /// Rate limit (messages per minute)
+    /// Messages per minute. Omitted leaves it; 0 clears it (no limit).
     pub rate_limit: Option<i32>,
 
     /// Max concurrent dispatches

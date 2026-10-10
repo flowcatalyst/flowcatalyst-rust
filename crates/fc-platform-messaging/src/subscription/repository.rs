@@ -132,6 +132,34 @@ impl SubscriptionRepository {
         Self { pool: pool.clone() }
     }
 
+    /// The identifier of the client with this id, or `None` for no client (a
+    /// platform-wide subscription) or an id that names no client (Go
+    /// `repocommon.ClientIdentifier`). Create stores it beside the id: the SPA
+    /// shows it as the scope.
+    pub async fn client_identifier(&self, client_id: Option<&ClientId>) -> Result<Option<String>> {
+        let Some(id) = client_id.filter(|id| !id.as_str().is_empty()) else {
+            return Ok(None);
+        };
+        Ok(sqlx::query_scalar!(
+            "SELECT identifier FROM tnt_clients WHERE id = $1",
+            id as &ClientId
+        )
+        .fetch_optional(&self.pool)
+        .await?)
+    }
+
+    /// The code of the dispatch pool with this id, or `None` when no pool has
+    /// it. Create and update store it beside the pool id, as the SDK sync
+    /// does, so the pool shows by code (Go `DispatchPoolCode`, bug 11).
+    pub async fn dispatch_pool_code(&self, pool_id: &DispatchPoolId) -> Result<Option<String>> {
+        Ok(sqlx::query_scalar!(
+            "SELECT code FROM msg_dispatch_pools WHERE id = $1",
+            pool_id as &DispatchPoolId
+        )
+        .fetch_optional(&self.pool)
+        .await?)
+    }
+
     async fn load_event_types(
         &self,
         subscription_id: &SubscriptionId,

@@ -156,6 +156,16 @@ pub struct CreateSubscriptionCommand {
     /// Custom configuration entries.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_config: Option<Vec<ConfigEntry>>,
+
+    /// Subscribes to client-scoped event types (the SPA's Client Scoped
+    /// switch). Omitted: false (Go `CreateCommand.ClientScoped`, bug 9).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_scoped: Option<bool>,
+
+    /// Orders this subscription's dispatch jobs within a message group (lower
+    /// first). Omitted: the default, 99. Not negative (Go bug 9).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sequence: Option<i32>,
 }
 
 impl AuditMasked for CreateSubscriptionCommand {}
@@ -221,6 +231,12 @@ impl<U: UnitOfWork> UseCase for CreateSubscriptionUseCase<U> {
         if let Some(ref queue) = command.queue {
             parse_queue(queue)?;
         }
+        if command.sequence.is_some_and(|s| s < 0) {
+            return Err(UseCaseError::validation(
+                "INVALID_SEQUENCE",
+                "sequence must not be negative",
+            ));
+        }
         Ok(())
     }
 
@@ -269,9 +285,18 @@ impl<U: UnitOfWork> UseCase for CreateSubscriptionUseCase<U> {
             ));
         }
 
+        // The pool's code beside its id, as the SDK sync stores it (Go bug
+        // 11); an id naming no pool stores none.
+        let dispatch_pool_code = match command.dispatch_pool_id.as_ref() {
+            Some(pool_id) if !pool_id.as_str().is_empty() => {
+                self.subscription_repo.dispatch_pool_code(pool_id).await?
+            }
+            _ => None,
+        };
+
         // Create the subscription entity (the endpoint as sent, as Go);
         // an absent optional setting keeps the entity's default.
-        let subscription = Subscription::builder()
+        let mut subscription = Subscription::builder()
             .code(&code)
             .name(name)
             .endpoint(&command.endpoint)
@@ -286,6 +311,7 @@ impl<U: UnitOfWork> UseCase for CreateSubscriptionUseCase<U> {
                     .collect(),
             )
             .maybe_dispatch_pool_id(command.dispatch_pool_id.clone())
+            .maybe_dispatch_pool_code(dispatch_pool_code)
             .maybe_service_account_id(command.service_account_id.clone())
             .data_only(command.data_only)
             .created_by(ctx.principal_id.clone())
@@ -303,6 +329,18 @@ impl<U: UnitOfWork> UseCase for CreateSubscriptionUseCase<U> {
                     .and_then(|queue| parse_queue(queue).ok().flatten()),
             )
             .build();
+        if let Some(client_scoped) = command.client_scoped {
+            subscription.client_scoped = client_scoped;
+        }
+        if let Some(sequence) = command.sequence {
+            subscription.sequence = sequence;
+        }
+        // The client's identifier beside its id, the scope the SPA shows (Go
+        // 60dc063). No client, or an id naming none: no identifier.
+        subscription.client_identifier = self
+            .subscription_repo
+            .client_identifier(subscription.client_id.as_ref())
+            .await?;
 
         // Create domain event
         let event = SubscriptionCreated::new(
@@ -349,6 +387,8 @@ mod tests {
             delay_seconds: None,
             max_age_seconds: None,
             custom_config: None,
+            client_scoped: None,
+            sequence: None,
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

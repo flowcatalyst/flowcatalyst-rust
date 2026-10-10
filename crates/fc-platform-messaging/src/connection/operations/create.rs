@@ -169,6 +169,12 @@ impl<U: UnitOfWork> UseCase for CreateConnectionUseCase<U> {
         connection.application_code = command.application_code.clone();
         connection.description = command.description.clone();
         connection.client_id = parse_client_id_opt(command.client_id.as_id_str())?;
+        // The client's identifier beside its id, the scope the SPA shows (Go
+        // 60dc063). No client, or an id naming none: no identifier.
+        connection.client_identifier = self
+            .connection_repo
+            .client_identifier(connection.client_id.as_ref())
+            .await?;
         if let Some(ref ext_id) = command.external_id {
             connection.external_id = Some(ext_id.clone());
         }

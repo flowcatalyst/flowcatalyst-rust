@@ -94,8 +94,10 @@ async function saveChanges() {
 	try {
 		await dispatchPoolsApi.update(poolId, {
 			name: editName.value,
-			description: editDescription.value || undefined,
-			rateLimit: editRateLimit.value || undefined,
+			// Blank clears: the API stores no description for "" and no rate
+			// limit for 0 (omitting them would keep the stored values).
+			description: editDescription.value,
+			rateLimit: editRateLimit.value ?? 0,
 			concurrency: editConcurrency.value || undefined,
 		});
 		await loadPool(poolId);

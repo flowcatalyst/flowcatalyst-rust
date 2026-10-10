@@ -886,6 +886,8 @@ impl TriggerSync {
                     delay_seconds: None,
                     max_age_seconds: None,
                     custom_config: None,
+                    client_scoped: None,
+                    sequence: None,
                 };
                 self.commit_linked(
                     uow,

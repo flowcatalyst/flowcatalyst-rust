@@ -110,14 +110,14 @@ impl<U: UnitOfWork> UseCase for UpdateDispatchPoolUseCase<U> {
             }
         }
 
-        // Apply description update
+        // Set-if-provided, and a provided blank description or a zero rate
+        // limit CLEARS the value (NULL: no description, no limit; the router
+        // treats 0 and NULL alike), so an edit can remove either (Go d1158fa).
         if let Some(ref description) = command.description {
-            pool.description = Some(description.clone());
+            pool.description = Some(description.clone()).filter(|d| !d.trim().is_empty());
         }
-
-        // Apply rate limit update (Some sets/changes; clearing requires a separate flag)
         if let Some(rate) = command.rate_limit {
-            pool.rate_limit = Some(rate);
+            pool.rate_limit = Some(rate).filter(|r| *r != 0);
         }
 
         // Apply concurrency update

@@ -204,8 +204,17 @@ impl<U: UnitOfWork> UseCase for UpdateSubscriptionUseCase<U> {
             subscription.endpoint = ep.clone();
         }
 
-        if let Some(ref conn_id) = command.connection_id {
-            subscription.connection_id = Some(conn_id.clone());
+        // Set-if-provided: an omitted value leaves the existing binding, so
+        // connectionId can be re-pointed but not cleared here. A blank value
+        // (the SPA's edit sends "" for an empty field) is treated as omitted
+        // rather than stored as "" (Go bug 12); values are trimmed.
+        if let Some(conn_id) = command
+            .connection_id
+            .as_ref()
+            .map(|id| id.as_str().trim())
+            .filter(|id| !id.is_empty())
+        {
+            subscription.connection_id = Some(ConnectionId::from_wire(conn_id));
         }
 
         // Replaced wholesale when given, as Go.
@@ -218,6 +227,13 @@ impl<U: UnitOfWork> UseCase for UpdateSubscriptionUseCase<U> {
 
         if let Some(ref pool_id) = command.dispatch_pool_id {
             subscription.dispatch_pool_id = Some(pool_id.clone());
+            // The pool's code beside its id (Go bug 11); an id naming no pool
+            // stores none.
+            subscription.dispatch_pool_code = if pool_id.as_str().is_empty() {
+                None
+            } else {
+                self.subscription_repo.dispatch_pool_code(pool_id).await?
+            };
         }
 
         if let Some(ref account_id) = command.service_account_id {
