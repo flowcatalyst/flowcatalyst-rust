@@ -12,7 +12,6 @@ const route = useRoute();
 const clients = ref<Client[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
-const hasMore = ref(false);
 
 const listState = useListState(
 	{
@@ -23,10 +22,11 @@ const listState = useListState(
 	},
 	() => loadClients(),
 );
-const { filters, page } = listState;
+const { filters } = listState;
 
-// Hybrid list: the server fetch is a page window (Prev/Next below); the quick
-// search filters CLIENT-SIDE within the fetched window via the global filter.
+// GET /api/clients returns every client (it has no paging parameters), so the
+// list loads them all once and the table pages and searches them in the
+// browser: the search covers every client, not one window.
 const { filters: tableFilters, activeFilterCount, clearAll } = useTableFilters(
 	listState,
 	[],
@@ -40,24 +40,13 @@ async function loadClients() {
 	loading.value = true;
 	error.value = null;
 	try {
-		const response = await clientsApi.list({ page: page.value, pageSize: PAGE_SIZE });
+		const response = await clientsApi.list();
 		clients.value = response.clients;
-		hasMore.value = response.clients.length > 0;
 	} catch (e) {
 		error.value = e instanceof Error ? e.message : "Failed to load clients";
 	} finally {
 		loading.value = false;
 	}
-}
-
-async function prevPage() {
-	page.value--;
-	await loadClients();
-}
-
-async function nextPage() {
-	page.value++;
-	await loadClients();
 }
 
 function openDetail(id: string, edit = false) {
@@ -107,6 +96,9 @@ function formatDate(dateString: string) {
         :loading="loading"
         :filters="tableFilters"
         :globalFilterFields="['identifier', 'name']"
+        paginator
+        :rows="PAGE_SIZE"
+        :rowsPerPageOptions="[50, 100, 250, 500]"
         stripedRows
         rowHover
         :rowClass="() => 'clickable-row'"
@@ -151,25 +143,6 @@ function formatDate(dateString: string) {
           </template>
         </Column>
       </DataTable>
-
-      <!-- Server page-window pagination (the list endpoint reports no total) -->
-      <div v-if="!loading" class="pagination">
-        <Button
-          v-if="page > 0"
-          label="Previous"
-          icon="pi pi-chevron-left"
-          text
-          @click="prevPage"
-        />
-        <Button
-          v-if="hasMore"
-          label="Next"
-          icon="pi pi-chevron-right"
-          iconPos="right"
-          text
-          @click="nextPage"
-        />
-      </div>
     </div>
 
     <!-- Drawer outlet: detail/create child routes render over this list -->
@@ -191,10 +164,4 @@ function formatDate(dateString: string) {
   font-size: 13px;
 }
 
-.pagination {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 12px;
-}
 </style>

@@ -365,16 +365,10 @@ async function loadUser() {
 
 async function loadClients() {
 	try {
-		const allClients: typeof clients.value = [];
-		let page = 0;
-		const pageSize = 100;
-		while (true) {
-			const response = await clientsApi.list({ page, pageSize });
-			allClients.push(...response.clients);
-			if (response.clients.length < pageSize) break;
-			page++;
-		}
-		clients.value = allClients;
+		// GET /api/clients returns every client in one answer (it has no
+		// paging parameters; paging it looped forever from 100 clients).
+		const response = await clientsApi.list();
+		clients.value = response.clients;
 	} catch (error) {
 		console.error("Failed to fetch clients:", error);
 	}

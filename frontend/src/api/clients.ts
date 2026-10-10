@@ -33,17 +33,13 @@ export interface ClientSearchParams {
 }
 
 export const clientsApi = {
-	list(
-		params?: { page?: number; pageSize?: number; status?: string } | string,
-	): Promise<ClientListResponse> {
+	// GET /api/clients answers every client; it has no paging parameters,
+	// so this takes none (sending page/pageSize made pagers repeat the list).
+	list(params?: { status?: string } | string): Promise<ClientListResponse> {
 		const searchParams = new URLSearchParams();
 		if (typeof params === "string") {
 			if (params) searchParams.set("status", params);
 		} else if (params) {
-			if (params.page !== undefined)
-				searchParams.set("page", String(params.page));
-			if (params.pageSize !== undefined)
-				searchParams.set("pageSize", String(params.pageSize));
 			if (params.status) searchParams.set("status", params.status);
 		}
 		const query = searchParams.toString();
