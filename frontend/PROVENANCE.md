@@ -87,3 +87,15 @@ platform-granted sources.
 get no application access" against Go's `ServiceAccountCreateDrawer` (its toggle is Go's own, from
 a8ff165; Rust's all-applications toggle was not re-added). Rust's `tests/conventions/` check is the
 same file in both repos.
+
+### Go fixes ported after the take
+
+Go's platform bug-fix batch of 2026-10-10 (flowcatalyst-go `docs/platform-bug-fixes.md`), applied
+from Go's commits with their tests: `17b79ef` (schema viewer escapes before highlighting),
+`b7b9a06` (event type pencil), `8b98b1f` (subscription Queue select), `db4e776` (client list pages
+in the browser), `069a65d` (dispatch-job code facets, applied by hand: this copy has no
+requeue-by-filter dialog), `6116eee` (Sign needs view-raw), `108894d` (ClientSelect reads the
+caller's client options), `10a5ac1` (process pencil), `d1158fa` (pool edit clears blanks), and
+from `eb537a7`/`d1158fa` the two `api/openapi.lock.json` hunks they made, copied into
+`openapi/openapi.json` (the rest of Go's newer lock is not taken). Ledger:
+`docs/go-mirror/2026-10-10-platform-bug-fixes.md`.
