@@ -22,8 +22,17 @@ function wrap(cls: string, text: string): string {
 // JSON
 // ---------------------------------------------------------------------------
 
+// The result is inserted with v-html, and the input is stored data (any
+// principal that can add a schema version writes it), so & < > are escaped
+// before tokenising. Quotes stay raw: the tokenizer needs them, and the output
+// is element content, never an attribute value. Same as the Go port
+// (internal/schemacodegen/highlight.go).
+function escapeJsonText(text: string): string {
+	return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 export function highlightJson(json: string): string {
-	return json.replace(
+	return escapeJsonText(json).replace(
 		/("(?:\\.|[^"\\])*")\s*(:)|("(?:\\.|[^"\\])*")|(true|false|null)|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
 		(match, key, colon, str, keyword, num) => {
 			if (key) return `${wrap("hl-key", key)}${colon}`;
