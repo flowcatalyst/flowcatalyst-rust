@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { ref, watch, onMounted } from "vue";
-import { clientsApi, type Client } from "@/api/clients";
+import type { FilterOption } from "@/api/filter-options";
+import { useClientOptions } from "@/composables/useClientOptions";
+import { matchClientOptions } from "@/utils/client-options";
 
 interface Props {
 	modelValue: string | null;
 	placeholder?: string;
 	disabled?: boolean;
 	showClear?: boolean;
-	status?: string;
 	invalid?: boolean;
 }
 
@@ -15,72 +16,55 @@ const props = withDefaults(defineProps<Props>(), {
 	placeholder: "Search for a client...",
 	disabled: false,
 	showClear: true,
-	status: "ACTIVE",
 	invalid: false,
 });
 
 const emit = defineEmits<{
 	"update:modelValue": [value: string | null];
-	"client-selected": [client: Client | null];
+	"client-selected": [client: FilterOption | null];
 }>();
 
-// Internal state
-const selectedClient = ref<Client | null>(null);
-const suggestions = ref<Client[]>([]);
-const loading = ref(false);
+// The choices are the active clients the caller can access
+// (/bff/filter-options/clients), not the anchor-only client search: a
+// client-scoped user picks one of its own clients.
+const { options, loading, ensureLoaded } = useClientOptions();
+const selectedClient = ref<FilterOption | null>(null);
+const suggestions = ref<FilterOption[]>([]);
 
-// Load initial client if modelValue is provided
-onMounted(async () => {
-	if (props.modelValue) {
-		await loadClientById(props.modelValue);
+async function selectById(id: string | null) {
+	if (!id) {
+		selectedClient.value = null;
+		return;
 	}
-});
+	try {
+		await ensureLoaded();
+	} catch (e) {
+		console.error("Failed to load clients:", e);
+	}
+	selectedClient.value = options.value.find((o) => o.value === id) ?? { value: id, label: id };
+}
 
-// Watch for external modelValue changes
+onMounted(() => selectById(props.modelValue));
+
 watch(
 	() => props.modelValue,
-	async (newValue) => {
-		if (
-			newValue &&
-			(!selectedClient.value || selectedClient.value.id !== newValue)
-		) {
-			await loadClientById(newValue);
-		} else if (!newValue) {
-			selectedClient.value = null;
-		}
+	(newValue) => {
+		if (newValue !== (selectedClient.value?.value ?? null)) void selectById(newValue);
 	},
 );
 
-async function loadClientById(id: string) {
-	try {
-		const client = await clientsApi.get(id);
-		selectedClient.value = client;
-	} catch (e) {
-		console.error("Failed to load client:", e);
-		selectedClient.value = null;
-	}
-}
-
 async function searchClients(event: { query: string }) {
-	loading.value = true;
 	try {
-		const response = await clientsApi.search({
-			q: event.query,
-			status: props.status,
-			limit: 20,
-		});
-		suggestions.value = response.clients;
+		await ensureLoaded();
 	} catch (e) {
-		console.error("Failed to search clients:", e);
-		suggestions.value = [];
-	} finally {
-		loading.value = false;
+		console.error("Failed to load clients:", e);
 	}
+	suggestions.value = matchClientOptions(options.value, event.query);
 }
 
-function onSelect(event: { value: Client }) {
+function onSelect(event: { value: FilterOption }) {
 	selectedClient.value = event.value;
-	emit("update:modelValue", event.value.id);
+	emit("update:modelValue", event.value.value);
 	emit("client-selected", event.value);
 }
 
@@ -95,7 +79,7 @@ function onClear() {
   <AutoComplete
     v-model="selectedClient"
     :suggestions="suggestions"
-    optionLabel="name"
+    optionLabel="label"
     :placeholder="placeholder"
     :disabled="disabled"
     :loading="loading"
@@ -110,8 +94,7 @@ function onClear() {
   >
     <template #option="{ option }">
       <div class="client-option">
-        <span class="client-name">{{ option.name }}</span>
-        <span class="client-identifier">{{ option.identifier }}</span>
+        <span class="client-name">{{ option.label }}</span>
       </div>
     </template>
     <template #empty>
@@ -138,12 +121,6 @@ function onClear() {
 
 .client-name {
   font-weight: 500;
-}
-
-.client-identifier {
-  font-size: 12px;
-  color: #64748b;
-  font-family: monospace;
 }
 
 .empty-message {
