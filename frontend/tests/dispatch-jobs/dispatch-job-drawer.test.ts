@@ -33,6 +33,9 @@ const api = vi.hoisted(() => ({
 }));
 
 vi.mock("@/api/dispatch-jobs", () => ({ dispatchJobsApi: api }));
+// The drawer reads the signed-in user for its Sign gate (view-raw); a viewer
+// without it is enough here.
+vi.mock("@/stores/auth", () => ({ useAuthStore: () => ({ user: null }) }));
 vi.mock("@/composables/useDrawerRoute", () => ({
 	useDrawerRoute: () => ({ id: ref("djb0000000001"), goToList: vi.fn() }),
 }));
