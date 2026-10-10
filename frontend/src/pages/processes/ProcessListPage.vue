@@ -6,6 +6,7 @@ import { processesApi } from "@/api/processes";
 import type { Process } from "@/api/processes";
 import { useListState } from "@/composables/useListState";
 import { useTableFilters } from "@/composables/useTableFilters";
+import { canEditProcess } from "@/utils/process-rules";
 
 const router = useRouter();
 const route = useRoute();
@@ -70,6 +71,7 @@ function viewProcess(p: Process) {
 }
 
 function editProcess(p: Process) {
+	if (!canEditProcess(p)) return;
 	// Straight to the full-page Mermaid editor.
 	void router.push(`/processes/${p.id}/edit`);
 }
@@ -226,7 +228,9 @@ function openCreate() {
                 text
                 rounded
                 severity="secondary"
-                v-tooltip.left="'Edit'"
+                :disabled="!canEditProcess(data)"
+                :aria-label="canEditProcess(data) ? 'Edit' : 'Archived processes cannot be edited'"
+                v-tooltip.left="canEditProcess(data) ? 'Edit' : 'Archived processes cannot be edited'"
                 @click.stop="editProcess(data)"
               />
             </div>

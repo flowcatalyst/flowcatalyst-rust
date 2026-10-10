@@ -3,6 +3,7 @@ import { ref, onMounted, computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { toast } from "@/utils/errorBus";
 import { processesApi } from "@/api/processes";
+import { canEditProcess } from "@/utils/process-rules";
 
 const route = useRoute();
 const router = useRouter();
@@ -19,6 +20,13 @@ const saving = ref(false);
 onMounted(async () => {
 	try {
 		const p = await processesApi.get(processId.value);
+		// An archived process is read-only (a stale link included): back to
+		// its drawer, which has no Edit for it.
+		if (!canEditProcess(p)) {
+			toast.error("Read-only", "Archived processes cannot be edited.");
+			router.push(`/processes/${processId.value}`);
+			return;
+		}
 		code.value = p.code;
 		name.value = p.name;
 		description.value = p.description ?? "";
