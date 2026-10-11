@@ -170,42 +170,6 @@ pub fn schemas() -> HashMap<&'static str, Value> {
         obj(&[req_str("serviceAccountId"), req_str("code")]),
     );
 
-    // ─── platform:iam:client ───────────────────────────────────────────
-    m.insert(
-        "platform:iam:client:created",
-        obj(&[
-            req_str("clientId"),
-            req_str("name"),
-            req_str("identifier"),
-            opt_str("description"),
-        ]),
-    );
-    m.insert(
-        "platform:iam:client:updated",
-        obj(&[req_str("clientId"), opt_str("name"), opt_str("description")]),
-    );
-    m.insert(
-        "platform:iam:client:activated",
-        obj(&[req_str("clientId"), req_str("previousStatus")]),
-    );
-    m.insert(
-        "platform:iam:client:suspended",
-        obj(&[req_str("clientId"), req_str("reason")]),
-    );
-    m.insert(
-        "platform:iam:client:deleted",
-        obj(&[req_str("clientId"), req_str("name"), req_str("identifier")]),
-    );
-    m.insert(
-        "platform:iam:client:note-added",
-        obj(&[
-            req_str("clientId"),
-            req_str("category"),
-            req_str("text"),
-            req_str("author"),
-        ]),
-    );
-
     // ─── platform:iam:role ─────────────────────────────────────────────
     m.insert(
         "platform:iam:role:created",
@@ -571,8 +535,8 @@ pub fn schemas() -> HashMap<&'static str, Value> {
 /// Schemas for the event types the platform emits that Go's seeded
 /// catalogue lacks. The entries above are Go's catalogue verbatim (codes,
 /// names and schemas, `internal/platform/seed/event_schemas.go`), which
-/// predates several renames: Go emits e.g. `platform:admin:client:*` while
-/// seeding `platform:iam:client:*`. These describe each emitted event's
+/// predates several renames (Go seeded the client events as
+/// `platform:iam:client:*` until its `25c3ed6`). These describe each emitted event's
 /// `data` exactly (Go's `ToDataJSON`), so a subscription can reference every
 /// type the platform actually emits.
 fn emitted_beyond_go_catalogue(m: &mut HashMap<&'static str, Value>) {
@@ -582,7 +546,7 @@ fn emitted_beyond_go_catalogue(m: &mut HashMap<&'static str, Value>) {
         obj(&props)
     };
 
-    // Client (Go emits `platform:admin:client:*`; the catalogue has iam).
+    // Client (emitted as `platform:admin:client:*`).
     m.insert(
         "platform:admin:client:created",
         id_and("clientId", &[req_str("name"), req_str("identifier")]),

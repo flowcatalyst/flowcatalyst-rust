@@ -69,20 +69,10 @@ pub fn definitions() -> Vec<SyncEventTypeInput> {
         ],
     );
 
-    // Client
-    group(
-        &mut defs,
-        &schemas,
-        "platform:iam:client",
-        &[
-            "created",
-            "updated",
-            "activated",
-            "suspended",
-            "deleted",
-            "note-added",
-        ],
-    );
+    // Client: the lifecycle events are emitted under `platform:admin:client`
+    // (catalogued below with the other emitted types); Go's catalogue listed
+    // them as `platform:iam:client:*`, which nothing emits, until its
+    // `25c3ed6`. Migration 068 renames the rows an older seed wrote.
 
     // Role
     group(
@@ -215,9 +205,9 @@ pub fn definitions() -> Vec<SyncEventTypeInput> {
     //
     // Everything above is Go's catalogue (`seed/event_types.go`) code for
     // code, so production rows stay as Go seeded them. Go emits several
-    // types under other names than it seeds (e.g. `platform:admin:client:*`
-    // against the seeded `platform:iam:client:*`); these make every emitted
-    // type subscribable.
+    // types under other names than it seeds (the client events were one,
+    // until Go catalogued them in `25c3ed6`); these make every emitted type
+    // subscribable.
     group(
         &mut defs,
         &schemas,

@@ -346,6 +346,14 @@ fn core_migrations() -> &'static [(&'static str, &'static str)] {
             "067_application_service_batch_permissions",
             include_str!("../../../migrations/067_application_service_batch_permissions.sql"),
         ),
+        // The client lifecycle event types are catalogued under the codes
+        // the use cases emit (`platform:admin:client:*`): the rows an older
+        // seed wrote as `platform:iam:client:*` are renamed and subscription
+        // bindings follow (Go 070, `25c3ed6`).
+        (
+            "068_client_event_type_codes",
+            include_str!("../../../migrations/068_client_event_type_codes.sql"),
+        ),
     ]
 }
 

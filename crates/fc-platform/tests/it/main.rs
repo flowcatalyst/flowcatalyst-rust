@@ -15,6 +15,8 @@
     reason = "test code: a failed unwrap, expect or panic is a failed test (clippy's test exemption covers #[test] fns and #[cfg(test)] modules, not the helpers of an integration-test crate)"
 )]
 
+mod client_event_codes_migration_test;
+mod emitted_catalogue_test;
 mod event_type_client_ignored_test;
 mod scheduled_job_report_scope_test;
 mod support;
