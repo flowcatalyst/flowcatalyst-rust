@@ -860,7 +860,7 @@ export type CreateEventTypeRequest = {
      */
     readonly $schema?: string;
     /**
-     * Optional client scope; absent means anchor-level
+     * Ignored. Event types are platform-wide and have no client; a value is accepted for compatibility and not stored (creating an event type needs anchor scope). Use clientScoped to mark events of this type as carried per client.
      */
     clientId?: string;
     /**
@@ -3672,7 +3672,7 @@ export type CreateEventResponseWritable = {
 
 export type CreateEventTypeRequestWritable = {
     /**
-     * Optional client scope; absent means anchor-level
+     * Ignored. Event types are platform-wide and have no client; a value is accepted for compatibility and not stored (creating an event type needs anchor scope). Use clientScoped to mark events of this type as carried per client.
      */
     clientId?: string;
     /**

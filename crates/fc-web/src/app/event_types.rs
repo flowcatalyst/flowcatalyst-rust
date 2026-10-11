@@ -721,7 +721,6 @@ async fn create_event_type(cx: &Cx, form: Option<Form<CreateForm>>) -> Result<im
                         name,
                         description: Some(form.description.trim().to_owned())
                             .filter(|d| !d.is_empty()),
-                        client_id: None,
                         client_scoped: false,
                         schema: None,
                     },

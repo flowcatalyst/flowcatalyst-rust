@@ -51,7 +51,7 @@ pub struct CreateEventTypeRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<serde_json::Value>,
 
-    /// Client ID (optional, null = anchor-level)
+    /// Ignored. Event types are platform-wide and have no client; a value is accepted for compatibility and not stored (creating an event type needs anchor scope). Use clientScoped to mark events of this type as carried per client.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
 
@@ -226,12 +226,12 @@ pub async fn create_event_type(
         code: CreateEventTypeCommand::parse_code(&req.code, &req.name)?,
         name: req.name,
         description: req.description,
-        client_id: req.client_id.map(ClientId::from_wire),
         client_scoped: req.client_scoped,
         schema: req.schema,
     };
     // Go's `CreateEventType`: the use case validates the command (the code
-    // parsed above), then checks the scope (`CheckScopeAccess`).
+    // parsed above), then requires anchor reach (`CheckScopeAccess` on no
+    // client; a `clientId` in the body is ignored).
     let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state.create_use_case.run(cmd, ctx).await.into_result()?;
 

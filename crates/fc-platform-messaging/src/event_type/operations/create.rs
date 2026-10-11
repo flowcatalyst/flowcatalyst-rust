@@ -3,7 +3,6 @@
 //! Use case for creating a new event type.
 
 use async_trait::async_trait;
-use fc_platform_core::shared::id::ClientId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -31,13 +30,12 @@ pub struct CreateEventTypeCommand {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
-    /// Optional client ID for multi-tenant scoping
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<ClientId>,
-
+    // An event type has no client: event types are platform-wide
+    // (`msg_event_types` has no client column). The wire bodies still accept
+    // a `clientId` for compatibility and ignore it (Go `0a8df19`).
     /// Events of this type are carried per client (Go `clientScoped`): the
     /// subscription editor offers client-scoped types only to client-scoped
-    /// subscriptions. Distinct from `client_id`, which scopes the row itself.
+    /// subscriptions.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub client_scoped: bool,
 
@@ -92,7 +90,6 @@ fn name_required() -> UseCaseError {
 ///     code: CreateEventTypeCommand::parse_code("orders:fulfillment:shipment:shipped", &name)?,
 ///     name,
 ///     description: Some("Emitted when a shipment leaves".to_string()),
-///     client_id: None,
 ///     client_scoped: false,
 ///     schema: None,
 /// };
@@ -126,15 +123,16 @@ impl<U: UnitOfWork> UseCase for CreateEventTypeUseCase<U> {
         Ok(())
     }
 
-    /// Go `CheckScopeAccess` on the requested client (Go's `CreateEventType`
-    /// authorize): a client-scoped type needs that client, a platform one anchor
-    /// scope (403 `SCOPE_FORBIDDEN`).
+    /// Every event type is platform-wide, so creating one is a platform-level
+    /// act: Go `CheckScopeAccess` on no client (anchor or super-admin reach,
+    /// else 403 `SCOPE_FORBIDDEN`). A `clientId` on the wire used to pass this
+    /// for the caller's own client and then be dropped (Go `0a8df19`).
     async fn authorize(
         &self,
-        command: &CreateEventTypeCommand,
+        _command: &CreateEventTypeCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        caller_reach::check_scope_access(ctx.caller(), command.client_id.as_ref())
+        caller_reach::check_scope_access(ctx.caller(), None)
     }
 
     async fn execute(
@@ -158,9 +156,6 @@ impl<U: UnitOfWork> UseCase for CreateEventTypeUseCase<U> {
         let mut event_type = EventType::new(command.code.clone(), &command.name);
         if let Some(desc) = &command.description {
             event_type.description = Some(desc.clone());
-        }
-        if let Some(client_id) = &command.client_id {
-            event_type.client_id = Some(client_id.clone());
         }
         event_type.client_scoped = command.client_scoped;
         if let Some(schema) = &command.schema {
@@ -192,7 +187,6 @@ mod tests {
             code: EventTypeCode::parse("orders:fulfillment:shipment:shipped").unwrap(),
             name: "Shipment Shipped".to_string(),
             description: Some("When a shipment leaves".to_string()),
-            client_id: None,
             client_scoped: false,
             schema: None,
         };

@@ -3,7 +3,6 @@
 //! Backend-For-Frontend endpoints for event type management.
 //! Provides a UI-friendly view of event types at `/bff/event-types`.
 
-use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::EventTypeId;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -143,7 +142,8 @@ pub struct BffCreateEventTypeRequest {
     /// Initial JSON schema
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<serde_json::Value>,
-    /// Client ID (optional, null = anchor-level)
+    /// Accepted and ignored: event types are platform-wide (see
+    /// `CreateEventTypeCommand`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
     /// Events of this type are per-client: honoured on create exactly as
@@ -434,13 +434,9 @@ pub async fn create_event_type(
     auth: Authenticated,
     Json(req): Json<BffCreateEventTypeRequest>,
 ) -> Result<(StatusCode, Json<BffEventTypeResponse>), PlatformError> {
+    // The permission here; the use case requires anchor reach (every event
+    // type is platform-wide; a `clientId` in the body is ignored).
     checks::can_create_event_types(&auth.0)?;
-
-    // Validate client access if specified
-    access::ensure_can_create(
-        &auth.0,
-        req.client_id.as_deref().map(ClientId::from_wire).as_ref(),
-    )?;
 
     let ctx = ExecutionContext::from_auth(&auth.0);
 
@@ -448,7 +444,6 @@ pub async fn create_event_type(
         code: CreateEventTypeCommand::parse_code(&req.code, &req.name)?,
         name: req.name,
         description: req.description,
-        client_id: req.client_id.map(ClientId::from_wire),
         client_scoped: req.client_scoped,
         schema: None,
     };
