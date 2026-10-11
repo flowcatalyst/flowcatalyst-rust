@@ -4,9 +4,12 @@ import { ref, computed, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { rolesApi, type Role } from "@/api/roles";
 import { permissionsApi, type Permission } from "@/api/permissions";
+import { useAuthStore } from "@/stores/auth";
+import { canUpdateRoles } from "@/utils/admin-permissions";
 
 const route = useRoute();
 const router = useRouter();
+const authStore = useAuthStore();
 
 const role = ref<Role | null>(null);
 const allPermissions = ref<Permission[]>([]);
@@ -108,10 +111,17 @@ async function loadRole() {
 		clientManaged.value = role.value.clientManaged;
 		selectedPermissions.value = new Set(role.value.permissions);
 
-		// Redirect if not editable. Return so the rest of the page setup
-		// (loadPermissions etc.) doesn't run and flash behind the redirect.
-		if (role.value.source !== "DATABASE") {
-			toast.warn("Not Editable", "Only admin-created roles can be edited");
+		// Redirect if not editable (a code-defined role, or a user the BFF
+		// would refuse the update: anchor and role:update). Return so the rest
+		// of the page setup (loadPermissions etc.) doesn't run and flash
+		// behind the redirect.
+		if (role.value.source !== "DATABASE" || !canUpdateRoles(authStore.user)) {
+			toast.warn(
+				"Not Editable",
+				role.value.source !== "DATABASE"
+					? "Only admin-created roles can be edited"
+					: "You do not have permission to edit roles",
+			);
 			await router.push(
 				`/authorization/roles/${encodeURIComponent(roleName.value)}`,
 			);

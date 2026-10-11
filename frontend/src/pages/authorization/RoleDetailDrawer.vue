@@ -4,8 +4,11 @@ import { useRouter } from "vue-router";
 import { rolesApi, type Role, type RoleSource } from "@/api/roles";
 import EntityDrawer from "@/components/drawer/EntityDrawer.vue";
 import { useDrawerRoute } from "@/composables/useDrawerRoute";
+import { useAuthStore } from "@/stores/auth";
+import { canUpdateRoles } from "@/utils/admin-permissions";
 
 const router = useRouter();
+const authStore = useAuthStore();
 
 // Read-only drawer — no dirty state, so no discard guard needed.
 const { id: roleName, goToList } = useDrawerRoute({
@@ -17,8 +20,11 @@ const role = ref<Role | null>(null);
 const loading = ref(true);
 const loadError = ref<string | null>(null);
 
-// Only admin-created roles are editable.
-const canEdit = computed(() => role.value?.source === "DATABASE");
+// Only admin-created roles are editable, and only by those the BFF lets
+// update roles (anchor and role:update).
+const canEdit = computed(
+	() => role.value?.source === "DATABASE" && canUpdateRoles(authStore.user),
+);
 
 // Reactive param: the drawer instance is reused when switching between rows.
 watch(

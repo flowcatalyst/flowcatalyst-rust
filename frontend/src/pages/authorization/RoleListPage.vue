@@ -11,10 +11,23 @@ import {
 	type RoleSource,
 	type ApplicationOption,
 } from "@/api/roles";
+import { useAuthStore } from "@/stores/auth";
+import {
+	canCreateRoles,
+	canDeleteRoles,
+	canUpdateRoles,
+} from "@/utils/admin-permissions";
 
 const router = useRouter();
 const route = useRoute();
 const confirm = useConfirm();
+const authStore = useAuthStore();
+
+// Create, edit and delete are offered only to those the BFF lets make them
+// (anchor and the role permission for the operation).
+const canCreate = computed(() => canCreateRoles(authStore.user));
+const canUpdate = computed(() => canUpdateRoles(authStore.user));
+const canDelete = computed(() => canDeleteRoles(authStore.user));
 
 // Data
 const roles = ref<Role[]>([]);
@@ -203,7 +216,7 @@ function getSourceLabel(source: RoleSource) {
         <h1 class="page-title">Roles</h1>
         <p class="page-subtitle">Manage roles and their permissions</p>
       </div>
-      <Button label="Create Role" icon="pi pi-plus" @click="openCreateDialog" />
+      <Button v-if="canCreate" label="Create Role" icon="pi pi-plus" @click="openCreateDialog" />
     </header>
 
     <!-- Data Table -->
@@ -309,7 +322,7 @@ function getSourceLabel(source: RoleSource) {
           <template #body="{ data }">
             <div class="action-buttons" @click.stop>
               <Button
-                v-if="data.source === 'DATABASE'"
+                v-if="data.source === 'DATABASE' && canUpdate"
                 icon="pi pi-pencil"
                 text
                 rounded
@@ -318,7 +331,7 @@ function getSourceLabel(source: RoleSource) {
                 @click="editRole(data)"
               />
               <Button
-                v-if="data.source === 'DATABASE'"
+                v-if="data.source === 'DATABASE' && canDelete"
                 icon="pi pi-trash"
                 text
                 rounded

@@ -8,10 +8,18 @@ import { eventTypesApi } from "@/api/event-types";
 import type { EventType } from "@/api/event-types";
 import { exportSchemasAsZip } from "@/utils/schema-export";
 import { canEditEventType } from "@/utils/event-type-rules";
+import { canSyncPlatformEventTypes } from "@/utils/admin-permissions";
+import { useAuthStore } from "@/stores/auth";
 
 const router = useRouter();
 const route = useRoute();
 const syncing = ref(false);
+const authStore = useAuthStore();
+// Sync Platform Events only for those the BFF lets run it (anchor and the
+// event-type sync permission).
+const canSyncPlatform = computed(() =>
+	canSyncPlatformEventTypes(authStore.user),
+);
 
 const {
 	eventTypes,
@@ -137,6 +145,7 @@ function getSchemaStatusSeverity(status: string) {
           @click="exportSchemas"
         />
         <Button
+          v-if="canSyncPlatform"
           label="Sync Platform Events"
           icon="pi pi-sync"
           severity="secondary"

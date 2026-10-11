@@ -26,8 +26,8 @@ export const permissionsApi = {
 	},
 
 	// create defines a permission in the persistent catalogue (idempotent by
-	// code). Anchor-gated server-side — anyone who can manage roles can create
-	// permissions. Returns the created permission.
+	// code). Server-side: anchor scope and role:create (canCreateRoles).
+	// Returns the created permission.
 	create(req: CreatePermissionRequest): Promise<Permission> {
 		return bffFetch(`/roles/permissions`, {
 			method: "POST",

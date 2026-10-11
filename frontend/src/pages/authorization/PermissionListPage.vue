@@ -5,14 +5,18 @@ import { rolesApi, type ApplicationOption } from "@/api/roles";
 import { useListState } from "@/composables/useListState";
 import { useTableFilters } from "@/composables/useTableFilters";
 import { toast } from "@/utils/errorBus";
+import { useAuthStore } from "@/stores/auth";
+import { canCreateRoles } from "@/utils/admin-permissions";
 
 
 const permissions = ref<Permission[]>([]);
 const loading = ref(true);
 
-// Create-permission dialog. Anyone who can manage roles can define a
-// permission (anchor-gated server-side). The four segments form the canonical
+// Create-permission dialog, offered to those the BFF lets define a
+// permission (anchor and role:create). The four segments form the canonical
 // "application:context:aggregate:action" code.
+const authStore = useAuthStore();
+const canCreatePermission = computed(() => canCreateRoles(authStore.user));
 const applications = ref<ApplicationOption[]>([]);
 const showCreateDialog = ref(false);
 const creating = ref(false);
@@ -182,7 +186,7 @@ function getActionSeverity(action: string) {
         <p class="page-subtitle">View all available permissions in the system</p>
       </div>
       <div class="header-right">
-        <Button label="Create Permission" icon="pi pi-plus" @click="openCreateDialog" />
+        <Button v-if="canCreatePermission" label="Create Permission" icon="pi pi-plus" @click="openCreateDialog" />
       </div>
     </header>
 
