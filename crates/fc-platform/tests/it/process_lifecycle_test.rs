@@ -60,6 +60,14 @@ async fn process_edit_and_delete_follow_the_status() {
     let got = assert_status(app.get(&path, &admin).await, StatusCode::OK).await;
     assert!(got.get("description").is_none(), "{got}");
 
+    // An edit that changes nothing is saved, as Go does (it was 400
+    // `NO_CHANGES` here).
+    assert_status(
+        app.put(&path, &admin, json!({ "name": "Shipping" })).await,
+        StatusCode::NO_CONTENT,
+    )
+    .await;
+
     // An archived process is not edited, and is deleted.
     let (status, body) = read_json(
         app.post(&format!("{path}/archive"), &admin, json!({}))

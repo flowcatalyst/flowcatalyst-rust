@@ -106,49 +106,27 @@ impl<U: UnitOfWork> UseCase for UpdateProcessUseCase<U> {
             ));
         }
 
-        let mut any_change = false;
-
+        // Go applies what is sent; an edit that changes nothing is saved too
+        // (it answered 400 `NO_CHANGES` here, a rule Go does not have).
         if let Some(name) = command.name.as_ref() {
-            let trimmed = name.trim();
-            if trimmed != process.name {
-                process.name = trimmed.to_string();
-                any_change = true;
-            }
+            process.name = name.trim().to_string();
         }
         if let Some(desc) = command.description.as_ref() {
             // A blank description is none (Go bug 25: the SPA sends "" for an
             // emptied field).
-            let desc = optional_description(Some(desc));
-            if process.description != desc {
-                process.description = desc;
-                any_change = true;
-            }
+            process.description = optional_description(Some(desc));
         }
         if let Some(body) = command.body.as_ref() {
-            if &process.body != body {
-                process.body = body.clone();
-                any_change = true;
-            }
+            process.body = body.clone();
         }
         if let Some(dt) = command.diagram_type.as_ref() {
             let trimmed = dt.trim();
-            if !trimmed.is_empty() && trimmed != process.diagram_type {
+            if !trimmed.is_empty() {
                 process.diagram_type = trimmed.to_string();
-                any_change = true;
             }
         }
         if let Some(tags) = command.tags.as_ref() {
-            if &process.tags != tags {
-                process.tags = tags.clone();
-                any_change = true;
-            }
-        }
-
-        if !any_change {
-            return Err(UseCaseError::validation(
-                "NO_CHANGES",
-                "No changes detected",
-            ));
+            process.tags = tags.clone();
         }
 
         process.updated_at = chrono::Utc::now();
