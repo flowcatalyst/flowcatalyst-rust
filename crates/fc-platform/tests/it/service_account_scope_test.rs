@@ -36,7 +36,7 @@ async fn create_sa(app: &TestApp, body: Value) -> (StatusCode, Value) {
     read_json(
         app.post(
             "/api/service-accounts",
-            &app.anchor_admin_token().await,
+            &app.anchor_admin_token_all_applications().await,
             body,
         )
         .await,
@@ -59,19 +59,19 @@ fn token(app: &TestApp, principal: &Principal) -> String {
         .expect("token")
 }
 
-/// The 403 code an anchor-gated write (regenerating an account's auth
-/// token, which asks anchor reach first, as Go's `RequireAnchor` there)
-/// made with `token` answers. The token's principal holds no permissions, so
-/// an anchor caller passes the anchor check and stops at the permission
-/// check (`PERMISSION_REQUIRED`); any other caller stops at the anchor check
-/// (`ANCHOR_REQUIRED`), as Go's bodies have it. (Creating an account asks the
-/// permission first since Go b49b73a, so it cannot tell the two apart.)
+/// The 403 code an anchor-gated write (creating a client, which asks anchor
+/// reach first, as Go's `anchorWith`) made with `token` answers. The token's
+/// principal holds no permissions, so an anchor caller passes the anchor
+/// check and stops at the permission check (`PERMISSION_REQUIRED`); any other
+/// caller stops at the anchor check (`ANCHOR_REQUIRED`). (Every
+/// service-account write asks the permission first since Go `0ae0988`, so
+/// none can tell the two apart.)
 async fn anchor_only_status(app: &TestApp, token: &str, code: &str) -> String {
     let (status, body) = read_json(
         app.post(
-            &format!("/api/service-accounts/{code}/regenerate-auth-token"),
+            "/api/clients",
             token,
-            json!({}),
+            json!({ "identifier": code, "name": code }),
         )
         .await,
     )
@@ -274,7 +274,7 @@ async fn update_moves_the_principal_reach() {
         "/api/service-accounts/{}",
         body["serviceAccount"]["id"].as_str().unwrap()
     );
-    let admin = app.anchor_admin_token().await;
+    let admin = app.anchor_admin_token_all_applications().await;
 
     let resp = app
         .put(
@@ -343,7 +343,7 @@ async fn provisioned_service_account_is_anchor() {
                 "/api/applications/{}/provision-service-account",
                 application.id
             ),
-            &app.anchor_admin_token().await,
+            &app.anchor_admin_token_all_applications().await,
             json!({}),
         )
         .await,

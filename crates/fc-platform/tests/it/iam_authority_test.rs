@@ -78,7 +78,7 @@ async fn create_sa(app: &TestApp, token: &str, body: Value) -> (StatusCode, Valu
 #[ignore = "requires Docker"]
 async fn service_account_credentials_and_roles_need_anchor_and_update() {
     let app = setup().await;
-    let admin = app.anchor_admin_token().await;
+    let admin = app.anchor_admin_token_all_applications().await;
     let (status, body) =
         create_sa(&app, &admin, json!({ "code": "sa-gate", "name": "Gate" })).await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
@@ -97,12 +97,15 @@ async fn service_account_credentials_and_roles_need_anchor_and_update() {
         Some(&clt),
         &[permissions::admin::SERVICE_ACCOUNT_UPDATE],
     );
-    let anchor_with = caller(
+    // Stored (a new user reaches every application): the writes confine an
+    // application-scoped caller, and an unstored one reaches none.
+    let anchor_with = stored_caller(
         &app,
+        "sa-gate-anchor@iam.test",
         UserScope::Anchor,
-        None,
         &[permissions::admin::SERVICE_ACCOUNT_UPDATE],
-    );
+    )
+    .await;
 
     for (method, path) in [
         ("PUT", format!("/api/service-accounts/{id}/roles")),
@@ -803,12 +806,19 @@ async fn service_account_roles_are_bounded_by_the_callers_own_permissions() {
     use fc_platform::role::entity::roles;
     let app = setup().await;
     seed_roles(&app, vec![roles::super_admin(), roles::iam_readonly()]).await;
-    let admin = app.anchor_admin_token().await;
+    let admin = app.anchor_admin_token_all_applications().await;
     let (_, body) = create_sa(&app, &admin, json!({ "code": "sa-ceiling", "name": "C" })).await;
     let id = body["serviceAccount"]["id"].as_str().unwrap().to_string();
     let path = format!("/api/service-accounts/{id}/roles");
 
-    let sa_admin = iam_admin(&app, &[]);
+    // Stored, as the writes confine an application-scoped caller.
+    let iam_admin_role = roles::iam_admin();
+    let perms: Vec<&str> = iam_admin_role
+        .permissions
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let sa_admin = stored_caller(&app, "sa-ceiling@iam.test", UserScope::Anchor, &perms).await;
     let (status, resp) = read_json(
         app.put(
             &path,

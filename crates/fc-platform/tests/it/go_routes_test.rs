@@ -319,7 +319,7 @@ async fn create_sa(app: &TestApp, admin: &str, code: &str) -> Value {
 #[ignore = "requires Docker"]
 async fn a_service_account_token_is_minted_and_deactivation_stops_it() {
     let app = setup().await;
-    let admin = app.anchor_admin_token().await;
+    let admin = app.anchor_admin_token_all_applications().await;
     let created = create_sa(&app, &admin, "mint-bot").await;
     let id = created["serviceAccount"]["id"]
         .as_str()
@@ -423,7 +423,7 @@ async fn a_service_account_token_is_minted_and_deactivation_stops_it() {
 #[ignore = "requires Docker"]
 async fn go_regenerate_spellings_are_aliases() {
     let app = setup().await;
-    let admin = app.anchor_admin_token().await;
+    let admin = app.anchor_admin_token_all_applications().await;
     let created = create_sa(&app, &admin, "regen-bot").await;
     let id = created["serviceAccount"]["id"]
         .as_str()
@@ -1249,7 +1249,7 @@ async fn application_service_accounts_attach_and_client_configs_read() {
     use fc_platform::application::entity::Application;
     use fc_platform::ApplicationClientConfig;
     let app = setup().await;
-    let admin = app.anchor_admin_token().await;
+    let admin = app.anchor_admin_token_all_applications().await;
     let application = Application::new("attachapp", "Attach App");
     app.repos
         .application_repo

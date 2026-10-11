@@ -19,6 +19,7 @@ mod client_event_codes_migration_test;
 mod emitted_catalogue_test;
 mod event_type_client_ignored_test;
 mod scheduled_job_report_scope_test;
+mod service_account_app_reach_test;
 mod support;
 
 mod api_integration_tests;

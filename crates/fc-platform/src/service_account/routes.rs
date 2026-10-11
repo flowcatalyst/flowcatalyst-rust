@@ -97,6 +97,7 @@ pub fn service_account_admin_state(ctx: &PlatformContext) -> ServiceAccountAdmin
         record_mint_use_case: Arc::new(RecordServiceAccountTokenMintUseCase::new(
             ctx.unit_of_work.clone(),
         )),
+        app_access: ctx.app_access.clone(),
     }
 }
 

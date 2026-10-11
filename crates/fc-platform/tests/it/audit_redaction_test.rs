@@ -65,7 +65,7 @@ fn assert_absent(rows: &[(String, String)], secret: &str) {
 #[ignore = "requires Docker"]
 async fn service_account_credentials_never_reach_the_audit_log() {
     let app = setup().await;
-    let token = app.anchor_admin_token().await;
+    let token = app.anchor_admin_token_all_applications().await;
 
     let resp = app
         .post(

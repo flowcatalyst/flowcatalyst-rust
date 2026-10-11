@@ -367,7 +367,7 @@ async fn client_credentials(app: &TestApp, client_id: &str, secret: &str) -> (St
 #[ignore = "requires Docker"]
 async fn oauth_client_create_links_the_service_principal_it_names() {
     let app = setup().await;
-    let token = app.anchor_admin_token().await;
+    let token = app.anchor_admin_token_all_applications().await;
     let sa = assert_status(
         app.post(
             "/api/service-accounts",
@@ -447,6 +447,9 @@ async fn known_admin(app: &TestApp) -> (String, String) {
     app.anchor_admin_token().await; // seeds `platform:test-admin`
     let mut admin = Principal::new_user("gaps-admin@flowcatalyst.test", UserScope::Anchor);
     admin.roles = vec![RoleAssignment::new("platform:test-admin")];
+    // Stored with all-applications access: service-account writes confine an
+    // application-scoped caller (an unstored principal reaches none).
+    app.persist_all_applications(&admin).await;
     let token = app
         .auth_service
         .generate_access_token(&admin)
@@ -520,7 +523,7 @@ async fn service_account_update_replaces_the_webhook_credentials() {
     use fc_platform::shared::encryption_service::EncryptionService;
 
     let app = setup().await;
-    let token = app.anchor_admin_token().await;
+    let token = app.anchor_admin_token_all_applications().await;
     let sa = assert_status(
         app.post(
             "/api/service-accounts",

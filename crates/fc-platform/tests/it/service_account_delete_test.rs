@@ -36,7 +36,7 @@ async fn grant_counts(app: &TestApp, principal_id: &str) -> (i64, i64) {
 async fn deleting_a_service_account_removes_its_grants_and_frees_the_application() {
     support::set_app_key();
     let app = TestApp::setup().await;
-    let admin = app.anchor_admin_token().await;
+    let admin = app.anchor_admin_token_all_applications().await;
 
     let application = Application::new("sa-delete-grants", "SA delete grants");
     app.repos

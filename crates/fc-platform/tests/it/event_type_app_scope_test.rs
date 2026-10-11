@@ -19,7 +19,7 @@ const FOREIGN: &str = "etscope-other:orders:order:created";
 
 /// Persist a service account bound to `bound` and holding a role made of
 /// `permissions`, and mint a token for it.
-async fn token_with(
+pub(crate) async fn token_with(
     app: &TestApp,
     name: &str,
     bound: &Application,

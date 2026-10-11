@@ -369,7 +369,7 @@ async fn provision_service_account_records_one_command() {
 async fn service_account_events_carry_the_account_id() {
     support::set_app_key();
     let app = TestApp::setup().await;
-    let token = app.anchor_admin_token().await;
+    let token = app.anchor_admin_token_all_applications().await;
 
     let (status, body) = read_json(
         app.post(

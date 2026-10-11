@@ -60,7 +60,7 @@ async fn rotate(app: &TestApp, id: &str, body: Option<Value>) -> (StatusCode, Va
 #[ignore = "requires Docker"]
 async fn rotated_secret_overlaps_until_revoked_or_lapsed() {
     let app = setup().await;
-    let admin = app.anchor_admin_token().await;
+    let admin = app.anchor_admin_token_all_applications().await;
 
     // A service account comes with a CONFIDENTIAL client_credentials client.
     let (status, body) = read_json(

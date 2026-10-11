@@ -527,24 +527,36 @@ pub mod checks {
         require_anchor_scope(context)
     }
 
-    /// Service accounts, update (`PUT /api/service-accounts/{id}`):
-    /// `platform:iam:service-account:update`, then anchor scope (Go
-    /// `requireAnchorWriter(CanUpdateServiceAccounts)`). The credential
-    /// writes keep [`can_update_service_accounts`], which asks anchor first
-    /// as Go's `RequireAnchor` there does.
-    pub fn can_update_service_account_details(context: &impl Authority) -> Result<()> {
+    /// Service accounts, every write to an existing account but delete:
+    /// update, deactivate, role assignment, the auth-token and signing-secret
+    /// regenerations and the token mint. `platform:iam:service-account:update`,
+    /// then anchor scope (Go `requireAnchorWriter(CanUpdateServiceAccounts)`,
+    /// `authorizeWrite`, `0ae0988`; owner decision #19). Anchor scope alone
+    /// let an application's own ANCHOR-tier account grant itself super-admin.
+    /// The handler then confines an application-scoped caller
+    /// ([`require_service_account_reach`]).
+    pub fn can_update_service_accounts(context: &impl Authority) -> Result<()> {
         require_permission(context, permissions::admin::SERVICE_ACCOUNT_UPDATE)?;
         require_anchor_scope(context)
     }
 
-    /// Service accounts, what issues authority or a credential to an
-    /// existing account: role assignment, auth-token and signing-secret
-    /// regeneration. Anchor plus `platform:iam:service-account:update` (Go's
-    /// `CanUpdateServiceAccounts`, auth.go:683-685, with decision #19's anchor
-    /// requirement; Java 6068fe6b S1.2). Anchor scope alone let an
-    /// application's own ANCHOR-tier account grant itself super-admin.
-    pub fn can_update_service_accounts(context: &impl Authority) -> Result<()> {
-        anchor_with(context, permissions::admin::SERVICE_ACCOUNT_UPDATE)
+    /// Service accounts, the application confinement on every write (Go
+    /// `requireApplicationReach`, `0ae0988`): a caller with all-applications
+    /// access is not confined; an application-scoped one (an application's
+    /// own service account) manages only accounts bound to an application
+    /// `scope` covers, never a platform-wide account (`application_id`
+    /// `None`) or another application's. 403 `APPLICATION_ACCESS_REQUIRED`.
+    pub fn require_service_account_reach(
+        scope: &ApplicationScope,
+        application_id: Option<&ApplicationId>,
+    ) -> Result<()> {
+        if !scope.is_application_scoped() || application_id.is_some_and(|id| scope.allows(id)) {
+            return Ok(());
+        }
+        Err(PlatformError::forbidden_code(
+            "APPLICATION_ACCESS_REQUIRED",
+            "not authorised for this service account's application",
+        ))
     }
 
     /// Service accounts, delete: `platform:iam:service-account:delete`, then

@@ -6,6 +6,7 @@
 use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::OAuthClientId;
+use fc_platform_core::shared::id::PrincipalId;
 use std::sync::Arc;
 
 use axum::{
@@ -44,7 +45,7 @@ use crate::service_account::repository::ServiceAccountRepository;
 use crate::shared::authorization_service::ApplicationAccessService;
 use crate::{principal::repository::PrincipalRepository, role::repository::RoleRepository};
 use base64::engine::general_purpose;
-use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::shared::authorization_service::{checks, AuthContext};
 use fc_platform_core::shared::encryption_service::EncryptionService;
 use fc_platform_core::shared::enum_str::{non_empty, parse_opt};
 use fc_platform_core::shared::error::PlatformError;
@@ -437,6 +438,31 @@ pub struct ServiceAccountsState<U: UnitOfWork + 'static> {
     pub app_access: Arc<ApplicationAccessService>,
 }
 
+/// The gate on every write to an existing service account (Go
+/// `authorizeWrite`, `0ae0988`): the permission for the operation and anchor
+/// reach (`gate`), then, for an application-scoped caller (an application's
+/// own service account), only an account bound to an application it can
+/// access (403 `APPLICATION_ACCESS_REQUIRED`). Such a caller is answered 404
+/// for an unknown account here, before the operation, as Go does.
+async fn authorize_write(
+    repo: &ServiceAccountRepository,
+    app_access: &ApplicationAccessService,
+    auth: &AuthContext,
+    id: &PrincipalId,
+    gate: fn(&AuthContext) -> Result<(), PlatformError>,
+) -> Result<(), PlatformError> {
+    gate(auth)?;
+    let scope = app_access.scope_for(&auth.principal_id).await?;
+    if !scope.is_application_scoped() {
+        return Ok(());
+    }
+    let account = repo
+        .find_by_id(id)
+        .await?
+        .ok_or_else(|| PlatformError::not_found_code("ServiceAccount", id))?;
+    checks::require_service_account_reach(&scope, account.application_id.as_ref())
+}
+
 // ============================================================================
 // Endpoints
 // ============================================================================
@@ -603,13 +629,22 @@ pub async fn create_service_account<U: UnitOfWork>(
     // Go serviceaccount/api/api.go:155-159: only a caller that itself holds
     // all-applications access may grant it. Checked here, where Go checks
     // it (before the body's other rules), and again by the use case.
+    let scope = state.app_access.scope_for(&auth.0.principal_id).await?;
     let application_scope = if all_applications {
-        let scope = state.app_access.scope_for(&auth.0.principal_id).await?;
         checks::require_all_applications_grantor(Some(&scope))?;
-        Some(scope)
+        Some(scope.clone())
     } else {
         None
     };
+    // Go `requireApplicationReach` (`0ae0988`): an application-scoped caller
+    // may not create a platform-wide account or another application's.
+    checks::require_service_account_reach(
+        &scope,
+        req.application_id
+            .clone()
+            .map(ApplicationId::from_wire)
+            .as_ref(),
+    )?;
     if all_applications && req.application_id.is_some() {
         return Err(PlatformError::bad_request_code(
             "ALL_APPLICATIONS_WITH_APPLICATION_ID",
@@ -734,7 +769,14 @@ pub async fn update_service_account<U: UnitOfWork>(
     Json(req): Json<UpdateServiceAccountRequest>,
 ) -> Result<StatusCode, PlatformError> {
     let id = account_or_principal_id(id);
-    checks::can_update_service_account_details(&auth.0)?;
+    authorize_write(
+        &state.repo,
+        &state.app_access,
+        &auth.0,
+        &id,
+        checks::can_update_service_accounts,
+    )
+    .await?;
     let webhook_credentials = req
         .webhook_credentials
         .as_ref()
@@ -778,7 +820,14 @@ pub async fn delete_service_account<U: UnitOfWork>(
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse, PlatformError> {
     let id = account_or_principal_id(id);
-    checks::can_delete_service_accounts(&auth.0)?;
+    authorize_write(
+        &state.repo,
+        &state.app_access,
+        &auth.0,
+        &id,
+        checks::can_delete_service_accounts,
+    )
+    .await?;
     let command = DeleteServiceAccountCommand { id };
 
     let ctx = ExecutionContext::from_auth(&auth.0);
@@ -810,7 +859,14 @@ pub async fn update_auth_token<U: UnitOfWork>(
     Path(id): Path<String>,
 ) -> Result<Json<RegenerateTokenResponse>, PlatformError> {
     let id = account_or_principal_id(id);
-    checks::can_update_service_accounts(&auth.0)?;
+    authorize_write(
+        &state.repo,
+        &state.app_access,
+        &auth.0,
+        &id,
+        checks::can_update_service_accounts,
+    )
+    .await?;
     let command = RegenerateAuthTokenCommand {
         service_account_id: id.clone(),
     };
@@ -852,7 +908,14 @@ pub async fn regenerate_auth_token<U: UnitOfWork>(
     Path(id): Path<String>,
 ) -> Result<Json<RegenerateTokenResponse>, PlatformError> {
     let id = account_or_principal_id(id);
-    checks::can_update_service_accounts(&auth.0)?;
+    authorize_write(
+        &state.repo,
+        &state.app_access,
+        &auth.0,
+        &id,
+        checks::can_update_service_accounts,
+    )
+    .await?;
     let command = RegenerateAuthTokenCommand {
         service_account_id: id.clone(),
     };
@@ -894,7 +957,14 @@ pub async fn regenerate_signing_secret<U: UnitOfWork>(
     Path(id): Path<String>,
 ) -> Result<Json<RegenerateSecretResponse>, PlatformError> {
     let id = account_or_principal_id(id);
-    checks::can_update_service_accounts(&auth.0)?;
+    authorize_write(
+        &state.repo,
+        &state.app_access,
+        &auth.0,
+        &id,
+        checks::can_update_service_accounts,
+    )
+    .await?;
     let command = RegenerateSigningSecretCommand {
         service_account_id: id.clone(),
     };
@@ -1014,7 +1084,14 @@ pub async fn assign_roles<U: UnitOfWork>(
     Json(req): Json<AssignRolesRequest>,
 ) -> Result<Json<AssignRolesResponse>, PlatformError> {
     let id = account_or_principal_id(id);
-    checks::can_update_service_accounts(&auth.0)?;
+    authorize_write(
+        &state.repo,
+        &state.app_access,
+        &auth.0,
+        &id,
+        checks::can_update_service_accounts,
+    )
+    .await?;
     let command = AssignRolesCommand {
         service_account_id: id.clone(),
         roles: req.roles,
@@ -1067,10 +1144,9 @@ pub async fn assign_roles<U: UnitOfWork>(
 // Go's `regenerate-token` / `regenerate-secret` spellings are aliases in
 // `service_accounts_router` itself.
 //
-// Permissions: deactivate is Go's `CanWriteServiceAccounts` plus anchor
-// (owner decision #19). The token mint is anchor-only in Go; it issues a
-// credential, so Rust asks anchor plus `service-account:update`, as for
-// token and secret regeneration (triage S3).
+// Permissions: both make Go's `authorizeWrite` (`0ae0988`):
+// `service-account:update`, anchor (owner decision #19), and the
+// application confinement of an application-scoped caller.
 
 #[derive(Clone)]
 pub struct ServiceAccountAdminState {
@@ -1080,6 +1156,8 @@ pub struct ServiceAccountAdminState {
     pub auth_service: Arc<AuthService>,
     pub deactivate_use_case: Arc<DeactivateServiceAccountUseCase<PgUnitOfWork>>,
     pub record_mint_use_case: Arc<RecordServiceAccountTokenMintUseCase<PgUnitOfWork>>,
+    /// The caller's application scope, for the write confinement.
+    pub app_access: Arc<ApplicationAccessService>,
 }
 
 /// Go `MintTokenResponse`.
@@ -1118,7 +1196,14 @@ pub async fn deactivate_service_account(
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
     let id = account_or_principal_id(id);
-    checks::can_update_service_accounts(&auth.0)?;
+    authorize_write(
+        &state.repo,
+        &state.app_access,
+        &auth.0,
+        &id,
+        checks::can_update_service_accounts,
+    )
+    .await?;
     state
         .deactivate_use_case
         .run(
@@ -1152,7 +1237,14 @@ pub async fn mint_service_account_token(
     Path(id): Path<String>,
 ) -> Result<Json<MintTokenResponse>, PlatformError> {
     let id = account_or_principal_id(id);
-    checks::can_update_service_accounts(&auth.0)?;
+    authorize_write(
+        &state.repo,
+        &state.app_access,
+        &auth.0,
+        &id,
+        checks::can_update_service_accounts,
+    )
+    .await?;
     let sa = state
         .repo
         .find_by_id(&id)
