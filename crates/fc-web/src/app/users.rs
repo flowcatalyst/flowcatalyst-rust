@@ -401,7 +401,7 @@ pub(crate) async fn user_list(
     dialog_error: String,
 ) -> Result<impl View> {
     let auth = auth(cx)?;
-    let can_create = checks::can_write_principals(auth).is_ok();
+    let can_create = checks::can_create_principals(auth).is_ok();
     let can_read_roles = checks::can_read_roles(auth).is_ok();
     let state = ListState::from_request(cx);
     let deps = crate::deps(cx);
@@ -877,7 +877,7 @@ pub(crate) struct CreateState {
 #[page([GET, POST] "/ui/(app)/users/new")]
 async fn create_user(cx: &Cx, form: Option<Form<CreateForm>>) -> Result<impl View> {
     let auth = auth(cx)?;
-    permit(checks::can_write_principals(auth))?;
+    permit(checks::can_create_principals(auth))?;
     let deps = crate::deps(cx);
     let mut state = CreateState::default();
     let mut overlay = None;
@@ -1046,7 +1046,7 @@ async fn domain_check(
     return_link: bool,
 ) -> Result<impl View> {
     let auth = auth(cx)?;
-    permit(checks::can_write_principals(auth))?;
+    permit(checks::can_create_principals(auth))?;
     let email = email.trim().to_owned();
     let deps = crate::deps(cx);
     let check = if email.contains('@') {

@@ -183,7 +183,10 @@ async fn event_type_list(
     create: Option<CreateState>,
 ) -> Result<impl View> {
     let auth = auth(cx)?;
-    let can_write = checks::can_write_event_types(auth).is_ok();
+    let can_create = checks::can_create_event_types(auth).is_ok();
+    // The BFF's gate for Sync Platform Events: anchor, then event-type:sync
+    // or :manage.
+    let can_sync = checks::can_sync_platform_event_types(auth).is_ok();
     let query = query_params::<ListQuery>(cx)?;
     let search = ListQuery::get(&query.q).to_owned();
     let application = ListQuery::get(&query.application).to_owned();
@@ -278,13 +281,15 @@ async fn event_type_list(
 
     Ok(view! {
         page_header(title: "Event Types", subtitle: "Manage event type definitions and schemas",
-            if can_write {
+            if can_sync {
                 <form method="post" action=(format!("{LIST}/sync-platform"))>
                     <button type="submit" class=(Btn::Secondary)>
                         icon(data: iconify_icon!("lucide:refresh-cw"), size: Length::rem(1.0))
                         "Sync Platform Events"
                     </button>
                 </form>
+            }
+            if can_create {
                 <a href=(create_href) class=(Btn::Primary)>
                     icon(data: iconify_icon!("lucide:plus"), size: Length::rem(1.0))
                     "Create Event Type"
@@ -416,8 +421,12 @@ async fn event_type_drawer(cx: &Cx, id: String, editing: Signal<bool>) -> Result
 
 #[component]
 async fn drawer_body(auth: AuthContext, et: EventType, editing: Signal<bool>) -> Result<impl View> {
-    let can_write = checks::can_write_event_types(&auth).is_ok();
+    // The BFF's permission for each operation: edit, the schema actions and
+    // archive `can_update_event_types`, delete `can_delete_event_types`.
+    let can_write = checks::can_update_event_types(&auth).is_ok();
     let can_modify = can_write && ensure_modifiable(&auth, &et, "modify").is_ok();
+    let can_remove = checks::can_delete_event_types(&auth).is_ok()
+        && ensure_modifiable(&auth, &et, "delete").is_ok();
     let current = et.status == EventTypeStatus::Current;
     let editable = can_modify && current;
     let base = detail_href(et.id.as_str());
@@ -512,13 +521,13 @@ async fn drawer_body(auth: AuthContext, et: EventType, editing: Signal<bool>) ->
                 </div>
             </section>
 
-            if can_modify {
+            if can_modify || can_remove {
                 <section class="fc-form-section fc-danger-zone">
                     <header class="fc-section-header">
                         <h3 class="fc-section-title">"Danger Zone"</h3>
                     </header>
                     <div class="fc-danger-actions">
-                        if current {
+                        if current && can_modify {
                             <div class="fc-danger-item">
                                 <div>
                                     <strong>"Archive Event Type"</strong>
@@ -535,21 +544,23 @@ async fn drawer_body(auth: AuthContext, et: EventType, editing: Signal<bool>) ->
                                 warn: true,
                             )
                         }
-                        <div class="fc-danger-item">
-                            <div>
-                                <strong>"Delete Event Type"</strong>
-                                <p>"Permanently delete this event type."</p>
+                        if can_remove {
+                            <div class="fc-danger-item">
+                                <div>
+                                    <strong>"Delete Event Type"</strong>
+                                    <p>"Permanently delete this event type."</p>
+                                </div>
+                                <button type="button" class=(Btn::DangerOutline) disabled=(!deletable) commandfor="et-delete" command="show-modal">"Delete"</button>
                             </div>
-                            <button type="button" class=(Btn::DangerOutline) disabled=(!deletable) commandfor="et-delete" command="show-modal">"Delete"</button>
-                        </div>
-                        confirm_dialog(
-                            id: "et-delete",
-                            action: format!("{base}/delete"),
-                            title: "Delete Event Type",
-                            message: "Delete this event type? This cannot be undone.",
-                            confirm_label: "Delete",
-                            danger: true,
-                        )
+                            confirm_dialog(
+                                id: "et-delete",
+                                action: format!("{base}/delete"),
+                                title: "Delete Event Type",
+                                message: "Delete this event type? This cannot be undone.",
+                                confirm_label: "Delete",
+                                danger: true,
+                            )
+                        }
                     </div>
                 </section>
             }
@@ -680,7 +691,7 @@ struct CreateState {
 #[page([GET, POST] "/ui/(app)/event-types/create")]
 async fn create_event_type(cx: &Cx, form: Option<Form<CreateForm>>) -> Result<impl View> {
     let auth = auth(cx)?;
-    permit(checks::can_write_event_types(auth))?;
+    permit(checks::can_create_event_types(auth))?;
     let deps = crate::deps(cx);
     let mut state = CreateState::default();
 
@@ -881,9 +892,10 @@ async fn create_drawer(state: CreateState, close_href: String) -> Result<impl Vi
 
 // -------------------------------------------------------------- writes
 
-/// Load the event type a write targets, after the caller's permission check.
-async fn load_for_write(cx: &Cx, auth: &AuthContext) -> Result<EventType> {
-    permit(checks::can_write_event_types(auth))?;
+/// Load the event type a write targets, after the caller's permission check
+/// (`check`: the BFF's permission for the operation).
+async fn load_for_write(cx: &Cx, check: fc_platform::Result<()>) -> Result<EventType> {
+    permit(check)?;
     let id = path_param::<Id>(cx);
     crate::deps(cx)
         .event_type_repo
@@ -930,7 +942,7 @@ struct UpdateForm {
 #[route(POST "/ui/(app)/event-types/{id}/update")]
 async fn update(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
     let auth = auth(cx)?;
-    let et = load_for_write(cx, auth).await?;
+    let et = load_for_write(cx, checks::can_update_event_types(auth)).await?;
     permit(ensure_modifiable(auth, &et, "modify"))?;
     let deps = crate::deps(cx);
     let outcome =
@@ -961,7 +973,7 @@ struct VersionForm {
 #[route(POST "/ui/(app)/event-types/{id}/schemas/finalise")]
 async fn finalise_schema(cx: &Cx, Form(form): Form<VersionForm>) -> Result<SeeOther> {
     let auth = auth(cx)?;
-    let et = load_for_write(cx, auth).await?;
+    let et = load_for_write(cx, checks::can_update_event_types(auth)).await?;
     permit(ensure_visible(auth, &et))?;
     let deps = crate::deps(cx);
     let outcome =
@@ -985,7 +997,7 @@ async fn finalise_schema(cx: &Cx, Form(form): Form<VersionForm>) -> Result<SeeOt
 #[route(POST "/ui/(app)/event-types/{id}/schemas/deprecate")]
 async fn deprecate_schema(cx: &Cx, Form(form): Form<VersionForm>) -> Result<SeeOther> {
     let auth = auth(cx)?;
-    let et = load_for_write(cx, auth).await?;
+    let et = load_for_write(cx, checks::can_update_event_types(auth)).await?;
     permit(ensure_visible(auth, &et))?;
     let deps = crate::deps(cx);
     let outcome =
@@ -1009,7 +1021,7 @@ async fn deprecate_schema(cx: &Cx, Form(form): Form<VersionForm>) -> Result<SeeO
 #[route(POST "/ui/(app)/event-types/{id}/archive")]
 async fn archive(cx: &Cx) -> Result<SeeOther> {
     let auth = auth(cx)?;
-    let et = load_for_write(cx, auth).await?;
+    let et = load_for_write(cx, checks::can_update_event_types(auth)).await?;
     permit(ensure_modifiable(auth, &et, "archive"))?;
     let deps = crate::deps(cx);
     let outcome =
@@ -1031,7 +1043,7 @@ async fn archive(cx: &Cx) -> Result<SeeOther> {
 #[route(POST "/ui/(app)/event-types/{id}/delete")]
 async fn delete(cx: &Cx) -> Result<SeeOther> {
     let auth = auth(cx)?;
-    let et = load_for_write(cx, auth).await?;
+    let et = load_for_write(cx, checks::can_delete_event_types(auth)).await?;
     permit(ensure_modifiable(auth, &et, "delete"))?;
     let deps = crate::deps(cx);
     let outcome =
@@ -1060,7 +1072,7 @@ async fn delete(cx: &Cx) -> Result<SeeOther> {
 #[route(POST "/ui/(app)/event-types/sync-platform")]
 async fn sync_platform(cx: &Cx) -> Result<SeeOther> {
     let auth = auth(cx)?;
-    permit(checks::can_write_event_types(auth))?;
+    permit(checks::can_sync_platform_event_types(auth))?;
     let deps = crate::deps(cx);
     let outcome =
         SyncEventTypesUseCase::new(deps.event_type_repo.clone(), deps.unit_of_work.clone())

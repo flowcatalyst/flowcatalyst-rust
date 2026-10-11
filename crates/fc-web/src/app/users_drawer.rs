@@ -302,7 +302,11 @@ async fn drawer_body(
         clients,
         role_defs,
     } = data;
-    let can_write = checks::can_write_principals(&auth).is_ok();
+    // The API's permission for each write here: `can_update_principals`
+    // (update, application access, activate/deactivate, password reset, 2FA
+    // reset, developer credential); roles, client access and delete have
+    // their own below.
+    let can_write = checks::can_update_principals(&auth).is_ok();
     let can_assign =
         checks::can_assign_principal_roles(&auth).is_ok() && checks::can_read_roles(&auth).is_ok();
     let can_grant = checks::can_grant_client_access(&auth).is_ok();
@@ -1217,7 +1221,7 @@ struct UpdateForm {
 #[route(POST "/ui/(app)/users/{id}/update")]
 async fn save_user(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
     let auth = auth(cx)?;
-    permit(checks::can_write_principals(auth))?;
+    permit(checks::can_update_principals(auth))?;
     let id = target(cx);
     let deps = crate::deps(cx);
     let outcome: std::result::Result<(), PlatformError> = async {
@@ -1369,7 +1373,7 @@ async fn revoke_client(cx: &Cx) -> Result<SeeOther> {
 #[route(POST "/ui/(app)/users/{id}/applications")]
 async fn save_applications(cx: &Cx, Form(form): Form<HashMap<String, String>>) -> Result<SeeOther> {
     let auth = auth(cx)?;
-    permit(checks::can_write_principals(auth))?;
+    permit(checks::can_update_principals(auth))?;
     let id = target(cx);
     let outcome = admin::set_application_access(
         principals(cx),
@@ -1410,7 +1414,7 @@ struct AllAppsForm {
 #[route(POST "/ui/(app)/users/{id}/all-applications")]
 async fn toggle_all_applications(cx: &Cx, Form(form): Form<AllAppsForm>) -> Result<SeeOther> {
     let auth = auth(cx)?;
-    permit(checks::can_write_principals(auth))?;
+    permit(checks::can_update_principals(auth))?;
     let id = target(cx);
     let on = form.all.is_some();
     let outcome = async {
@@ -1446,7 +1450,7 @@ async fn toggle_all_applications(cx: &Cx, Form(form): Form<AllAppsForm>) -> Resu
 #[route(POST "/ui/(app)/users/{id}/activate")]
 async fn activate_user(cx: &Cx) -> Result<SeeOther> {
     let auth = auth(cx)?;
-    permit(checks::can_write_principals(auth))?;
+    permit(checks::can_update_principals(auth))?;
     let id = target(cx);
     let outcome = admin::activate(principals(cx), auth, &PrincipalId::from_wire(id.as_str())).await;
     let base = detail_href(&id);
@@ -1457,7 +1461,7 @@ async fn activate_user(cx: &Cx) -> Result<SeeOther> {
 #[route(POST "/ui/(app)/users/{id}/deactivate")]
 async fn deactivate_user(cx: &Cx) -> Result<SeeOther> {
     let auth = auth(cx)?;
-    permit(checks::can_write_principals(auth))?;
+    permit(checks::can_update_principals(auth))?;
     let id = target(cx);
     let outcome =
         admin::deactivate(principals(cx), auth, &PrincipalId::from_wire(id.as_str())).await;
@@ -1470,7 +1474,7 @@ async fn deactivate_user(cx: &Cx) -> Result<SeeOther> {
 #[route(POST "/ui/(app)/users/{id}/send-password-reset")]
 async fn send_password_reset(cx: &Cx) -> Result<SeeOther> {
     let auth = auth(cx)?;
-    permit(checks::can_write_principals(auth))?;
+    permit(checks::can_update_principals(auth))?;
     let id = target(cx);
     let outcome = admin::send_password_reset(
         principals(cx),
@@ -1498,7 +1502,7 @@ struct ResetPasswordForm {
 #[page(POST "/ui/(app)/users/{id}/reset-password")]
 async fn reset_user_password(cx: &Cx, Form(form): Form<ResetPasswordForm>) -> Result<impl View> {
     let auth = auth(cx)?;
-    permit(checks::can_write_principals(auth))?;
+    permit(checks::can_update_principals(auth))?;
     let id = target(cx);
     let outcome = if form.new_password.is_empty() {
         Err(PlatformError::validation("Password is required"))
@@ -1534,7 +1538,7 @@ async fn reset_user_password(cx: &Cx, Form(form): Form<ResetPasswordForm>) -> Re
 #[route(POST "/ui/(app)/users/{id}/reset-2fa")]
 async fn reset_2fa(cx: &Cx) -> Result<SeeOther> {
     let auth = auth(cx)?;
-    permit(checks::can_write_principals(auth))?;
+    permit(checks::can_update_principals(auth))?;
     let id = target(cx);
     let outcome = reset_user_two_factor(&crate::deps(cx).users.two_factor, auth, &id).await;
     let base = detail_href(&id);
@@ -1552,7 +1556,7 @@ async fn reset_2fa(cx: &Cx) -> Result<SeeOther> {
 #[page(POST "/ui/(app)/users/{id}/developer-credential")]
 async fn generate_developer_credential(cx: &Cx) -> Result<impl View> {
     let auth = auth(cx)?;
-    permit(checks::can_write_principals(auth))?;
+    permit(checks::can_update_principals(auth))?;
     let id = target(cx);
     let outcome = set_credential(&crate::deps(cx).users.developer_credentials, auth, &id).await;
     let secret = match outcome {
@@ -1574,7 +1578,7 @@ async fn generate_developer_credential(cx: &Cx) -> Result<impl View> {
 #[route(POST "/ui/(app)/users/{id}/developer-credential/revoke")]
 async fn revoke_developer_credential(cx: &Cx) -> Result<SeeOther> {
     let auth = auth(cx)?;
-    permit(checks::can_write_principals(auth))?;
+    permit(checks::can_update_principals(auth))?;
     let id = target(cx);
     let outcome = revoke_credential(&crate::deps(cx).users.developer_credentials, auth, &id).await;
     let base = detail_href(&id);

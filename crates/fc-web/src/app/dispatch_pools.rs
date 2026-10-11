@@ -10,10 +10,10 @@
 //! always come back empty there.
 //!
 //! Writes run the use cases `dispatch_pool/api.rs` runs, with its reach
-//! rules (`dispatch_pool::access`) and execution context. Create, update,
-//! suspend and activate also need Go's `CanWriteDispatchPools`
-//! (`checks::can_write_dispatch_pools`), which the Rust handlers don't
-//! check yet; delete needs anchor + `can_delete_dispatch_pools`, as there.
+//! rules (`dispatch_pool::access`) and execution context, and the API's
+//! permission for each operation: create `can_create_dispatch_pools`;
+//! update, suspend and activate `can_update_dispatch_pools`; delete anchor +
+//! `can_delete_dispatch_pools`.
 
 use fc_platform::shared::id::ClientId;
 use fc_platform::shared::id::DispatchPoolId;
@@ -158,7 +158,7 @@ async fn dispatch_pool_detail(cx: &Cx) -> Result<impl View> {
 #[component]
 async fn pool_list(cx: &Cx, open_id: String, create: Option<CreateState>) -> Result<impl View> {
     let auth = auth(cx)?;
-    let can_write = checks::can_write_dispatch_pools(auth).is_ok();
+    let can_create = checks::can_create_dispatch_pools(auth).is_ok();
     let query = query_params::<ListQuery>(cx)?;
     let search = ListQuery::get(&query.q).to_owned();
     let status = ListQuery::get(&query.status).to_owned();
@@ -207,7 +207,7 @@ async fn pool_list(cx: &Cx, open_id: String, create: Option<CreateState>) -> Res
 
     Ok(view! {
         page_header(title: "Dispatch Pools", subtitle: "Manage rate limiting and concurrency for dispatch jobs",
-            if can_write {
+            if can_create {
                 <a href=(create_href) class=(Btn::Primary)>
                     icon(data: iconify_icon!("lucide:plus"), size: Length::rem(1.0))
                     "Create Pool"
@@ -339,10 +339,10 @@ async fn drawer_body(
 ) -> Result<impl View> {
     let archived = pool.status == DispatchPoolStatus::Archived;
     let active = pool.status == DispatchPoolStatus::Active;
-    let can_write = checks::can_write_dispatch_pools(&auth).is_ok();
-    let editable = can_write && ensure_modifiable(&auth, &pool, "update").is_ok() && !archived;
-    let can_suspend = can_write && ensure_modifiable(&auth, &pool, "suspend").is_ok();
-    let can_activate = can_write && ensure_modifiable(&auth, &pool, "activate").is_ok();
+    let can_update = checks::can_update_dispatch_pools(&auth).is_ok();
+    let editable = can_update && ensure_modifiable(&auth, &pool, "update").is_ok() && !archived;
+    let can_suspend = can_update && ensure_modifiable(&auth, &pool, "suspend").is_ok();
+    let can_activate = can_update && ensure_modifiable(&auth, &pool, "activate").is_ok();
     let deletable =
         checks::require_anchor(&auth).is_ok() && checks::can_delete_dispatch_pools(&auth).is_ok();
     let show_actions =
@@ -541,7 +541,7 @@ struct CreateState {
 #[page([GET, POST] "/ui/(app)/dispatch-pools/new")]
 async fn create_pool(cx: &Cx, form: Option<Form<CreateForm>>) -> Result<impl View> {
     let auth = auth(cx)?;
-    permit(checks::can_write_dispatch_pools(auth))?;
+    permit(checks::can_create_dispatch_pools(auth))?;
     let deps = crate::deps(cx);
     let mut state = CreateState::default();
 
@@ -756,7 +756,7 @@ struct UpdateForm {
 #[route(POST "/ui/(app)/dispatch-pools/{id}/update")]
 async fn update(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
     let auth = auth(cx)?;
-    permit(checks::can_write_dispatch_pools(auth))?;
+    permit(checks::can_update_dispatch_pools(auth))?;
     let pool = load_pool(cx).await?;
     permit(ensure_modifiable(auth, &pool, "update"))?;
     let deps = crate::deps(cx);
@@ -793,7 +793,7 @@ async fn update(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
 #[route(POST "/ui/(app)/dispatch-pools/{id}/suspend")]
 async fn suspend(cx: &Cx) -> Result<SeeOther> {
     let auth = auth(cx)?;
-    permit(checks::can_write_dispatch_pools(auth))?;
+    permit(checks::can_update_dispatch_pools(auth))?;
     let pool = load_pool(cx).await?;
     permit(ensure_modifiable(auth, &pool, "suspend"))?;
     let deps = crate::deps(cx);
@@ -816,7 +816,7 @@ async fn suspend(cx: &Cx) -> Result<SeeOther> {
 #[route(POST "/ui/(app)/dispatch-pools/{id}/activate")]
 async fn activate(cx: &Cx) -> Result<SeeOther> {
     let auth = auth(cx)?;
-    permit(checks::can_write_dispatch_pools(auth))?;
+    permit(checks::can_update_dispatch_pools(auth))?;
     let pool = load_pool(cx).await?;
     permit(ensure_modifiable(auth, &pool, "activate"))?;
     let deps = crate::deps(cx);

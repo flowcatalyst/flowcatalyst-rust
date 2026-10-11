@@ -19,7 +19,7 @@ use fc_platform::application::operations::{
 use fc_platform::client::access::ensure_visible;
 use fc_platform::client::operations::{
     ActivateClientCommand, ActivateClientUseCase, CreateClientCommand, CreateClientUseCase,
-    DeleteClientCommand, DeleteClientUseCase, SuspendClientCommand, SuspendClientUseCase,
+    DeactivateClientCommand, DeactivateClientUseCase, SuspendClientCommand, SuspendClientUseCase,
     UpdateClientCommand, UpdateClientUseCase,
 };
 use fc_platform::shared::id::ApplicationId;
@@ -707,19 +707,22 @@ async fn suspend(cx: &Cx) -> Result<SeeOther> {
     finish(cx, outcome, "Client suspended", base.clone(), base)
 }
 
-/// `POST /api/clients/{id}/deactivate`: a soft delete through
-/// `DeleteClientUseCase`, as the API does (the SPA's reason, "Manual
-/// deactivation", is only logged there). The drawer closes, as the SPA's.
+/// `POST /api/clients/{id}/deactivate`: the soft delete, through
+/// `DeactivateClientUseCase` as the API runs it: the client becomes
+/// INACTIVE with the SPA's reason and can be reactivated (it ran the delete
+/// use case, which removed the client, Go bug 15). The drawer closes, as the
+/// SPA's.
 #[route(POST "/ui/(app)/clients/{id}/deactivate")]
 async fn deactivate(cx: &Cx) -> Result<SeeOther> {
     let auth = auth(cx)?;
     permit(checks::can_deactivate_clients(auth))?;
     let id = target(cx);
     let deps = crate::deps(cx);
-    let outcome = DeleteClientUseCase::new(deps.client_repo.clone(), deps.unit_of_work.clone())
+    let outcome = DeactivateClientUseCase::new(deps.client_repo.clone(), deps.unit_of_work.clone())
         .run(
-            DeleteClientCommand {
+            DeactivateClientCommand {
                 client_id: ClientId::from_wire(id.clone()),
+                reason: "Manual deactivation".to_owned(),
             },
             ExecutionContext::from_auth(auth),
         )
@@ -727,9 +730,6 @@ async fn deactivate(cx: &Cx) -> Result<SeeOther> {
         .into_result()
         .map(|_| ())
         .map_err(PlatformError::from);
-    if outcome.is_ok() {
-        tracing::info!(client_id = %id, principal_id = %auth.principal_id, reason = "Manual deactivation", "Client deactivated");
-    }
     finish(
         cx,
         outcome,

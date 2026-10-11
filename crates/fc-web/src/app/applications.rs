@@ -170,7 +170,7 @@ struct LoginClientCredentials {
 async fn application_list(cx: &Cx, open_id: String, overlay: Overlay) -> Result<impl View> {
     let auth = auth(cx)?;
     let can_create =
-        checks::require_anchor(auth).is_ok() && checks::can_write_applications(auth).is_ok();
+        checks::require_anchor(auth).is_ok() && checks::can_create_applications(auth).is_ok();
     let query = query_params::<ListQuery>(cx)?;
     let search = ListQuery::get(&query.q).to_owned();
     let app_type = ListQuery::get(&query.r#type).to_owned();
@@ -361,7 +361,9 @@ async fn drawer_body(
     editing: Signal<bool>,
 ) -> Result<impl View> {
     let anchor = checks::require_anchor(&auth).is_ok();
-    let can_write = anchor && checks::can_write_applications(&auth).is_ok();
+    // The API's permission for each operation: update, activate and
+    // deactivate `can_update_applications`, delete `can_delete_applications`.
+    let can_write = anchor && checks::can_update_applications(&auth).is_ok();
     let can_delete = anchor && checks::can_delete_applications(&auth).is_ok();
     let can_update = auth.has_permission(permissions::admin::APPLICATION_UPDATE);
     let can_provision_sa =
@@ -687,12 +689,12 @@ fn non_empty(s: &str) -> Option<String> {
 }
 
 /// `ApplicationCreateDrawer.vue`: `CreateApplicationUseCase`, as `POST
-/// /api/applications` (anchor + `can_write_applications`).
+/// /api/applications` (anchor + `can_create_applications`).
 #[page([GET, POST] "/ui/(app)/applications/new")]
 async fn create_application(cx: &Cx, form: Option<Form<CreateForm>>) -> Result<impl View> {
     let auth = auth(cx)?;
     permit(checks::require_anchor(auth))?;
-    permit(checks::can_write_applications(auth))?;
+    permit(checks::can_create_applications(auth))?;
     let deps = crate::deps(cx);
     let mut state = CreateState::default();
 
@@ -866,7 +868,7 @@ struct UpdateForm {
 async fn update(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
     let auth = auth(cx)?;
     permit(checks::require_anchor(auth))?;
-    permit(checks::can_write_applications(auth))?;
+    permit(checks::can_update_applications(auth))?;
     let id = target(cx);
     let deps = crate::deps(cx);
     let outcome =
@@ -898,7 +900,7 @@ async fn update(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
 async fn activate(cx: &Cx) -> Result<SeeOther> {
     let auth = auth(cx)?;
     permit(checks::require_anchor(auth))?;
-    permit(checks::can_write_applications(auth))?;
+    permit(checks::can_update_applications(auth))?;
     let id = target(cx);
     let deps = crate::deps(cx);
     let outcome =
@@ -923,7 +925,7 @@ async fn activate(cx: &Cx) -> Result<SeeOther> {
 async fn deactivate(cx: &Cx) -> Result<SeeOther> {
     let auth = auth(cx)?;
     permit(checks::require_anchor(auth))?;
-    permit(checks::can_write_applications(auth))?;
+    permit(checks::can_update_applications(auth))?;
     let id = target(cx);
     let deps = crate::deps(cx);
     let outcome = deactivate_application_cascade(

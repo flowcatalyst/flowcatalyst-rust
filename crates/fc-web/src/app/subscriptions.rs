@@ -214,7 +214,7 @@ async fn subscription_list(
     create: Option<CreateState>,
 ) -> Result<impl View> {
     let auth = auth(cx)?;
-    let can_create = checks::can_write_subscriptions(auth).is_ok();
+    let can_create = checks::can_create_subscriptions(auth).is_ok();
     let query = query_params::<ListQuery>(cx)?;
     let search = ListQuery::get(&query.q).to_owned();
     let app = ListQuery::get(&query.app).to_owned();
@@ -423,10 +423,12 @@ async fn drawer_body(
     sub: Subscription,
     editing: Signal<bool>,
 ) -> Result<impl View> {
-    let can_write = checks::can_write_subscriptions(&auth).is_ok();
+    // The API's permission for each operation: update, pause and resume
+    // `can_update_subscriptions`, delete `can_delete_subscriptions`.
+    let can_update = checks::can_update_subscriptions(&auth).is_ok();
     // Update and delete also need an anchor user for an anchor-level
     // subscription; pause and resume only visibility (the handlers' rules).
-    let editable = can_write && ensure_modifiable(&auth, &sub, "modify").is_ok();
+    let editable = can_update && ensure_modifiable(&auth, &sub, "modify").is_ok();
     let deletable = checks::can_delete_subscriptions(&auth).is_ok()
         && ensure_modifiable(&auth, &sub, "delete").is_ok();
     let active = sub.status == SubscriptionStatus::Active;
@@ -539,13 +541,13 @@ async fn drawer_body(
                 </div>
             </section>
 
-            if can_write || deletable {
+            if can_update || deletable {
                 <section class="fc-form-section" :hidden=$(actions_editing.get())>
                     <header class="fc-section-header">
                         <h3 class="fc-section-title">"Actions"</h3>
                     </header>
                     <div class="fc-danger-actions">
-                        if can_write && active {
+                        if can_update && active {
                             <div class="fc-danger-item">
                                 <div>
                                     <strong>"Pause Subscription"</strong>
@@ -565,7 +567,7 @@ async fn drawer_body(
                                 warn: true,
                             )
                         }
-                        if can_write && !active {
+                        if can_update && !active {
                             <div class="fc-danger-item">
                                 <div>
                                     <strong>"Resume Subscription"</strong>
@@ -702,7 +704,7 @@ async fn create_subscription(
     form: Option<Form<Vec<(String, String)>>>,
 ) -> Result<impl View> {
     let auth = auth(cx)?;
-    permit(checks::can_write_subscriptions(auth))?;
+    permit(checks::can_create_subscriptions(auth))?;
     let deps = crate::deps(cx);
     let mut state = CreateState {
         anchor: auth.is_anchor(),
@@ -1056,7 +1058,7 @@ struct UpdateForm {
 #[route(POST "/ui/(app)/subscriptions/{id}/update")]
 async fn update(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
     let auth = auth(cx)?;
-    let sub = load_for_write(cx, checks::can_write_subscriptions(auth)).await?;
+    let sub = load_for_write(cx, checks::can_update_subscriptions(auth)).await?;
     permit(ensure_modifiable(auth, &sub, "modify"))?;
     let deps = crate::deps(cx);
     let outcome = UpdateSubscriptionUseCase::new(
@@ -1100,7 +1102,7 @@ async fn update(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
 #[route(POST "/ui/(app)/subscriptions/{id}/pause")]
 async fn pause(cx: &Cx) -> Result<SeeOther> {
     let auth = auth(cx)?;
-    let sub = load_for_write(cx, checks::can_write_subscriptions(auth)).await?;
+    let sub = load_for_write(cx, checks::can_update_subscriptions(auth)).await?;
     permit(ensure_visible(auth, &sub))?;
     let deps = crate::deps(cx);
     let outcome =
@@ -1122,7 +1124,7 @@ async fn pause(cx: &Cx) -> Result<SeeOther> {
 #[route(POST "/ui/(app)/subscriptions/{id}/resume")]
 async fn resume(cx: &Cx) -> Result<SeeOther> {
     let auth = auth(cx)?;
-    let sub = load_for_write(cx, checks::can_write_subscriptions(auth)).await?;
+    let sub = load_for_write(cx, checks::can_update_subscriptions(auth)).await?;
     permit(ensure_visible(auth, &sub))?;
     let deps = crate::deps(cx);
     let outcome =
