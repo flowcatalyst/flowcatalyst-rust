@@ -33,14 +33,12 @@ use fc_common::diagnostics::Exposition;
 use fc_common::logging;
 use fc_common::netguard;
 use fc_common::{PoolConfig, QueueConfig, RouterConfig};
-use fc_platform::api::DispatchJobsState;
 use fc_platform::api::FilterOptionsState;
 #[cfg(feature = "web")]
 use fc_platform::auth::routes;
 #[cfg(feature = "web")]
 use fc_platform::developer_credential::routes::developer_credentials_state;
 use fc_platform::dispatch_job::reaper;
-use fc_platform::dispatch_job::signing_guard::SigningGuard;
 use fc_platform::principal::entity::UserScope;
 #[cfg(feature = "web")]
 use fc_platform::principal::routes::{principal_go_state, principals_state};
@@ -1069,20 +1067,9 @@ async fn main() -> Result<()> {
         warn!(error = %e, "Developer-portal auto-sync skipped");
     }
 
-    // Dev-specific extra route states (the shared builder doesn't wire
-    // /api/dispatch-jobs or /api/event-types/filters — fc-dev does
-    // this itself as compatibility for the generated frontend client).
-    let dispatch_jobs_state = DispatchJobsState {
-        dispatch_job_repo: repos.dispatch_job_repo.clone(),
-        client_repo: repos.client_repo.clone(),
-        signing: Arc::new(SigningGuard::new(
-            repos.subscription_repo.clone(),
-            repos.connection_repo.clone(),
-            repos.service_account_repo.clone(),
-            repos.application_repo.clone(),
-            repos.principal_repo.clone(),
-        )),
-    };
+    // Dev-specific extra route state (the shared builder doesn't wire
+    // /api/event-types/filters; fc-dev does it itself as compatibility for
+    // the generated frontend client).
     let filter_options_state = FilterOptionsState {
         client_repo: repos.client_repo.clone(),
         event_type_repo: repos.event_type_repo.clone(),
@@ -1098,7 +1085,6 @@ async fn main() -> Result<()> {
     // re-nest the full `dispatch_jobs_router` here — doing so double-
     // registers the /batch handler and axum panics at startup. Dispatch
     // job list/get endpoints remain available under `/bff/dispatch-jobs/*`.
-    let _ = dispatch_jobs_state; // kept for future expansion; not mounted
     let platform_router = platform_app
         .nest(
             "/api/event-types/filters",
