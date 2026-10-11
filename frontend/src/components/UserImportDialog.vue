@@ -7,6 +7,8 @@ import {
 	type BulkImportUserRow,
 	type BulkImportResponse,
 } from "@/api/users";
+import { useAuthStore } from "@/stores/auth";
+import { canAssignUserRoles } from "@/utils/admin-permissions";
 
 // Reusable CSV user-import dialog (trigger button + modal). Used by both the
 // client-administration page (client admins, scoped to their own clients) and
@@ -23,6 +25,11 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{ (e: "imported"): void }>();
+
+// A row's roles are assigned only with user:assign-roles; without it the
+// users are still created and each such row comes back "roles not applied".
+const authStore = useAuthStore();
+const canAssignRoles = computed(() => canAssignUserRoles(authStore.user));
 
 const visible = ref(false);
 const fileName = ref("");
@@ -188,6 +195,11 @@ function rowSeverity(status: string): "warn" | "danger" {
 				<strong>Existing users</strong>, and users whose email
 				<strong>domain belongs to another client</strong>, are skipped and
 				listed below.
+			</p>
+			<p v-if="!canAssignRoles" class="dialog-note">
+				You cannot assign roles: users are created without the
+				<strong>Roles</strong> column, and those rows are reported as
+				"roles not applied".
 			</p>
 
 			<div class="import-toolbar">

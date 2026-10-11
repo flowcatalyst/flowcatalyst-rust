@@ -1,16 +1,22 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { useConfirm } from "primevue/useconfirm";
 import { toast } from "@/utils/errorBus";
 import { usersApi, type User } from "@/api/users";
 import { useListState } from "@/composables/useListState";
 import { useTableFilters } from "@/composables/useTableFilters";
+import { useAuthStore } from "@/stores/auth";
+import { canAssignUserRoles } from "@/utils/admin-permissions";
 
 // Matches internal/platform/seed/roles.go's seeded "platform:developer" role
 // and the literal duplicated in the token endpoint / use cases.
 const DEVELOPER_ROLE = "platform:developer";
 
 const confirm = useConfirm();
+const authStore = useAuthStore();
+// Granting and removing the developer role change the user's roles, which
+// needs user:assign-roles; without it only the credential actions are offered.
+const canAssignRoles = computed(() => canAssignUserRoles(authStore.user));
 
 const developers = ref<User[]>([]);
 const loading = ref(true);
@@ -185,7 +191,7 @@ function copyToClipboard(text: string) {
           Users who can mint a self-service API credential (client_credentials, as themselves) for local testing against a deployed environment
         </p>
       </div>
-      <Button label="Grant Developer Role" icon="pi pi-plus" @click="openGrantDialog" />
+      <Button v-if="canAssignRoles" label="Grant Developer Role" icon="pi pi-plus" @click="openGrantDialog" />
     </header>
 
     <div class="fc-card table-card">
@@ -260,6 +266,7 @@ function copyToClipboard(text: string) {
                 @click="confirmRevokeSecret(data)"
               />
               <Button
+                v-if="canAssignRoles"
                 v-tooltip.top="'Remove Developer Role'"
                 icon="pi pi-user-minus"
                 text
@@ -275,7 +282,7 @@ function copyToClipboard(text: string) {
           <div class="empty-message">
             <i class="pi pi-code"></i>
             <span>No developer users yet</span>
-            <Button label="Grant Developer Role" link @click="openGrantDialog" />
+            <Button v-if="canAssignRoles" label="Grant Developer Role" link @click="openGrantDialog" />
           </div>
         </template>
       </DataTable>

@@ -16,6 +16,7 @@ export const EVENT_TYPE_MANAGE = "platform:messaging:event-type:manage";
 export const ROLE_CREATE = "platform:iam:role:create";
 export const ROLE_UPDATE = "platform:iam:role:update";
 export const ROLE_DELETE = "platform:iam:role:delete";
+export const USER_ASSIGN_ROLES = "platform:iam:user:assign-roles";
 
 function isAnchor(user: SessionUser): boolean {
 	return !!user && userScope(user) === "anchor";
@@ -51,4 +52,14 @@ export function canDeleteRoles(user: SessionUser): boolean {
  */
 export function canSyncPlatformRoles(user: SessionUser): boolean {
 	return canCreateRoles(user) && canUpdateRoles(user) && canDeleteRoles(user);
+}
+
+/**
+ * PUT and POST /api/principals/{id}/roles, DELETE .../roles/{role}, and the
+ * roles of a CSV import row: user:assign-roles, not user:update (owner ruling
+ * 2026-10-11). No anchor check: a client administrator holding it assigns its
+ * client's application roles, and the API bounds which.
+ */
+export function canAssignUserRoles(user: SessionUser): boolean {
+	return userHasPermission(user, USER_ASSIGN_ROLES);
 }

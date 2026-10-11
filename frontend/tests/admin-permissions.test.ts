@@ -9,6 +9,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+	canAssignUserRoles,
 	canCreateRoles,
 	canDeleteRoles,
 	canSyncPlatformEventTypes,
@@ -131,5 +132,57 @@ describe("role editors", () => {
 		expect(dashboard).toMatch(
 			/<div v-if="canSyncRoles" class="sync-card">\s*<div class="sync-icon bg-purple">/,
 		);
+	});
+});
+
+describe("user role assignment", () => {
+	it("needs user:assign-roles, not user:update (owner ruling 2026-10-11)", () => {
+		expect(canAssignUserRoles(anchor("platform:iam:user:assign-roles"))).toBe(
+			true,
+		);
+		expect(canAssignUserRoles(anchor("platform:iam:*:*"))).toBe(true);
+		expect(
+			canAssignUserRoles(
+				anchor(
+					"platform:iam:user:create",
+					"platform:iam:user:update",
+					"platform:iam:user:delete",
+				),
+			),
+		).toBe(false);
+		// A client administrator assigns its client's application roles.
+		expect(
+			canAssignUserRoles(clientUser("platform:iam:user:assign-roles")),
+		).toBe(true);
+		expect(canAssignUserRoles(clientUser("platform:iam:user:update"))).toBe(
+			false,
+		);
+		expect(canAssignUserRoles(null)).toBe(false);
+	});
+
+	it("hides the role controls from users without it", () => {
+		const body = source("pages/users/UserDetailBody.vue");
+		expect(body).toContain("canAssignUserRoles(authStore.user)");
+		expect(body).toMatch(
+			/<template v-if="canAssignRoles" #actions>\s*<Button label="Manage Roles"/,
+		);
+		expect(body).toContain(
+			'<Button v-if="canAssignRoles" label="Assign Roles"',
+		);
+
+		const developers = source("pages/developer/DeveloperUsersListPage.vue");
+		expect(developers).toContain("canAssignUserRoles(authStore.user)");
+		expect(
+			developers.match(
+				/<Button v-if="canAssignRoles" label="Grant Developer Role"/g,
+			),
+		).toHaveLength(2);
+		expect(developers).toMatch(
+			/v-if="canAssignRoles"\s*v-tooltip\.top="'Remove Developer Role'"/,
+		);
+
+		const importer = source("components/UserImportDialog.vue");
+		expect(importer).toContain("canAssignUserRoles(authStore.user)");
+		expect(importer).toContain('<p v-if="!canAssignRoles" class="dialog-note">');
 	});
 });

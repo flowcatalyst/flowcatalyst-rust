@@ -103,4 +103,6 @@ from `eb537a7`/`d1158fa` the two `api/openapi.lock.json` hunks they made, copied
 Go's second batch (2026-10-11): `0a8df19`'s lock hunk (`CreateEventTypeRequest.clientId` is
 ignored), copied into `openapi/openapi.json` and regenerated, and `fb36438` (Sync Platform Events
 and the role editors offered only to users the BFF admits; the dashboard hunk applied by hand, as
-this copy has the audit-redaction card). Ledger: `docs/go-mirror/2026-10-11-platform-bug-fixes-2.md`.
+this copy has the audit-redaction card), and `18c0c27` (role assignment offered only to holders of
+`user:assign-roles`; `UserDetailBody.vue` by hand, it had no auth store import). Ledger:
+`docs/go-mirror/2026-10-11-platform-bug-fixes-2.md`.
