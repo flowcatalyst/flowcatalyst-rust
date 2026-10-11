@@ -134,6 +134,12 @@ impl<U: UnitOfWork> SyncConnectionsUseCase<U> {
             .find_by_application_and_client(&command.application_code, command.client_id.as_ref())
             .await?;
         let syncable = |source: &str| source == SOURCE_API || source == SOURCE_CODE;
+        // A connection the sync creates stores its client's identifier, as
+        // create does (Go 3f0dba4); rows it updates are not backfilled.
+        let client_identifier = self
+            .connection_repo
+            .client_identifier(command.client_id.as_ref())
+            .await?;
 
         let now = chrono::Utc::now();
         let (mut created, mut updated, mut deleted) = (0u32, 0u32, 0u32);
@@ -157,6 +163,7 @@ impl<U: UnitOfWork> SyncConnectionsUseCase<U> {
                 None => {
                     let mut c = Connection::new(&code, input.name.trim(), &service_account);
                     c.client_id = parse_client_id_opt(command.client_id.as_id_str())?;
+                    c.client_identifier = client_identifier.clone();
                     c.description = input.description.clone();
                     c.external_id = input.external_id.clone();
                     saves.push((c, SOURCE_API.to_string()));

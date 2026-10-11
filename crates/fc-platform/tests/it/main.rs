@@ -16,6 +16,7 @@
 )]
 
 mod client_event_codes_migration_test;
+mod code_first_sync_identifier_test;
 mod emitted_catalogue_test;
 mod event_type_client_ignored_test;
 mod scheduled_job_report_scope_test;

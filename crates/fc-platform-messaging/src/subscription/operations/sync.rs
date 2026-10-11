@@ -217,6 +217,12 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
             .subscription_repo
             .find_by_application_and_client(&command.application_code, command.client_id.as_ref())
             .await?;
+        // A subscription the sync creates stores its client's identifier, as
+        // create does (Go 3f0dba4); rows it updates are not backfilled.
+        let client_identifier = self
+            .subscription_repo
+            .client_identifier(command.client_id.as_ref())
+            .await?;
 
         let mut created_count = 0u32;
         let mut updated_count = 0u32;
@@ -273,7 +279,7 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
                 }
                 None => {
                     let pool = requested_pool_code(input).and_then(|c| pools.get(c));
-                    let sub = Subscription::builder()
+                    let mut sub = Subscription::builder()
                         .code(&input.code)
                         .name(&input.name)
                         .endpoint(&input.target)
@@ -295,6 +301,7 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
                         .maybe_dispatch_pool_id(pool.map(|p| p.id.clone()))
                         .maybe_dispatch_pool_code(pool.map(|p| p.code.clone()))
                         .build();
+                    sub.client_identifier = client_identifier.clone();
                     rows.push(RecordedEvent::of(&SubscriptionCreated::new(
                         &ctx, &sub.id, &sub.code, &sub.name,
                     ))?);
