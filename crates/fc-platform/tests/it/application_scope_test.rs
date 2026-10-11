@@ -33,7 +33,7 @@ pub(crate) async fn create_app(app: &TestApp, code: &str) -> Application {
 
 /// Seed the built-in application-service role (the harness doesn't run the
 /// startup role sync) and return its code.
-async fn application_service_role(app: &TestApp) -> String {
+pub(crate) async fn application_service_role(app: &TestApp) -> String {
     let role = roles::application_service();
     if app
         .repos
@@ -54,7 +54,11 @@ async fn application_service_role(app: &TestApp) -> String {
 
 /// Persist `principal` (with the application-service role and the given
 /// grants) and mint a token for it.
-async fn token_for(app: &TestApp, mut principal: Principal, grants: &[&Application]) -> String {
+pub(crate) async fn token_for(
+    app: &TestApp,
+    mut principal: Principal,
+    grants: &[&Application],
+) -> String {
     principal.roles = vec![RoleAssignment::new(application_service_role(app).await)];
     app.repos
         .principal_repo

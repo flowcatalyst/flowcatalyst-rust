@@ -1280,26 +1280,62 @@ pub mod checks {
         }
     }
 
-    /// SDK callback path — log/complete an instance the platform fired.
-    /// Granted to application service accounts via
-    /// `application_service::SCHEDULED_JOB_INSTANCE_WRITE`. Anchor /
-    /// `ADMIN_ALL` also work.
-    /// Go gates these with `CanWriteScheduledJobs` (scheduled-job create,
-    /// update or delete), so those grant it too.
-    pub fn can_write_scheduled_job_instance(context: &impl Authority) -> Result<()> {
-        if context.has_any_permission(&[
-            permissions::application_service::SCHEDULED_JOB_INSTANCE_WRITE,
-            permissions::admin::SCHEDULED_JOB_MANAGE,
-            permissions::admin::SCHEDULED_JOB_CREATE,
-            permissions::admin::SCHEDULED_JOB_UPDATE,
-            permissions::admin::SCHEDULED_JOB_DELETE,
-        ]) {
-            Ok(())
-        } else {
-            Err(PlatformError::forbidden(
-                "Cannot write to scheduled job instance",
-            ))
+    /// The messaging scheduled-job write grants that let a runner report on
+    /// any firing.
+    const SCHEDULED_JOB_REPORT_ANY: [&str; 3] = [
+        permissions::admin::SCHEDULED_JOB_CREATE,
+        permissions::admin::SCHEDULED_JOB_UPDATE,
+        permissions::admin::SCHEDULED_JOB_DELETE,
+    ];
+
+    /// The runner's reports on a firing, `POST
+    /// /api/scheduled-jobs/instances/{instanceId}/log` and `/complete` (Go
+    /// `CanReportScheduledJobInstances`): the messaging scheduled-job create,
+    /// update or delete grant, or the
+    /// `application_service::SCHEDULED_JOB_INSTANCE_WRITE` an SDK service
+    /// account holds. A caller admitted only by the latter is confined to its
+    /// own applications' jobs ([`can_report_scheduled_job_instance`]).
+    /// Refused as Go: 403 `PERMISSION_REQUIRED`.
+    pub fn can_report_scheduled_job_instances(context: &impl Authority) -> Result<()> {
+        require_any_permission(
+            context,
+            &[
+                SCHEDULED_JOB_REPORT_ANY[0],
+                SCHEDULED_JOB_REPORT_ANY[1],
+                SCHEDULED_JOB_REPORT_ANY[2],
+                permissions::application_service::SCHEDULED_JOB_INSTANCE_WRITE,
+            ],
+        )
+    }
+
+    /// The resource rule for one firing of a job owned by `application_id`
+    /// (`None`: a job of no application), Go `CanReportScheduledJobInstance`:
+    /// a messaging scheduled-job write grant reports on any firing; a caller
+    /// holding only the application-service grant reports on firings of jobs
+    /// of an application `scope` covers (the rule of the SDK syncs'
+    /// application access), else 403 `APPLICATION_ACCESS_REQUIRED`.
+    pub fn can_report_scheduled_job_instance(
+        context: &impl Authority,
+        scope: &ApplicationScope,
+        application_id: Option<&ApplicationId>,
+    ) -> Result<()> {
+        can_report_scheduled_job_instances(context)?;
+        if reports_on_any_scheduled_job_instance(context) {
+            return Ok(());
         }
+        if application_id.is_some_and(|id| scope.allows(id)) {
+            return Ok(());
+        }
+        Err(PlatformError::forbidden_code(
+            "APPLICATION_ACCESS_REQUIRED",
+            "not authorised for this scheduled job's application",
+        ))
+    }
+
+    /// Whether the caller reports on any firing (a messaging scheduled-job
+    /// write grant), so its application scope need not be looked up.
+    pub fn reports_on_any_scheduled_job_instance(context: &impl Authority) -> bool {
+        context.has_any_permission(&SCHEDULED_JOB_REPORT_ANY)
     }
 
     /// SDK-driven sync of scheduled-job definitions for an application.

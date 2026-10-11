@@ -223,6 +223,7 @@ const AUTH_CHECK_PATTERNS: &[&str] = &[
     "can_administer_",
     "can_sync_",
     "can_add_",
+    "can_report_",
     "can_view_",
     ".authorize(",
     ".is_anchor()",

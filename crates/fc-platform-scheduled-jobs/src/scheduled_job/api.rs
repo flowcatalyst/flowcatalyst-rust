@@ -40,6 +40,7 @@ use crate::scheduled_job::{
     InstanceListFilters, ScheduledJob, ScheduledJobInstance, ScheduledJobInstanceLog,
     ScheduledJobInstanceRepository, ScheduledJobRepository,
 };
+use fc_platform_core::directory::ApplicationAccess;
 use fc_platform_core::shared::api_common::{CreatedResponse, PaginatedResponse, PaginationParams};
 use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::caller_reach;
@@ -62,6 +63,8 @@ pub struct ScheduledJobsState {
     pub archive_use_case: Arc<ArchiveScheduledJobUseCase<PgUnitOfWork>>,
     pub delete_use_case: Arc<DeleteScheduledJobUseCase<PgUnitOfWork>>,
     pub fire_use_case: Arc<FireScheduledJobUseCase<PgUnitOfWork>>,
+    /// The caller's application scope, for the runner's reports.
+    pub app_access: Arc<dyn ApplicationAccess>,
 }
 
 // ── Request DTOs ────────────────────────────────────────────────────────────
@@ -946,6 +949,37 @@ pub async fn list_instance_logs(
 
 // ── SDK callback path (infrastructure write — bypasses UoW) ────────────────
 
+/// Load the firing a runner reports on (a log line or its completion) and
+/// authorize the report (Go `reportableInstance`), after the handler's
+/// coarse gate (`checks::can_report_scheduled_job_instances`). The messaging
+/// scheduled-job write grants report on any firing; an SDK service account
+/// holding only `application-service:scheduled-job-instance:write` reports
+/// on firings of its own applications' jobs (a job of no application:
+/// refused). The per-instance client scope applies to both.
+async fn reportable_instance(
+    state: &ScheduledJobsState,
+    auth: &Authenticated,
+    instance_id: String,
+) -> Result<ScheduledJobInstance, PlatformError> {
+    let instance_id = ScheduledJobInstanceId::from_wire(instance_id);
+    let inst = state
+        .instance_repo
+        .find_by_id(&instance_id)
+        .await?
+        .or_not_found("ScheduledJobInstance", instance_id.as_str())?;
+    if !checks::reports_on_any_scheduled_job_instance(&auth.0) {
+        let application_id = state
+            .repo
+            .find_by_id(&inst.scheduled_job_id)
+            .await?
+            .and_then(|job| job.application_id);
+        let scope = state.app_access.scope_for(&auth.0.principal_id).await?;
+        checks::can_report_scheduled_job_instance(&auth.0, &scope, application_id.as_ref())?;
+    }
+    check_scope_access(auth, inst.client_id.as_ref())?;
+    Ok(inst)
+}
+
 #[utoipa::path(
     post, path = "/instances/{instanceId}/log", tag = "scheduled-jobs",
     operation_id = "writeScheduledJobInstanceLog",
@@ -960,14 +994,8 @@ pub async fn post_instance_log(
     Path(instance_id): Path<String>,
     Json(req): Json<InstanceLogRequest>,
 ) -> Result<StatusCode, PlatformError> {
-    let instance_id = ScheduledJobInstanceId::from_wire(instance_id);
-    checks::can_write_scheduled_job_instance(&auth.0)?;
-    let inst = state
-        .instance_repo
-        .find_by_id(&instance_id)
-        .await?
-        .or_not_found("ScheduledJobInstance", instance_id.as_str())?;
-    check_scope_access(&auth, inst.client_id.as_ref())?;
+    checks::can_report_scheduled_job_instances(&auth.0)?;
+    let inst = reportable_instance(&state, &auth, instance_id).await?;
 
     let log = ScheduledJobInstanceLog {
         id: ScheduledJobInstanceLogId::generate(),
@@ -997,14 +1025,8 @@ pub async fn post_instance_complete(
     Path(instance_id): Path<String>,
     Json(req): Json<InstanceCompleteRequest>,
 ) -> Result<StatusCode, PlatformError> {
-    let instance_id = ScheduledJobInstanceId::from_wire(instance_id);
-    checks::can_write_scheduled_job_instance(&auth.0)?;
-    let inst = state
-        .instance_repo
-        .find_by_id(&instance_id)
-        .await?
-        .or_not_found("ScheduledJobInstance", instance_id.as_str())?;
-    check_scope_access(&auth, inst.client_id.as_ref())?;
+    checks::can_report_scheduled_job_instances(&auth.0)?;
+    let inst = reportable_instance(&state, &auth, instance_id).await?;
 
     let (status, completion) =
         resolve_instance_completion(req.status.as_deref(), req.completion_status.as_deref())

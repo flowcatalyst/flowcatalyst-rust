@@ -53,6 +53,10 @@ const AUTH_CHECK_PATTERNS: &[&str] = &[
     // Adding a schema version to an event type (Go's CanAddEventTypeSchema):
     // messaging write permissions or the application-service create/update.
     "can_add_",
+    // A runner's report on a scheduled-job firing (Go's
+    // CanReportScheduledJobInstances): the messaging scheduled-job writes or
+    // the application-service instance write.
+    "can_report_",
     // AuthorizationService method calls
     ".authorize(",
     // AuthContext inline checks (used in conditionals that return 403)

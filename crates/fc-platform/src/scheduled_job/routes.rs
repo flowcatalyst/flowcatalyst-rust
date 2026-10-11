@@ -56,6 +56,7 @@ pub fn scheduled_jobs_state(ctx: &PlatformContext) -> ScheduledJobsState {
             ctx.repos.scheduled_job_instance_repo.clone(),
             uow.clone(),
         )),
+        app_access: ctx.app_access.clone(),
     }
 }
 
