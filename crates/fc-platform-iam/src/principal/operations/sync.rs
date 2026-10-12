@@ -22,7 +22,14 @@
 //! sync with 403 `SYNC_TARGET_FORBIDDEN`; the sweep skips such users. Role
 //! names prefixed `platform:` or with another application's code are
 //! refused with 403 `ROLE_APP_FORBIDDEN` (decision #23); other names are
-//! accepted as before. A `platform:iam:principals:synced` rollup closes the
+//! accepted as before. The role ceiling then bounds every role the sync adds
+//! or removes, the sweep's included (Go `e08eee4`, F8): the caller must hold
+//! each such role's platform permissions, or the whole sync is refused with
+//! 403 `ROLE_ABOVE_CALLER` and nothing is written. An application's roles
+//! holding only its own permissions pass for any caller, so an SDK syncing
+//! its own roles is unaffected; the ceiling stops an own-application (or
+//! unprefixed) role that carries platform permissions, which the name rule
+//! lets through. A `platform:iam:principals:synced` rollup closes the
 //! sync. Run inside [`fc_platform_core::usecase::PgUnitOfWork::run`], the rows, every
 //! event and every audit entry commit in one transaction.
 
@@ -36,6 +43,8 @@ use super::events::{PrincipalsSynced, UserCreated, UserUpdated};
 use crate::application::repository::ApplicationRepository;
 use crate::principal::entity::{Principal, PrincipalSyncBatch};
 use crate::principal::repository::PrincipalRepository;
+use crate::role::ceiling;
+use crate::role::repository::RoleRepository;
 use crate::service_account::entity::{AssignmentSource, RoleAssignment};
 use fc_platform_core::permissions;
 use fc_platform_core::principal_kind::UserScope;
@@ -125,6 +134,7 @@ fn is_own_sdk_role(role: &RoleAssignment, application_code: &str) -> bool {
 pub struct SyncPrincipalsUseCase<U: UnitOfWork> {
     principal_repo: Arc<PrincipalRepository>,
     application_repo: Arc<ApplicationRepository>,
+    role_repo: Arc<RoleRepository>,
     unit_of_work: Arc<U>,
 }
 
@@ -132,11 +142,13 @@ impl<U: UnitOfWork> SyncPrincipalsUseCase<U> {
     pub fn new(
         principal_repo: Arc<PrincipalRepository>,
         application_repo: Arc<ApplicationRepository>,
+        role_repo: Arc<RoleRepository>,
         unit_of_work: Arc<U>,
     ) -> Self {
         Self {
             principal_repo,
             application_repo,
+            role_repo,
             unit_of_work,
         }
     }
@@ -242,6 +254,10 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
         let mut saved: HashMap<String, Principal> = HashMap::new();
         let mut row_events = Vec::with_capacity(command.principals.len());
         let (mut created, mut updated, mut deactivated) = (0u32, 0u32, 0u32);
+        // Every role the sync adds or removes, for the role ceiling.
+        let mut changed: Vec<String> = Vec::new();
+        let role_names =
+            |p: &Principal| -> Vec<String> { p.roles.iter().map(|ra| ra.role.clone()).collect() };
 
         for (input, email) in command.principals.iter().zip(&emails) {
             let mut roles: Vec<RoleAssignment> = Vec::with_capacity(input.roles.len());
@@ -256,6 +272,7 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
             let current = saved.remove(email).or_else(|| existing.remove(email));
             let principal = match current {
                 Some(mut p) => {
+                    let before = role_names(&p);
                     // Only this application's SDK roles are replaced.
                     p.roles.retain(|ra| !is_own_sdk_role(ra, app_code));
                     for ra in roles {
@@ -263,6 +280,7 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
                             p.roles.push(ra);
                         }
                     }
+                    changed.extend(ceiling::changed(&before, &role_names(&p)));
                     p.name = input.name.clone();
                     p.active = input.active;
                     p.updated_at = now;
@@ -282,6 +300,7 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
                     p.name = input.name.clone();
                     p.active = input.active;
                     p.roles = roles;
+                    changed.extend(role_names(&p));
                     // Go sdksync/api.go:527: carry a migrated credential
                     // verbatim so the user keeps their password.
                     if let (Some(hash), Some(identity)) = (hash, p.user_identity.as_mut()) {
@@ -321,13 +340,21 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
                 if !p.roles.iter().any(|ra| is_own_sdk_role(ra, app_code)) {
                     continue;
                 }
+                let before = role_names(&p);
                 p.roles.retain(|ra| !is_own_sdk_role(ra, app_code));
+                changed.extend(ceiling::changed(&before, &role_names(&p)));
                 p.updated_at = now;
                 row_events.push(RecordedEvent::of(&UserUpdated::new(&ctx, &p.id, &p.name))?);
                 deactivated += 1;
                 principals.push(p);
             }
         }
+
+        // The role ceiling, before anything is written (Go `e08eee4`).
+        let mut seen = HashSet::new();
+        changed.retain(|r| seen.insert(r.clone()));
+        let definitions = ceiling::definitions(&self.role_repo, &changed).await?;
+        ceiling::require_roles(Some(&caller), &changed, &definitions)?;
 
         let rollup = PrincipalsSynced {
             metadata: PrincipalsSynced::metadata_for(&ctx, app_code),

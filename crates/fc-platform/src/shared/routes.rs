@@ -206,6 +206,7 @@ pub fn sdk_sync_state(ctx: &PlatformContext) -> SdkSyncState {
         trigger_objects: repos.function_trigger_object_repo.clone(),
         principal_repo: repos.principal_repo.clone(),
         application_repo: repos.application_repo.clone(),
+        role_repo: repos.role_repo.clone(),
         client_repo: repos.client_repo.clone(),
         unit_of_work: uow.clone(),
     }

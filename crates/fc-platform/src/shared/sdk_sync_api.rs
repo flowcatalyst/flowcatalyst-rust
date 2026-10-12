@@ -287,6 +287,8 @@ pub struct SdkSyncState {
     /// for `passwordHashIgnored`.
     pub principal_repo: Arc<crate::PrincipalRepository>,
     pub application_repo: Arc<crate::ApplicationRepository>,
+    /// The role ceiling on the principal sync's role changes.
+    pub role_repo: Arc<crate::RoleRepository>,
     /// Resolves a sync's `clientId` (an id or an identifier).
     pub client_repo: Arc<crate::ClientRepository>,
     /// The principal sync runs its rows, events and audit entries in one
@@ -727,13 +729,16 @@ pub(super) async fn sync_principals(
 
     let ctx = ExecutionContext::from_auth(&auth.0)
         .with_application_scope(state.app_access.scope_for(&auth.0.principal_id).await?);
-    let (principal_repo, application_repo) =
-        (state.principal_repo.clone(), state.application_repo.clone());
+    let (principal_repo, application_repo, role_repo) = (
+        state.principal_repo.clone(),
+        state.application_repo.clone(),
+        state.role_repo.clone(),
+    );
 
     match state
         .unit_of_work
         .run(|session| async move {
-            SyncPrincipalsUseCase::new(principal_repo, application_repo, session)
+            SyncPrincipalsUseCase::new(principal_repo, application_repo, role_repo, session)
                 .run(command, ctx)
                 .await
                 .into_committed()

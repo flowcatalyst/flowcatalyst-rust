@@ -12,6 +12,8 @@ use crate::support::{self, read_json, TestApp};
 use fc_platform::application::entity::Application;
 use fc_platform::domain::{Principal, UserScope};
 use fc_platform::role::entity::{permissions, roles, AuthRole};
+use fc_platform::service_account::entity::{AssignmentSource, RoleAssignment};
+use fc_platform::shared::id::PrincipalId;
 
 async fn setup() -> TestApp {
     support::set_app_key();
@@ -180,4 +182,148 @@ async fn provisioning_is_bounded_by_the_application_service_role() {
     let super_admin = stored_caller(&app, "prov-super@iam.test", &[permissions::ADMIN_ALL]).await;
     let (status, body) = read_json(app.post(&path(&ids[1]), &super_admin, json!({})).await).await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
+}
+
+async fn roles_of(app: &TestApp, id: &str) -> Vec<String> {
+    let mut roles: Vec<String> = app
+        .repos
+        .principal_repo
+        .find_by_id(&PrincipalId::from_wire(id))
+        .await
+        .unwrap()
+        .unwrap()
+        .roles
+        .iter()
+        .map(|r| r.role.clone())
+        .collect();
+    roles.sort();
+    roles
+}
+
+async fn sdk_user(app: &TestApp, email: &str, roles: &[&str]) -> String {
+    let mut p = Principal::new_user(email, UserScope::Client);
+    for r in roles {
+        p.roles
+            .push(RoleAssignment::with_source(*r, AssignmentSource::SdkSync));
+    }
+    app.repos.principal_repo.insert(&p).await.unwrap();
+    p.id.to_string()
+}
+
+/// Go `e08eee4`: the application-scoped principal sync applies the ceiling
+/// to every role it adds or removes, the sweep's included. An application
+/// role holding only the application's permissions passes for any caller; one
+/// carrying a platform permission (a super-admin's cross-application edit, or
+/// a role from before the confinement rule) does not, though the name rule
+/// admits it.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn the_application_principal_sync_is_bounded_by_the_callers_permissions() {
+    let app = setup().await;
+    let hr = Application::new("hr", "hr");
+    app.repos.application_repo.insert(&hr).await.unwrap();
+    seed_roles(
+        &app,
+        vec![
+            AuthRole::new("hr", "boss", "Boss").with_permission(permissions::iam::ROLE_CREATE),
+            AuthRole::new("hr", "clerk", "Clerk").with_permission("hr:leave:view"),
+        ],
+    )
+    .await;
+    let syncer = stored_caller(&app, "hr-syncer@iam.test", &[permissions::iam::USER_CREATE]).await;
+    let sync = |remove_unlisted: bool, principals: Value| {
+        let (app, syncer) = (&app, syncer.clone());
+        async move {
+            let q = if remove_unlisted {
+                "?removeUnlisted=true"
+            } else {
+                ""
+            };
+            read_json(
+                app.post(
+                    &format!("/api/applications/hr/principals/sync{q}"),
+                    &syncer,
+                    json!({ "principals": principals }),
+                )
+                .await,
+            )
+            .await
+        }
+    };
+    let refused = |status: StatusCode, body: &Value| {
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(code(body), "ROLE_ABOVE_CALLER");
+        assert_eq!(
+            message(body),
+            "You may only assign or remove roles whose permissions you hold yourself: hr:boss"
+        );
+    };
+    let exists = |email: &'static str| {
+        let app = &app;
+        async move {
+            app.repos
+                .principal_repo
+                .find_by_email(email)
+                .await
+                .unwrap()
+                .is_some()
+        }
+    };
+
+    // Adding the role above: refused, nothing written.
+    let (status, body) = sync(
+        false,
+        json!([{ "email": "new@iam.test", "name": "N", "roles": ["hr:boss"] }]),
+    )
+    .await;
+    refused(status, &body);
+    assert!(!exists("new@iam.test").await);
+
+    // Removing it from a listed user: refused.
+    let holder = sdk_user(&app, "holder@iam.test", &["hr:boss"]).await;
+    let (status, body) = sync(
+        false,
+        json!([{ "email": "holder@iam.test", "name": "H", "roles": [] }]),
+    )
+    .await;
+    refused(status, &body);
+    assert_eq!(roles_of(&app, &holder).await, vec!["hr:boss"]);
+
+    // Sweeping it from an unlisted user: refused, the listed user not created.
+    let (status, body) = sync(
+        true,
+        json!([{ "email": "clerk@iam.test", "name": "C", "roles": ["hr:clerk"] }]),
+    )
+    .await;
+    refused(status, &body);
+    assert!(!exists("clerk@iam.test").await);
+    assert_eq!(roles_of(&app, &holder).await, vec!["hr:boss"]);
+
+    // The application's own role (application permissions only) passes, and
+    // a role the target keeps is not checked.
+    let (status, body) = sync(
+        false,
+        json!([
+            { "email": "clerk@iam.test", "name": "C", "roles": ["hr:clerk"] },
+            { "email": "holder@iam.test", "name": "H", "roles": ["hr:boss", "hr:clerk"] }
+        ]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(exists("clerk@iam.test").await);
+    assert_eq!(roles_of(&app, &holder).await, vec!["hr:boss", "hr:clerk"]);
+
+    // A super-admin may.
+    let super_admin = stored_caller(&app, "hr-super@iam.test", &[permissions::ADMIN_ALL]).await;
+    let (status, body) = read_json(
+        app.post(
+            "/api/applications/hr/principals/sync",
+            &super_admin,
+            json!({ "principals": [{ "email": "holder@iam.test", "name": "H", "roles": [] }] }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(roles_of(&app, &holder).await.is_empty());
 }
