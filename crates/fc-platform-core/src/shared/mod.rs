@@ -8,6 +8,7 @@ pub mod caller_reach;
 pub mod capped_body;
 pub mod database;
 pub mod email_service;
+pub mod encoded_json;
 pub mod encryption_service;
 pub mod enum_str;
 pub mod error;

@@ -160,7 +160,7 @@ async fn a_secret_config_value_never_reaches_the_audit_log() {
 /// The ingest backstop: an SDK-posted audit item is redacted by the name
 /// rule before it is stored, whether `operationData` arrives as an object
 /// or — as the TypeScript, Laravel and fc-sdk DTOs send it — as a
-/// JSON-encoded string.
+/// JSON-encoded string, which is stored as the object it holds.
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn ingested_audit_logs_are_redacted_before_they_are_stored() {
@@ -210,12 +210,11 @@ async fn ingested_audit_logs_are_redacted_before_they_are_stored() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].0, json!({ "password": "***", "name": "kept" }));
 
+    // The encoded string is unwrapped at ingest (Go `8bf67d1`) and stored
+    // as the redacted object.
     let rows = stored("ord_2").await;
     assert_eq!(rows.len(), 1);
-    let inner: serde_json::Value =
-        serde_json::from_str(rows[0].0.as_str().expect("stored as a JSON string"))
-            .expect("inner JSON");
-    assert_eq!(inner, json!({ "apiKey": "***", "name": "kept" }));
+    assert_eq!(rows[0].0, json!({ "apiKey": "***", "name": "kept" }));
 }
 
 // ── Temporary: the dashboard's redact-existing sweep ────────────────────────

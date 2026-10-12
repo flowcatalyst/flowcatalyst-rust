@@ -45,6 +45,7 @@ use fc_common::audit_redaction;
 use fc_platform_core::directory::ApplicationAccess;
 use fc_platform_core::permissions;
 use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::shared::encoded_json::unwrap_encoded_json;
 
 /// Largest batch accepted, as in Go.
 const MAX_BATCH: usize = 100;
@@ -267,10 +268,12 @@ fn plan_batch(
         // writing their own outbox rows do not, so the ingested document is
         // redacted by the name rule before it is stored. There is no live
         // command here to declare masked fields. The SDK DTOs send
-        // `operationData` as a JSON-encoded string, which redact_document
-        // reaches into as well.
+        // `operationData` as a JSON-encoded string: it is unwrapped first
+        // and stored as the object (Go `8bf67d1`, owner ruling 2026-10-12),
+        // then redacted. A string kept as sent is still redacted inside.
         let operation_data = item
             .operation_data
+            .map(unwrap_encoded_json)
             .map(|data| audit_redaction::redact_document(&data, &[]));
 
         let mut log = AuditLog::new(
@@ -509,6 +512,35 @@ mod tests {
             logs[0].operation_json,
             Some(json!({ "password": "***", "name": "kept" }))
         );
+    }
+
+    /// An encoded `operationData` is stored as the object it holds, redacted
+    /// after the unwrap; any other string is stored as sent.
+    #[test]
+    fn encoded_operation_data_is_unwrapped_then_redacted() {
+        let batch = items(json!({ "items": [
+            { "entityType": "Order", "entityId": "o1", "operation": "CREATE",
+              "principalId": "prn_a",
+              "operationData": "{\"password\":\"hunter2\",\"total\":1500}" },
+            { "entityType": "Order", "entityId": "o2", "operation": "CREATE",
+              "principalId": "prn_a", "operationData": "plain text" },
+            { "entityType": "Order", "entityId": "o3", "operation": "CREATE",
+              "principalId": "prn_a", "operationData": "null" },
+        ]}));
+        let (logs, _) = plan_batch(
+            batch,
+            &HashMap::new(),
+            &HashMap::new(),
+            &ctx(UserScope::Anchor, &["*"]),
+            &ApplicationScope::All,
+            Utc::now(),
+        );
+        assert_eq!(
+            logs[0].operation_json,
+            Some(json!({ "password": "***", "total": 1500 }))
+        );
+        assert_eq!(logs[1].operation_json, Some(json!("plain text")));
+        assert_eq!(logs[2].operation_json, Some(json!("null")));
     }
 
     #[test]

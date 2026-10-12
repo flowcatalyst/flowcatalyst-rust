@@ -47,6 +47,7 @@ mod dispatch_process_test;
 mod dispatch_scheduler_test;
 mod dispatch_schema_test;
 mod emitted_catalogue_test;
+mod encoded_ingest_test;
 mod enum_roundtrip_test;
 mod event_catalogue_schema_test;
 mod event_data_convention_test;

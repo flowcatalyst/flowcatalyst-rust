@@ -20,6 +20,7 @@ use fc_platform_core::directory::ClientDirectory;
 use fc_platform_core::permissions;
 use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::caller_reach;
+use fc_platform_core::shared::encoded_json::unwrap_encoded_json;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
 use std::collections::HashSet;
@@ -306,10 +307,14 @@ pub async fn batch_events(
         };
         let client_id = caller_reach::require_writable_client(&auth.0, client_id)?;
 
+        // An SDK outbox sends `data` as a JSON string holding the encoded
+        // object; it is stored as the object (Go `8bf67d1`, owner ruling
+        // 2026-10-12). See `unwrap_encoded_json` for what is kept.
         let mut event = Event::new(
             item.r#type,
             item.source.unwrap_or_default(),
-            item.data.unwrap_or(serde_json::Value::Null),
+            item.data
+                .map_or(serde_json::Value::Null, unwrap_encoded_json),
         );
         // A supplied id is the event's, set before the default
         // deduplication id (`<type>-<id>`) derives from it: a re-sent event
