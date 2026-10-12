@@ -25,6 +25,7 @@ use crate::auth::oauth_entity::GrantType;
 use crate::auth::oauth_entity::OAuthClientType;
 use crate::auth::operations::CreateOAuthClientCommand;
 use crate::auth::operations::CreateOAuthClientUseCase;
+use crate::role::ceiling;
 use crate::service_account::account_or_principal_id;
 use crate::service_account::entity::RoleAssignment;
 use crate::service_account::entity::ServiceAccount;
@@ -1215,9 +1216,38 @@ pub async fn deactivate_service_account(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// The role ceiling on the admin token mint (Go `requireMintWithinCaller`,
+/// `09b33e8`, F8): the minted bearer carries the account's whole authority,
+/// so the caller must hold every platform permission of every role the
+/// account holds. Otherwise a holder of `service-account:update` could mint
+/// a token for an account a super-admin made stronger than the caller.
+/// 403 `ROLE_ABOVE_CALLER`, naming the roles.
+async fn require_mint_within_caller(
+    role_repo: &RoleRepository,
+    caller: &AuthContext,
+    role_names: &[String],
+) -> Result<(), PlatformError> {
+    let definitions = ceiling::definitions(role_repo, role_names).await?;
+    let above = ceiling::roles_above(Some(caller), role_names, &definitions);
+    if above.is_empty() {
+        return Ok(());
+    }
+    Err(PlatformError::Coded {
+        status: StatusCode::FORBIDDEN,
+        code: "ROLE_ABOVE_CALLER".to_string(),
+        message: format!(
+            "You may only mint a token for a service account whose roles' permissions you hold yourself: {}",
+            above.join(", ")
+        ),
+        details: Default::default(),
+    })
+}
+
 /// Mint an access token for a service account, as the `client_credentials`
 /// grant would for its OAuth client (Go `mintServiceAccountToken`): the
-/// linked principal's roles, `scope` = its flattened permissions.
+/// linked principal's roles, `scope` = its flattened permissions. The caller
+/// must hold the account's roles' platform permissions (the role ceiling,
+/// 403 `ROLE_ABOVE_CALLER`).
 #[utoipa::path(
     post,
     path = "/api/service-accounts/{id}/token",
@@ -1269,10 +1299,9 @@ pub async fn mint_service_account_token(
     if !principal.active {
         return Err(inactive("the service account's principal is deactivated"));
     }
-    let granted = state
-        .role_repo
-        .flatten_permissions(&auth_service::role_names(&principal))
-        .await?;
+    let role_names = auth_service::role_names(&principal);
+    require_mint_within_caller(&state.role_repo, &auth.0, &role_names).await?;
+    let granted = state.role_repo.flatten_permissions(&role_names).await?;
     let access_token = state
         .auth_service
         .generate_access_token_with_scope(&principal, &granted, None)?;
