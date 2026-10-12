@@ -393,6 +393,9 @@ export type BatchEventItem = {
     deduplicationId?: string;
     id?: string;
     messageGroup?: string;
+    /**
+     * Event source. When absent or blank, the type's {application}:{subdomain} (its first two segments)
+     */
     source?: string;
     specVersion?: string;
     subject?: string;
@@ -828,9 +831,9 @@ export type CreateEventRequest = {
      */
     messageGroup?: string;
     /**
-     * Event source URI
+     * Event source URI. When absent or blank, the type's {application}:{subdomain} (its first two segments)
      */
-    source: string;
+    source?: string;
     /**
      * Event subject (optional context)
      */
@@ -3648,9 +3651,9 @@ export type CreateEventRequestWritable = {
      */
     messageGroup?: string;
     /**
-     * Event source URI
+     * Event source URI. When absent or blank, the type's {application}:{subdomain} (its first two segments)
      */
-    source: string;
+    source?: string;
     /**
      * Event subject (optional context)
      */

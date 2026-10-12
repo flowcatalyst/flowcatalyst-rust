@@ -85,19 +85,21 @@ async fn the_events_batch_unwraps_encoded_data() {
             .unwrap();
     assert_eq!(client_id.as_deref(), Some(acme.id.as_str()));
 
-    // The minimal fixture carries no source: refused in its slot.
+    // The minimal fixture carries no source: the platform defaults it to
+    // the type's {application}:{subdomain} (Go F14) and stores `{}`.
     let result = ingest_event(&app, &token, fixture(EVENT_MINIMAL)).await;
-    assert_eq!(result["status"], "BAD_REQUEST", "{result}");
-    assert_eq!(result["error"], "source is required", "{result}");
-    // With a source it is stored as `{}`.
-    let mut minimal = fixture(EVENT_MINIMAL);
-    minimal["source"] = json!("orders");
-    let result = ingest_event(&app, &token, minimal).await;
     assert_eq!(result["status"], "SUCCESS", "{result}");
+    let id = result["id"].as_str().unwrap();
     assert_eq!(
-        stored_data(&app, result["id"].as_str().unwrap()).await,
+        stored_data(&app, id).await,
         ("object".to_string(), json!({}))
     );
+    let (source,): (String,) = sqlx::query_as("SELECT source FROM msg_events WHERE id = $1")
+        .bind(id)
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(source, "orders:sales");
 
     // Go's table: the value itself, encoded arrays, and strings kept.
     for (data, kind, want) in [

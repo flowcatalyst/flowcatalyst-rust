@@ -60,8 +60,9 @@ pub struct CreateEventRequest {
     /// Event type code (e.g., "orders:fulfillment:shipment:shipped")
     pub event_type: String,
 
-    /// Event source URI
-    pub source: String,
+    /// Event source URI. When absent or blank, the type's {application}:{subdomain} (its first two segments)
+    #[serde(default)]
+    pub source: Option<String>,
 
     /// Event subject (optional context)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -93,6 +94,39 @@ pub struct CreateEventRequest {
     /// Context data for filtering/searching
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub context_data: Vec<ContextDataDto>,
+}
+
+/// An event's source: the one given when it is not blank, else the type's
+/// `{application}:{subdomain}` (Go `eventSource`, `4c3654a`; Java
+/// `EventIngestMapper.eventSource`; owner ruling 2026-10-12, F14): the first
+/// two `:` segments of the trimmed type (`orders:sales:order:created` gives
+/// `orders:sales`), the first alone when there is no non-blank second
+/// (`orders` gives `orders`). The source every platform and SDK domain event
+/// carries; the Java, TypeScript and Laravel SDKs omit an unset one. `None`
+/// when the type's first segment is blank too, which the caller refuses as
+/// "source is required". A given source is returned as sent.
+pub fn event_source(source: Option<&str>, event_type: &str) -> Option<String> {
+    if let Some(source) = source.filter(|s| !s.trim().is_empty()) {
+        return Some(source.to_string());
+    }
+    let (application, rest) = event_type
+        .trim()
+        .split_once(':')
+        .unwrap_or((event_type.trim(), ""));
+    if application.trim().is_empty() {
+        return None;
+    }
+    let subdomain = rest.split_once(':').map_or(rest, |(s, _)| s);
+    if subdomain.trim().is_empty() {
+        return Some(application.to_string());
+    }
+    Some(format!("{application}:{subdomain}"))
+}
+
+/// [`event_source`], or 400 `VALIDATION` "source is required".
+fn required_event_source(source: Option<&str>, event_type: &str) -> Result<String, PlatformError> {
+    event_source(source, event_type)
+        .ok_or_else(|| PlatformError::bad_request_code("VALIDATION", "source is required"))
 }
 
 /// Create event response - includes deduplication info and dispatch job count
@@ -340,6 +374,9 @@ pub async fn create_event(
             "data is required",
         ));
     }
+    // An absent or blank source defaults to the type's application and
+    // subdomain (Go F14); a blank first segment is still refused.
+    let source = required_event_source(req.source.as_deref(), &req.event_type)?;
 
     // Application confinement: an application-scoped caller may only ingest
     // events of its own applications (first segment of the event type).
@@ -372,7 +409,7 @@ pub async fn create_event(
     }
 
     // Create event
-    let mut event = Event::new(&req.event_type, &req.source, req.data);
+    let mut event = Event::new(&req.event_type, &source, req.data);
 
     if let Some(subject) = req.subject {
         event = event.with_subject(subject);
@@ -742,6 +779,13 @@ pub async fn batch_create_events(
         .iter()
         .map(|e| caller_reach::require_writable_client(&auth.0, e.client_id.clone()))
         .collect::<Result<Vec<_>, PlatformError>>()?;
+    // Every item's source, defaulted as on the singular create (Go F14); an
+    // item with neither a source nor a type's application refuses the batch.
+    let sources = req
+        .events
+        .iter()
+        .map(|e| required_event_source(e.source.as_deref(), &e.event_type))
+        .collect::<Result<Vec<_>, PlatformError>>()?;
     // And every item's type from a caller that may sign as its application
     // (owner ruling 17a).
     state
@@ -749,7 +793,7 @@ pub async fn batch_create_events(
         .check_event_types(&auth.0, req.events.iter().map(|e| e.event_type.as_str()))
         .await?;
 
-    for (event_req, client_id) in req.events.into_iter().zip(client_ids) {
+    for ((event_req, client_id), source) in req.events.into_iter().zip(client_ids).zip(sources) {
         if let Some(existing) = event_req
             .deduplication_id
             .as_deref()
@@ -761,7 +805,7 @@ pub async fn batch_create_events(
         }
 
         // Create event
-        let mut event = Event::new(&event_req.event_type, &event_req.source, event_req.data);
+        let mut event = Event::new(&event_req.event_type, &source, event_req.data);
 
         if let Some(subject) = event_req.subject {
             event = event.with_subject(subject);
@@ -938,4 +982,51 @@ pub async fn event_filter_options(
         subdomains: options(subdomains),
         event_types: options(types),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Go's `eventSource` table (F14) and Java's edge rows.
+    #[test]
+    fn a_missing_source_is_the_types_application_and_subdomain() {
+        let cases: [(Option<&str>, &str, Option<&str>); 14] = [
+            (None, "orders:sales:order:created", Some("orders:sales")),
+            (Some(""), "orders:sales:order:created", Some("orders:sales")),
+            (
+                Some("  "),
+                "orders:sales:order:created",
+                Some("orders:sales"),
+            ),
+            (Some("orders"), "orders:sales:order:created", Some("orders")),
+            (
+                Some(" orders "),
+                "orders:sales:order:created",
+                Some(" orders "),
+            ),
+            (None, " orders:sales:order:created ", Some("orders:sales")),
+            (None, "orders:sales", Some("orders:sales")),
+            (None, "orders", Some("orders")),
+            (None, "orders: :x", Some("orders")),
+            (None, "orders::x", Some("orders")),
+            (None, ":sales:order:created", None),
+            (None, " :sales", None),
+            (None, "  ", None),
+            (None, "", None),
+        ];
+        for (source, event_type, want) in cases {
+            assert_eq!(
+                event_source(source, event_type).as_deref(),
+                want,
+                "{source:?} {event_type:?}"
+            );
+        }
+        let err = required_event_source(None, ":x").unwrap_err();
+        assert!(
+            matches!(&err, PlatformError::Coded { code, .. } if code == "VALIDATION"),
+            "{err:?}"
+        );
+        assert_eq!(err.to_string(), "source is required");
+    }
 }

@@ -52,6 +52,7 @@ mod enum_roundtrip_test;
 mod event_catalogue_schema_test;
 mod event_data_convention_test;
 mod event_schema_fixes_migration_test;
+mod event_source_default_test;
 mod event_type_app_scope_test;
 mod event_type_bug_fixes_test;
 mod event_type_client_ignored_test;

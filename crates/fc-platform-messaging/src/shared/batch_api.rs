@@ -12,7 +12,7 @@ use std::sync::Arc;
 use utoipa::ToSchema;
 
 use crate::dispatch_job::signing_guard::SigningGuard;
-use crate::event::api::ContextDataDto;
+use crate::event::api::{event_source, ContextDataDto};
 use crate::event::entity::{ContextData, Event};
 use crate::event::repository::EventRepository;
 use crate::shared::app_scope::{first_segment, AppScopeGuard, EVENT_TYPE_APP_REFUSED};
@@ -112,6 +112,7 @@ pub struct BatchEventItem {
     /// Event type — accepts both `type` (camelCase API) and `event_type` (SDK outbox payload).
     #[serde(default, alias = "event_type")]
     pub r#type: String,
+    /// Event source. When absent or blank, the type's {application}:{subdomain} (its first two segments)
     pub source: Option<String>,
     pub subject: Option<String>,
     pub data: Option<serde_json::Value>,
@@ -172,11 +173,14 @@ pub struct BatchResultItem {
 }
 
 /// Go's `validateBatchItem` (event/api/api.go): the singular create's
-/// required members for one batch item. `None` when acceptable.
-fn batch_item_error(item: &BatchEventItem) -> Option<&'static str> {
+/// required members for one batch item (type, data; the source defaulted by
+/// [`event_source`], which it stores on the item). `None` when acceptable.
+fn batch_item_error(item: &mut BatchEventItem) -> Option<&'static str> {
     if item.r#type.trim().is_empty() {
-        Some("type is required")
-    } else if item.source.as_deref().unwrap_or("").trim().is_empty() {
+        return Some("type is required");
+    }
+    item.source = event_source(item.source.as_deref(), &item.r#type);
+    if item.source.is_none() {
         Some("source is required")
     } else if item.data.as_ref().is_none_or(|d| d.is_null()) {
         Some("data is required")
@@ -257,10 +261,10 @@ pub async fn batch_events(
 
     // The whole batch is checked before anything is written: one item the
     // caller may not write refuses the request.
-    for (item, supplied) in req.items.into_iter().zip(supplied) {
+    for (mut item, supplied) in req.items.into_iter().zip(supplied) {
         // Partial success, as Go: an invalid item reports BAD_REQUEST in its
         // own slot and the valid items are still stored.
-        if let Some(error) = batch_item_error(&item) {
+        if let Some(error) = batch_item_error(&mut item) {
             results.push(BatchResultItem {
                 id: item.id.clone().unwrap_or_default(),
                 status: "BAD_REQUEST".to_string(),
