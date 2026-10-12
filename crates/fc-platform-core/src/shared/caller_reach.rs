@@ -141,6 +141,35 @@ pub fn resolve_job_client(
     }
 }
 
+/// The client an ingested event is written under when it may name it by
+/// `clientCode` (Go `ResolveEventClient`, Java
+/// `IngestClients.resolveEventClient`; owner ruling 2026-10-12, F14), given
+/// the request's resolved codes (`ids_by_code`, see [`codes_to_resolve`]):
+/// a non-blank `clientId` wins and goes through [`require_writable_client`];
+/// else a code naming a client the caller reaches resolves to it; an
+/// anchor's unknown code leaves the event platform-scoped (the event is a
+/// fact); any other code is 403 `FORBIDDEN` "No access to client:
+/// <clientCode>", whether it names another client or none (never the
+/// other client's id); neither goes through [`require_writable_client`].
+pub fn resolve_event_client(
+    ctx: &impl Authority,
+    client_id: Option<String>,
+    client_code: Option<String>,
+    ids_by_code: &HashMap<String, ClientId>,
+) -> Result<Option<String>> {
+    if let Some(id) = non_blank(client_id) {
+        return require_writable_client(ctx, Some(id));
+    }
+    let Some(code) = non_blank(client_code) else {
+        return require_writable_client(ctx, None);
+    };
+    match ids_by_code.get(&code) {
+        Some(id) if reaches_client(ctx, id) => Ok(Some(id.to_string())),
+        None if ctx.is_anchor() => Ok(None),
+        _ => Err(no_access_to_code(&code)),
+    }
+}
+
 /// The client filter of a read-model list (events, dispatch jobs), shared
 /// by the `/api` list handlers and the server-rendered `fc-web` UI:
 /// requested clients must each be reachable (else 403 `No access to
@@ -413,6 +442,51 @@ mod tests {
             "{err:?}"
         );
         assert_eq!(err.to_string(), "Client not found: nosuch");
+    }
+
+    #[test]
+    fn an_event_code_refusal_names_the_code() {
+        let c = ctx(UserScope::Client, &["clt_a"]);
+        let anchor = ctx(UserScope::Anchor, &["*"]);
+        let codes = codes();
+        // Another client's code and an unknown code: the same refusal,
+        // naming the code, never `clt_b`.
+        for code in ["beta", "nosuch"] {
+            assert_eq!(
+                refused(resolve_event_client(&c, None, some(code), &codes)),
+                format!("No access to client: {code}")
+            );
+            assert_eq!(
+                refused(resolve_event_client(&c, some("  "), some(code), &codes)),
+                format!("No access to client: {code}")
+            );
+        }
+        // An own code resolves, an explicit id wins, a blank one is absent.
+        assert_eq!(
+            resolve_event_client(&c, None, some("acme"), &codes).unwrap(),
+            some("clt_a")
+        );
+        assert_eq!(
+            resolve_event_client(&c, some("clt_a"), some("beta"), &codes).unwrap(),
+            some("clt_a")
+        );
+        assert_eq!(
+            resolve_event_client(&c, some(" "), None, &codes).unwrap(),
+            some("clt_a")
+        );
+        // An anchor's unknown code leaves the event platform-scoped.
+        assert_eq!(
+            resolve_event_client(&anchor, None, some("nosuch"), &codes).unwrap(),
+            None
+        );
+        assert_eq!(
+            resolve_event_client(&anchor, some(""), some("beta"), &codes).unwrap(),
+            some("clt_b")
+        );
+        let p = ctx(UserScope::Partner, &["clt_a", "clt_b"]);
+        assert!(
+            refused(resolve_event_client(&p, None, None, &codes)).contains("clientId is required")
+        );
     }
 
     #[test]

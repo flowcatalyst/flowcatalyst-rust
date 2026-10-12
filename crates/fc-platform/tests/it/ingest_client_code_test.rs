@@ -8,6 +8,9 @@
 //! resolves to it; a code naming another client or none is 403 "No access to
 //! client: <code>" for a non-anchor and 400 `CLIENT_NOT_FOUND` for an
 //! anchor. Any refusal rejects the whole batch.
+//!
+//! Events (`POST /api/events/batch`): the same, except that an anchor's
+//! unknown code leaves the event platform-scoped.
 
 use crate::support;
 
@@ -368,4 +371,145 @@ async fn a_dispatch_job_names_its_client_by_code() {
         .await
         .unwrap();
     assert_eq!(n, 12);
+}
+
+/// The event `clientId` of `id`, if the event was written.
+async fn event_client(f: &Fixture, id: &str) -> Option<Option<String>> {
+    sqlx::query_as::<_, (Option<String>,)>("SELECT client_id FROM msg_events WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&f.app.pool)
+        .await
+        .expect("read event")
+        .map(|(c,)| c)
+}
+
+/// A batch event item with a fixed id and `members` merged in.
+fn event(id: &str, members: Value) -> Value {
+    let mut item = json!({
+        "id": id,
+        "type": "cc:sales:order:created",
+        "source": "cc",
+        "data": {"n": 1},
+    });
+    for (k, v) in members.as_object().unwrap() {
+        item[k] = v.clone();
+    }
+    item
+}
+
+/// Events (Go `abd2ae9`, F14 ruling 3; Java `2928d4a0`): a `clientCode`
+/// the caller may not write under is refused naming the code, whether it
+/// names another client or none, never the other client's id (before: the
+/// resolved id). A blank `clientId` is absent; an anchor's unknown code
+/// leaves the event platform-scoped.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn an_event_client_code_refusal_names_the_code() {
+    let f = Fixture::new().await;
+    const BATCH: &str = "/api/events/batch";
+
+    for code in ["beta", "nosuch-client"] {
+        for members in [
+            json!({"clientCode": code}),
+            json!({"clientId": "  ", "clientCode": code}),
+        ] {
+            let (good, bad) = (new_id(), new_id());
+            let (status, body) = f
+                .post(
+                    &f.single,
+                    BATCH,
+                    json!({"items": [event(&good, json!({})), event(&bad, members.clone())]}),
+                )
+                .await;
+            assert_refused(
+                status,
+                &body,
+                (
+                    StatusCode::FORBIDDEN,
+                    "FORBIDDEN",
+                    format!("No access to client: {code}"),
+                ),
+            );
+            assert!(!body.to_string().contains(f.b.id.as_str()), "{body}");
+            assert_eq!(event_client(&f, &good).await, None, "{members}");
+        }
+    }
+
+    // Own code, own id over another client's code, a blank id beside the
+    // own code, and a blank id alone (the single client's default).
+    let ids: Vec<String> = (0..4).map(|_| new_id()).collect();
+    let (status, body) = f
+        .post(
+            &f.single,
+            BATCH,
+            json!({"items": [
+                event(&ids[0], json!({"clientCode": "acme"})),
+                event(&ids[1], json!({"clientId": id_of(&f.a), "clientCode": "beta"})),
+                event(&ids[2], json!({"clientId": "", "clientCode": "acme"})),
+                event(&ids[3], json!({"clientId": " "})),
+            ]}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    for id in &ids {
+        assert_eq!(event_client(&f, id).await, Some(Some(id_of(&f.a))), "{id}");
+    }
+
+    // A partner names one of its clients by code, and must name one.
+    let id = new_id();
+    let (status, body) = f
+        .post(
+            &f.partner,
+            BATCH,
+            json!({"items": [event(&id, json!({"clientCode": "coda"}))]}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(event_client(&f, &id).await, Some(Some(id_of(&f.c))));
+    let (status, body) = f
+        .post(
+            &f.partner,
+            BATCH,
+            json!({"items": [event(&new_id(), json!({"clientId": " "}))]}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("clientId is required"),
+        "{body}"
+    );
+
+    // An anchor: an unknown code and a blank id are platform-scoped; a
+    // blank id beside a known code resolves it.
+    let (unknown, blank, coded) = (new_id(), new_id(), new_id());
+    let (status, body) = f
+        .post(
+            &f.anchor,
+            BATCH,
+            json!({"items": [
+                event(&unknown, json!({"clientCode": "nosuch-client"})),
+                event(&blank, json!({"clientId": "  "})),
+                event(&coded, json!({"clientId": "", "clientCode": "beta"})),
+            ]}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(event_client(&f, &unknown).await, Some(None));
+    assert_eq!(event_client(&f, &blank).await, Some(None));
+    assert_eq!(event_client(&f, &coded).await, Some(Some(id_of(&f.b))));
+
+    // The singular create: a blank clientId is absent (the caller's client).
+    let (status, body) = f
+        .post(
+            &f.single,
+            "/api/events",
+            json!({"eventType": "cc:sales:order:created", "source": "cc",
+                   "data": {}, "clientId": "  "}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["event"]["clientId"], json!(id_of(&f.a)), "{body}");
 }

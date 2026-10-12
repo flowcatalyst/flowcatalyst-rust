@@ -232,19 +232,12 @@ pub async fn batch_events(
     }
 
     // Every distinct `clientCode` on items without a `clientId`, resolved in
-    // one query. For an anchor an unknown code leaves the event unlinked
-    // rather than failing the batch: the event is a fact (Go
-    // event/api/api.go:151-185). A non-anchor never writes an unlinked row
-    // (owner decision #24), so for it an unknown code is refused like one
-    // naming another tenant.
-    let mut codes: Vec<String> = req
-        .items
-        .iter()
-        .filter(|i| caller_reach::non_blank(i.client_id.clone()).is_none())
-        .filter_map(|i| caller_reach::non_blank(i.client_code.clone()))
-        .collect();
-    codes.sort();
-    codes.dedup();
+    // one query (see `caller_reach::resolve_event_client` for the rule).
+    let codes = caller_reach::codes_to_resolve(
+        req.items
+            .iter()
+            .map(|i| (i.client_id.as_deref(), i.client_code.as_deref())),
+    );
     let client_ids_by_code = state.client_repo.find_ids_by_identifiers(&codes).await?;
 
     // Supplied ids that already name a stored event: the event was ingested
@@ -289,23 +282,18 @@ pub async fn batch_events(
             });
             continue;
         }
-        let client_id = match caller_reach::non_blank(item.client_id) {
-            Some(id) => Some(id),
-            None => match caller_reach::non_blank(item.client_code) {
-                Some(code) => match client_ids_by_code.get(&code) {
-                    Some(id) => Some(id.to_string()),
-                    None if auth.0.is_anchor() => None,
-                    None => {
-                        return Err(PlatformError::forbidden_code(
-                            "FORBIDDEN",
-                            format!("No access to client: {code}"),
-                        ))
-                    }
-                },
-                None => None,
-            },
-        };
-        let client_id = caller_reach::require_writable_client(&auth.0, client_id)?;
+        // The client the event is written under (owner decision #24, Go
+        // F14): by id, or by a `clientCode` the caller reaches. For an
+        // anchor an unknown code leaves the event unlinked (the event is a
+        // fact); for anyone else a code naming another client or none is
+        // refused naming the code, never the other tenant's id. A refusal
+        // rejects the whole batch.
+        let client_id = caller_reach::resolve_event_client(
+            &auth.0,
+            item.client_id,
+            item.client_code,
+            &client_ids_by_code,
+        )?;
 
         // An SDK outbox sends `data` as a JSON string holding the encoded
         // object; it is stored as the object (Go `8bf67d1`, owner ruling
