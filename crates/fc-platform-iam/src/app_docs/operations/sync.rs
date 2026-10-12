@@ -28,7 +28,7 @@ pub const MAX_TOTAL_BYTES: usize = 4 << 20;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppDocsSynced {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
     pub application_code: String,
     pub created: u32,

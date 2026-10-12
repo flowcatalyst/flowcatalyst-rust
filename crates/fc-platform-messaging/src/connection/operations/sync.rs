@@ -32,7 +32,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionsSynced {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
     pub application_code: String,
     #[serde(skip_serializing_if = "Option::is_none")]

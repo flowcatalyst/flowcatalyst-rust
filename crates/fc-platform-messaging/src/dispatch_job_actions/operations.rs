@@ -21,7 +21,7 @@ const SOURCE: &str = "platform:messaging";
 /// Go `DispatchJobsResent`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DispatchJobsResent {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
     pub ids: Vec<String>,
 }
@@ -36,7 +36,7 @@ impl DispatchJobsResent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DispatchJobSettled {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
     pub dispatch_job_id: String,
 }

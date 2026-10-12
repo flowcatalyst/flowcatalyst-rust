@@ -56,7 +56,7 @@ fn app_metadata(ctx: &ExecutionContext, event_type: &str, app_id: &PortalAppId) 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IdentityEnsured {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
     pub identity_id: PortalIdentityId,
     pub client_id: ClientId,
@@ -98,7 +98,7 @@ impl IdentityEnsured {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IdentityStatusSet {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
     pub identity_id: PortalIdentityId,
     pub client_id: ClientId,
@@ -127,7 +127,7 @@ impl IdentityStatusSet {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IdentityDeleted {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
     pub identity_id: PortalIdentityId,
     pub client_id: ClientId,
@@ -156,7 +156,7 @@ impl IdentityDeleted {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IdentityAppGranted {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
     pub identity_id: PortalIdentityId,
     pub client_id: ClientId,
@@ -191,7 +191,7 @@ impl IdentityAppGranted {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IdentityAppRevoked {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
     pub identity_id: PortalIdentityId,
     pub client_id: ClientId,
@@ -224,7 +224,7 @@ impl IdentityAppRevoked {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PortalAppChanged {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
     pub portal_app_id: PortalAppId,
     pub client_id: ClientId,

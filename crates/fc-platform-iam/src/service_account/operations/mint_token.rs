@@ -20,7 +20,7 @@ use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceAccountTokenMinted {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
     pub service_account_id: String,
     pub code: String,

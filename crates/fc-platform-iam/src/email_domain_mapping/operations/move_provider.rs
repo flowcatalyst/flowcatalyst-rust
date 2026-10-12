@@ -30,7 +30,7 @@ use fc_platform_core::usecase::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EmailDomainMappingProviderChanged {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
     pub mapping_id: EmailDomainMappingId,
     pub email_domain: String,

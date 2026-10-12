@@ -27,7 +27,7 @@ fn metadata(ctx: &ExecutionContext, event_type: &str, user_id: &PrincipalId) -> 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeveloperCredentialSet {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
     pub user_id: PrincipalId,
 }
@@ -49,7 +49,7 @@ impl DeveloperCredentialSet {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeveloperCredentialRevoked {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
     pub user_id: PrincipalId,
 }
