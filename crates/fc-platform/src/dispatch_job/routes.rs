@@ -30,6 +30,7 @@ pub fn routes(ctx: &PlatformContext) -> AggregateRoutes {
             "/api/dispatch-jobs",
             sdk_dispatch_jobs_batch_router(SdkDispatchJobsState {
                 dispatch_job_repo: ctx.repos.dispatch_job_repo.clone(),
+                client_repo: ctx.repos.client_repo.clone(),
                 signing: ctx.signing_guard.clone(),
                 app_scope: ctx.app_scope_guard.clone(),
             }),

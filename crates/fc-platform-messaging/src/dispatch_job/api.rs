@@ -455,6 +455,13 @@ pub struct CreateDispatchJobRequest {
     /// Client ID
     pub client_id: Option<String>,
 
+    /// The client's identifier (slug), naming the job's client when
+    /// `clientId` is absent; never stored. A code naming a client the
+    /// caller cannot reach is 403, and one naming no client is 400
+    /// `CLIENT_NOT_FOUND` for an anchor and 403 for anyone else.
+    #[serde(default, alias = "client_code")]
+    pub client_code: Option<String>,
+
     /// Subscription ID that created this job
     pub subscription_id: Option<String>,
 
@@ -528,6 +535,25 @@ where
             .collect(),
         Some(Metadata::List(list)) => list,
     })
+}
+
+/// The `clientCode`s a request's jobs name (`(clientId, clientCode)` per
+/// job; only those without a `clientId` count), resolved to client ids in
+/// one query; none to look up costs none.
+pub(crate) async fn resolve_job_client_codes<'a>(
+    directory: &dyn ClientDirectory,
+    jobs: impl IntoIterator<Item = (Option<&'a str>, Option<&'a str>)>,
+) -> Result<HashMap<String, ClientId>, PlatformError> {
+    let codes = caller_reach::codes_to_resolve(jobs);
+    if codes.is_empty() {
+        return Ok(HashMap::new());
+    }
+    directory.find_ids_by_identifiers(&codes).await
+}
+
+/// `(clientId, clientCode)` of a job, for [`resolve_job_client_codes`].
+pub(crate) fn job_client_refs(job: &CreateDispatchJobRequest) -> (Option<&str>, Option<&str>) {
+    (job.client_id.as_deref(), job.client_code.as_deref())
 }
 
 /// A directly created job's own priority (Go `jobFromItem`:
@@ -890,8 +916,15 @@ pub async fn create_dispatch_job(
         ));
     };
 
-    // The client the job is written under (owner decision #24).
-    let client_id = caller_reach::require_writable_client(&auth.0, req.client_id)?;
+    // The client the job is written under (owner decision #24), named by
+    // id or by `clientCode` (Go F14).
+    let ids_by_code = resolve_job_client_codes(
+        &*state.client_repo,
+        [(req.client_id.as_deref(), req.client_code.as_deref())],
+    )
+    .await?;
+    let client_id =
+        caller_reach::resolve_job_client(&auth.0, req.client_id, req.client_code, &ids_by_code)?;
 
     // Determine kind
     // Absent/empty means EVENT; anything else must be an exact kind (400).
@@ -1023,10 +1056,18 @@ pub async fn batch_create_dispatch_jobs(
 
     let mut created_jobs: Vec<DispatchJob> = Vec::new();
     let mut supplied = SuppliedJobIds::default();
+    let ids_by_code =
+        resolve_job_client_codes(&*state.client_repo, req.jobs.iter().map(job_client_refs)).await?;
 
     for job_req in req.jobs {
-        // The client the job is written under (owner decision #24).
-        let client_id = caller_reach::require_writable_client(&auth.0, job_req.client_id)?;
+        // The client the job is written under (owner decision #24), named
+        // by id or by `clientCode` (Go F14).
+        let client_id = caller_reach::resolve_job_client(
+            &auth.0,
+            job_req.client_id,
+            job_req.client_code,
+            &ids_by_code,
+        )?;
 
         // Determine kind
         // Absent/empty means EVENT; anything else must be an exact kind (400).

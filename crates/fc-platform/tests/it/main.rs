@@ -72,6 +72,7 @@ mod harness_smoke_test;
 mod iam_authority_test;
 mod id_roundtrip_test;
 mod ingest_app_scope_test;
+mod ingest_client_code_test;
 mod ingest_security_test;
 mod junction_cascade_convention_test;
 mod load_tests;

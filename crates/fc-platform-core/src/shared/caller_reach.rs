@@ -8,6 +8,7 @@ use crate::shared::error::{PlatformError, Result};
 use crate::shared::id::ClientId;
 use crate::shared::id::Id;
 use crate::usecase::UseCaseError;
+use std::collections::HashMap;
 use std::result;
 
 /// The client ids the caller holds explicitly (never `*`), in claim order.
@@ -74,6 +75,69 @@ pub fn require_writable_client(
             "FORBIDDEN",
             format!("No access to client: {id}"),
         )),
+    }
+}
+
+/// The distinct non-blank `clientCode`s of the items that name no
+/// non-blank `clientId` (`(clientId, clientCode)` per item): the codes a
+/// request has to look up, in one query.
+pub fn codes_to_resolve<'a>(
+    items: impl IntoIterator<Item = (Option<&'a str>, Option<&'a str>)>,
+) -> Vec<String> {
+    let mut codes: Vec<String> = items
+        .into_iter()
+        .filter(|(id, _)| id.is_none_or(|id| id.trim().is_empty()))
+        .filter_map(|(_, code)| code.filter(|c| !c.trim().is_empty()).map(str::to_string))
+        .collect();
+    codes.sort();
+    codes.dedup();
+    codes
+}
+
+/// The refusal of a `clientCode` the caller may not write under, naming the
+/// code: one answer whether it names another client or none, so it neither
+/// confirms that a code exists nor reveals another tenant's client id.
+fn no_access_to_code(code: &str) -> PlatformError {
+    PlatformError::forbidden_code("FORBIDDEN", format!("No access to client: {code}"))
+}
+
+/// The client a directly created dispatch job is written under when it may
+/// name it by `clientCode` (Go `ResolveJobClient`, Java
+/// `IngestClients.resolveJobClient`; owner ruling 2026-10-12, F14), given
+/// the request's resolved codes (`ids_by_code`, see [`codes_to_resolve`]):
+///
+/// 1. a non-blank `clientId` wins (the code is ignored) and goes through
+///    [`require_writable_client`]: 403 "No access to client: <clientId>";
+/// 2. else a code naming a client the caller reaches resolves to it;
+/// 3. a code naming another client, or none, from a non-anchor: 403
+///    `FORBIDDEN` "No access to client: <clientCode>";
+/// 4. a code naming no client from an anchor: 400 `CLIENT_NOT_FOUND`
+///    "Client not found: <clientCode>" (a job is never written unscoped
+///    because of an unknown code);
+/// 5. neither: [`require_writable_client`] with no client, unchanged (Go
+///    writes a non-anchor's job platform-scoped here; Java and Rust refuse).
+///
+/// A blank `clientId` or `clientCode` counts as absent. The code is not
+/// stored.
+pub fn resolve_job_client(
+    ctx: &impl Authority,
+    client_id: Option<String>,
+    client_code: Option<String>,
+    ids_by_code: &HashMap<String, ClientId>,
+) -> Result<Option<String>> {
+    if let Some(id) = non_blank(client_id) {
+        return require_writable_client(ctx, Some(id));
+    }
+    let Some(code) = non_blank(client_code) else {
+        return require_writable_client(ctx, None);
+    };
+    match ids_by_code.get(&code) {
+        Some(id) if reaches_client(ctx, id) => Ok(Some(id.to_string())),
+        None if ctx.is_anchor() => Err(PlatformError::bad_request_code(
+            "CLIENT_NOT_FOUND",
+            format!("Client not found: {code}"),
+        )),
+        _ => Err(no_access_to_code(&code)),
     }
 }
 
@@ -162,6 +226,7 @@ mod tests {
     use crate::principal_kind::{PrincipalType, UserScope};
     use crate::shared::authorization_service::{AuthContext, Credential};
     use crate::shared::id::PrincipalId;
+    use axum::http::StatusCode;
     use std::collections::HashSet;
 
     fn caller(scope: UserScope, clients: &[&str], perms: &[&str]) -> AuthContext {
@@ -256,6 +321,98 @@ mod tests {
             refused(require_writable_client(&c, Some("clt_b".into()))),
             "No access to client: clt_b"
         );
+    }
+
+    fn codes() -> HashMap<String, ClientId> {
+        HashMap::from([
+            ("acme".to_string(), ClientId::parse("clt_a").unwrap()),
+            ("beta".to_string(), ClientId::parse("clt_b").unwrap()),
+        ])
+    }
+
+    fn some(s: &str) -> Option<String> {
+        Some(s.to_string())
+    }
+
+    #[test]
+    fn only_codes_of_items_without_a_client_id_are_looked_up() {
+        let items = [
+            (None, Some("beta")),
+            (Some("clt_x"), Some("acme")),
+            (Some("  "), Some("acme")),
+            (None, Some(" ")),
+            (None, None),
+            (None, Some("beta")),
+        ];
+        assert_eq!(codes_to_resolve(items), ["acme", "beta"]);
+    }
+
+    #[test]
+    fn a_job_code_resolves_to_a_client_the_caller_reaches() {
+        let c = ctx(UserScope::Client, &["clt_a"]);
+        let anchor = ctx(UserScope::Anchor, &["*"]);
+        let p = ctx(UserScope::Partner, &["clt_a", "clt_b"]);
+        let codes = codes();
+        // A code naming a reached client resolves.
+        for caller in [&c, &anchor] {
+            assert_eq!(
+                resolve_job_client(caller, None, some("acme"), &codes).unwrap(),
+                some("clt_a")
+            );
+        }
+        assert_eq!(
+            resolve_job_client(&p, None, some("beta"), &codes).unwrap(),
+            some("clt_b")
+        );
+        // A clientId wins, even over another client's code; a blank one is
+        // absent.
+        assert_eq!(
+            resolve_job_client(&c, some("clt_a"), some("beta"), &codes).unwrap(),
+            some("clt_a")
+        );
+        assert_eq!(
+            resolve_job_client(&c, some(" "), some("acme"), &codes).unwrap(),
+            some("clt_a")
+        );
+        assert_eq!(
+            refused(resolve_job_client(&c, some("clt_b"), some("acme"), &codes)),
+            "No access to client: clt_b"
+        );
+        // Neither: the writable-client rule, unchanged.
+        assert_eq!(
+            resolve_job_client(&anchor, None, some("  "), &codes).unwrap(),
+            None
+        );
+        assert_eq!(
+            resolve_job_client(&c, None, None, &codes).unwrap(),
+            some("clt_a")
+        );
+        assert!(
+            refused(resolve_job_client(&p, None, None, &codes)).contains("clientId is required")
+        );
+    }
+
+    #[test]
+    fn a_job_code_the_caller_cannot_use_is_refused_naming_the_code() {
+        let c = ctx(UserScope::Client, &["clt_a"]);
+        let codes = codes();
+        for code in ["beta", "nosuch"] {
+            let err = resolve_job_client(&c, None, some(code), &codes).unwrap_err();
+            assert!(
+                matches!(&err, PlatformError::Coded { status, code: c, .. }
+                    if *status == StatusCode::FORBIDDEN && c == "FORBIDDEN"),
+                "{err:?}"
+            );
+            assert_eq!(err.to_string(), format!("No access to client: {code}"));
+        }
+        let anchor = ctx(UserScope::Anchor, &["*"]);
+        let err = resolve_job_client(&anchor, None, some("nosuch"), &codes).unwrap_err();
+        assert!(
+            matches!(&err, PlatformError::Coded { status, code, .. }
+                if *status == StatusCode::BAD_REQUEST && code == "CLIENT_NOT_FOUND"),
+            "{err:?}"
+        );
+        assert_eq!(err.to_string(), "Client not found: nosuch");
     }
 
     #[test]
