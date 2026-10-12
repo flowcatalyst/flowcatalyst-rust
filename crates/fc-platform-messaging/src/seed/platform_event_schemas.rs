@@ -821,6 +821,209 @@ fn emitted_beyond_go_catalogue(m: &mut HashMap<&'static str, Value>) {
             req_bool("unchanged"),
         ]),
     );
+
+    // Go's F9 (`8ddaed4`), data as Go's `ToDataJSON` and Rust's events.
+    for code in [
+        "platform:iam:user:developer-credential-set",
+        "platform:iam:user:developer-credential-revoked",
+    ] {
+        m.insert(code, id_and("userId", &[]));
+    }
+    m.insert(
+        "platform:admin:email-domain-mapping:provider-changed",
+        id_and(
+            "mappingId",
+            &[
+                req_str("emailDomain"),
+                req_str("fromIdentityProviderId"),
+                req_str("toIdentityProviderId"),
+            ],
+        ),
+    );
+    for code in [
+        "platform:messaging:dispatch-job:cancelled",
+        "platform:messaging:dispatch-job:completed",
+    ] {
+        m.insert(code, id_and("dispatchJobId", &[]));
+    }
+    m.insert(
+        "platform:messaging:dispatch-jobs:resent",
+        obj(&[req_str_array("ids")]),
+    );
+    for code in [
+        "platform:portal:app:created",
+        "platform:portal:app:updated",
+        "platform:portal:app:deleted",
+    ] {
+        m.insert(
+            code,
+            id_and(
+                "portalAppId",
+                &[req_str("clientId"), req_str("code"), req_str("name")],
+            ),
+        );
+    }
+    m.insert(
+        "platform:portal:identity:ensured",
+        id_and(
+            "identityId",
+            &[
+                req_str("clientId"),
+                req_str("email"),
+                req_bool("created"),
+                req_str("source"),
+                opt_str("portalAppId"),
+                opt_str("portalAppCode"),
+            ],
+        ),
+    );
+    m.insert(
+        "platform:portal:identity:status-set",
+        id_and("identityId", &[req_str("clientId"), req_str("status")]),
+    );
+    m.insert(
+        "platform:portal:identity:deleted",
+        id_and("identityId", &[req_str("clientId"), req_str("email")]),
+    );
+    m.insert(
+        "platform:portal:identity:app-granted",
+        id_and(
+            "identityId",
+            &[
+                req_str("clientId"),
+                req_str("portalAppId"),
+                req_str("portalAppCode"),
+                req_str("source"),
+            ],
+        ),
+    );
+    m.insert(
+        "platform:portal:identity:app-revoked",
+        id_and(
+            "identityId",
+            &[
+                req_str("clientId"),
+                req_str("portalAppId"),
+                req_str("portalAppCode"),
+            ],
+        ),
+    );
+
+    emitted_by_rust_only(m);
+}
+
+/// Schemas for the types Rust emits that Go does not (Go has no event for
+/// the app-docs sync, the permission catalogue or the admin token mint; the
+/// function registry and the audit redaction follow Java). Each describes
+/// the emitting struct's `Serialize` output.
+fn emitted_by_rust_only(m: &mut HashMap<&'static str, Value>) {
+    let function_and = |more: &[Prop]| {
+        let mut props = vec![req_str("functionId"), req_str("address")];
+        props.extend_from_slice(more);
+        obj(&props)
+    };
+
+    m.insert(
+        "platform:admin:app-docs:synced",
+        obj(&[
+            req_str("applicationCode"),
+            req_u32("created"),
+            req_u32("updated"),
+            req_u32("deleted"),
+            req_str_array("syncedCodes"),
+        ]),
+    );
+    m.insert(
+        "platform:admin:audit-log:redacted",
+        obj(&[req_u32("scanned"), req_u32("redacted")]),
+    );
+    m.insert(
+        "platform:admin:permission:defined",
+        obj(&[
+            req_str("permissionId"),
+            req_str("permission"),
+            opt_str("description"),
+        ]),
+    );
+    m.insert(
+        "platform:admin:permission:deleted",
+        obj(&[req_str("permissionId"), req_str("permission")]),
+    );
+    m.insert(
+        "platform:iam:serviceaccount:token-minted",
+        obj(&[req_str("serviceAccountId"), req_str("code")]),
+    );
+
+    // Function registry: a function's events carry its id and address.
+    m.insert(
+        "platform:function:function:created",
+        function_and(&[
+            req_str("applicationId"),
+            opt_str("clientId"),
+            req_str("runtime"),
+        ]),
+    );
+    m.insert(
+        "platform:function:function:updated",
+        function_and(&[opt_str("description"), req_str("status")]),
+    );
+    m.insert("platform:function:function:deleted", function_and(&[]));
+    m.insert(
+        "platform:function:version:published",
+        function_and(&[
+            req_str("versionId"),
+            req_u32("version"),
+            req_str("digest"),
+            req_str("pool"),
+            opt_str("signerIssuer"),
+            opt_str("signerSubject"),
+        ]),
+    );
+    m.insert(
+        "platform:function:version:ready",
+        function_and(&[req_str("versionId"), req_u32("version"), req_str("hostId")]),
+    );
+    m.insert(
+        "platform:function:version:retired",
+        function_and(&[req_str("versionId"), req_u32("version")]),
+    );
+    m.insert(
+        "platform:function:alias:changed",
+        function_and(&[
+            req_str("alias"),
+            req_str("versionId"),
+            req_u32("version"),
+            opt_str("previousVersionId"),
+        ]),
+    );
+    m.insert(
+        "platform:function:alias:removed",
+        function_and(&[req_str("alias"), req_str("versionId"), req_u32("version")]),
+    );
+    m.insert(
+        "platform:function:config:updated",
+        function_and(&[req_str_array("keys")]),
+    );
+    for code in [
+        "platform:function:secret:set",
+        "platform:function:secret:deleted",
+    ] {
+        m.insert(code, function_and(&[req_str("key")]));
+    }
+    // A policy has no function: its owner ("platform" or the client id).
+    m.insert(
+        "platform:function:policy:updated",
+        obj(&[req_str("owner"), req_u32("signerCount")]),
+    );
+    for code in [
+        "platform:function:domain:claimed",
+        "platform:function:domain:released",
+    ] {
+        m.insert(
+            code,
+            obj(&[req_str("domainId"), req_str("hostname"), req_str("owner")]),
+        );
+    }
 }
 
 /// Look up the schema for a given event type code.
@@ -917,8 +1120,8 @@ mod tests {
     fn all_schemas_are_valid_json_schema() {
         let schemas = schemas();
         assert!(
-            schemas.len() >= 70,
-            "Expected 70+ schemas, got {}",
+            schemas.len() >= 159,
+            "Expected 159+ schemas, got {}",
             schemas.len()
         );
         for (code, schema) in &schemas {
@@ -969,13 +1172,20 @@ mod tests {
     #[test]
     fn only_platform_subdomains() {
         let schemas = schemas();
+        let subdomains = [
+            "iam",
+            "admin",
+            "messaging",
+            "developer",
+            "portal",
+            "function",
+        ];
         for code in schemas.keys() {
+            let parts: Vec<&str> = code.split(':').collect();
             assert!(
-                code.starts_with("platform:iam:")
-                    || code.starts_with("platform:admin:")
-                    || code == &"platform:developer:application-openapi:synced",
-                "Event type '{}' must use platform:iam or platform:admin prefix",
-                code,
+                parts.len() == 4 && parts[0] == "platform" && subdomains.contains(&parts[1]),
+                "Event type '{code}' must be platform:{{{}}}:{{aggregate}}:{{event}}",
+                subdomains.join("|"),
             );
         }
     }

@@ -48,6 +48,7 @@ mod dispatch_scheduler_test;
 mod dispatch_schema_test;
 mod emitted_catalogue_test;
 mod enum_roundtrip_test;
+mod event_catalogue_schema_test;
 mod event_data_convention_test;
 mod event_type_app_scope_test;
 mod event_type_bug_fixes_test;

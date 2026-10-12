@@ -18,45 +18,13 @@ use std::fs;
 use crate::support::sources;
 use fc_platform::seed::platform_event_types;
 
-/// Emitted, not catalogued (found 2026-10-11, not fixed; Go lists its own
-/// 79 the same way): no subscription can pick these. A code leaving this list
+/// Emitted, not catalogued: no subscription can pick these. Empty since the
+/// 33 found 2026-10-11 were catalogued (as Go's F9, `8ddaed4`;
+/// docs/go-mirror/2026-10-11-event-catalogue.md); keep it empty: catalogue a
+/// new emitted code rather than listing it here. A code leaving this list
 /// (now catalogued, or no longer emitted) fails the test until it is removed
 /// here.
-const KNOWN_UNCATALOGUED: &[&str] = &[
-    "platform:admin:app-docs:synced",
-    "platform:admin:audit-log:redacted",
-    "platform:admin:email-domain-mapping:provider-changed",
-    "platform:admin:permission:defined",
-    "platform:admin:permission:deleted",
-    "platform:function:alias:changed",
-    "platform:function:alias:removed",
-    "platform:function:config:updated",
-    "platform:function:domain:claimed",
-    "platform:function:domain:released",
-    "platform:function:function:created",
-    "platform:function:function:deleted",
-    "platform:function:function:updated",
-    "platform:function:policy:updated",
-    "platform:function:secret:deleted",
-    "platform:function:secret:set",
-    "platform:function:version:published",
-    "platform:function:version:ready",
-    "platform:function:version:retired",
-    "platform:iam:serviceaccount:token-minted",
-    "platform:iam:user:developer-credential-revoked",
-    "platform:iam:user:developer-credential-set",
-    "platform:messaging:dispatch-job:cancelled",
-    "platform:messaging:dispatch-job:completed",
-    "platform:messaging:dispatch-jobs:resent",
-    "platform:portal:app:created",
-    "platform:portal:app:deleted",
-    "platform:portal:app:updated",
-    "platform:portal:identity:app-granted",
-    "platform:portal:identity:app-revoked",
-    "platform:portal:identity:deleted",
-    "platform:portal:identity:ensured",
-    "platform:portal:identity:status-set",
-];
+const KNOWN_UNCATALOGUED: &[&str] = &[];
 
 fn platform_literals(line: &str) -> Vec<String> {
     let mut out = Vec::new();

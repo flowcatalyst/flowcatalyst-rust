@@ -13,13 +13,21 @@ use std::collections::HashMap;
 
 /// Returns all platform domain event type definitions with JSON schemas.
 ///
-/// Two subdomains:
+/// Subdomains:
 ///
-///   platform:iam:*   — Identity & access management (users, service accounts,
-///                      clients, roles, applications, anchor domains, auth configs)
-///   platform:admin:* — Platform administration (CORS, identity providers,
-///                      email domain mappings, event types, connections,
-///                      dispatch pools, subscriptions)
+///   platform:iam:*       — Identity & access management (users, service
+///                          accounts, clients, roles, applications, anchor
+///                          domains, auth configs)
+///   platform:admin:*     — Platform administration (CORS, identity providers,
+///                          email domain mappings, event types, connections,
+///                          dispatch pools, subscriptions, processes, ...)
+///   platform:messaging:* — Dispatch-job actions
+///   platform:developer:* — The application OpenAPI sync
+///   platform:portal:*    — Portal apps and identities
+///   platform:function:*  — The function registry (Rust and Java only)
+///
+/// Every type a platform use case emits is here (the `it` test
+/// `emitted_catalogue_test` fails on one that is not).
 pub fn definitions() -> Vec<SyncEventTypeInput> {
     let mut defs = Vec::new();
     let schemas = platform_event_schemas::schemas();
@@ -44,6 +52,8 @@ pub fn definitions() -> Vec<SyncEventTypeInput> {
             "logged-in",
             "password-reset-requested",
             "password-reset-completed",
+            "developer-credential-set",
+            "developer-credential-revoked",
         ],
     );
     // Principals (sync — aggregate is plural)
@@ -306,7 +316,7 @@ pub fn definitions() -> Vec<SyncEventTypeInput> {
         &mut defs,
         &schemas,
         "platform:admin:email-domain-mapping",
-        &["created", "updated", "deleted"],
+        &["created", "updated", "provider-changed", "deleted"],
     );
     group(
         &mut defs,
@@ -359,20 +369,146 @@ pub fn definitions() -> Vec<SyncEventTypeInput> {
         "Application OpenAPI Synced",
     );
 
+    // Go's F9 (`8ddaed4`): the dispatch-job actions and the portal, with
+    // Go's codes, names and data.
+    group(
+        &mut defs,
+        &schemas,
+        "platform:messaging:dispatch-job",
+        &["cancelled", "completed"],
+    );
+    push(
+        &mut defs,
+        &schemas,
+        "platform:messaging:dispatch-jobs:resent",
+        "Dispatch Jobs Resent",
+    );
+    group_as(
+        &mut defs,
+        &schemas,
+        "platform:portal:app",
+        "Portal App",
+        &["created", "updated", "deleted"],
+    );
+    group_as(
+        &mut defs,
+        &schemas,
+        "platform:portal:identity",
+        "Portal Identity",
+        &[
+            "ensured",
+            "status-set",
+            "deleted",
+            "app-granted",
+            "app-revoked",
+        ],
+    );
+
+    // ─── Emitted by Rust only (no Go counterpart) ─────────────────────
+    //
+    // Writes Go makes without an event (the app-docs sync, the permission
+    // catalogue, the admin token mint) and the Java-shaped function
+    // registry and audit redaction (docs/go-mirror/2026-10-11-event-catalogue.md).
+    push(
+        &mut defs,
+        &schemas,
+        "platform:admin:app-docs:synced",
+        "App Docs Synced",
+    );
+    push(
+        &mut defs,
+        &schemas,
+        "platform:admin:audit-log:redacted",
+        "Audit Log Redacted",
+    );
+    group(
+        &mut defs,
+        &schemas,
+        "platform:admin:permission",
+        &["defined", "deleted"],
+    );
+    push(
+        &mut defs,
+        &schemas,
+        "platform:iam:serviceaccount:token-minted",
+        "Serviceaccount Token Minted",
+    );
+    group(
+        &mut defs,
+        &schemas,
+        "platform:function:function",
+        &["created", "updated", "deleted"],
+    );
+    group_as(
+        &mut defs,
+        &schemas,
+        "platform:function:version",
+        "Function Version",
+        &["published", "ready", "retired"],
+    );
+    group_as(
+        &mut defs,
+        &schemas,
+        "platform:function:alias",
+        "Function Alias",
+        &["changed", "removed"],
+    );
+    group_as(
+        &mut defs,
+        &schemas,
+        "platform:function:policy",
+        "Function Policy",
+        &["updated"],
+    );
+    group_as(
+        &mut defs,
+        &schemas,
+        "platform:function:config",
+        "Function Config",
+        &["updated"],
+    );
+    group_as(
+        &mut defs,
+        &schemas,
+        "platform:function:secret",
+        "Function Secret",
+        &["set", "deleted"],
+    );
+    group_as(
+        &mut defs,
+        &schemas,
+        "platform:function:domain",
+        "Function Domain",
+        &["claimed", "released"],
+    );
+
     defs
 }
 
-/// Add a group of events under the same prefix.
+/// Add a group of events under the same prefix, each named after the
+/// aggregate segment ("User Created").
 fn group(
     defs: &mut Vec<SyncEventTypeInput>,
     schemas: &HashMap<&str, Value>,
     prefix: &str,
     events: &[&str],
 ) {
+    let aggregate = prefix.rsplit(':').next().unwrap_or(prefix);
+    group_as(defs, schemas, prefix, &title_case(aggregate), events);
+}
+
+/// Add a group of events under the same prefix, each named "<label>
+/// <Event>" (Go's `groupAs`: "Portal Identity App Granted").
+fn group_as(
+    defs: &mut Vec<SyncEventTypeInput>,
+    schemas: &HashMap<&str, Value>,
+    prefix: &str,
+    label: &str,
+    events: &[&str],
+) {
     for event in events {
         let code = format!("{}:{}", prefix, event);
-        let aggregate = prefix.rsplit(':').next().unwrap_or(prefix);
-        let name = format!("{} {}", title_case(aggregate), title_case(event));
+        let name = format!("{} {}", label, title_case(event));
         let schema = schemas.get(code.as_str()).cloned();
         defs.push(SyncEventTypeInput {
             code,
