@@ -12,11 +12,12 @@
 //! scheduled-job permissions — and admins lost access to features the
 //! entity definitions said they had. We don't redo that.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use tracing::{info, warn};
 
 use crate::role::entity::roles;
 use crate::role::entity::{AuthRole, RoleSource};
+use crate::role::operations::require_confined;
 use crate::role::repository::RoleRepository;
 use fc_platform_core::shared::error::Result;
 use std::sync::Arc;
@@ -45,16 +46,53 @@ impl RoleSyncService {
     /// Sync all code-defined roles to the database.
     /// Call this at application startup or via the BFF sync-platform endpoint.
     pub async fn sync_code_defined_roles(&self) -> Result<RoleSyncCounts> {
+        self.sync_catalogue(&roles::all()).await
+    }
+
+    /// [`Self::sync_code_defined_roles`] with `code_roles` in place of the
+    /// built-in catalogue (Go `SyncPlatformRoles` takes its catalogue the
+    /// same way).
+    ///
+    /// Owner ruling 15 (Go F12): a catalogue role may gain only its own
+    /// application's permissions, with no super-admin exception (the
+    /// catalogue sync never crosses applications), 400
+    /// `PERMISSION_OUTSIDE_APPLICATION`. Only what the sync adds is checked:
+    /// a new role's permissions, an existing `CODE` role's additions. Every
+    /// role is checked before the first write, so a refused sync writes
+    /// nothing. The built-in catalogue is all `platform:` roles holding
+    /// `platform:` permissions, so it syncs as before.
+    pub async fn sync_catalogue(&self, code_roles: &[AuthRole]) -> Result<RoleSyncCounts> {
         info!("Syncing code-defined roles to database...");
 
-        let code_roles = roles::all();
         let total = code_roles.len() as u32;
         let mut created = 0u32;
         let mut updated = 0u32;
 
-        for role_def in &code_roles {
+        let mut stored = Vec::with_capacity(code_roles.len());
+        for role_def in code_roles {
+            let existing = self.role_repo.find_by_name(&role_def.name).await?;
+            match &existing {
+                Some(existing) if existing.source == RoleSource::Code => {
+                    let added: BTreeSet<&str> = role_def
+                        .permissions
+                        .difference(&existing.permissions)
+                        .map(String::as_str)
+                        .collect();
+                    require_confined(existing.owning_application_code(), added, false)?;
+                }
+                Some(_) => {}
+                None => {
+                    let permissions: BTreeSet<&str> =
+                        role_def.permissions.iter().map(String::as_str).collect();
+                    require_confined(role_def.owning_application_code(), permissions, false)?;
+                }
+            }
+            stored.push(existing);
+        }
+
+        for (role_def, existing) in code_roles.iter().zip(stored) {
             // Check if role exists
-            if let Some(mut existing) = self.role_repo.find_by_name(&role_def.name).await? {
+            if let Some(mut existing) = existing {
                 // Only update if it's a CODE-sourced role
                 if existing.source == RoleSource::Code {
                     existing.display_name = role_def.display_name.clone();
@@ -89,7 +127,7 @@ impl RoleSyncService {
         }
 
         // Remove stale CODE roles
-        let removed = self.remove_stale_code_roles(&code_roles).await? as u32;
+        let removed = self.remove_stale_code_roles(code_roles).await? as u32;
 
         info!(created, updated, removed, total, "Code role sync complete",);
 
@@ -137,5 +175,24 @@ impl RoleSyncService {
         }
 
         Ok(removed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::role::entity::permissions_outside_application;
+
+    /// Confinement leaves the boot sync alone: every built-in role holds
+    /// only its own application's permissions.
+    #[test]
+    fn the_built_in_catalogue_is_confined() {
+        for role in roles::all() {
+            let outside = permissions_outside_application(
+                role.owning_application_code(),
+                role.permissions.iter().map(String::as_str),
+            );
+            assert!(outside.is_empty(), "{}: {outside:?}", role.name);
+        }
     }
 }

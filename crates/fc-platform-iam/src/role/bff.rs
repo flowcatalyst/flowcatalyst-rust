@@ -861,7 +861,7 @@ pub async fn sync_platform_roles(
         .role_sync_service
         .sync_code_defined_roles()
         .await
-        .map_err(|e| PlatformError::internal(format!("Role sync failed: {}", e)))?;
+        .map_err(sync_platform_roles_error)?;
 
     Ok(axum::Json(SyncPlatformRolesResponse {
         created: counts.created,
@@ -869,6 +869,18 @@ pub async fn sync_platform_roles(
         removed: counts.removed,
         total: counts.total,
     }))
+}
+
+/// A refusal the sync answers itself (confinement's 400
+/// `PERMISSION_OUTSIDE_APPLICATION`) reaches the caller as it is; anything
+/// else is a 500.
+fn sync_platform_roles_error(e: PlatformError) -> PlatformError {
+    if let PlatformError::Coded { status, .. } = &e {
+        if status.is_client_error() {
+            return e;
+        }
+    }
+    PlatformError::internal(format!("Role sync failed: {}", e))
 }
 
 // ── Router ────────────────────────────────────────────────────────────────
@@ -944,4 +956,32 @@ pub async fn bff_create_permission(
             description: event.description.unwrap_or_default(),
         }),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fc_platform_core::usecase::UseCaseError;
+
+    /// Confinement's refusal keeps its 400 and code through the BFF; a
+    /// repository failure is still a 500.
+    #[test]
+    fn a_sync_refusal_keeps_its_status() {
+        let refused = sync_platform_roles_error(PlatformError::from(UseCaseError::validation(
+            "PERMISSION_OUTSIDE_APPLICATION",
+            "Permission 'other:thing:view' does not belong to application 'platform'",
+        )));
+        let PlatformError::Coded { status, code, .. } = &refused else {
+            panic!("{refused:?}");
+        };
+        assert_eq!(*status, StatusCode::BAD_REQUEST);
+        assert_eq!(code, "PERMISSION_OUTSIDE_APPLICATION");
+        let failed = sync_platform_roles_error(PlatformError::Validation {
+            message: "x".into(),
+        });
+        assert!(
+            matches!(failed, PlatformError::Internal { .. }),
+            "{failed:?}"
+        );
+    }
 }
