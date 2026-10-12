@@ -251,16 +251,18 @@ pub fn definitions() -> Vec<SyncEventTypeInput> {
         "platform:admin:auth-config",
         &["created", "updated", "deleted"],
     );
-    group(
+    group_as(
         &mut defs,
         &schemas,
         "platform:admin:idp-role-mapping",
+        "IdP Role Mapping",
         &["created", "deleted"],
     );
-    group(
+    group_as(
         &mut defs,
         &schemas,
         "platform:admin:oauth-client",
+        "OAuth Client",
         &[
             "created",
             "updated",
@@ -549,6 +551,15 @@ mod tests {
         assert_eq!(
             name("platform:admin:eventtype:schema-added"),
             "Eventtype Schema Added"
+        );
+        // Go's `groupAs` labels (Go F9).
+        assert_eq!(
+            name("platform:admin:oauth-client:secret-rotated"),
+            "OAuth Client Secret Rotated"
+        );
+        assert_eq!(
+            name("platform:admin:idp-role-mapping:created"),
+            "IdP Role Mapping Created"
         );
     }
 }
