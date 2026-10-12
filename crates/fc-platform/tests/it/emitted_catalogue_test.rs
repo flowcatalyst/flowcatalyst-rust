@@ -121,6 +121,25 @@ fn every_emitted_event_type_is_catalogued() {
     );
 }
 
+/// Every catalogued event type is emitted by some use case (Go
+/// `TestEveryCataloguedEventTypeIsEmitted`, `45537af`): a catalogued code
+/// nothing emits is a subscription that never fires. With
+/// `every_emitted_event_type_is_catalogued`, drift either way fails.
+#[test]
+fn every_catalogued_event_type_is_emitted() {
+    let emitted = emitted_codes();
+    let unemitted: Vec<String> = platform_event_types::definitions()
+        .into_iter()
+        .map(|d| d.code)
+        .filter(|c| !emitted.contains(c))
+        .collect();
+    assert!(
+        unemitted.is_empty(),
+        "catalogued event types nothing emits (a subscription to one never fires); \
+         remove them from the seed and from existing databases: {unemitted:#?}"
+    );
+}
+
 /// The catalogue no longer lists the client codes nothing emits.
 #[test]
 fn client_events_are_catalogued_under_the_emitted_codes() {

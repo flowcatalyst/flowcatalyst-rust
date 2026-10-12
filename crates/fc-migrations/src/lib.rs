@@ -354,6 +354,13 @@ fn core_migrations() -> &'static [(&'static str, &'static str)] {
             "068_client_event_type_codes",
             include_str!("../../../migrations/068_client_event_type_codes.sql"),
         ),
+        // The 15 catalogued event types nothing emits are removed with their
+        // schemas; subscription bindings naming them are archived, not
+        // re-pointed (Go 071, `45537af`).
+        (
+            "069_prune_unemitted_event_types",
+            include_str!("../../../migrations/069_prune_unemitted_event_types.sql"),
+        ),
     ]
 }
 

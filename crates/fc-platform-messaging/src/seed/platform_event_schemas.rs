@@ -170,42 +170,6 @@ pub fn schemas() -> HashMap<&'static str, Value> {
         obj(&[req_str("serviceAccountId"), req_str("code")]),
     );
 
-    // ─── platform:iam:role ─────────────────────────────────────────────
-    m.insert(
-        "platform:iam:role:created",
-        obj(&[
-            req_str("roleId"),
-            req_str("code"),
-            req_str("displayName"),
-            req_str("applicationCode"),
-            req_str_array("permissions"),
-        ]),
-    );
-    m.insert(
-        "platform:iam:role:updated",
-        obj(&[
-            req_str("roleId"),
-            opt_str("displayName"),
-            opt_str("description"),
-            req_str_array("permissionsAdded"),
-            req_str_array("permissionsRemoved"),
-        ]),
-    );
-    m.insert(
-        "platform:iam:role:deleted",
-        obj(&[req_str("roleId"), req_str("code")]),
-    );
-    m.insert(
-        "platform:iam:roles:synced",
-        obj(&[
-            req_str("applicationCode"),
-            req_u32("created"),
-            req_u32("updated"),
-            req_u32("deleted"),
-            req_str_array("syncedNames"),
-        ]),
-    );
-
     // ─── platform:iam:application ──────────────────────────────────────
     m.insert(
         "platform:iam:application:created",
@@ -262,34 +226,6 @@ pub fn schemas() -> HashMap<&'static str, Value> {
         ]),
     );
 
-    // ─── platform:iam:anchor-domain ────────────────────────────────────
-    m.insert(
-        "platform:iam:anchor-domain:created",
-        obj(&[req_str("anchorDomainId"), req_str("domain")]),
-    );
-    m.insert(
-        "platform:iam:anchor-domain:deleted",
-        obj(&[req_str("anchorDomainId"), req_str("domain")]),
-    );
-
-    // ─── platform:iam:auth-config ──────────────────────────────────────
-    m.insert(
-        "platform:iam:auth-config:created",
-        obj(&[
-            req_str("authConfigId"),
-            req_str("emailDomain"),
-            req_str("configType"),
-        ]),
-    );
-    m.insert(
-        "platform:iam:auth-config:updated",
-        obj(&[req_str("authConfigId"), req_str("emailDomain")]),
-    );
-    m.insert(
-        "platform:iam:auth-config:deleted",
-        obj(&[req_str("authConfigId"), req_str("emailDomain")]),
-    );
-
     // ─── platform:admin:cors ───────────────────────────────────────────
     m.insert(
         "platform:admin:cors:origin-added",
@@ -298,44 +234,6 @@ pub fn schemas() -> HashMap<&'static str, Value> {
     m.insert(
         "platform:admin:cors:origin-deleted",
         obj(&[req_str("originId"), req_str("origin")]),
-    );
-
-    // ─── platform:admin:idp ────────────────────────────────────────────
-    m.insert(
-        "platform:admin:idp:created",
-        obj(&[
-            req_str("idpId"),
-            req_str("code"),
-            req_str("name"),
-            req_str("idpType"),
-        ]),
-    );
-    m.insert(
-        "platform:admin:idp:updated",
-        obj(&[req_str("idpId"), opt_str("name")]),
-    );
-    m.insert(
-        "platform:admin:idp:deleted",
-        obj(&[req_str("idpId"), req_str("code")]),
-    );
-
-    // ─── platform:admin:edm ────────────────────────────────────────────
-    m.insert(
-        "platform:admin:edm:created",
-        obj(&[
-            req_str("mappingId"),
-            req_str("emailDomain"),
-            req_str("identityProviderId"),
-            req_str("scopeType"),
-        ]),
-    );
-    m.insert(
-        "platform:admin:edm:updated",
-        obj(&[req_str("mappingId"), req_str("emailDomain")]),
-    );
-    m.insert(
-        "platform:admin:edm:deleted",
-        obj(&[req_str("mappingId"), req_str("emailDomain")]),
     );
 
     // ─── platform:admin:eventtype (no hyphen) ───────────────────────────
@@ -1120,8 +1018,8 @@ mod tests {
     fn all_schemas_are_valid_json_schema() {
         let schemas = schemas();
         assert!(
-            schemas.len() >= 159,
-            "Expected 159+ schemas, got {}",
+            schemas.len() >= 144,
+            "Expected 144+ schemas, got {}",
             schemas.len()
         );
         for (code, schema) in &schemas {

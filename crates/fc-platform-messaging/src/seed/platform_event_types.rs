@@ -1,8 +1,9 @@
 //! Platform Event Type Definitions
 //!
 //! Canonical list of platform domain events: Go's seeded catalogue
-//! (`internal/platform/seed/event_types.go`) code for code, then every type
-//! the platform emits that Go's catalogue lacks. Used by the startup seeder
+//! (`internal/platform/seed/event_types.go`), then every type the platform
+//! emits that Go's older catalogue lacked; exactly the emitted types (the
+//! `it` test `emitted_catalogue_test` fails on drift either way). Used by the startup seeder
 //! (`shared::database::seed_platform_event_types`, as Go seeds on every
 //! start) and the BFF sync-platform endpoint.
 
@@ -84,19 +85,13 @@ pub fn definitions() -> Vec<SyncEventTypeInput> {
     // them as `platform:iam:client:*`, which nothing emits, until its
     // `25c3ed6`. Migration 068 renames the rows an older seed wrote.
 
-    // Role
-    group(
-        &mut defs,
-        &schemas,
-        "platform:iam:role",
-        &["created", "updated", "deleted"],
-    );
-    push(
-        &mut defs,
-        &schemas,
-        "platform:iam:roles:synced",
-        "Roles Synced",
-    );
+    // Role, anchor domain, auth config, identity provider and email domain
+    // mapping events are emitted under `platform:admin:*` (below). Older
+    // seeds also catalogued `platform:iam:role:*`, `platform:iam:roles:synced`,
+    // `platform:iam:anchor-domain:*`, `platform:iam:auth-config:*`,
+    // `platform:admin:idp:*` and `platform:admin:edm:*`, which nothing has
+    // emitted since `cb1b3e4f`; migration 069 removes them (Go's F9
+    // follow-up, `45537af`).
 
     // Application
     group(
@@ -115,22 +110,6 @@ pub fn definitions() -> Vec<SyncEventTypeInput> {
         ],
     );
 
-    // Anchor Domain
-    group(
-        &mut defs,
-        &schemas,
-        "platform:iam:anchor-domain",
-        &["created", "deleted"],
-    );
-
-    // Auth Config
-    group(
-        &mut defs,
-        &schemas,
-        "platform:iam:auth-config",
-        &["created", "updated", "deleted"],
-    );
-
     // ─── platform:admin ───────────────────────────────────────────────
 
     // CORS
@@ -139,22 +118,6 @@ pub fn definitions() -> Vec<SyncEventTypeInput> {
         &schemas,
         "platform:admin:cors",
         &["origin-added", "origin-deleted"],
-    );
-
-    // Identity Provider
-    group(
-        &mut defs,
-        &schemas,
-        "platform:admin:idp",
-        &["created", "updated", "deleted"],
-    );
-
-    // Email Domain Mapping
-    group(
-        &mut defs,
-        &schemas,
-        "platform:admin:edm",
-        &["created", "updated", "deleted"],
     );
 
     // Event Type (no hyphen in aggregate)
@@ -213,8 +176,10 @@ pub fn definitions() -> Vec<SyncEventTypeInput> {
 
     // ─── Emitted, but absent from Go's seeded catalogue ───────────────
     //
-    // Everything above is Go's catalogue (`seed/event_types.go`) code for
-    // code, so production rows stay as Go seeded them. Go emits several
+    // Everything above is Go's older catalogue (`seed/event_types.go`) code
+    // for code, less the codes nothing emits (Go's `45537af`; Go also drops
+    // `platform:iam:user:password-reset-requested`, which is emitted here),
+    // so production rows stay as Go seeded them. Go emits several
     // types under other names than it seeds (the client events were one,
     // until Go catalogued them in `25c3ed6`); these make every emitted type
     // subscribable.
