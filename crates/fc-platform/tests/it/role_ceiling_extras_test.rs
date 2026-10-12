@@ -9,8 +9,9 @@ use axum::http::StatusCode;
 use serde_json::{json, Value};
 
 use crate::support::{self, read_json, TestApp};
+use fc_platform::application::entity::Application;
 use fc_platform::domain::{Principal, UserScope};
-use fc_platform::role::entity::{roles, AuthRole};
+use fc_platform::role::entity::{permissions, roles, AuthRole};
 
 async fn setup() -> TestApp {
     support::set_app_key();
@@ -121,4 +122,62 @@ async fn the_token_mint_is_bounded_by_the_callers_permissions() {
     let (status, body) = read_json(app.post(&mint, &sa_admin, json!({})).await).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body["accessToken"].is_string());
+}
+
+/// Go `8b1cb0f`: provisioning gives the account `platform:application-service`,
+/// so the caller must hold that role's platform permissions.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn provisioning_is_bounded_by_the_application_service_role() {
+    let app = setup().await;
+    seed_roles(&app, vec![roles::application_service()]).await;
+    let mut ids = Vec::new();
+    for code in ["prov-a", "prov-b"] {
+        let a = Application::new(code, code);
+        app.repos.application_repo.insert(&a).await.unwrap();
+        ids.push(a.id.to_string());
+    }
+    let path = |id: &str| format!("/api/applications/{id}/provision-service-account");
+
+    // The gate alone (anchor, service-account:create, application:update).
+    let gated = stored_caller(
+        &app,
+        "prov-gate@iam.test",
+        &[
+            permissions::admin::SERVICE_ACCOUNT_CREATE,
+            permissions::admin::APPLICATION_UPDATE,
+        ],
+    )
+    .await;
+    let (status, body) = read_json(app.post(&path(&ids[0]), &gated, json!({})).await).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(code(&body), "ROLE_ABOVE_CALLER");
+    assert!(
+        message(&body).ends_with(": platform:application-service"),
+        "{body}"
+    );
+    let app_row = app
+        .repos
+        .application_repo
+        .find_by_code("prov-a")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(app_row.service_account_id.is_none(), "nothing provisioned");
+
+    // The gate plus every permission of the role: provisioned.
+    let role = roles::application_service();
+    let mut perms: Vec<&str> = role.permissions.iter().map(String::as_str).collect();
+    perms.extend([
+        permissions::admin::SERVICE_ACCOUNT_CREATE,
+        permissions::admin::APPLICATION_UPDATE,
+    ]);
+    let holder = stored_caller(&app, "prov-holder@iam.test", &perms).await;
+    let (status, body) = read_json(app.post(&path(&ids[0]), &holder, json!({})).await).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+
+    // A super-admin may.
+    let super_admin = stored_caller(&app, "prov-super@iam.test", &[permissions::ADMIN_ALL]).await;
+    let (status, body) = read_json(app.post(&path(&ids[1]), &super_admin, json!({})).await).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
 }

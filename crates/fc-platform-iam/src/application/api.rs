@@ -38,6 +38,8 @@ use crate::application::ApplicationClientConfig;
 use crate::auth::oauth_entity::{GrantType, OAuthClientType};
 use crate::auth::operations::CreateOAuthClientUseCase;
 use crate::principal::repository::PrincipalRepository;
+use crate::role::ceiling;
+use crate::role::entity::roles;
 use crate::shared::authorization_service::ApplicationAccessService;
 use crate::{
     application::entity::Application, auth::oauth_client_repository::OAuthClientRepository,
@@ -918,6 +920,7 @@ pub async fn provision_service_account<U: UnitOfWork>(
     // Java 6068fe6b S1.2: it mints a service account and binds it.
     checks::require_permission(&auth.0, permissions::admin::SERVICE_ACCOUNT_CREATE)?;
     checks::require_permission(&auth.0, permissions::admin::APPLICATION_UPDATE)?;
+    require_provision_within_caller(&state.role_repo, &auth.0).await?;
 
     let service_account = provision_application_service_account(
         &state.pg_unit_of_work,
@@ -940,11 +943,27 @@ pub async fn provision_service_account<U: UnitOfWork>(
     ))
 }
 
+/// The role ceiling on provisioning (Go `RequireProvisionWithinCaller`,
+/// `8b1cb0f`, F8): the provisioned account is given the
+/// `platform:application-service` role, so the caller must hold that role's
+/// platform permissions (403 `ROLE_ABOVE_CALLER`, as any role assignment).
+/// Called by the API and `fc-web` handlers after their permission gate;
+/// fc-dev's start-up provisioning acts as the system and does not run it.
+pub async fn require_provision_within_caller(
+    role_repo: &RoleRepository,
+    auth: &AuthContext,
+) -> Result<(), PlatformError> {
+    ceiling::require_role_change(auth, role_repo, &[], &[roles::application_service().name])
+        .await?;
+    Ok(())
+}
+
 /// Provision an application's service account: create it, attach it and
 /// mint its `client_credentials` OAuth client in one transaction. The body
 /// of `POST /api/applications/{id}/provision-service-account` after its
-/// permission checks, shared with the server-rendered `fc-web` UI. The
-/// plaintext secret in the result is the only chance to read it.
+/// permission checks and [`require_provision_within_caller`], shared with
+/// the server-rendered `fc-web` UI. The plaintext secret in the result is
+/// the only chance to read it.
 pub async fn provision_application_service_account(
     pg_unit_of_work: &PgUnitOfWork,
     application_repo: &Arc<ApplicationRepository>,

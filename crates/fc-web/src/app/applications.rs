@@ -20,6 +20,7 @@ use fc_platform::application::api::{
     LoginClientCredentialsResponse, ProvisionLoginClientRequest, ServiceAccountCredentialsResponse,
     app_has_login_client, deactivate_application_cascade, delete_application_cascade,
     provision_application_login_client, provision_application_service_account,
+    require_provision_within_caller,
 };
 use fc_platform::application::operations::{
     ActivateApplicationCommand, ActivateApplicationUseCase, CreateApplicationCommand,
@@ -997,6 +998,10 @@ async fn provision_service_account(cx: &Cx) -> Result<impl View> {
     permit_provision(auth, permissions::admin::SERVICE_ACCOUNT_CREATE)?;
     let id = target(cx);
     let deps = crate::deps(cx);
+    // The role ceiling on the application-service role (Go `8b1cb0f`).
+    require_provision_within_caller(&deps.auth_state.role_repo, auth)
+        .await
+        .map_err(|e| provision_refused(cx, &id, e))?;
     let creds: ServiceAccountCredentialsResponse = provision_application_service_account(
         &deps.unit_of_work,
         &deps.application_repo,
