@@ -7,22 +7,31 @@
 //! come from Java's golden data, which the Rust events match
 //! (`function_events_golden_test`).
 //!
+//! Also covers every code whose older seeded schema migration 070 replaces
+//! (Go's F9 follow-up, `4c23adf`): the corrected schema must admit what the
+//! event really sends, and the test fails on a code 070 lists without a
+//! sample here.
+//!
 //! The validator knows the subset of draft-07 the catalogue's builders
 //! write: `type` (one or a list), `properties`, `required`,
-//! `additionalProperties: false`, `items`, `minimum`, `enum`.
+//! `additionalProperties: false`, `items`, `minimum`, `enum`, and
+//! `format: date-time` (RFC 3339).
 
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::{json, Value};
 
+use fc_platform::domain::UserScope;
 use fc_platform::seed::platform_event_schemas::schema_for;
 use fc_platform::seed::platform_event_types;
 use fc_platform::shared::id::{
-    ClientId, EmailDomainMappingId, FunctionId, FunctionVersionId, IdentityProviderId,
-    PermissionId, PortalAppId, PortalIdentityId, PrincipalId,
+    ApplicationId, ClientId, ConnectionId, DispatchPoolId, EmailDomainMappingId, EventTypeId,
+    FunctionId, FunctionVersionId, IdentityProviderId, OAuthClientId, PermissionId, PortalAppId,
+    PortalIdentityId, PrincipalId, SubscriptionId,
 };
 use fc_platform::usecase::{DomainEvent, EventMetadata, ExecutionContext};
 use fc_platform_auth::portal::operations::events::{
@@ -33,17 +42,42 @@ use fc_platform_functions::function::operations::events::{
     AliasChanged, AliasRemoved, VersionReady,
 };
 use fc_platform_iam::app_docs::operations::sync::AppDocsSynced;
+use fc_platform_iam::application::operations::{
+    ApplicationActivated, ApplicationCreated, ApplicationDeactivated, ApplicationDeleted,
+    ApplicationUpdated, ClientApplicationsUpdated,
+};
 use fc_platform_iam::audit::operations::events::AuditLogsRedacted;
+use fc_platform_iam::auth::operations::OAuthClientSecretRotated;
 use fc_platform_iam::developer_credential::events::{
     DeveloperCredentialRevoked, DeveloperCredentialSet,
 };
 use fc_platform_iam::email_domain_mapping::operations::move_provider::EmailDomainMappingProviderChanged;
 use fc_platform_iam::portal::entity::IdentityStatus;
 use fc_platform_iam::portal::PortalApp;
+use fc_platform_iam::principal::operations::{
+    FederatedClaims, FlowcatalystClaims, PasswordResetCompleted, UserCreated, UserDeactivated,
+    UserDeleted, UserLoggedIn, UserUpdated,
+};
+use fc_platform_iam::role::operations::RolesSynced;
 use fc_platform_iam::role::operations::{PermissionDefined, PermissionDeleted};
+use fc_platform_iam::service_account::entity::ServiceAccount;
 use fc_platform_iam::service_account::operations::mint_token::ServiceAccountTokenMinted;
+use fc_platform_iam::service_account::operations::{ServiceAccountCreated, ServiceAccountUpdated};
+use fc_platform_messaging::connection::operations::{
+    ConnectionCreated, ConnectionDeleted, ConnectionUpdated,
+};
 use fc_platform_messaging::dispatch_job_actions::operations::{
     DispatchJobSettled, DispatchJobsResent, CANCELLED_EVENT, COMPLETED_EVENT,
+};
+use fc_platform_messaging::dispatch_pool::operations::{
+    DispatchPoolArchived, DispatchPoolCreated, DispatchPoolDeleted, DispatchPoolUpdated,
+};
+use fc_platform_messaging::event_type::operations::{
+    EventTypeUpdated, SchemaAdded, SchemaDeprecated, SchemaFinalised,
+};
+use fc_platform_messaging::subscription::operations::{
+    SubscriptionCreated, SubscriptionPaused, SubscriptionResumed, SubscriptionUpdated,
+    SubscriptionsSynced,
 };
 
 /// Errors of `value` against `schema`, at `path`.
@@ -72,6 +106,13 @@ fn validate(schema: &Value, value: &Value, path: &str, errors: &mut Vec<String>)
     if let Some(min) = schema.get("minimum").and_then(Value::as_f64) {
         if value.as_f64().is_some_and(|n| n < min) {
             errors.push(format!("{path}: {value} < {min}"));
+        }
+    }
+    if schema.get("format").and_then(Value::as_str) == Some("date-time") {
+        if let Some(s) = value.as_str() {
+            if DateTime::parse_from_rfc3339(s).is_err() {
+                errors.push(format!("{path}: {value} is not an RFC 3339 date-time"));
+            }
         }
     }
     if let Some(allowed) = schema.get("enum").and_then(Value::as_array) {
@@ -296,6 +337,174 @@ fn emitted_data_validates_against_the_catalogue_schema() {
         errors.extend(errors_for(&code, &data));
     }
     assert!(errors.is_empty(), "{errors:#?}");
+}
+
+/// Real data of every code migration 070 corrects, each optional field
+/// present and absent where it has any.
+fn corrected_samples() -> Vec<(String, Value)> {
+    let ctx = ExecutionContext::system("prn_1");
+    let user = PrincipalId::from_wire("prn_2");
+    let app = ApplicationId::from_wire("app_1");
+    let et = EventTypeId::from_wire("etp_1");
+    let conn = ConnectionId::from_wire("con_1");
+    let pool = DispatchPoolId::from_wire("dpl_1");
+    let sub = SubscriptionId::from_wire("sub_1");
+    let account = ServiceAccount::new("billing-sa", "Billing", UserScope::Anchor);
+    let claims = FlowcatalystClaims {
+        email: "a@b.c".into(),
+        principal_type: "USER".into(),
+        roles: vec!["platform:viewer".into()],
+        clients: vec!["*".into()],
+        applications: vec![],
+    };
+    let mut rotated = OAuthClientSecretRotated::new(&ctx, &OAuthClientId::from_wire("oac_1"));
+    let rotated_now = emitted(&rotated);
+    rotated.previous_secret_expires_at = Some(Utc::now());
+    let roles_synced = |code: &str, synced: Vec<String>| RolesSynced {
+        metadata: RolesSynced::metadata_for(&ctx, code),
+        created: 1,
+        updated: 0,
+        removed: 0,
+        total: 1,
+        application_code: code.into(),
+        synced_codes: synced,
+    };
+    let subs_synced = |client: Option<ClientId>| SubscriptionsSynced {
+        metadata: SubscriptionsSynced::metadata_for(&ctx, "billing"),
+        application_code: "billing".into(),
+        client_id: client,
+        created: 1,
+        updated: 0,
+        deleted: 0,
+        synced_codes: vec!["s1".into()],
+    };
+    vec![
+        emitted(&UserCreated::new(&ctx, &user, "a@b.c")),
+        emitted(&UserUpdated::new(&ctx, &user, "A")),
+        emitted(&UserDeactivated::new(&ctx, &user)),
+        emitted(&UserDeleted::new(&ctx, &user, "a@b.c")),
+        emitted(&UserDeleted::new(&ctx, &user, "")),
+        emitted(&PasswordResetCompleted::from_ctx(&ctx, &user)),
+        emitted(&UserLoggedIn::new(
+            &ctx,
+            &user,
+            "a@b.c",
+            "OIDC",
+            None,
+            claims.clone(),
+            None,
+        )),
+        emitted(&UserLoggedIn::new(
+            &ctx,
+            &user,
+            "a@b.c",
+            "OIDC",
+            Some("entra"),
+            claims,
+            Some(FederatedClaims {
+                access_token: json!({"sub": "x"}),
+                id_token: json!({"sub": "x"}),
+            }),
+        )),
+        emitted(&ServiceAccountCreated::new(&ctx, &account)),
+        emitted(&ServiceAccountUpdated::new(&ctx, &account)),
+        emitted(&ApplicationCreated::new(&ctx, &app, "billing", "Billing")),
+        emitted(&ApplicationUpdated::new(&ctx, &app, "Billing")),
+        emitted(&ApplicationActivated::new(&ctx, &app)),
+        emitted(&ApplicationDeactivated::new(&ctx, &app)),
+        emitted(&ApplicationDeleted::new(&ctx, &app, "billing")),
+        emitted(&ClientApplicationsUpdated::new(
+            &ctx,
+            &ClientId::from_wire("clt_1"),
+            vec![],
+            vec![],
+            vec![],
+        )),
+        emitted(&ClientApplicationsUpdated::new(
+            &ctx,
+            &ClientId::from_wire("clt_1"),
+            vec![app.clone()],
+            vec![app.clone()],
+            vec![],
+        )),
+        emitted(&EventTypeUpdated::new(&ctx, &et, "Thing Done", None)),
+        emitted(&EventTypeUpdated::new(&ctx, &et, "Thing Done", Some("d"))),
+        emitted(&SchemaAdded::new(&ctx, &et, "1.1")),
+        emitted(&SchemaFinalised::new(&ctx, &et, "1.1", None)),
+        emitted(&SchemaFinalised::new(&ctx, &et, "1.1", Some("1.0"))),
+        emitted(&SchemaDeprecated::new(&ctx, &et, "1.0")),
+        emitted(&ConnectionCreated::new(&ctx, &conn, "hook", "Hook")),
+        emitted(&ConnectionUpdated::new(&ctx, &conn, "Hook")),
+        emitted(&ConnectionDeleted::new(&ctx, &conn, "hook")),
+        emitted(&DispatchPoolCreated::new(&ctx, &pool, "p", "P")),
+        emitted(&DispatchPoolUpdated::new(&ctx, &pool, "P")),
+        emitted(&DispatchPoolArchived::new(&ctx, &pool, "p")),
+        emitted(&DispatchPoolDeleted::new(&ctx, &pool, "p")),
+        emitted(&SubscriptionCreated::new(&ctx, &sub, "s", "S")),
+        emitted(&SubscriptionUpdated::new(&ctx, &sub, "S")),
+        emitted(&SubscriptionPaused::new(&ctx, &sub)),
+        emitted(&SubscriptionResumed::new(&ctx, &sub)),
+        emitted(&subs_synced(None)),
+        emitted(&subs_synced(Some(ClientId::from_wire("clt_1")))),
+        emitted(&roles_synced("", vec![])),
+        emitted(&roles_synced("billing", vec!["billing:clerk".into()])),
+        rotated_now,
+        emitted(&rotated),
+    ]
+}
+
+/// The codes migration 070 replaces a seeded schema of.
+fn migration_070_codes() -> BTreeSet<String> {
+    let sql = include_str!("../../../../migrations/070_platform_event_schema_fixes.sql");
+    sql.lines()
+        .filter_map(|l| l.trim().strip_prefix("('platform:"))
+        .filter_map(|rest| rest.split_once('\'').map(|(c, _)| format!("platform:{c}")))
+        .collect()
+}
+
+#[test]
+fn emitted_data_of_the_corrected_codes_validates() {
+    let mut errors = Vec::new();
+    for (code, data) in corrected_samples() {
+        errors.extend(errors_for(&code, &data));
+    }
+    assert!(errors.is_empty(), "{errors:#?}");
+}
+
+#[test]
+fn every_code_migration_070_corrects_is_sampled() {
+    let codes = migration_070_codes();
+    assert_eq!(codes.len(), 32, "{codes:#?}");
+    let sampled: BTreeSet<String> = corrected_samples().into_iter().map(|(c, _)| c).collect();
+    let missing: Vec<&String> = codes.iter().filter(|c| !sampled.contains(*c)).collect();
+    assert!(missing.is_empty(), "no sample: {missing:#?}");
+}
+
+/// The corrected schemas reject the older shapes they replace: the
+/// dispatch-pool id name, the event-type schema version name, a null list
+/// where the field is left out, a timestamp that is not one.
+#[test]
+fn the_corrected_schemas_reject_the_old_shapes() {
+    assert!(!errors_for(
+        "platform:admin:dispatch-pool:created",
+        &json!({"dispatchPoolId": "dpl_1", "code": "p", "name": "P"})
+    )
+    .is_empty());
+    assert!(!errors_for(
+        "platform:admin:eventtype:schema-added",
+        &json!({"eventTypeId": "etp_1", "version": "1.0"})
+    )
+    .is_empty());
+    assert!(!errors_for(
+        "platform:admin:roles:synced",
+        &json!({"created": 0, "updated": 0, "removed": 0, "total": 0, "syncedCodes": null})
+    )
+    .is_empty());
+    assert!(!errors_for(
+        "platform:admin:oauth-client:secret-rotated",
+        &json!({"oauthClientId": "oac_1", "previousSecretExpiresAt": "tomorrow"})
+    )
+    .is_empty());
 }
 
 /// Every code catalogued on 2026-10-11 has at least one real sample above.

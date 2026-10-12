@@ -361,6 +361,12 @@ fn core_migrations() -> &'static [(&'static str, &'static str)] {
             "069_prune_unemitted_event_types",
             include_str!("../../../migrations/069_prune_unemitted_event_types.sql"),
         ),
+        // Seeded 1.0 schemas that did not describe the emitted data are
+        // replaced while still exactly as seeded (Go 072, `4c23adf`).
+        (
+            "070_platform_event_schema_fixes",
+            include_str!("../../../migrations/070_platform_event_schema_fixes.sql"),
+        ),
     ]
 }
 

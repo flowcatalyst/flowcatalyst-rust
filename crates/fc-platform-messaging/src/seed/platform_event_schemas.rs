@@ -19,19 +19,11 @@ pub fn schemas() -> HashMap<&'static str, Value> {
     // ─── platform:iam:user ─────────────────────────────────────────────
     m.insert(
         "platform:iam:user:created",
-        obj(&[
-            req_str("principalId"),
-            req_str("email"),
-            req_str("emailDomain"),
-            req_str("name"),
-            req_str("scope"),
-            opt_str("clientId"),
-            req_bool("isAnchorUser"),
-        ]),
+        obj(&[req_str("principalId"), req_str("email")]),
     );
     m.insert(
         "platform:iam:user:updated",
-        obj(&[req_str("principalId"), opt_str("name"), opt_str("email")]),
+        obj(&[req_str("principalId"), req_str("name")]),
     );
     m.insert(
         "platform:iam:user:activated",
@@ -39,9 +31,12 @@ pub fn schemas() -> HashMap<&'static str, Value> {
     );
     m.insert(
         "platform:iam:user:deactivated",
-        obj(&[req_str("principalId"), opt_str("reason")]),
+        obj(&[req_str("principalId")]),
     );
-    m.insert("platform:iam:user:deleted", obj(&[req_str("principalId")]));
+    m.insert(
+        "platform:iam:user:deleted",
+        obj(&[req_str("principalId"), req_str("email")]),
+    );
     m.insert(
         "platform:iam:user:roles-assigned",
         obj(&[
@@ -113,7 +108,7 @@ pub fn schemas() -> HashMap<&'static str, Value> {
     );
     m.insert(
         "platform:iam:user:password-reset-completed",
-        obj(&[req_str("principalId"), req_str("email")]),
+        obj(&[req_str("principalId")]),
     );
 
     // ─── platform:iam:principals (sync — plural aggregate) ─────────────
@@ -135,19 +130,11 @@ pub fn schemas() -> HashMap<&'static str, Value> {
             req_str("serviceAccountId"),
             req_str("code"),
             req_str("name"),
-            opt_str("applicationId"),
-            req_str_array("clientIds"),
         ]),
     );
     m.insert(
         "platform:iam:serviceaccount:updated",
-        obj(&[
-            req_str("serviceAccountId"),
-            opt_str("name"),
-            opt_str("description"),
-            req_str_array("clientIdsAdded"),
-            req_str_array("clientIdsRemoved"),
-        ]),
+        obj(&[req_str("serviceAccountId"), req_str("name")]),
     );
     m.insert(
         "platform:iam:serviceaccount:deleted",
@@ -173,32 +160,23 @@ pub fn schemas() -> HashMap<&'static str, Value> {
     // ─── platform:iam:application ──────────────────────────────────────
     m.insert(
         "platform:iam:application:created",
-        obj(&[
-            req_str("applicationId"),
-            req_str("code"),
-            req_str("name"),
-            req_str("applicationType"),
-        ]),
+        obj(&[req_str("applicationId"), req_str("code"), req_str("name")]),
     );
     m.insert(
         "platform:iam:application:updated",
-        obj(&[
-            req_str("applicationId"),
-            opt_str("name"),
-            opt_str("description"),
-        ]),
+        obj(&[req_str("applicationId"), req_str("name")]),
     );
     m.insert(
         "platform:iam:application:activated",
-        obj(&[req_str("applicationId"), req_str("code")]),
+        obj(&[req_str("applicationId")]),
     );
     m.insert(
         "platform:iam:application:deactivated",
-        obj(&[req_str("applicationId"), req_str("code")]),
+        obj(&[req_str("applicationId")]),
     );
     m.insert(
         "platform:iam:application:deleted",
-        obj(&[req_str("applicationId"), req_str("code"), req_str("name")]),
+        obj(&[req_str("applicationId"), req_str("code")]),
     );
     m.insert(
         "platform:iam:application:service-account-provisioned",
@@ -255,7 +233,7 @@ pub fn schemas() -> HashMap<&'static str, Value> {
         "platform:admin:eventtype:updated",
         obj(&[
             req_str("eventTypeId"),
-            opt_str("name"),
+            req_str("name"),
             opt_str("description"),
         ]),
     );
@@ -269,24 +247,19 @@ pub fn schemas() -> HashMap<&'static str, Value> {
     );
     m.insert(
         "platform:admin:eventtype:schema-added",
-        obj(&[
-            req_str("eventTypeId"),
-            req_str("version"),
-            req_str("mimeType"),
-            req_str("schemaType"),
-        ]),
+        obj(&[req_str("eventTypeId"), req_str("specVersion")]),
     );
     m.insert(
         "platform:admin:eventtype:schema-finalised",
         obj(&[
             req_str("eventTypeId"),
-            req_str("version"),
+            req_str("specVersion"),
             opt_str("deprecatedVersion"),
         ]),
     );
     m.insert(
         "platform:admin:eventtype:schema-deprecated",
-        obj(&[req_str("eventTypeId"), req_str("version")]),
+        obj(&[req_str("eventTypeId"), req_str("specVersion")]),
     );
     m.insert(
         "platform:admin:eventtypes:synced",
@@ -302,32 +275,15 @@ pub fn schemas() -> HashMap<&'static str, Value> {
     // ─── platform:admin:connection ──────────────────────────────────────
     m.insert(
         "platform:admin:connection:created",
-        obj(&[
-            req_str("connectionId"),
-            req_str("code"),
-            req_str("name"),
-            req_str("endpoint"),
-            req_str("serviceAccountId"),
-            opt_str("clientId"),
-        ]),
+        obj(&[req_str("connectionId"), req_str("code"), req_str("name")]),
     );
     m.insert(
         "platform:admin:connection:updated",
-        obj(&[
-            req_str("connectionId"),
-            req_str("code"),
-            opt_str("name"),
-            opt_str("endpoint"),
-            opt_str("status"),
-        ]),
+        obj(&[req_str("connectionId"), req_str("name")]),
     );
     m.insert(
         "platform:admin:connection:deleted",
-        obj(&[
-            req_str("connectionId"),
-            req_str("code"),
-            opt_str("clientId"),
-        ]),
+        obj(&[req_str("connectionId"), req_str("code")]),
     );
 
     m.insert(
@@ -345,29 +301,19 @@ pub fn schemas() -> HashMap<&'static str, Value> {
     // ─── platform:admin:dispatch-pool ───────────────────────────────────
     m.insert(
         "platform:admin:dispatch-pool:created",
-        obj(&[
-            req_str("dispatchPoolId"),
-            req_str("code"),
-            req_str("name"),
-            opt_str("clientId"),
-        ]),
+        obj(&[req_str("poolId"), req_str("code"), req_str("name")]),
     );
     m.insert(
         "platform:admin:dispatch-pool:updated",
-        obj(&[
-            req_str("dispatchPoolId"),
-            opt_str("name"),
-            opt_u32("rateLimit"),
-            opt_u32("concurrency"),
-        ]),
+        obj(&[req_str("poolId"), req_str("name")]),
     );
     m.insert(
         "platform:admin:dispatch-pool:archived",
-        obj(&[req_str("dispatchPoolId"), req_str("code")]),
+        obj(&[req_str("poolId"), req_str("code")]),
     );
     m.insert(
         "platform:admin:dispatch-pool:deleted",
-        obj(&[req_str("dispatchPoolId"), req_str("code")]),
+        obj(&[req_str("poolId"), req_str("code")]),
     );
     m.insert(
         "platform:admin:dispatch-pools:synced",
@@ -383,31 +329,19 @@ pub fn schemas() -> HashMap<&'static str, Value> {
     // ─── platform:admin:subscription ────────────────────────────────────
     m.insert(
         "platform:admin:subscription:created",
-        obj(&[
-            req_str("subscriptionId"),
-            req_str("code"),
-            req_str("name"),
-            req_str("connectionId"),
-            req_str_array("eventTypes"),
-            opt_str("clientId"),
-        ]),
+        obj(&[req_str("subscriptionId"), req_str("code"), req_str("name")]),
     );
     m.insert(
         "platform:admin:subscription:updated",
-        obj(&[
-            req_str("subscriptionId"),
-            opt_str("name"),
-            req_str_array("eventTypesAdded"),
-            req_str_array("eventTypesRemoved"),
-        ]),
+        obj(&[req_str("subscriptionId"), req_str("name")]),
     );
     m.insert(
         "platform:admin:subscription:paused",
-        obj(&[req_str("subscriptionId"), req_str("code")]),
+        obj(&[req_str("subscriptionId")]),
     );
     m.insert(
         "platform:admin:subscription:resumed",
-        obj(&[req_str("subscriptionId"), req_str("code")]),
+        obj(&[req_str("subscriptionId")]),
     );
     m.insert(
         "platform:admin:subscription:deleted",
@@ -431,12 +365,12 @@ pub fn schemas() -> HashMap<&'static str, Value> {
 }
 
 /// Schemas for the event types the platform emits that Go's seeded
-/// catalogue lacks. The entries above are Go's catalogue verbatim (codes,
-/// names and schemas, `internal/platform/seed/event_schemas.go`), which
-/// predates several renames (Go seeded the client events as
-/// `platform:iam:client:*` until its `25c3ed6`). These describe each emitted event's
-/// `data` exactly (Go's `ToDataJSON`), so a subscription can reference every
-/// type the platform actually emits.
+/// catalogue lacked. The entries above are Go's older catalogue (codes, names
+/// and schemas, `internal/platform/seed/event_schemas.go`), pruned of the
+/// codes nothing emits and with the schemas corrected to the emitted data
+/// (Go's F9 follow-up, `45537af` and `4c23adf`; migrations 069 and 070 here).
+/// These describe each emitted event's `data` exactly (Go's `ToDataJSON`),
+/// so a subscription can reference every type the platform actually emits.
 fn emitted_beyond_go_catalogue(m: &mut HashMap<&'static str, Value>) {
     let id_and = |id: &'static str, more: &[Prop]| {
         let mut props = vec![req_str(id)];
@@ -592,7 +526,7 @@ fn emitted_beyond_go_catalogue(m: &mut HashMap<&'static str, Value>) {
     }
     m.insert(
         "platform:admin:oauth-client:secret-rotated",
-        id_and("oauthClientId", &[opt_str("previousSecretExpiresAt")]),
+        id_and("oauthClientId", &[opt_date_time("previousSecretExpiresAt")]),
     );
 
     // Identity provider and email domain mapping (Go's emitted names).
@@ -969,23 +903,26 @@ fn req_u32(name: &'static str) -> Prop {
     (name, json!({"type": "integer", "minimum": 0}), true)
 }
 
-fn opt_u32(name: &'static str) -> Prop {
-    (
-        name,
-        json!({"type": ["integer", "null"], "minimum": 0}),
-        false,
-    )
-}
-
 fn opt_bool(name: &'static str) -> Prop {
     (name, json!({"type": ["boolean", "null"]}), false)
 }
 
-/// A list that may be absent (Go's `omitempty`).
+/// A list the producer leaves out when empty, never `null` (Go's
+/// `optStrArray`, `omitempty`; serde `skip_serializing_if = "Vec::is_empty"`).
 fn opt_str_array(name: &'static str) -> Prop {
     (
         name,
-        json!({"type": ["array", "null"], "items": {"type": "string"}}),
+        json!({"type": "array", "items": {"type": "string"}}),
+        false,
+    )
+}
+
+/// An RFC 3339 timestamp the producer leaves out when unset (Go's
+/// `optDateTime`; serde `skip_serializing_if = "Option::is_none"`).
+fn opt_date_time(name: &'static str) -> Prop {
+    (
+        name,
+        json!({"type": "string", "format": "date-time"}),
         false,
     )
 }
@@ -1047,7 +984,8 @@ mod tests {
         let props = schema["properties"].as_object().unwrap();
         assert!(props.contains_key("principalId"));
         assert!(props.contains_key("email"));
-        assert!(props.contains_key("isAnchorUser"));
+        // What `UserCreated` sends (Go F9 follow-up, `4c23adf`).
+        assert_eq!(props.len(), 2);
     }
 
     #[test]
