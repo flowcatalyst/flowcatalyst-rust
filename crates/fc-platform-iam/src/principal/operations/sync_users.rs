@@ -255,6 +255,7 @@ impl<U: UnitOfWork> UseCase for SyncUsersUseCase<U> {
             updated,
             deactivated: 0,
             synced_emails: emails,
+            skipped_roles: Vec::new(),
         };
 
         // Go's usecaseop.Sync: each row's event and audit row, then the

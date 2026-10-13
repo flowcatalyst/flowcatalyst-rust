@@ -246,7 +246,8 @@ pub struct SyncPrincipalInputRequest {
     pub email: String,
     /// Display name
     pub name: String,
-    /// Role short names to assign (prefixed with applicationCode)
+    // Go's description (F15): the platform never prefixed the names.
+    /// Role names, the application's own (app:role, matched case-insensitively and not prefixed by the platform). A name that is not a role is not assigned and is reported in skippedRoles; another application's role refuses the sync (403 ROLE_APP_FORBIDDEN).
     #[serde(default)]
     pub roles: Vec<String>,
     /// Whether the user is active (default: true)
@@ -417,6 +418,7 @@ pub(super) async fn sync_roles(
             deleted: event.removed,
             synced_codes: event.synced_codes,
             password_hash_ignored: Vec::new(),
+            skipped_roles: Vec::new(),
         })),
         Err(err) => Err(err.into()),
     }
@@ -483,6 +485,7 @@ pub(super) async fn sync_event_types(
             deleted: event.deleted,
             synced_codes: event.synced_codes,
             password_hash_ignored: Vec::new(),
+            skipped_roles: Vec::new(),
         })),
         Err(err) => Err(err.into()),
     }
@@ -593,6 +596,7 @@ pub(super) async fn sync_subscriptions(
             deleted: event.deleted,
             synced_codes: event.synced_codes,
             password_hash_ignored: Vec::new(),
+            skipped_roles: Vec::new(),
         })),
         Err(err) => Err(err.into()),
     }
@@ -668,6 +672,7 @@ pub(super) async fn sync_dispatch_pools(
             deleted: event.deleted,
             synced_codes: event.synced_codes,
             password_hash_ignored: Vec::new(),
+            skipped_roles: Vec::new(),
         })),
         Err(err) => Err(err.into()),
     }
@@ -753,6 +758,7 @@ pub(super) async fn sync_principals(
             deleted: event.deactivated,
             synced_codes: event.synced_emails,
             password_hash_ignored,
+            skipped_roles: event.skipped_roles,
         })),
         Err(err) => Err(err.into()),
     }
@@ -902,6 +908,7 @@ pub(super) async fn sync_processes(
             deleted: event.deleted,
             synced_codes: event.synced_codes,
             password_hash_ignored: Vec::new(),
+            skipped_roles: Vec::new(),
         })),
         Err(err) => Err(err.into()),
     }

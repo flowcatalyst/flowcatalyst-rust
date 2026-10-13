@@ -237,4 +237,10 @@ pub struct SyncResultResponse {
     /// as Java's `passwordHashIgnored`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub password_hash_ignored: Vec<String>,
+    // Application principal sync only (Go F15): the role names that are not
+    // roles, so were not assigned. Omitted when empty, so every other sync's
+    // response is unchanged. Go's description.
+    /// Principal sync only: role names that are not roles and so were not assigned to anyone (lower-cased, each once, in payload order; omitted when none). The rest of the sync applied.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub skipped_roles: Vec<String>,
 }

@@ -1113,14 +1113,23 @@ async fn application(app: &TestApp, code: &str) {
 }
 
 /// The sync replaces and sweeps only its own application's SDK roles, never
-/// takes another application's or a platform role name, and an anchor's
-/// sync reaches every user.
+/// takes another application's or a platform role, skips a name that is not
+/// a role (Go F15), and an anchor's sync reaches every user.
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn application_sync_keeps_to_its_own_roles() {
     let app = setup().await;
     application(&app, "hr").await;
     application(&app, "rfp").await;
+    seed_roles(
+        &app,
+        vec![
+            roles::super_admin(),
+            AuthRole::new("rfp", "buyer", "Buyer"),
+            AuthRole::new("hr", "manager", "Manager"),
+        ],
+    )
+    .await;
     let syncer = stored_caller(
         &app,
         "hr-syncer@iam.test",
@@ -1140,7 +1149,7 @@ async fn application_sync_keeps_to_its_own_roles() {
     app.repos.principal_repo.update(&kept).await.unwrap();
     let swept = sdk_user(&app, "swept@iam.test", None, &["hr:employee", "rfp:buyer"]).await;
 
-    // Refused names: a platform role, another application's role.
+    // Refused: a platform role, another application's role.
     for role in ["platform:super-admin", "RFP:Buyer"] {
         let (status, resp) = read_json(
             app.post(
@@ -1162,7 +1171,8 @@ async fn application_sync_keeps_to_its_own_roles() {
         .unwrap()
         .is_none());
 
-    // Accepted: its own, an unprefixed name, an unknown prefix.
+    // Its own role is assigned; an unprefixed name and an unknown prefix are
+    // not roles, so skipped (Go F15).
     let (status, resp) = read_json(
         app.post(
             "/api/applications/hr/principals/sync?removeUnlisted=true",
@@ -1178,15 +1188,10 @@ async fn application_sync_keeps_to_its_own_roles() {
     assert_eq!(status, StatusCode::OK, "{resp}");
     assert_eq!(resp["updated"], 1);
     assert_eq!(resp["deleted"], 1, "{resp}");
+    assert_eq!(resp["skippedRoles"], json!(["employee", "legacy:thing"]));
     assert_eq!(
         roles_of(&app, &named).await,
-        vec![
-            "employee",
-            "hr:manager",
-            "legacy:thing",
-            "platform:viewer",
-            "rfp:buyer"
-        ]
+        vec!["hr:manager", "platform:viewer", "rfp:buyer"]
     );
     // The sweep stripped only hr's SDK role.
     assert_eq!(roles_of(&app, &swept).await, vec!["rfp:buyer"]);
@@ -1200,6 +1205,12 @@ async fn application_sync_keeps_to_its_own_roles() {
 async fn application_sync_stays_within_the_callers_reach() {
     let app = setup().await;
     application(&app, "hr").await;
+    // The role the sync assigns must exist, or it is skipped (Go F15).
+    seed_roles(
+        &app,
+        vec![AuthRole::new("hr", "manager", "Manager"), roles::viewer()],
+    )
+    .await;
     let mine = create_client(&app, "reach-mine").await;
     let theirs = create_client(&app, "reach-theirs").await;
     // A client-tier syncer that reaches every application.
@@ -1235,6 +1246,37 @@ async fn application_sync_stays_within_the_callers_reach() {
         .unwrap()
         .is_none());
     assert_eq!(roles_of(&app, &foreign).await, vec!["hr:employee"]);
+
+    // Per entry, as Go: its target's reach, then its roles. An earlier entry's
+    // foreign role is refused before a later entry's target.
+    let (status, resp) = read_json(
+        app.post(
+            "/api/applications/hr/principals/sync",
+            &syncer,
+            json!({ "principals": [
+                { "email": "brand-new@iam.test", "name": "New", "roles": ["platform:viewer"] },
+                { "email": "foreign@iam.test", "name": "Hijacked" }
+            ] }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert_eq!(code(&resp), "ROLE_APP_FORBIDDEN", "{resp}");
+    let (status, resp) = read_json(
+        app.post(
+            "/api/applications/hr/principals/sync",
+            &syncer,
+            json!({ "principals": [
+                { "email": "foreign@iam.test", "name": "Hijacked" },
+                { "email": "brand-new@iam.test", "name": "New", "roles": ["platform:viewer"] }
+            ] }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert_eq!(code(&resp), "SYNC_TARGET_FORBIDDEN", "{resp}");
 
     // The sweep: its own client's user loses hr's role; the other client's
     // user is out of reach and keeps it.

@@ -2668,7 +2668,7 @@ export type SyncPrincipalInputRequest = {
      */
     passwordHash?: string;
     /**
-     * Role short names (prefixed with applicationCode)
+     * Role names, the application's own (app:role, matched case-insensitively and not prefixed by the platform). A name that is not a role is not assigned and is reported in skippedRoles; another application's role refuses the sync (403 ROLE_APP_FORBIDDEN).
      */
     roles?: Array<string>;
 };
@@ -2727,6 +2727,10 @@ export type SyncResultResponse = {
     applicationCode: string;
     created: number;
     deleted: number;
+    /**
+     * Principal sync only: role names that are not roles and so were not assigned to anyone (lower-cased, each once, in payload order; omitted when none). The rest of the sync applied.
+     */
+    skippedRoles?: Array<string>;
     syncedCodes: Array<string>;
     updated: number;
 };
@@ -4758,6 +4762,10 @@ export type SyncResultResponseWritable = {
     applicationCode: string;
     created: number;
     deleted: number;
+    /**
+     * Principal sync only: role names that are not roles and so were not assigned to anyone (lower-cased, each once, in payload order; omitted when none). The rest of the sync applied.
+     */
+    skippedRoles?: Array<string>;
     syncedCodes: Array<string>;
     updated: number;
 };

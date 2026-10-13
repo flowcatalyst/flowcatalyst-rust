@@ -317,6 +317,11 @@ pub struct PrincipalsSynced {
     pub updated: u32,
     pub deactivated: u32,
     pub synced_emails: Vec<String>,
+    /// The role names the application's sync did not assign because they are
+    /// not roles (Go F15), for the route's `skippedRoles`. Not part of the
+    /// event's data, so the catalogued schema is unchanged.
+    #[serde(skip)]
+    pub skipped_roles: Vec<String>,
 }
 
 impl_domain_event!(PrincipalsSynced);

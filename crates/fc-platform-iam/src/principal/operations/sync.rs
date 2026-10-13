@@ -19,18 +19,25 @@
 //!
 //! The caller touches only principals within its reach (Java S1.3,
 //! decision #23): a listed user it could not administer refuses the whole
-//! sync with 403 `SYNC_TARGET_FORBIDDEN`; the sweep skips such users. Role
-//! names prefixed `platform:` or with another application's code are
-//! refused with 403 `ROLE_APP_FORBIDDEN` (decision #23); other names are
-//! accepted as before. The role ceiling then bounds every role the sync adds
-//! or removes, the sweep's included (Go `e08eee4`, F8): the caller must hold
-//! each such role's platform permissions, or the whole sync is refused with
-//! 403 `ROLE_ABOVE_CALLER` and nothing is written. An application's roles
-//! holding only its own permissions pass for any caller, so an SDK syncing
-//! its own roles is unaffected; the ceiling stops an own-application (or
-//! unprefixed) role that carries platform permissions, which the name rule
-//! lets through. A `platform:iam:principals:synced` rollup closes the
-//! sync. Run inside [`fc_platform_core::usecase::PgUnitOfWork::run`], the rows, every
+//! sync with 403 `SYNC_TARGET_FORBIDDEN`; the sweep skips such users. Then,
+//! per entry, its role names, lower-cased and matched exactly (no `app:`
+//! prefix is added; Go F12 and F15, owner ruling 2026-10-13):
+//! - a role of another application (a platform role included) refuses the
+//!   whole sync with 403 `ROLE_APP_FORBIDDEN`;
+//! - a name that is not a role, whatever its prefix, is neither assigned nor
+//!   refused and creates nothing: the entry syncs with its other roles (with
+//!   none, it loses this application's `SDK_SYNC` set). The names are logged
+//!   and reported in [`PrincipalsSynced::skipped_roles`] (the route's
+//!   `skippedRoles`), each once across the request, in payload order.
+//!
+//! The role ceiling then bounds every role the sync adds or removes, the
+//! sweep's included (Go `e08eee4`, F8): the caller must hold each such role's
+//! platform permissions, or the whole sync is refused with 403
+//! `ROLE_ABOVE_CALLER` and nothing is written. An application's roles holding
+//! only its own permissions pass for any caller, so an SDK syncing its own
+//! roles is unaffected; the ceiling stops an own-application role that
+//! carries platform permissions. A `platform:iam:principals:synced` rollup
+//! closes the sync. Run inside [`fc_platform_core::usecase::PgUnitOfWork::run`], the rows, every
 //! event and every audit entry commit in one transaction.
 
 use async_trait::async_trait;
@@ -64,7 +71,8 @@ pub struct SyncPrincipalInput {
     pub email: String,
     /// Display name
     pub name: String,
-    /// Role names to assign (the SDK prefixes them with the applicationCode)
+    /// Role names to assign, the application's own (`app:role`; the platform
+    /// adds no prefix). A name that is not a role is skipped.
     #[serde(default)]
     pub roles: Vec<String>,
     /// Whether the user is active (default: true)
@@ -217,12 +225,23 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
                 format!("Application not found: {}", app_code),
             )?;
 
-        let all_roles: Vec<String> = command
-            .principals
-            .iter()
-            .flat_map(|p| p.roles.iter().map(|r| r.to_lowercase()))
+        // Every role the payload names, in one query: name -> owning
+        // application.
+        let mut named: Vec<String> = Vec::new();
+        for r in command.principals.iter().flat_map(|p| &p.roles) {
+            let name = r.to_lowercase();
+            if !named.contains(&name) {
+                named.push(name);
+            }
+        }
+        let owners: HashMap<String, String> = self
+            .role_repo
+            .find_by_codes(&named)
+            .await
+            .map_err(|e| UseCaseError::commit(format!("Failed to load roles: {e}")))?
+            .into_iter()
+            .map(|r| (r.name.clone(), r.owning_application_code().to_string()))
             .collect();
-        self.require_syncable_roles(app_code, &all_roles).await?;
 
         let now = Utc::now();
         let emails: Vec<String> = command
@@ -241,13 +260,6 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
             .map(|p| (p.email().unwrap_or_default().to_lowercase(), p))
             .collect();
 
-        // Java S1.3: a listed user out of reach refuses the whole sync.
-        for (email, p) in &existing {
-            if !administers(&caller, p) {
-                return Err(sync_target_forbidden(email));
-            }
-        }
-
         // Keyed by email so a repeated entry updates the user the earlier one
         // created or loaded, in order.
         let mut order: Vec<String> = Vec::new();
@@ -256,13 +268,37 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
         let (mut created, mut updated, mut deactivated) = (0u32, 0u32, 0u32);
         // Every role the sync adds or removes, for the role ceiling.
         let mut changed: Vec<String> = Vec::new();
+        // The names that are not roles (F15), each once, in payload order.
+        let mut skipped: Vec<String> = Vec::new();
         let role_names =
             |p: &Principal| -> Vec<String> { p.roles.iter().map(|ra| ra.role.clone()).collect() };
 
         for (input, email) in command.principals.iter().zip(&emails) {
+            // Java S1.3: a listed user out of reach refuses the whole sync.
+            // Checked per entry, before its roles (Go's order).
+            if let Some(p) = existing.get(email) {
+                if !administers(&caller, p) {
+                    return Err(sync_target_forbidden(email));
+                }
+            }
             let mut roles: Vec<RoleAssignment> = Vec::with_capacity(input.roles.len());
             for r in &input.roles {
                 let name = r.to_lowercase();
+                match owners.get(&name) {
+                    None => {
+                        if !skipped.contains(&name) {
+                            skipped.push(name);
+                        }
+                        continue;
+                    }
+                    Some(owner) if owner != app_code => {
+                        return Err(UseCaseError::forbidden(
+                            "ROLE_APP_FORBIDDEN",
+                            format!("role '{name}' does not belong to application '{app_code}'"),
+                        ));
+                    }
+                    Some(_) => {}
+                }
                 if !roles.iter().any(|a| a.role == name) {
                     roles.push(RoleAssignment::with_source(name, AssignmentSource::SdkSync));
                 }
@@ -355,6 +391,14 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
         changed.retain(|r| seen.insert(r.clone()));
         let definitions = ceiling::definitions(&self.role_repo, &changed).await?;
         ceiling::require_roles(Some(&caller), &changed, &definitions)?;
+        if !skipped.is_empty() {
+            // Never silently: logged here, and the route reports them.
+            tracing::warn!(
+                application_code = app_code,
+                roles = ?skipped,
+                "principal sync: role names that are not roles were not assigned"
+            );
+        }
 
         let rollup = PrincipalsSynced {
             metadata: PrincipalsSynced::metadata_for(&ctx, app_code),
@@ -363,6 +407,7 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
             updated,
             deactivated,
             synced_emails: emails,
+            skipped_roles: skipped,
         };
         let (batch, row_events, rollup) = (PrincipalSyncBatch { principals }, row_events, rollup);
 
@@ -377,46 +422,6 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
                 &command,
             )
             .await
-    }
-}
-
-impl<U: UnitOfWork> SyncPrincipalsUseCase<U> {
-    /// Decision #23: refuse role names prefixed `platform:` or with another
-    /// application's code. One query for the whole payload.
-    async fn require_syncable_roles(
-        &self,
-        application_code: &str,
-        role_names: &[String],
-    ) -> Result<(), UseCaseError> {
-        let prefixes: Vec<String> = role_names
-            .iter()
-            .filter_map(|r| r.split_once(':').map(|(p, _)| p.to_string()))
-            .filter(|p| p != application_code)
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect();
-        if prefixes.is_empty() {
-            return Ok(());
-        }
-        let other_apps = self
-            .application_repo
-            .find_ids_by_codes(&prefixes)
-            .await
-            .map_err(|e| UseCaseError::commit(format!("Failed to load applications: {e}")))?;
-        for name in role_names {
-            let Some((prefix, _)) = name.split_once(':') else {
-                continue;
-            };
-            if prefix != application_code
-                && (prefix == "platform" || other_apps.contains_key(prefix))
-            {
-                return Err(UseCaseError::forbidden(
-                    "ROLE_APP_FORBIDDEN",
-                    format!("role '{name}' does not belong to application '{application_code}'"),
-                ));
-            }
-        }
-        Ok(())
     }
 }
 

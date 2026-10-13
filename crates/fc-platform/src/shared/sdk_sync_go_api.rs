@@ -167,6 +167,7 @@ pub async fn sync_connections(
         deleted: event.deleted,
         synced_codes: event.synced_codes,
         password_hash_ignored: Vec::new(),
+        skipped_roles: Vec::new(),
     }))
 }
 
@@ -225,5 +226,6 @@ pub async fn sync_processes_by_body(
         deleted: event.deleted,
         synced_codes: event.synced_codes,
         password_hash_ignored: Vec::new(),
+        skipped_roles: Vec::new(),
     }))
 }

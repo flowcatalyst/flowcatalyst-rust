@@ -671,6 +671,8 @@ fn principals_synced() {
         updated: 2,
         deactivated: 1,
         synced_emails: s(&["a@example.com"]),
+        // Not event data (Go F15): the snapshot below does not change.
+        skipped_roles: s(&["orders:ghost"]),
     });
     check(&e, EXPECTED_PRINCIPALS_SYNCED);
 }

@@ -236,5 +236,6 @@ pub async fn sync_app_docs(
         deleted: event.deleted,
         synced_codes: event.synced_codes,
         password_hash_ignored: Vec::new(),
+        skipped_roles: Vec::new(),
     }))
 }

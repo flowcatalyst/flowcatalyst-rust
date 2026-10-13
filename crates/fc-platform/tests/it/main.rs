@@ -91,6 +91,7 @@ mod platform_role_sync_confinement_test;
 mod portal_identity_test;
 mod postgres_integration_tests;
 mod principal_go_parity_test;
+mod principal_sync_unknown_roles_test;
 mod process_lifecycle_test;
 mod profile_only_test;
 mod prune_event_types_migration_test;
