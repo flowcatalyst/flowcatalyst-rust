@@ -3,6 +3,15 @@
 //! Syncs roles from an application SDK. Creates new SDK-sourced roles,
 //! updates existing SDK-sourced ones, and optionally removes unlisted
 //! SDK-sourced roles. CODE and DATABASE-sourced roles are never modified.
+//!
+//! The permission ceiling (owner ruling 14; Go F10 and F15, `c56a68c`,
+//! `2ba9763`) bounds the change: a platform permission a synced role gains or
+//! loses (only a non-empty list replaces the stored one), every permission of
+//! a new role and of a role `removeUnlisted` deletes, must be one the caller
+//! holds. The changes of every role are collected and checked once, after
+//! confinement and `ROLE_HAS_ASSIGNMENTS`: 403 `PERMISSION_ABOVE_CALLER`, the
+//! whole sync refused, nothing written. A same-named CODE or DATABASE role is
+//! skipped untouched, so not checked.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -10,6 +19,7 @@ use std::sync::Arc;
 
 use super::events::{RoleCreated, RoleDeleted, RoleUpdated, RolesSynced};
 use crate::application::repository::ApplicationRepository;
+use crate::role::ceiling;
 use crate::role::entity::{AuthRole, RoleSource};
 use crate::role::repository::RoleRepository;
 use fc_platform_core::shared::authorization_service::checks;
@@ -149,6 +159,10 @@ impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
         let mut saves: Vec<AuthRole> = Vec::new();
         let mut deletes: Vec<AuthRole> = Vec::new();
         let mut rows: Vec<RecordedEvent> = Vec::new();
+        // Every permission the sync adds or removes, for the ceiling: per role
+        // in payload order its added then its removed permissions, then the
+        // deleted roles' permissions.
+        let mut changed: Vec<String> = Vec::new();
 
         // Plan every row before anything is written (Go's `usecaseop.Sync`):
         // a refused row fails the sync with nothing written.
@@ -175,6 +189,10 @@ impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
                         // permissions in the UI, so an empty list keeps the
                         // stored permissions; only a non-empty list replaces them.
                         if !input.permissions.is_empty() {
+                            changed.extend(ceiling::changed(
+                                &sorted_permissions(role),
+                                &input.permissions,
+                            ));
                             updated.permissions = input.permissions.iter().cloned().collect();
                         }
                         updated.client_managed = input.client_managed;
@@ -199,6 +217,7 @@ impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
                     role.source = RoleSource::Sdk;
                     role.description = input.description.clone();
                     role.permissions = input.permissions.iter().cloned().collect();
+                    changed.extend(input.permissions.iter().cloned());
                     role.client_managed = input.client_managed;
                     rows.push(RecordedEvent::of(&RoleCreated::new(
                         &ctx, &role.id, &role.name,
@@ -228,6 +247,7 @@ impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
                             ),
                         ));
                     }
+                    changed.extend(sorted_permissions(role));
                     rows.push(RecordedEvent::of(&RoleDeleted::new(
                         &ctx, &role.id, &role.name,
                     ))?);
@@ -236,6 +256,10 @@ impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
                 }
             }
         }
+
+        // The permission ceiling over the whole change, before anything is
+        // written (Go `role.RequirePermissionsWithinCaller`).
+        ceiling::require_permissions(Some(ctx.caller()), changed.iter().map(String::as_str))?;
 
         let event = RolesSynced {
             metadata: RolesSynced::metadata_for(&ctx, &command.application_code),
@@ -253,6 +277,14 @@ impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
             .commit_sync(&*self.role_repo, &saves, &deletes, rows, event, &command)
             .await
     }
+}
+
+/// A stored role's permissions in a stable order (the set is unordered
+/// here), so a refusal names them the same way every time.
+fn sorted_permissions(role: &AuthRole) -> Vec<String> {
+    let mut permissions: Vec<String> = role.permissions.iter().cloned().collect();
+    permissions.sort();
+    permissions
 }
 
 /// The short role name: `name` without a leading `{application_code}:` (Go
