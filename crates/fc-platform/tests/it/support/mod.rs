@@ -335,7 +335,9 @@ impl TestApp {
     }
 
     /// A request carrying `token` as the platform session cookie rather
-    /// than a bearer.
+    /// than a bearer, as the SPA sends it: from the platform's own origin
+    /// (`Sec-Fetch-Site: same-origin`, which the session-cookie guard
+    /// requires of an unsafe request).
     pub async fn send_with_session<B: Serialize>(
         &self,
         method: Method,
@@ -346,7 +348,8 @@ impl TestApp {
         let builder = Request::builder()
             .method(method)
             .uri(path)
-            .header("cookie", format!("fc_session={session_token}"));
+            .header("cookie", format!("fc_session={session_token}"))
+            .header("sec-fetch-site", "same-origin");
         let req = match body {
             Some(b) => builder
                 .header("content-type", "application/json")
