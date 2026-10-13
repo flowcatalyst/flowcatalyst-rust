@@ -16,11 +16,7 @@
     reason = "the module list: the route-wiring scanner reads each `crate::<module>::routes(ctx)`"
 )]
 
-use axum::{
-    response::{IntoResponse, Json},
-    routing::get,
-    Router,
-};
+use axum::{response::Json, routing::get, Router};
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::shared::platform_context::{AggregateRoutes, PlatformContext};
@@ -222,69 +218,37 @@ pub fn build(ctx: &PlatformContext) -> (Router, serde_json::Value) {
     (app, openapi)
 }
 
-/// Serve the SPA in `static_dir` under `app`: hashed `/assets/*` immutable,
-/// the shell never cacheable, and the shell as the fallback for any path no
-/// route claims. A directory without `index.html` serves nothing.
+/// Serve the SPA in `static_dir` under `app` ([`serve_spa_files`]). A
+/// directory without `index.html` serves nothing.
 pub fn serve_spa(app: Router, static_dir: &str) -> Router {
-    let index_path = std::path::PathBuf::from(static_dir).join("index.html");
-    if index_path.exists() {
-        use axum::http::header::CACHE_CONTROL;
-        use axum::http::HeaderValue;
-        use tower_http::services::{ServeDir, ServeFile};
-        use tower_http::set_header::SetResponseHeaderLayer;
-
+    let root = std::path::PathBuf::from(static_dir);
+    if root.join("index.html").exists() {
         tracing::info!(dir = %static_dir, "Serving static frontend files with SPA fallback");
-
-        let assets_dir = std::path::PathBuf::from(static_dir).join("assets");
-        let assets_service = tower::ServiceBuilder::new()
-            .layer(SetResponseHeaderLayer::overriding(
-                CACHE_CONTROL,
-                HeaderValue::from_static("public, max-age=31536000, immutable"),
-            ))
-            .service(ServeDir::new(&assets_dir));
-
-        // SPA routes that conflict with API nests (e.g., /auth/login vs POST /auth/login).
-        // Without these, the /auth nest returns 405 for GET requests the SPA should handle.
-        let spa_index = index_path.clone();
-        let spa_handler = get(move || {
-            let path = spa_index.clone();
-            async move {
-                match tokio::fs::read_to_string(&path).await {
-                    Ok(html) => (
-                        [(CACHE_CONTROL, SPA_SHELL_CACHE_CONTROL)],
-                        axum::response::Html(html),
-                    )
-                        .into_response(),
-                    Err(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                }
-            }
-        });
-
-        // The shell — `/`, `/index.html` by name, and the SPA
-        // fallback for any other path — is never cacheable, so a
-        // browser never keeps a stale SPA after a deploy (Java
-        // 8fd35a8b). Every other static file keeps default caching.
-        let fallback_service = tower::ServiceBuilder::new()
-            .layer(SetResponseHeaderLayer::overriding(
-                CACHE_CONTROL,
-                |res: &axum::http::Response<_>| {
-                    is_html(res.headers())
-                        .then(|| HeaderValue::from_static(SPA_SHELL_CACHE_CONTROL))
-                },
-            ))
-            .service(ServeDir::new(static_dir).fallback(ServeFile::new(index_path)));
-
-        app.route("/auth/login", spa_handler.clone())
-            .route("/auth/forgot-password", spa_handler.clone())
-            .route("/auth/reset-password", spa_handler.clone())
-            // Invites land on the set-password framing of the same page.
-            .route("/auth/set-password", spa_handler)
-            .nest_service("/assets", assets_service)
-            .fallback_service(fallback_service)
+        serve_spa_files(app, crate::shared::spa::SpaFiles::Dir(root))
     } else {
         tracing::warn!(dir = %static_dir, "Static dir set but index.html not found");
         app
     }
+}
+
+/// Serve the SPA from `files` under `app` (Go `frontend.Handler`, the rules
+/// in `shared::spa`): the answer for every path no route claims, and the
+/// GET of the client routes that share a path with an API route registered
+/// for another method (`POST /auth/login`: without these, axum answers the
+/// GET with 405).
+pub fn serve_spa_files(app: Router, files: crate::shared::spa::SpaFiles) -> Router {
+    let files = Arc::new(files);
+    let spa =
+        move |method: axum::http::Method, uri: axum::http::Uri, headers: axum::http::HeaderMap| {
+            let files = Arc::clone(&files);
+            async move { crate::shared::spa::respond(&files, &method, &uri, &headers).await }
+        };
+    app.route("/auth/login", get(spa.clone()))
+        .route("/auth/forgot-password", get(spa.clone()))
+        .route("/auth/reset-password", get(spa.clone()))
+        // Invites land on the set-password framing of the same page.
+        .route("/auth/set-password", get(spa.clone()))
+        .fallback(spa)
 }
 
 /// The platform API listener's timeouts (owner ruling 10): keep-alive idle
@@ -322,18 +286,6 @@ pub async fn serve_api(
     fc_http_listener::serve(listener, app, listener_timeouts(), shutdown).await
 }
 
-/// `Cache-Control` of every SPA shell response (index.html, whether asked
-/// for by name, as `/`, or as the fallback for a client-side route). Hashed
-/// `/assets/*` keep `public, max-age=31536000, immutable`.
-pub const SPA_SHELL_CACHE_CONTROL: &str = "no-cache, no-store, must-revalidate";
-
-fn is_html(headers: &axum::http::HeaderMap) -> bool {
-    headers
-        .get(axum::http::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|ct| ct.starts_with("text/html"))
-}
-
 // =============================================================================
 // Health handler (simple inline version matching the binary crates)
 // =============================================================================
@@ -349,24 +301,9 @@ async fn health_handler() -> Json<serde_json::Value> {
 mod tests {
     use super::*;
     use axum::body::Body;
-    use axum::http::{header::CACHE_CONTROL, Request, StatusCode};
+    use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
 
-    async fn cache_control(app: &Router, path: &str) -> (StatusCode, Option<String>) {
-        let res = app
-            .clone()
-            .oneshot(Request::get(path).body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        let cc = res
-            .headers()
-            .get(CACHE_CONTROL)
-            .map(|v| v.to_str().unwrap().to_string());
-        (res.status(), cc)
-    }
-
-    /// Java 8fd35a8b: every shell response is never cacheable; hashed
-    /// assets stay immutable and other static files keep default caching.
     #[test]
     fn only_an_artifact_upload_is_read_against_a_stall_deadline() {
         let upload = |m: axum::http::Method, p: &str| is_artifact_upload(&m, &p.parse().unwrap());
@@ -397,39 +334,246 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn the_spa_shell_is_never_cacheable_and_assets_stay_immutable() {
+    /// Go frontend/handler_test.go's fixture: a shell, hashed assets, an
+    /// unhashed root file.
+    fn fixture() -> (tempfile::TempDir, Router) {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("index.html"), "<html>shell</html>").unwrap();
-        std::fs::write(dir.path().join("robots.txt"), "User-agent: *").unwrap();
-        std::fs::create_dir(dir.path().join("assets")).unwrap();
-        std::fs::write(dir.path().join("assets/index-abc123.js"), "1").unwrap();
-        let app = serve_spa(Router::new(), dir.path().to_str().unwrap());
+        // A file outside the served directory, for the traversal check.
+        std::fs::write(dir.path().join("outside-the-spa.txt"), "secret").unwrap();
+        let dist = dir.path().join("dist");
+        std::fs::create_dir_all(dist.join("assets")).unwrap();
+        std::fs::write(dist.join("index.html"), "<html>shell</html>").unwrap();
+        std::fs::write(dist.join("favicon.svg"), "<svg/>").unwrap();
+        std::fs::write(dist.join("assets/index-abc123.js"), "1").unwrap();
+        std::fs::write(dist.join("assets/index-abc123.css"), "a{}").unwrap();
+        let app = serve_spa(
+            Router::new().route("/api/real", axum::routing::post(|| async { "ok" })),
+            dist.to_str().unwrap(),
+        );
+        (dir, app)
+    }
 
-        let shell = Some(SPA_SHELL_CACHE_CONTROL.to_string());
+    struct Got {
+        status: StatusCode,
+        headers: axum::http::HeaderMap,
+        body: String,
+    }
+
+    impl Got {
+        fn header(&self, name: &str) -> &str {
+            self.headers
+                .get(name)
+                .map(|v| v.to_str().unwrap())
+                .unwrap_or("")
+        }
+        fn is_index(&self) -> bool {
+            self.body.contains("shell")
+        }
+    }
+
+    async fn send(app: &Router, method: &str, path: &str, headers: &[(&str, &str)]) -> Got {
+        let mut req = Request::builder().method(method).uri(path);
+        for (k, v) in headers {
+            req = req.header(*k, *v);
+        }
+        let res = app
+            .clone()
+            .oneshot(req.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = res.status();
+        let headers = res.headers().clone();
+        let bytes = http_body_util::BodyExt::collect(res.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
+        Got {
+            status,
+            headers,
+            body: String::from_utf8_lossy(&bytes).to_string(),
+        }
+    }
+
+    /// Go `TestSPAFallbackForClientRoutes` and
+    /// `TestAPIPrefixMatchesWholeSegment`.
+    #[tokio::test]
+    async fn client_routes_get_the_shell() {
+        let (_dir, app) = fixture();
         for path in [
             "/",
             "/index.html",
-            "/applications/app_1",
+            "/dashboard",
+            "/clients/clt_0ABC",
             "/auth/login",
             "/auth/reset-password",
+            "/authorization/roles/orders:admin",
+            "/portal/login",
+            "/apiary",
         ] {
+            let got = send(&app, "GET", path, &[]).await;
+            assert_eq!(got.status, StatusCode::OK, "{path}");
+            assert!(got.is_index(), "{path}: {}", got.body);
+        }
+    }
+
+    /// Go `TestMissingAssetIs404NotIndex`: a stale hashed chunk, a missing
+    /// root file, never the shell, never cached.
+    #[tokio::test]
+    async fn a_missing_asset_is_a_404_not_the_shell() {
+        let (_dir, app) = fixture();
+        for path in [
+            "/assets/index-OLDHASH.js",
+            "/assets/Page-OLD.css",
+            "/assets/",
+            "/assets",
+            "/assets/no-extension",
+            "/favicon.ico",
+            "/robots.txt",
+            "/some/deep/chunk-x.js",
+            "/manifest.webmanifest",
+            "/logo.PNG",
+        ] {
+            let got = send(&app, "GET", path, &[]).await;
+            assert_eq!(got.status, StatusCode::NOT_FOUND, "{path}");
+            assert!(!got.is_index(), "{path}");
+            assert_eq!(got.header("cache-control"), "no-store", "{path}");
+        }
+    }
+
+    /// Go `TestUnknownAPIPathIs404JSON`, plus the method rules: an unknown
+    /// API path is a JSON 404 for every method; a GET to an API route
+    /// registered for another method stays 405.
+    #[tokio::test]
+    async fn an_unknown_api_path_is_a_json_404() {
+        let (_dir, app) = fixture();
+        for path in [
+            "/api/nope",
+            "/api",
+            "/bff/nope",
+            "/oauth/nope",
+            "/.well-known/nope",
+            "/control/nope",
+            "/q/nope",
+        ] {
+            for method in ["GET", "POST", "DELETE"] {
+                let got = send(&app, method, path, &[("accept", "text/html")]).await;
+                assert_eq!(got.status, StatusCode::NOT_FOUND, "{method} {path}");
+                assert_eq!(got.header("content-type"), "application/json");
+                let body: serde_json::Value = serde_json::from_str(&got.body).unwrap();
+                assert_eq!(body["error"], "NOT_FOUND", "{method} {path}");
+                assert_eq!(body["message"], format!("No route for {method} {path}"));
+                assert_eq!(got.header("cache-control"), "no-store");
+            }
+        }
+        let got = send(&app, "GET", "/api/real", &[]).await;
+        assert_eq!(got.status, StatusCode::METHOD_NOT_ALLOWED);
+        assert!(!got.is_index());
+    }
+
+    /// Go `TestUnsafeMethodOnClientRouteIsNotServed`.
+    #[tokio::test]
+    async fn an_unsafe_method_on_a_client_route_is_405() {
+        let (_dir, app) = fixture();
+        for method in ["POST", "PUT", "DELETE", "PATCH"] {
+            let got = send(&app, method, "/dashboard", &[]).await;
+            assert_eq!(got.status, StatusCode::METHOD_NOT_ALLOWED, "{method}");
+            assert!(!got.is_index());
+            assert_eq!(got.header("allow"), "GET, HEAD");
+        }
+    }
+
+    /// Go `TestCacheHeaders`: the shell revalidates with its ETag (304), the
+    /// hashed assets are immutable, an unhashed root file revalidates.
+    #[tokio::test]
+    async fn cache_headers_and_revalidation() {
+        let (_dir, app) = fixture();
+        let index = send(&app, "GET", "/clients", &[]).await;
+        assert_eq!(index.header("cache-control"), "no-cache");
+        let etag = index.header("etag").to_string();
+        assert!(etag.starts_with('"') && etag.len() == 34, "{etag}");
+        for path in ["/", "/index.html", "/auth/login"] {
             assert_eq!(
-                cache_control(&app, path).await,
-                (StatusCode::OK, shell.clone()),
+                send(&app, "GET", path, &[]).await.header("etag"),
+                etag,
                 "{path}"
             );
         }
+        let revalidated = send(&app, "GET", "/clients", &[("if-none-match", &etag)]).await;
+        assert_eq!(revalidated.status, StatusCode::NOT_MODIFIED);
+        assert!(revalidated.body.is_empty());
+        assert_eq!(revalidated.header("etag"), etag);
+        let other = send(&app, "GET", "/clients", &[("if-none-match", "\"other\"")]).await;
+        assert_eq!(other.status, StatusCode::OK);
+
+        let js = send(&app, "GET", "/assets/index-abc123.js", &[]).await;
+        assert_eq!(js.status, StatusCode::OK);
         assert_eq!(
-            cache_control(&app, "/assets/index-abc123.js").await,
-            (
-                StatusCode::OK,
-                Some("public, max-age=31536000, immutable".to_string())
-            )
+            js.header("cache-control"),
+            "public, max-age=31536000, immutable"
         );
-        assert_eq!(
-            cache_control(&app, "/robots.txt").await,
-            (StatusCode::OK, None)
+        assert!(
+            js.header("content-type").contains("javascript"),
+            "{}",
+            js.header("content-type")
         );
+        assert_eq!(js.body, "1");
+
+        let favicon = send(&app, "GET", "/favicon.svg", &[]).await;
+        assert_eq!(favicon.header("cache-control"), "no-cache");
+        assert!(!favicon.header("etag").is_empty());
+        assert_eq!(favicon.header("content-type"), "image/svg+xml");
+
+        let head = send(&app, "HEAD", "/assets/index-abc123.css", &[]).await;
+        assert_eq!(head.status, StatusCode::OK);
+        assert!(head.body.is_empty());
+        let head = send(&app, "HEAD", "/dashboard", &[]).await;
+        assert_eq!(head.status, StatusCode::OK);
+        assert_eq!(head.header("cache-control"), "no-cache");
+    }
+
+    /// Go `TestSecurityHeaders`: on every answer, and a CSP that restricts
+    /// neither scripts, styles nor connections.
+    #[tokio::test]
+    async fn every_answer_carries_the_security_headers() {
+        let (_dir, app) = fixture();
+        for (method, path) in [
+            ("GET", "/"),
+            ("GET", "/dashboard"),
+            ("GET", "/auth/login"),
+            ("GET", "/assets/index-abc123.js"),
+            ("GET", "/assets/missing.js"),
+            ("GET", "/api/nope"),
+            ("POST", "/dashboard"),
+        ] {
+            let got = send(&app, method, path, &[]).await;
+            assert_eq!(got.header("x-content-type-options"), "nosniff", "{path}");
+            assert_eq!(got.header("x-frame-options"), "DENY", "{path}");
+            assert_eq!(got.header("referrer-policy"), "same-origin", "{path}");
+            let csp = got.header("content-security-policy");
+            for d in [
+                "frame-ancestors 'none'",
+                "object-src 'none'",
+                "base-uri 'self'",
+            ] {
+                assert!(csp.contains(d), "{path}: {csp}");
+            }
+            for d in ["default-src", "script-src", "style-src", "connect-src"] {
+                assert!(!csp.contains(d), "{path}: {csp}");
+            }
+        }
+    }
+
+    /// Go `TestPathTraversalIsNotServed`, encoded and plain.
+    #[tokio::test]
+    async fn path_traversal_is_not_served() {
+        let (_dir, app) = fixture();
+        for path in [
+            "/assets/../../outside-the-spa.txt",
+            "/assets/%2e%2e/%2e%2e/outside-the-spa.txt",
+            "/..%2foutside-the-spa.txt",
+        ] {
+            let got = send(&app, "GET", path, &[]).await;
+            assert!(!got.body.contains("secret"), "{path}");
+        }
     }
 }

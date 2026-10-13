@@ -853,8 +853,8 @@ DOC /q/openapi-full: 20ba74922669
 DOC developer-portal (build's returned document): 48ec78750194
 
 == full: app key (mounts /api/dispatch/*), SPA directory
-/ GET: 200 ct=text/html body=691f5a3987e4 limiter=- buckets=- doc=-
-/ PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
+/ GET: 200 ct=text/html; charset=utf-8 body=691f5a3987e4 limiter=- buckets=- doc=-
+/ PROBE: allow=GET, HEAD 405 ct=text/plain; charset=utf-8 body=c40aa69f0b30 limiter=- buckets=-
 /.well-known/jwks.json GET: 200 ct=application/json body=jwks limiter=- buckets=- doc=-
 /.well-known/jwks.json PROBE: allow=GET,HEAD 405 ct=- body=jwks limiter=- buckets=-
 /.well-known/openid-configuration GET: 200 ct=application/json body=511e205cb8e1 limiter=- buckets=- doc=-
@@ -1425,12 +1425,6 @@ DOC developer-portal (build's returned document): 48ec78750194
 /api/subscriptions/{id}/pause PROBE: allow=POST 405 ct=- body=e3b0c44298fc limiter=- buckets=-
 /api/subscriptions/{id}/resume POST: 403 ct=application/json body=850104f5ec67 limiter=- buckets=- doc=published+full
 /api/subscriptions/{id}/resume PROBE: allow=POST 405 ct=- body=e3b0c44298fc limiter=- buckets=-
-/assets GET: 404 ct=- body=e3b0c44298fc limiter=- buckets=- doc=-
-/assets PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
-/assets/ GET: 404 ct=- body=e3b0c44298fc limiter=- buckets=- doc=-
-/assets/ PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
-/assets/{*__private__axum_nest_tail_param} GET: 404 ct=- body=e3b0c44298fc limiter=- buckets=- doc=-
-/assets/{*__private__axum_nest_tail_param} PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
 /auth/2fa/challenge/email POST: 400 ct=application/json body=13ec7d66684e limiter=auth-ip buckets=- doc=-
 /auth/2fa/challenge/email PROBE: allow=POST 405 ct=- body=e3b0c44298fc limiter=auth-ip buckets=-
 /auth/2fa/enroll/email/begin POST: 400 ct=application/json body=13ec7d66684e limiter=auth-ip buckets=- doc=-
@@ -1713,10 +1707,10 @@ DOC developer-portal (build's returned document): 48ec78750194
 /swagger-ui/ PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
 /swagger-ui/{*rest} GET: 404 ct=- body=e3b0c44298fc limiter=- buckets=- doc=-
 /swagger-ui/{*rest} PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
-/zz-no-route GET: 200 ct=text/html body=691f5a3987e4 limiter=- buckets=- doc=-
-/zz-no-route PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
-/{*__private__axum_fallback} GET: 200 ct=text/html body=691f5a3987e4 limiter=- buckets=- doc=-
-/{*__private__axum_fallback} PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
+/zz-no-route GET: 200 ct=text/html; charset=utf-8 body=691f5a3987e4 limiter=- buckets=- doc=-
+/zz-no-route PROBE: allow=GET, HEAD 405 ct=text/plain; charset=utf-8 body=c40aa69f0b30 limiter=- buckets=-
+/{*__private__axum_fallback} GET: 200 ct=text/html; charset=utf-8 body=691f5a3987e4 limiter=- buckets=- doc=-
+/{*__private__axum_fallback} PROBE: allow=GET, HEAD 405 ct=text/plain; charset=utf-8 body=c40aa69f0b30 limiter=- buckets=-
 DOC /api/openapi.json: 48ec78750194
 DOC /api/openapi.yaml: bdd4ae2e8936
 DOC /q/openapi: 48ec78750194

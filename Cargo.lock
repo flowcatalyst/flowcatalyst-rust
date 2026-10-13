@@ -3449,6 +3449,7 @@ dependencies = [
  "hex",
  "http-body-util",
  "hyper",
+ "mime_guess",
  "regex",
  "reqwest",
  "serde",

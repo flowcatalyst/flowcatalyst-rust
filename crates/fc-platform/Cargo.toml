@@ -49,6 +49,11 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 time = "0.3"
 async-trait = { workspace = true }
+# SPA serving (shared::spa): content-hash ETags, MIME types, decoded paths.
+sha2 = "0.10"
+hex = { workspace = true }
+mime_guess = "2"
+urlencoding = "2.1"
 
 [dev-dependencies]
 # What the integration tests use directly (the platform's own crates use
@@ -61,12 +66,9 @@ cron = "0.15"
 fc-function-abi = { path = "../fc-function-abi" }
 fc-function-signing = { path = "../fc-function-signing" }
 fc-queue = { path = "../fc-queue", features = ["sqs", "postgres"] }
-hex = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
-sha2 = "0.10"
 tokio-util = { workspace = true, features = ["io"] }
-urlencoding = "2.1"
 # `InMemoryUnitOfWork` and `assert_str_enum` for the unit tests.
 fc-platform-core = { path = "../fc-platform-core", features = ["test-support"] }
 # Log capture in unit tests.

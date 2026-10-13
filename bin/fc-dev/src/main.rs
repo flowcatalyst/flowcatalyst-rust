@@ -21,12 +21,6 @@ use tracing::{error, info, warn};
 
 use rust_embed::Embed;
 
-use axum::http::header;
-use axum::http::HeaderMap;
-use axum::http::HeaderValue;
-use axum::http::StatusCode;
-use axum::http::Uri;
-use axum::response::Response;
 use fc_common::config;
 use fc_common::diagnostics;
 use fc_common::diagnostics::Exposition;
@@ -59,6 +53,7 @@ use fc_platform::shared::server_setup;
 use fc_platform::shared::server_setup::AuthInitConfig;
 use fc_platform::shared::server_setup::PlatformContext;
 use fc_platform::shared::server_setup::PlatformRoutesConfig;
+use fc_platform::shared::spa::{SpaFile, SpaFiles};
 use fc_router::{
     api::create_router as create_api_router, HealthService, HealthServiceConfig,
     HttpMediatorConfig, LifecycleConfig, LifecycleManager, QueueManager, WarningService,
@@ -1139,37 +1134,29 @@ async fn main() -> Result<()> {
     info!("Topcoat UI trial mounted at /ui");
 
     // Static frontend serving — uses FC_STATIC_DIR if set (for live reload),
-    // otherwise serves from the embedded frontend assets compiled into the binary.
-    let api_app = if let Ok(static_dir) = env::var("FC_STATIC_DIR") {
-        let index_path = PathBuf::from(&static_dir).join("index.html");
-        if index_path.exists() {
+    // otherwise serves from the embedded frontend assets compiled into the
+    // binary. Either way by the platform's SPA rules (`shared::spa`).
+    let frontend = match env::var("FC_STATIC_DIR") {
+        Ok(static_dir) if PathBuf::from(&static_dir).join("index.html").exists() => {
             info!(dir = %static_dir, "Serving frontend from filesystem (live reload)");
-            let app = router::serve_spa(api_app, &static_dir);
-            #[cfg(feature = "web")]
-            let app = app.fallback_service(fc_web::service(
-                web_deps.take().expect("web deps used once"),
-                router::serve_spa(Router::new(), &static_dir),
-            ));
-            app
-        } else {
-            warn!(dir = %static_dir, "FC_STATIC_DIR set but index.html not found — using embedded assets");
-            api_app.fallback(get(embedded_asset_handler))
+            SpaFiles::Dir(PathBuf::from(static_dir))
         }
-    } else {
-        info!("Serving embedded frontend (compiled into binary)");
-        let app = api_app
-            .route("/auth/login", get(embedded_spa_handler))
-            .route("/auth/forgot-password", get(embedded_spa_handler))
-            .route("/auth/reset-password", get(embedded_spa_handler));
-        #[cfg(feature = "web")]
-        let app = app.fallback_service(fc_web::service(
-            web_deps.take().expect("web deps used once"),
-            Router::new().fallback(get(embedded_asset_handler)),
-        ));
-        #[cfg(not(feature = "web"))]
-        let app = app.fallback(get(embedded_asset_handler));
-        app
+        not_set_or_empty => {
+            if let Ok(static_dir) = not_set_or_empty {
+                warn!(dir = %static_dir, "FC_STATIC_DIR set but index.html not found — using embedded assets");
+            }
+            info!("Serving embedded frontend (compiled into binary)");
+            SpaFiles::Embedded(embedded_frontend_file)
+        }
     };
+    let api_app = router::serve_spa_files(api_app, frontend.clone());
+    #[cfg(feature = "web")]
+    let api_app = api_app.fallback_service(fc_web::service(
+        web_deps.take().expect("web deps used once"),
+        router::serve_spa_files(Router::new(), frontend),
+    ));
+    #[cfg(not(feature = "web"))]
+    drop(frontend);
 
     let api_addr = format!("0.0.0.0:{}", args.api_port);
     info!("API server listening on http://{}", api_addr);
@@ -1445,24 +1432,10 @@ async fn health_handler() -> Json<serde_json::Value> {
     }))
 }
 
-/// Serve embedded frontend assets. Handles all GET requests that don't match API routes.
-/// For HTML requests or root, serves index.html (SPA fallback).
-/// For asset requests, serves the matching embedded file with correct MIME type.
-async fn embedded_asset_handler(uri: Uri) -> impl IntoResponse {
-    let path = uri.path().trim_start_matches('/');
-
-    // The shell asked for by name is the shell: never cacheable.
-    if path.is_empty() || path == "index.html" {
-        return embedded_spa_handler().await.into_response();
-    }
-
-    // Try exact path first (for assets like /assets/index-BKjElYp6.js)
-    if let Some(file) = FrontendAssets::get(path) {
-        return embedded_file_response(path, file.data.to_vec());
-    }
-
-    // SPA fallback: serve index.html for all other paths
-    embedded_spa_handler().await.into_response()
+/// A file of the SPA compiled into the binary and its SHA-256, for
+/// `fc_platform::shared::spa` (the content hash is computed at build time).
+fn embedded_frontend_file(path: &str) -> Option<SpaFile> {
+    FrontendAssets::get(path).map(|file| (file.data, file.metadata.sha256_hash()))
 }
 
 /// Logs a task that panicked or was cancelled while the process shut down.
@@ -1472,53 +1445,6 @@ fn log_join<T>(task: &str, joined: Result<T, JoinError>) {
     }
 }
 
-/// An embedded file other than the shell: hashed `/assets/*` are
-/// immutable; anything else keeps default caching.
-#[expect(
-    clippy::expect_used,
-    reason = "mime_guess yields registered MIME types, which are always valid header values"
-)]
-fn embedded_file_response(path: &str, data: Vec<u8>) -> Response {
-    let mime = mime_guess::from_path(path).first_or_octet_stream();
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::CONTENT_TYPE,
-        mime.as_ref()
-            .parse()
-            .expect("a MIME type is a valid header value"),
-    );
-    if path.starts_with("assets/") {
-        headers.insert(
-            header::CACHE_CONTROL,
-            HeaderValue::from_static("public, max-age=31536000, immutable"),
-        );
-    }
-    (headers, data).into_response()
-}
-
-/// Serve the embedded index.html (SPA entry point). Never cacheable
-/// (Java 8fd35a8b), so a browser never keeps a stale shell after an upgrade.
-async fn embedded_spa_handler() -> impl IntoResponse {
-    match FrontendAssets::get("index.html") {
-        Some(file) => embedded_shell_response(file.data.to_vec()),
-        None => (StatusCode::NOT_FOUND, "Frontend not embedded in this build").into_response(),
-    }
-}
-
-fn embedded_shell_response(html: Vec<u8>) -> Response {
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("text/html; charset=utf-8"),
-    );
-    headers.insert(
-        header::CACHE_CONTROL,
-        HeaderValue::from_static(router::SPA_SHELL_CACHE_CONTROL),
-    );
-    (headers, html).into_response()
-}
-
-use axum::response::IntoResponse;
 use fc_platform::event_type::operations::SyncEventTypeInput;
 
 /// Dev-only auto-sync of the Developer portal artefacts for the
@@ -1676,50 +1602,58 @@ fn changed_event_type_definitions(
 }
 
 #[cfg(test)]
-mod spa_cache_tests {
+mod spa_tests {
     use super::*;
-    use axum::http::header::CACHE_CONTROL;
+    use axum::body::Body;
+    use axum::http::{header, Request, StatusCode};
     use axum::response::Response;
-    use fc_platform::router;
+    use tower::ServiceExt;
 
-    fn cache_control(res: &Response) -> Option<&str> {
-        res.headers()
-            .get(CACHE_CONTROL)
-            .map(|v| v.to_str().unwrap())
-    }
-
-    /// Java 8fd35a8b: the shell is never cacheable; hashed assets stay
-    /// immutable; other embedded files keep default caching.
-    #[test]
-    fn the_embedded_shell_is_never_cacheable() {
-        let shell = embedded_shell_response(b"<html></html>".to_vec());
-        assert_eq!(cache_control(&shell), Some(router::SPA_SHELL_CACHE_CONTROL));
-        let asset = embedded_file_response("assets/index-abc.js", vec![]);
+    /// The real embedded build (when the frontend was built before this
+    /// binary, Go `TestEmbeddedBuild`): the shell revalidates, the hashed
+    /// script it references is immutable, a stale hash is a 404.
+    #[tokio::test]
+    async fn the_embedded_build_is_served_by_the_spa_rules() {
+        let Some(index) = FrontendAssets::get("index.html") else {
+            return; // a build without the frontend embeds nothing to serve
+        };
+        let app =
+            router::serve_spa_files(Router::new(), SpaFiles::Embedded(embedded_frontend_file));
+        let get = |path: String| {
+            let app = app.clone();
+            async move {
+                app.oneshot(Request::get(path).body(Body::empty()).unwrap())
+                    .await
+                    .unwrap()
+            }
+        };
+        let cache_control = |res: &Response| {
+            res.headers()
+                .get(header::CACHE_CONTROL)
+                .map(|v| v.to_str().unwrap().to_string())
+        };
+        for path in ["/", "/index.html", "/applications/app_1", "/auth/login"] {
+            let res = get(path.to_string()).await;
+            assert_eq!(res.status(), StatusCode::OK, "{path}");
+            assert_eq!(cache_control(&res).as_deref(), Some("no-cache"), "{path}");
+            assert!(res.headers().contains_key(header::ETAG), "{path}");
+        }
+        let html = String::from_utf8_lossy(&index.data).to_string();
+        let start = html
+            .find("src=\"/assets/")
+            .expect("index.html references a /assets/ script")
+            + 5;
+        let src = &html[start..start + html[start..].find('"').unwrap()];
+        let res = get(src.to_string()).await;
+        assert_eq!(res.status(), StatusCode::OK, "{src}");
         assert_eq!(
-            cache_control(&asset),
+            cache_control(&res).as_deref(),
             Some("public, max-age=31536000, immutable")
         );
-        assert_eq!(
-            cache_control(&embedded_file_response("favicon.ico", vec![])),
-            None
-        );
-    }
-
-    #[tokio::test]
-    async fn index_html_by_name_and_the_fallback_are_the_shell() {
-        if FrontendAssets::get("index.html").is_none() {
-            return; // a build without the frontend embeds nothing to serve
-        }
-        for path in ["/", "/index.html", "/applications/app_1"] {
-            let res = embedded_asset_handler(path.parse().unwrap())
-                .await
-                .into_response();
-            assert_eq!(
-                cache_control(&res),
-                Some(router::SPA_SHELL_CACHE_CONTROL),
-                "{path}"
-            );
-        }
+        let res = get("/assets/index-STALEHASH.js".to_string()).await;
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+        let res = get("/api/does-not-exist".to_string()).await;
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
     }
 }
 

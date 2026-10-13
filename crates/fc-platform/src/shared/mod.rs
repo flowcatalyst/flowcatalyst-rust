@@ -48,6 +48,7 @@ pub mod sdk_sync_api;
 pub mod sdk_sync_go_api;
 pub mod server_setup;
 pub mod session_csrf;
+pub mod spa;
 pub mod well_known_api;
 
 // Re-export commonly used items
