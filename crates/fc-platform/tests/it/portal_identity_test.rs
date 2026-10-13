@@ -20,6 +20,7 @@ use sha2::{Digest, Sha256};
 use tower::ServiceExt;
 
 use base64::engine::general_purpose;
+use fc_platform::auth::login_binding;
 use fc_platform::domain::{Principal, UserScope};
 use fc_platform::email_domain_mapping::entity::ScopeType;
 use fc_platform::identity_provider::entity::{IdentityProvider, IdentityProviderType};
@@ -1305,6 +1306,53 @@ async fn sso_owned_domains_route_to_their_idp() {
             .await
             .unwrap();
     assert_eq!(portal_client.as_deref(), Some(client_id.as_str()));
+    // The start binds the login to this browser (SSO login CSRF, F16
+    // follow-up): one cookie per login, named after the state.
+    let binding = login_binding::cookie_name(&state, false);
+    assert!(
+        resp.headers().get_all(header::SET_COOKIE).iter().any(|c| c
+            .to_str()
+            .unwrap()
+            .starts_with(&format!("{binding}={state};"))),
+        "the portal SSO start sets no binding cookie"
+    );
+    // A callback for a portal login started in another browser is refused
+    // before the IdP is asked, and the state is spent.
+    let other_flow = authorize(&app, &oauth_client, redirect, "st-sso-other").await;
+    let other = send_raw(
+        &app,
+        Request::get(format!(
+            "/portal/auth/oidc/login?flow={other_flow}&provider_id={}",
+            idp.id
+        ))
+        .header(header::HOST, "platform.test")
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await;
+    let other_state = query_param(&location(&other), "state").unwrap();
+    let (status, body) = read_json(
+        send_raw(
+            &app,
+            Request::get(format!(
+                "/auth/oidc/callback?state={other_state}&code=the-code"
+            ))
+            .header(header::HOST, "platform.test")
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"], "LOGIN_NOT_STARTED_HERE");
+    let (left,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM oauth_oidc_login_states WHERE state = $1")
+            .bind(&other_state)
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    assert_eq!(left, 0, "the refused state is spent");
 
     // The callback sink: a first login JIT-creates the identity with the app
     // it came through, and mints a portal code.

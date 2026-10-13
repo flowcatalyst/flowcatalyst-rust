@@ -66,6 +66,8 @@ cron = "0.15"
 fc-function-abi = { path = "../fc-function-abi" }
 fc-function-signing = { path = "../fc-function-signing" }
 fc-queue = { path = "../fc-queue", features = ["sqs", "postgres"] }
+# Signs the test identity provider's ID tokens (tests/it/sso_binding_test.rs).
+jsonwebtoken = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
 tokio-util = { workspace = true, features = ["io"] }

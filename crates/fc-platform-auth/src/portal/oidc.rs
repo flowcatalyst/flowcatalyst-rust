@@ -24,8 +24,10 @@ use super::login_api::{coded, issue_code, query_escape, redirect, PortalLoginSta
 use super::operations::{EnsureCommand, EnsurePortalIdentityUseCase};
 use super::repository::PortalOidcState;
 use super::PortalState;
+use crate::auth::login_binding;
 use crate::auth::oidc_login_api::{portal_handshake, portal_verify_callback};
 use axum::extract::Query;
+use axum_extra::extract::cookie::CookieJar;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::usecase::{ExecutionContext, UseCase};
 use fc_platform_iam::identity_provider::entity::IdentityProvider;
@@ -102,7 +104,14 @@ pub async fn start(
             "persist state failed",
         );
     }
-    redirect(StatusCode::FOUND, handshake.authorize_url)
+    // Bind the state to this browser: the callback requires this cookie
+    // (`login_binding`, SSO login CSRF).
+    let mut response = redirect(StatusCode::FOUND, handshake.authorize_url);
+    let binding = login_binding::binding_cookie(&parked.state, s.oidc.session_cookie.secure);
+    if let Ok(value) = header::HeaderValue::from_str(&binding.to_string()) {
+        response.headers_mut().append(header::SET_COOKIE, value);
+    }
+    response
 }
 
 /// Middleware over the shared OIDC router: completes callbacks whose state
@@ -125,13 +134,31 @@ pub async fn intercept(State(s): State<PortalLoginState>, req: Request, next: Ne
         Ok(None) => return next.run(req).await,
         Err(e) => return e.into_response(),
     };
-    let host = req
-        .headers()
-        .get(header::HOST)
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("localhost")
-        .to_string();
-    callback(&s, &parked, code, &host, req.uri()).await
+    // The login must have been started in this browser (`login_binding`),
+    // checked after the consume so a refused link is spent; the binding is
+    // cleared whatever the outcome.
+    let secure = s.oidc.session_cookie.secure;
+    let mut response = if login_binding::bound_to_browser(
+        &CookieJar::from_headers(req.headers()),
+        state_param,
+        secure,
+    ) {
+        let host = req
+            .headers()
+            .get(header::HOST)
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or("localhost")
+            .to_string();
+        callback(&s, &parked, code, &host, req.uri()).await
+    } else {
+        warn!(
+            identity_provider_id = %parked.identity_provider_id,
+            "portal OIDC callback refused: the login was not started in this browser"
+        );
+        login_binding::not_started_here()
+    };
+    login_binding::clear_on(&mut response, state_param, secure);
+    response
 }
 
 /// Verify the IdP callback of a portal handshake and hand it to the sink.

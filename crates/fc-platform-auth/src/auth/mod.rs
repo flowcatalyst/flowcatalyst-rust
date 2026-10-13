@@ -11,6 +11,7 @@ pub use fc_platform_iam::auth::*;
 // Core auth
 pub mod auth_api;
 pub mod login_backoff;
+pub mod login_binding;
 pub mod session_cookie;
 
 // OAuth

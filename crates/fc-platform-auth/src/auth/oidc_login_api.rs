@@ -33,6 +33,7 @@ use crate::auth::jwks_cache::{JwksCache, JwksError};
 use crate::auth::login_backoff;
 use crate::auth::login_backoff::BackoffDecision;
 use crate::auth::login_backoff::BackoffPolicy;
+use crate::auth::login_binding;
 use crate::auth::oauth_api;
 use crate::auth::oidc_login_state::OidcLoginState;
 use crate::auth::oidc_login_state_repository::OidcLoginStateRepository;
@@ -586,8 +587,18 @@ pub async fn oidc_login(
         "Redirecting to OIDC provider"
     );
 
-    // Redirect to IDP
-    (StatusCode::SEE_OTHER, [(header::LOCATION, auth_url)]).into_response()
+    // Redirect to IDP, the state bound to this browser: the callback
+    // requires this cookie (`login_binding`, SSO login CSRF).
+    let binding = CookieJar::new().add(login_binding::binding_cookie(
+        &oidc_state,
+        state.session_cookie.secure,
+    ));
+    (
+        StatusCode::SEE_OTHER,
+        binding,
+        [(header::LOCATION, auth_url)],
+    )
+        .into_response()
 }
 
 /// Handle OIDC callback from external IDP
@@ -606,6 +617,24 @@ pub async fn oidc_callback(
     Host(host): Host,
     uri: Uri,
     Query(params): Query<OidcCallbackParams>,
+    jar: CookieJar,
+) -> Response {
+    // Whatever the outcome, the login's browser binding is spent.
+    let bound_state = params.state.clone().filter(|s| !s.is_empty());
+    let secure = state.session_cookie.secure;
+    let mut response = complete_callback(state, host, uri, params, jar).await;
+    if let Some(bound_state) = bound_state {
+        login_binding::clear_on(&mut response, &bound_state, secure);
+    }
+    response
+}
+
+/// [`oidc_callback`] without the clearing of the browser binding.
+async fn complete_callback(
+    state: OidcLoginApiState,
+    host: String,
+    uri: Uri,
+    params: OidcCallbackParams,
     jar: CookieJar,
 ) -> Response {
     // Handle IDP errors
@@ -648,6 +677,19 @@ pub async fn oidc_callback(
             return error_redirect("Failed to validate login session");
         }
     };
+
+    // The state must have been started in this browser (`login_binding`):
+    // otherwise this is someone else's callback link, and completing it
+    // would sign this browser in to their account (login CSRF). Checked
+    // after the consume, so a refused link is spent. No login-attempt row:
+    // nothing has named an identity yet.
+    if !login_binding::bound_to_browser(&jar, oidc_state, state.session_cookie.secure) {
+        warn!(
+            identity_provider_id = %login_state.identity_provider_id,
+            "OIDC callback refused: the login was not started in this browser"
+        );
+        return login_binding::not_started_here();
+    }
 
     // Load identity provider and email domain mapping from stored IDs
     let idp = match state
@@ -1656,8 +1698,15 @@ pub async fn post_interaction_login(
         &callback_url,
     );
 
+    // The browser that follows this URL must be the one the callback sees
+    // (`login_binding`).
+    let binding = CookieJar::new().add(login_binding::binding_cookie(
+        &login_state.state,
+        state.session_cookie.secure,
+    ));
     (
         StatusCode::OK,
+        binding,
         Json(InteractionLoginResponse {
             success: true,
             redirect_url: Some(auth_url),
