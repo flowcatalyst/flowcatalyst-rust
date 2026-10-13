@@ -205,6 +205,20 @@ pub fn build(ctx: &PlatformContext) -> (Router, serde_json::Value) {
         crate::shared::profile_only::profile_only_without_role,
     ));
 
+    // An unsafe request the session cookie authenticated must come from
+    // this origin and carry JSON (Go `SessionCSRF`, F16); bearer callers
+    // are not affected. Outside the profile-only gate, so it runs first
+    // (right after the binaries' `AuthLayer`, as in Go) and a refused
+    // request gets the same answer whatever the caller's roles. The public
+    // base URL (the JWT issuer) is trusted as `Origin`, for a proxy that
+    // rewrites `Host`.
+    let app = app.layer(axum::middleware::from_fn_with_state(
+        Arc::new(
+            crate::shared::session_csrf::SessionCsrf::for_public_base_url(ctx.auth.auth.issuer()),
+        ),
+        crate::shared::session_csrf::session_csrf,
+    ));
+
     (app, openapi)
 }
 

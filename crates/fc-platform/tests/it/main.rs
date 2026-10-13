@@ -108,6 +108,7 @@ mod sdk_role_sync_ceiling_test;
 mod service_account_app_reach_test;
 mod service_account_delete_test;
 mod service_account_scope_test;
+mod session_csrf_test;
 mod sync_atomicity_test;
 mod two_factor_admin_test;
 mod two_factor_test;

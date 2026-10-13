@@ -88,6 +88,19 @@ impl TestApp {
     pub async fn setup_with_rate_limit_store(
         store: impl FnOnce(&sqlx::PgPool) -> Arc<dyn RateLimitStore>,
     ) -> Self {
+        Self::setup_with(store, "flowcatalyst-test").await
+    }
+
+    /// [`TestApp::setup`] with `issuer` as the JWT issuer, which is also the
+    /// public base URL the session-cookie guard trusts as `Origin`.
+    pub async fn setup_with_issuer(issuer: &str) -> Self {
+        Self::setup_with(|_| Arc::new(NoopRateLimitStore), issuer).await
+    }
+
+    async fn setup_with(
+        store: impl FnOnce(&sqlx::PgPool) -> Arc<dyn RateLimitStore>,
+        issuer: &str,
+    ) -> Self {
         let (container, database_url) = start_db("flowcatalyst_test").await;
 
         let pool = create_pool(&database_url).await.expect("pool");
@@ -120,8 +133,8 @@ impl TestApp {
             rsa_public_key: Some(public_key),
             rsa_public_key_previous: None,
             secret_key: String::new(),
-            issuer: "flowcatalyst-test".to_string(),
-            audience: "flowcatalyst-test".to_string(),
+            issuer: issuer.to_string(),
+            audience: issuer.to_string(),
             access_token_expiry_secs: 3600,
             session_token_expiry_secs: 28800,
             refresh_token_expiry_secs: 86400,
