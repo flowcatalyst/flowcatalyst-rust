@@ -468,3 +468,54 @@ async fn the_route_table_is_unchanged() {
         );
     }
 }
+
+/// Every public unsafe route has a decision (Go
+/// `TestEveryPublicUnsafeRouteIsDecided`, F16 follow-up): each POST, PUT,
+/// PATCH or DELETE in the pinned route table outside `/api` and `/bff` (the
+/// session-cookie group and the bearer API), plus the public
+/// `/api/dispatch/*` callbacks, is listed in `PUBLIC_UNSAFE_ROUTES`, and the
+/// list names no route the table does not hold. A new public route fails
+/// here once the snapshot is regenerated, until someone decides it.
+#[test]
+fn every_public_unsafe_route_is_decided() {
+    use fc_platform::shared::session_csrf::PUBLIC_UNSAFE_ROUTES;
+
+    let snapshot = fs::read_to_string(SNAPSHOT).expect("route table snapshot");
+    let full = snapshot
+        .split("\n== full")
+        .nth(1)
+        .expect("the full configuration's section");
+    let mut public = BTreeSet::new();
+    for line in full.lines() {
+        let Some((path, rest)) = line.split_once(' ') else {
+            continue;
+        };
+        let Some((method, _)) = rest.split_once(':') else {
+            continue;
+        };
+        if !matches!(method, "POST" | "PUT" | "PATCH" | "DELETE") {
+            continue;
+        }
+        let authenticated_api = (path.starts_with("/api/") || path.starts_with("/bff/"))
+            && !path.starts_with("/api/dispatch/");
+        if !authenticated_api {
+            public.insert((method.to_string(), path.to_string()));
+        }
+    }
+    let decided: BTreeSet<(String, String)> = PUBLIC_UNSAFE_ROUTES
+        .iter()
+        .map(|(m, p, _, _)| (m.to_string(), p.to_string()))
+        .collect();
+    let undecided: Vec<_> = public.difference(&decided).collect();
+    let stale: Vec<_> = decided.difference(&public).collect();
+    assert!(
+        undecided.is_empty() && stale.is_empty(),
+        "public unsafe routes with no decision in session_csrf::PUBLIC_UNSAFE_ROUTES: \
+         {undecided:?}; decisions for routes the table does not hold: {stale:?}"
+    );
+    assert_eq!(
+        decided.len(),
+        PUBLIC_UNSAFE_ROUTES.len(),
+        "a route decided twice"
+    );
+}

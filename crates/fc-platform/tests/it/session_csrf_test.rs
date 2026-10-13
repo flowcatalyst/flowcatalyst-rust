@@ -580,18 +580,7 @@ async fn public_routes_and_stale_cookies_are_not_cookie_sessions() {
             Some("application/x-www-form-urlencoded"),
             Some("grant_type=client_credentials&client_id=nope&client_secret=nope".to_string()),
         ),
-        (
-            "/auth/login",
-            Some("text/plain"),
-            Some(r#"{"email":"root@xo.test","password":"nope"}"#.into()),
-        ),
         ("/auth/logout", None, None),
-        ("/auth/2fa/verify", Some("text/plain"), Some("{}".into())),
-        (
-            "/auth/password-reset/request",
-            Some("text/plain"),
-            Some(r#"{"email":"x@xo.test"}"#.into()),
-        ),
         (
             "/api/dispatch/process",
             Some("text/plain"),
@@ -614,6 +603,31 @@ async fn public_routes_and_stale_cookies_are_not_cookie_sessions() {
         );
         assert_ne!(
             resp["error"], "UNSUPPORTED_MEDIA_TYPE",
+            "{path}: {status} {resp}"
+        );
+    }
+
+    // The sign-in routes answer to their own rule (login_csrf_test), not
+    // the cookie rule: a cookie-carrying JSON request with neither browser
+    // header is not refused there, as the cookie rule would refuse it.
+    for path in [
+        "/auth/login",
+        "/auth/2fa/verify",
+        "/auth/password-reset/request",
+    ] {
+        let (status, resp) = send(
+            &app,
+            Req {
+                path: path.into(),
+                session: Some(session.clone()),
+                content_type: Some("application/json"),
+                body: Some(r#"{"email":"root@xo.test","password":"nope"}"#.into()),
+                ..Req::default()
+            },
+        )
+        .await;
+        assert_ne!(
+            resp["error"], "CROSS_ORIGIN_REQUEST",
             "{path}: {status} {resp}"
         );
     }

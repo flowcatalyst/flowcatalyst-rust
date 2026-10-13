@@ -41,6 +41,7 @@ use axum::extract::{Request, State};
 use axum::http::header::{
     AUTHORIZATION, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, HOST, TRANSFER_ENCODING,
 };
+use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -62,6 +63,14 @@ pub const CROSS_ORIGIN_MESSAGE: &str =
 pub const UNSUPPORTED_MEDIA_TYPE_MESSAGE: &str =
     "Requests authenticated by the session cookie must send a JSON body (Content-Type: application/json).";
 
+/// Go `CredentialCSRF`'s 403 message (the sign-in routes).
+pub const SIGN_IN_CROSS_ORIGIN_MESSAGE: &str =
+    "This request was refused because it did not come from this site. \
+     Sign-in and credential requests must be sent by the platform's own pages.";
+/// Go `CredentialCSRF`'s 415 message.
+pub const SIGN_IN_UNSUPPORTED_MEDIA_TYPE_MESSAGE: &str =
+    "This endpoint accepts only a JSON body (Content-Type: application/json).";
+
 /// Why the guard refuses a request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Refusal {
@@ -69,6 +78,10 @@ pub enum Refusal {
     CrossOrigin,
     /// 415 `UNSUPPORTED_MEDIA_TYPE`.
     UnsupportedMediaType,
+    /// 403 `CROSS_ORIGIN_REQUEST` on a sign-in route.
+    SignInCrossOrigin,
+    /// 415 `UNSUPPORTED_MEDIA_TYPE` on a sign-in route.
+    SignInUnsupportedMediaType,
 }
 
 impl IntoResponse for Refusal {
@@ -83,6 +96,16 @@ impl IntoResponse for Refusal {
                 StatusCode::UNSUPPORTED_MEDIA_TYPE,
                 CODE_UNSUPPORTED_MEDIA_TYPE,
                 UNSUPPORTED_MEDIA_TYPE_MESSAGE,
+            ),
+            Self::SignInCrossOrigin => (
+                StatusCode::FORBIDDEN,
+                CODE_CROSS_ORIGIN_REQUEST,
+                SIGN_IN_CROSS_ORIGIN_MESSAGE,
+            ),
+            Self::SignInUnsupportedMediaType => (
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                CODE_UNSUPPORTED_MEDIA_TYPE,
+                SIGN_IN_UNSUPPORTED_MEDIA_TYPE_MESSAGE,
             ),
         };
         (
@@ -138,7 +161,7 @@ impl SessionCsrf {
     /// The rule for an unsafe request the session cookie authenticated
     /// (`has_body`: it carries, or may carry, a body).
     pub fn check(&self, headers: &HeaderMap, has_body: bool) -> Result<(), Refusal> {
-        if !self.is_from_this_origin(headers) {
+        if !self.is_from_this_origin(headers, Provenance::Required) {
             return Err(Refusal::CrossOrigin);
         }
         if has_body && !is_json_media_type(header(headers, CONTENT_TYPE.as_str())) {
@@ -147,15 +170,32 @@ impl SessionCsrf {
         Ok(())
     }
 
-    /// Go `CrossOriginProtection.Check` plus the neither-header refusal.
-    fn is_from_this_origin(&self, headers: &HeaderMap) -> bool {
+    /// The rule for an unsafe request to a sign-in route ([`sign_in_routes`],
+    /// Go `CredentialCSRF`), authenticated or not: refused when a browser
+    /// says another origin sent it, but a request with neither
+    /// `Sec-Fetch-Site` nor `Origin` passes (it did not come from a browser,
+    /// and login CSRF needs the victim's browser); a body must be JSON for
+    /// every caller.
+    pub fn check_sign_in(&self, headers: &HeaderMap, has_body: bool) -> Result<(), Refusal> {
+        if !self.is_from_this_origin(headers, Provenance::IfStated) {
+            return Err(Refusal::SignInCrossOrigin);
+        }
+        if has_body && !is_json_media_type(header(headers, CONTENT_TYPE.as_str())) {
+            return Err(Refusal::SignInUnsupportedMediaType);
+        }
+        Ok(())
+    }
+
+    /// Go `CrossOriginProtection.Check`, plus, when `provenance` is
+    /// required, the neither-header refusal.
+    fn is_from_this_origin(&self, headers: &HeaderMap, provenance: Provenance) -> bool {
         let origin = header(headers, "origin");
         let trusted = || origin.is_some_and(|o| self.trusted_origins.iter().any(|t| t == o));
         match header(headers, "sec-fetch-site") {
             Some("same-origin" | "none") => true,
             Some(_) => trusted(),
             None => match origin {
-                None => false,
+                None => provenance == Provenance::IfStated,
                 Some(o) => {
                     let host = header(headers, HOST.as_str());
                     host.is_some_and(|h| !h.is_empty() && origin_host(o) == Some(h)) || trusted()
@@ -163,6 +203,15 @@ impl SessionCsrf {
             },
         }
     }
+}
+
+/// Whether a request must state where it came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Provenance {
+    /// Neither `Sec-Fetch-Site` nor `Origin` is a refusal (the cookie rule).
+    Required,
+    /// Checked when stated; neither header passes (the sign-in rule).
+    IfStated,
 }
 
 fn header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
@@ -331,6 +380,87 @@ pub fn outside_the_authenticated_group(path: &str) -> bool {
         )
 }
 
+/// What protects a public unsafe route: every POST, PUT, PATCH and DELETE
+/// outside `/api` and `/bff` (and the public `/api/dispatch/*` callbacks)
+/// has a decision in [`PUBLIC_UNSAFE_ROUTES`] (Go
+/// `TestEveryPublicUnsafeRouteIsDecided`; pinned against the route table
+/// by `route_table_snapshot_test`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublicRouteDecision {
+    /// JSON only and refused cross-origin, for every caller
+    /// ([`SessionCsrf::check_sign_in`]): it signs a browser in or sets its
+    /// credentials.
+    SignIn,
+    /// Authenticated: the cookie rule ([`SessionCsrf::check`]) covers the
+    /// session cookie; a bearer is exempt.
+    CookieSession,
+    /// Left as it is, for the reason given.
+    Left,
+}
+
+/// Every public unsafe route, its decision and why (Go F16 follow-up,
+/// decision 24). Paths as the router registers them.
+pub const PUBLIC_UNSAFE_ROUTES: &[(&str, &str, PublicRouteDecision, &str)] = {
+    use PublicRouteDecision::{CookieSession, Left, SignIn};
+    &[
+        ("POST", "/auth/login", SignIn, "mints fc_session"),
+        ("POST", "/auth/2fa/verify", SignIn, "finishes a login, mints fc_session"),
+        ("POST", "/auth/2fa/enroll/totp/confirm", SignIn, "finishes a login, mints fc_session"),
+        ("POST", "/auth/2fa/enroll/email/confirm", SignIn, "finishes a login, mints fc_session"),
+        ("POST", "/auth/2fa/challenge/email", SignIn, "a step of the same flow; sends mail"),
+        ("POST", "/auth/2fa/enroll/totp/begin", SignIn, "a step of the same flow; a factor secret"),
+        ("POST", "/auth/2fa/enroll/email/begin", SignIn, "a step of the same flow; sends mail"),
+        ("POST", "/auth/webauthn/authenticate/begin", SignIn, "passkey sign-in"),
+        ("POST", "/auth/webauthn/authenticate/complete", SignIn, "passkey sign-in mints fc_session"),
+        ("POST", "/auth/password-reset/confirm", SignIn, "sets a password; an INVITE confirm mints fc_session"),
+        ("POST", "/auth/password-reset/request", SignIn, "mints a token, sends mail"),
+        ("POST", "/auth/password-setup/request", SignIn, "mints a token, sends mail"),
+        ("POST", "/portal/auth/login", SignIn, "portal password login (a code redirect in JSON, no cookie)"),
+        ("POST", "/portal/auth/password-reset", SignIn, "portal reset request, sends mail"),
+        ("POST", "/portal/auth/check-domain", SignIn, "guarded with the rest of the portal flow, as Go's one registration"),
+        ("POST", "/auth/check-domain", Left, "read-only lookup"),
+        ("POST", "/auth/logout", Left, "issues nothing; GET /auth/oidc/session/end clears the cookie by design"),
+        ("POST", "/auth/refresh", Left, "refresh token in the body, tokens in the JSON body, no cookie"),
+        ("POST", "/auth/oidc/interaction/{uid}/login", Left, "Rust-only and inert (nothing creates an interaction state); typed JSON body; answers an IdP URL, sets no session, and the callback requires the start's binding cookie"),
+        ("POST", "/oauth/token", Left, "form-encoded by the spec, client-authenticated; no password grant; sets no cookie"),
+        ("POST", "/oauth/introspect", Left, "form-encoded, client-authenticated"),
+        ("POST", "/oauth/revoke", Left, "form-encoded, client-authenticated"),
+        ("POST", "/oauth/userinfo", Left, "bearer access token"),
+        ("POST", "/auth/change-password", CookieSession, "authenticated"),
+        ("POST", "/auth/change-password/send-email-code", CookieSession, "authenticated"),
+        ("POST", "/auth/client/switch", CookieSession, "authenticated"),
+        ("POST", "/auth/2fa/methods/totp/begin", CookieSession, "authenticated"),
+        ("POST", "/auth/2fa/methods/totp/confirm", CookieSession, "authenticated"),
+        ("POST", "/auth/2fa/methods/email/begin", CookieSession, "authenticated"),
+        ("POST", "/auth/2fa/methods/email/confirm", CookieSession, "authenticated"),
+        ("DELETE", "/auth/2fa/methods/{method}", CookieSession, "authenticated"),
+        ("POST", "/auth/2fa/recovery-codes/regenerate", CookieSession, "authenticated"),
+        ("DELETE", "/auth/2fa/trusted-devices/{id}", CookieSession, "authenticated"),
+        ("POST", "/auth/webauthn/register/begin", CookieSession, "authenticated"),
+        ("POST", "/auth/webauthn/register/complete", CookieSession, "authenticated"),
+        ("DELETE", "/auth/webauthn/credentials/{id}", CookieSession, "authenticated"),
+        ("POST", "/control/functions/events", Left, "function runner bearer"),
+        ("POST", "/control/functions/heartbeat", Left, "function runner bearer"),
+        ("POST", "/api/dispatch/process", Left, "HMAC job token"),
+        ("POST", "/api/dispatch/settled", Left, "HMAC job token"),
+    ]
+};
+
+/// The sign-in routes ([`PublicRouteDecision::SignIn`]), all POST.
+pub fn sign_in_routes() -> Vec<&'static str> {
+    PUBLIC_UNSAFE_ROUTES
+        .iter()
+        .filter(|(_, _, decision, _)| *decision == PublicRouteDecision::SignIn)
+        .map(|(_, path, _, _)| *path)
+        .collect()
+}
+
+fn is_sign_in_route(method: &Method, path: &str) -> bool {
+    PUBLIC_UNSAFE_ROUTES.iter().any(|(m, p, decision, _)| {
+        *decision == PublicRouteDecision::SignIn && *p == path && method.as_str() == *m
+    })
+}
+
 /// The guard, as an axum middleware. Mount it inside the layer that
 /// installs the auth services (`AuthLayer`) and outside the profile-only
 /// gate (Go runs it right after the Authenticator, before that gate, so a
@@ -340,36 +470,58 @@ pub async fn session_csrf(
     request: Request,
     next: Next,
 ) -> Response {
-    if safe_method(request.method())
-        || outside_the_authenticated_group(request.uri().path())
-        // Only a request presenting the cookie, and no Authorization header
-        // (which decides on its own), can be cookie-authenticated.
-        || request.headers().contains_key(AUTHORIZATION)
-        || extract_session_cookie(request.headers()).is_none()
-    {
+    if safe_method(request.method()) {
+        return next.run(request).await;
+    }
+    let path = request.uri().path();
+    let sign_in = is_sign_in_route(request.method(), path);
+    // Only a request presenting the cookie, and no Authorization header
+    // (which decides on its own), can be cookie-authenticated.
+    let cookie_candidate = !outside_the_authenticated_group(path)
+        && !request.headers().contains_key(AUTHORIZATION)
+        && extract_session_cookie(request.headers()).is_some();
+    if !sign_in && !cookie_candidate {
         return next.run(request).await;
     }
     let body_present = has_body(&request);
     let (mut parts, body) = request.into_parts();
-    // Authenticates once; the handler's extractor reuses the context.
-    let by_cookie = resolve_context(&mut parts)
-        .await
-        .is_some_and(|context| context.via_session_cookie());
-    if by_cookie {
-        if let Err(refusal) = guard.check(&parts.headers, body_present) {
-            if refusal == Refusal::CrossOrigin {
-                tracing::warn!(
-                    method = %parts.method,
-                    path = parts.uri.path(),
-                    origin = header(&parts.headers, "origin").unwrap_or(""),
-                    sec_fetch_site = header(&parts.headers, "sec-fetch-site").unwrap_or(""),
-                    "cookie-session request refused: not from this origin"
-                );
+    if cookie_candidate {
+        // Authenticates once; the handler's extractor reuses the context.
+        let by_cookie = resolve_context(&mut parts)
+            .await
+            .is_some_and(|context| context.via_session_cookie());
+        if by_cookie {
+            if let Err(refusal) = guard.check(&parts.headers, body_present) {
+                return refuse(&parts, refusal);
             }
-            return refusal.into_response();
+        }
+    }
+    // A sign-in route (Go `CredentialCSRF`), whoever calls it.
+    if sign_in {
+        if let Err(refusal) = guard.check_sign_in(&parts.headers, body_present) {
+            return refuse(&parts, refusal);
         }
     }
     next.run(Request::from_parts(parts, body)).await
+}
+
+/// The refusal, a cross-origin one logged (warn) with what the browser said.
+fn refuse(parts: &Parts, refusal: Refusal) -> Response {
+    let what = match refusal {
+        Refusal::CrossOrigin => Some("cookie-session request refused: not from this origin"),
+        Refusal::SignInCrossOrigin => Some("sign-in request refused: not from this origin"),
+        Refusal::UnsupportedMediaType | Refusal::SignInUnsupportedMediaType => None,
+    };
+    if let Some(what) = what {
+        tracing::warn!(
+            method = %parts.method,
+            path = parts.uri.path(),
+            origin = header(&parts.headers, "origin").unwrap_or(""),
+            sec_fetch_site = header(&parts.headers, "sec-fetch-site").unwrap_or(""),
+            "{what}"
+        );
+    }
+    refusal.into_response()
 }
 
 #[cfg(test)]
@@ -576,6 +728,150 @@ mod tests {
             }
             assert_eq!(guard.check(&headers, c.body), c.want, "{}", c.name);
         }
+    }
+
+    /// Go `TestCredentialCSRF`: the same provenance check, except that a
+    /// request with neither header passes, and JSON only for every caller.
+    #[test]
+    fn the_sign_in_rule_matrix() {
+        use Refusal::{SignInCrossOrigin, SignInUnsupportedMediaType};
+        let json = Some("application/json");
+        let cases = [
+            Case {
+                sec_fetch_site: Some("same-origin"),
+                origin: Some(SELF),
+                content_type: json,
+                body: true,
+                ..case("same-origin")
+            },
+            Case {
+                sec_fetch_site: Some("none"),
+                content_type: json,
+                body: true,
+                ..case("user-initiated")
+            },
+            Case {
+                sec_fetch_site: Some("cross-site"),
+                origin: Some("https://attacker.test"),
+                content_type: Some("text/plain"),
+                body: true,
+                want: Err(SignInCrossOrigin),
+                ..case("cross-site text/plain (the form attack)")
+            },
+            Case {
+                sec_fetch_site: Some("same-site"),
+                origin: Some("https://evil.example.com"),
+                content_type: json,
+                body: true,
+                want: Err(SignInCrossOrigin),
+                ..case("same-site sibling")
+            },
+            Case {
+                origin: Some("https://evil.example.com"),
+                content_type: Some("text/plain"),
+                body: true,
+                want: Err(SignInCrossOrigin),
+                ..case("old browser, foreign Origin")
+            },
+            Case {
+                origin: Some("http://platform.example.com"),
+                content_type: json,
+                body: true,
+                ..case("old browser, Origin matches Host")
+            },
+            Case {
+                origin: Some("null"),
+                content_type: json,
+                body: true,
+                want: Err(SignInCrossOrigin),
+                ..case("Origin null")
+            },
+            Case {
+                host: "internal:8080",
+                origin: Some(SELF),
+                content_type: json,
+                body: true,
+                ..case("rewritten Host, trusted public Origin")
+            },
+            Case {
+                content_type: json,
+                body: true,
+                ..case("neither header: a non-browser caller passes")
+            },
+            Case {
+                content_type: Some("application/x-www-form-urlencoded"),
+                body: true,
+                want: Err(SignInUnsupportedMediaType),
+                ..case("non-browser form body")
+            },
+            Case {
+                sec_fetch_site: Some("same-origin"),
+                content_type: Some("text/plain;charset=UTF-8"),
+                body: true,
+                want: Err(SignInUnsupportedMediaType),
+                ..case("same-origin text/plain")
+            },
+            Case {
+                sec_fetch_site: Some("same-origin"),
+                content_type: Some("multipart/form-data; boundary=x"),
+                body: true,
+                want: Err(SignInUnsupportedMediaType),
+                ..case("same-origin multipart")
+            },
+            Case {
+                sec_fetch_site: Some("same-origin"),
+                body: true,
+                want: Err(SignInUnsupportedMediaType),
+                ..case("body without Content-Type")
+            },
+            Case {
+                content_type: Some("application/json; ="),
+                body: true,
+                want: Err(SignInUnsupportedMediaType),
+                ..case("malformed Content-Type")
+            },
+            Case {
+                content_type: Some("application/vnd.fc+json"),
+                body: true,
+                ..case("+json")
+            },
+            Case {
+                sec_fetch_site: Some("same-origin"),
+                ..case("no body, no Content-Type")
+            },
+            Case {
+                sec_fetch_site: Some("cross-site"),
+                origin: Some("https://attacker.test"),
+                content_type: Some("application/x-www-form-urlencoded"),
+                body: true,
+                want: Err(SignInCrossOrigin),
+                ..case("cross-origin and not JSON: provenance first")
+            },
+        ];
+        let guard = SessionCsrf::new(&["https://platform.example.com/"]).unwrap();
+        for c in cases {
+            let mut headers = HeaderMap::new();
+            headers.insert(HOST, HeaderValue::from_static(c.host));
+            if let Some(v) = c.sec_fetch_site {
+                headers.insert("sec-fetch-site", HeaderValue::from_static(v));
+            }
+            if let Some(v) = c.origin {
+                headers.insert("origin", HeaderValue::from_static(v));
+            }
+            if let Some(v) = c.content_type {
+                headers.insert(CONTENT_TYPE, HeaderValue::from_static(v));
+            }
+            assert_eq!(guard.check_sign_in(&headers, c.body), c.want, "{}", c.name);
+        }
+    }
+
+    #[test]
+    fn the_sign_in_routes_are_the_routes_decided_sign_in() {
+        assert_eq!(sign_in_routes().len(), 15);
+        assert!(is_sign_in_route(&Method::POST, "/auth/login"));
+        assert!(!is_sign_in_route(&Method::PUT, "/auth/login"));
+        assert!(!is_sign_in_route(&Method::POST, "/auth/logout"));
+        assert!(!is_sign_in_route(&Method::POST, "/auth/login/"));
     }
 
     /// Go `TestSessionCSRFRejectsBadTrustedOrigin`.
