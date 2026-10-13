@@ -25,6 +25,7 @@ test -p fc-platform --test it -- --include-ignored <module>::`).
 | 3. Login CSRF: JSON only and cross-origin refusal on the public sign-in routes; every public unsafe route decided | `6eb4b0f` | `13f099b3` |
 | 4. SSO callback bound to the browser that started the login | `2cdff75` | `353b8618` |
 | 5. Debug endpoints | `780e406` | none: no such surface (below) |
+| 6. CORS without credentials (Rust only: Go has no CORS layer) | none | `f1029b1f` (CORS follow-up, below) |
 | Ledger | `91bc61c`, `91c355f` | (this file) |
 
 ## Observed before the fixes
@@ -285,6 +286,95 @@ no cookie at the platform start; no cookie at the portal start; the portal callb
 no `__Host-` prefix; a 20-minute lifetime; `SameSite=Strict`. Checking before the consume was not
 mutated (the spent-state assertions pin the order's effect).
 
+## CORS follow-up (Rust only, `f1029b1f`)
+
+Go has no CORS layer (its SDKs are server-side bearer clients), so there is nothing to mirror; this
+closes what the "CORS" divergence below left open.
+
+**Observed before** (`cors_layer_test`, `cors::layer::tests`, the layer as fc-server built it):
+`Access-Control-Allow-Credentials: true` on **every** answer, the preflights included, for listed
+and unlisted origins alike (tower-http emits it unconditionally); the allowed origin reflected. So a
+page on an allow-listed origin could `fetch(…, { credentials: "include" })` the API with the
+user's `fc_session` cookie (Lax: same-site siblings; `FC_SESSION_COOKIE_SAME_SITE=None`: any site)
+and **read the answer**: the platform answers such a cookie `GET /api/clients` 200 (pinned by
+`cors_layer_test`; reads are not refused by item 1) and the layer reflected the origin with
+credentials allowed. Item 1 refuses the cookie writes; the reads remained. Unlisted origins got no `Access-Control-Allow-Origin` (no reflection), never `*`;
+`Vary: origin, access-control-request-method, access-control-request-headers` was tower-http's
+default.
+
+**What relied on credentialed CORS: nothing found.**
+
+- The SPA calls relative URLs on its own origin (`frontend/src/api/client.ts`, `API_BASE_URL =
+  "/api"`; `credentials: "include"` there is same-origin). Development serves it through Vite's
+  proxy (`frontend/vite.config.ts`: `/api`, `/bff`, `/auth`, `/oauth`, … to the backend), so the
+  browser sees one origin and no CORS is involved.
+- fc-dev has its own layer (`bin/fc-dev/src/main.rs`): `allow_origin(Any)`, any method and header,
+  **no credentials** (`Access-Control-Allow-Origin: *`); unchanged.
+- The SDKs (`clients/typescript-sdk`, Laravel, Java, Go) authenticate with bearer tokens (client
+  credentials or a user's token), never the cookie; the router dashboard proxies its token exchange
+  rather than call the platform cross-origin (`fc-router` `dashboard_sign_in`). A browser OAuth
+  public client calling `/oauth/token` or a bearer API cross-origin needs CORS but not credentials.
+- No test or doc depended on `Allow-Credentials`. `docs/owner-questions.md` CORS-3 ("`Allow-Credentials`
+  emitted?") is open; this answers its credentials half (no) on security grounds. The owner may
+  still rule on exact-versus-wildcard matching.
+
+So no dev-mode switch for credentialed CORS was added: there is no legitimate use to keep.
+
+**The change**: `fc_platform::cors::layer` (`crates/fc-platform/src/cors/layer.rs`) now holds the
+layer fc-server applies (`cors_layer(AllowedOrigins)`, after `AuthLayer` and `TraceLayer`, as
+before) and the allow-list (`AllowedOrigins`: exact entries in a set, `*` entries compiled once per
+refresh instead of per request; replaced whole on the 60 s refresh, as before). Rules:
+
+1. **Never `Access-Control-Allow-Credentials`** (`allow_credentials(false)`, explicit), on any
+   answer. A browser therefore fails a credentialed preflight and does not expose a response to a
+   request that carried the cookie.
+2. A listed origin (exact, or a `*` pattern where `*` is one DNS label, anchored) is reflected in
+   `Access-Control-Allow-Origin`; any other origin, `null` included, gets no CORS headers. Never `*`.
+3. Every answer: `Vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers`
+   (explicit, no longer tower-http's default).
+4. Methods, allowed request headers (`Authorization`, `Content-Type`, `Accept`, `Origin`,
+   `X-Requested-With`, `X-Client-Id`) and the 24 h preflight cache unchanged.
+
+fc-server's `regex` dependency moved to fc-platform with the code.
+
+**Tests**: `cors::layer::tests` (7, a router behind the layer: a listed origin reflected without
+credentials; its preflight allows `Authorization` and `DELETE` without credentials; unlisted
+origins — a sibling, a suffix-extended host, another scheme, `null` — get no CORS headers on a GET
+or a preflight; no Origin, no CORS headers but `Vary`; a `*` table entry never yields
+`Allow-Origin: *`; wildcard = one label, whole-origin match; exact entries exact, replace drops old
+ones) and `cors_layer_test::an_allow_listed_origin_reads_with_a_bearer_but_never_with_the_cookie`
+(the whole platform router under `AuthLayer` and the layer, the origin added through
+`POST /api/platform/cors` and loaded as fc-server loads it: the bearer preflight and the bearer
+`GET /api/clients` from the listed origin are allowed and readable, without credentials; the same
+GET with the cookie answers 200 with no `Allow-Credentials`; a credentialed DELETE preflight gets
+none; an unlisted origin gets no CORS headers with either credential; deleting the origin and
+refreshing takes it off the list).
+
+**Failing first**: with the layer extracted unchanged (`allow_credentials(true)`), four of the seven
+unit tests (`Allow-Credentials: true`, on the unlisted origins too) and the `it` test (at the
+preflight) failed; the three matching tests passed on both. **Mutants** (each killed):
+credentials `true`; any origin passes the predicate; `Allow-Origin: *` (`Any`); no `Vary`; the
+pattern not anchored; `*` spanning labels (`.+`); an exact entry matched as a prefix; replace
+keeping old entries; a refresh that ignores an empty table (killed by the `it` test). Not covered
+by a test: fc-server wiring the layer at all (`build_platform_app` is in the binary and needs the
+whole server; read, and clippy-clean).
+
+**Client-visible**: a page on an allow-listed origin can no longer use the user's platform session
+from the browser (credentialed requests: preflight refused, responses unreadable); bearer-token
+calls from it are unaffected. No OpenAPI change, no route change, no SQL change.
+
+**Verified**: `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets -- -D
+warnings` clean; lib tests fc-platform 99, fc-platform-auth 131, fc-platform-core 134,
+fc-platform-iam 452; fc-server binary tests 10; `route_table_snapshot_test` both pass (unchanged: the layer is outside `router::build`);
+the whole `it` suite with `--include-ignored` on the `FC_TEST_PG_BIN` harness (embedded PostgreSQL
+18.3): **511 passed, 0 failed** (510 before, plus `cors_layer_test`). No dev database, nothing on 8080.
+
+**Not verified**: no browser run (that a real browser refuses the credentialed preflight and hides
+the cookie response is the CORS specification, not observed); fc-server not started (the wiring is
+read and compiled, not exercised end to end); no deployed environment or proxy; the
+allowed-origin list's refresh loop not observed running; fc-dev's `*` layer not re-examined beyond
+reading it (it never sent credentials).
+
 ## Divergences from Go
 
 - **Where the rules live**: Rust has no authenticated route group (extractors authenticate lazily),
@@ -307,11 +397,11 @@ mutated (the spent-state assertions pin the order's effect).
   exists here.
 - **`$schema`**: Go's huma responses carry `$schema` (left by Go's ruling); Rust's never did.
   Unchanged.
-- **CORS**: fc-server has a `CorsLayer` with `allow_credentials(true)` for the origins in the CORS
-  table (Go has no CORS middleware). Before item 1, an allow-listed origin's page could make
-  credentialed preflighted requests (JSON, DELETE) with the user's cookie wherever SameSite let it
-  through; now a cookie-authenticated write from any origin other than the host or the public base
-  URL is refused. No first-party flow was found that uses the platform cookie from another origin.
+- **CORS**: fc-server has a CORS layer for the origins in the CORS table (Go has no CORS
+  middleware). It used to send `Access-Control-Allow-Credentials: true`: before item 1 an
+  allow-listed origin's page could make credentialed preflighted requests (JSON, DELETE) with the
+  user's cookie wherever SameSite let it through, and after item 1 it could still read
+  cookie-authenticated responses. The CORS follow-up below drops credentials.
 
 ## Client-visible changes
 
