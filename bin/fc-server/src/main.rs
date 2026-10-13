@@ -74,17 +74,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{response::Json, routing::get, Router};
-use tower_http::cors::{AllowOrigin, CorsLayer};
 // SetResponseHeaderLayer moved to fc_platform::router
 use tower_http::trace::TraceLayer;
 // CACHE_CONTROL moved to fc_platform::router
 // SPA serving is handled by fc_platform::router::build()
 use anyhow::Result;
-use axum::http::{header as http_header, HeaderValue, Method};
 use tokio::{net::TcpListener, sync::watch};
 use tracing::{info, warn};
 
 use fc_platform::api::middleware::{AppState, AuthLayer};
+use fc_platform::cors::{cors_layer, AllowedOrigins};
 use fc_platform::repository::{CorsOriginRepository, Repositories};
 use fc_platform::usecase::PgUnitOfWork;
 
@@ -122,12 +121,9 @@ use fc_router::bootstrap::RouterEnv;
 use fc_router::bootstrap::RouterRuntime;
 use rustls::crypto::aws_lc_rs;
 use sqlx::postgres::PgPoolOptions;
-use std::collections::HashSet;
 use std::env;
 use std::path::Path;
 use std::process;
-use std::sync::PoisonError;
-use std::sync::RwLock;
 use tokio::sync::oneshot;
 use tokio::sync::oneshot::Sender;
 use tokio::task::JoinHandle;
@@ -853,42 +849,23 @@ async fn init_platform(
     // Event fan-out runs inside the stream processor (fc-stream). See
     // `spawn_stream_processor` below.
 
-    // CORS origins cache
-    let cors_origins_cache: Arc<RwLock<HashSet<String>>> = Arc::new(RwLock::new(HashSet::new()));
-    {
-        match repos.cors_repo.get_allowed_origins().await {
-            Ok(origins) => {
-                // A poisoned lock only means another thread panicked mid-refresh; the
-                // set is cleared and refilled whole, so keep serving rather than
-                // fail every request.
-                let mut cache = cors_origins_cache
-                    .write()
-                    .unwrap_or_else(PoisonError::into_inner);
-                for origin in origins {
-                    cache.insert(origin);
-                }
-                info!(count = cache.len(), "CORS origins loaded");
-            }
-            Err(e) => warn!("Failed to load CORS origins: {}", e),
-        }
+    // The CORS allow-list (`fc_platform::cors::layer`: no credentials),
+    // loaded now and refreshed every minute.
+    let cors_origins = AllowedOrigins::new();
+    match cors_origins.refresh(&repos.cors_repo).await {
+        Ok(count) => info!(count, "CORS origins loaded"),
+        Err(e) => warn!("Failed to load CORS origins: {}", e),
     }
     {
-        let cache = cors_origins_cache.clone();
+        let origins = cors_origins.clone();
         let cors_repo_bg = CorsOriginRepository::new(pg_pool);
         tokio::spawn(async move {
             let mut interval = time::interval(Duration::from_secs(60));
             interval.tick().await;
             loop {
                 interval.tick().await;
-                match cors_repo_bg.get_allowed_origins().await {
-                    Ok(origins) => {
-                        let mut c = cache.write().unwrap_or_else(PoisonError::into_inner);
-                        c.clear();
-                        for origin in origins {
-                            c.insert(origin);
-                        }
-                    }
-                    Err(e) => warn!("Failed to refresh CORS origins: {}", e),
+                if let Err(e) = origins.refresh(&cors_repo_bg).await {
+                    warn!("Failed to refresh CORS origins: {}", e);
                 }
             }
         });
@@ -976,7 +953,7 @@ async fn init_platform(
             &auth_services,
             &unit_of_work,
             &repos,
-            &cors_origins_cache,
+            &cors_origins,
             standby_enabled,
             platform_application_id,
             rate_limit_store.clone(),
@@ -1040,7 +1017,7 @@ fn build_platform_app(
     auth_services: &AuthServices,
     unit_of_work: &Arc<PgUnitOfWork>,
     repos: &Repositories,
-    cors_origins_cache: &Arc<RwLock<HashSet<String>>>,
+    cors_origins: &AllowedOrigins,
     _standby_enabled: bool,
     platform_application_id: ApplicationId,
     rate_limit_store: Arc<dyn RateLimitStore>,
@@ -1083,55 +1060,7 @@ fn build_platform_app(
     let app = app
         .layer(AuthLayer::new(app_state))
         .layer(TraceLayer::new_for_http())
-        .layer({
-            let cache = cors_origins_cache.clone();
-            CorsLayer::new()
-                .allow_origin(AllowOrigin::predicate(
-                    move |origin: &HeaderValue, _parts| {
-                        let origin_str = match origin.to_str() {
-                            Ok(s) => s,
-                            Err(_) => return false,
-                        };
-                        let origins = cache.read().unwrap_or_else(PoisonError::into_inner);
-                        if origins.contains(origin_str) {
-                            return true;
-                        }
-                        for pattern in origins.iter() {
-                            if pattern.contains('*') {
-                                let regex_str = format!(
-                                    "^{}$",
-                                    regex::escape(pattern).replace(r"\*", "[a-zA-Z0-9-]+")
-                                );
-                                if let Ok(re) = regex::Regex::new(&regex_str) {
-                                    if re.is_match(origin_str) {
-                                        return true;
-                                    }
-                                }
-                            }
-                        }
-                        false
-                    },
-                ))
-                .allow_methods([
-                    Method::GET,
-                    Method::POST,
-                    Method::PUT,
-                    Method::PATCH,
-                    Method::DELETE,
-                    Method::OPTIONS,
-                    Method::HEAD,
-                ])
-                .allow_headers([
-                    http_header::AUTHORIZATION,
-                    http_header::CONTENT_TYPE,
-                    http_header::ACCEPT,
-                    http_header::ORIGIN,
-                    http_header::HeaderName::from_static("x-requested-with"),
-                    http_header::HeaderName::from_static("x-client-id"),
-                ])
-                .allow_credentials(true)
-                .max_age(Duration::from_secs(86400))
-        });
+        .layer(cors_layer(cors_origins.clone()));
 
     // SPA serving is handled by fc_platform::router::build() via the static_dir field.
     app

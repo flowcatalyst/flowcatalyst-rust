@@ -51,7 +51,6 @@ aws-sdk-secretsmanager = { workspace = true }
 reqwest = { workspace = true }
 rustls = "0.23"
 urlencoding = "2.1"
-regex = { workspace = true }
 utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true }
 utoipa-axum = { workspace = true }

@@ -228,7 +228,7 @@ The `can_write_*` form exists for endpoints that accept create/update/delete in 
 1. **Documented routes** — every module's `utoipa-axum` routes, merged in module order so they appear in the generated spec.
 2. **Plain routes** — the developer portal (which needs the finished spec), then every module's plain routes.
 3. **Auth middleware layer** — `AuthLayer` extracts bearer tokens or session cookies, populates `AuthContext` for downstream handlers.
-4. **CORS layer** — driven by `cors_origins_cache` populated from `tnt_cors_allowed_origins` (refreshed every 60 s).
+4. **CORS layer** (fc-server only, `fc_platform::cors::cors_layer`) — allows the origins in `tnt_cors_allowed_origins` (`AllowedOrigins`, refreshed every 60 s) for bearer-token calls: an allowed origin is reflected, any other gets no CORS headers, every answer `Vary: Origin`, and **never `Access-Control-Allow-Credentials`**, so no other origin can read a response to a request carrying the session cookie. fc-dev answers `Access-Control-Allow-Origin: *`, also without credentials.
 5. **SPA fallback** — `/assets/*` with `Cache-Control: public, max-age=31536000, immutable`; unmatched GET routes fall through to embedded `index.html`. Toggled per binary: `fc-server` serves the SPA from `FC_STATIC_DIR` (default `/app/frontend/dist`), `fc-dev` embeds it or uses `FC_STATIC_DIR`.
 
 ---
@@ -381,7 +381,7 @@ The platform keeps a few in-memory caches for hot reads:
 | Validated JWT claims | 30 s | `AuthService` | Skip RSA verify on repeat requests |
 | Principal→permissions | 60 s | `AuthorizationService` | Skip role join on repeat requests |
 | Paused connections | 60 s | `scheduler::PausedConnectionCache` | Filter `PENDING` jobs cheaply |
-| CORS origins | 60 s | `fc-server` top-level | CORS predicate function |
+| CORS origins | 60 s | `fc-server` top-level (`cors::AllowedOrigins`) | CORS predicate function |
 | Subscriptions | 5 s | `fc-stream::EventFanOutService` | Fan-out matching |
 
 All TTL-based; no explicit invalidation. The trade-off accepted: changes take up to 60 s to propagate (5 s for subscriptions, which see the most frequent admin changes).

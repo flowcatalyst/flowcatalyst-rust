@@ -422,6 +422,16 @@ The platform binary embeds `frontend/dist/` via `rust-embed`. Override with `FC_
 
 ---
 
+## CORS (fc-server)
+
+No environment variable: the allow-list is the **CORS Origins** table (Platform → CORS Origins, `/api/platform/cors`), reloaded every 60 s. Entries are exact origins (`https://app.example.com`) or patterns where `*` is one DNS label (`https://*.example.com`).
+
+**CORS here is for bearer-token calls only.** An allowed origin is reflected in `Access-Control-Allow-Origin` (never `*`; an origin not on the list gets no CORS headers) and every answer carries `Vary: Origin`, but fc-server **never sends `Access-Control-Allow-Credentials`**. A page on an allowed origin can call the API with its own `Authorization: Bearer` token and read the answer; it cannot use, or read anything with, a user's `fc_session` cookie, and browsers refuse a credentialed (`credentials: "include"`) preflight. There is no setting to turn credentials on.
+
+The platform's own SPA needs no CORS entry: it calls its own origin (in development through Vite's proxy, `frontend/vite.config.ts`). fc-dev answers every origin with `Access-Control-Allow-Origin: *`, also without credentials. The Go platform has no CORS layer.
+
+---
+
 ## fc-dev (development monolith)
 
 Most fc-server vars work in fc-dev. Additional dev-specific:

@@ -3841,7 +3841,6 @@ dependencies = [
  "p256",
  "parking_lot 0.12.5",
  "rand_core 0.6.4",
- "regex",
  "reqwest",
  "rsa",
  "rustls",

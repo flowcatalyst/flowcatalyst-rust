@@ -54,6 +54,8 @@ sha2 = "0.10"
 hex = { workspace = true }
 mime_guess = "2"
 urlencoding = "2.1"
+# The CORS allow-list's `*` patterns (cors::layer).
+regex = { workspace = true }
 
 [dev-dependencies]
 # What the integration tests use directly (the platform's own crates use
@@ -68,7 +70,6 @@ fc-function-signing = { path = "../fc-function-signing" }
 fc-queue = { path = "../fc-queue", features = ["sqs", "postgres"] }
 # Signs the test identity provider's ID tokens (tests/it/sso_binding_test.rs).
 jsonwebtoken = { workspace = true }
-regex = { workspace = true }
 reqwest = { workspace = true }
 tokio-util = { workspace = true, features = ["io"] }
 # `InMemoryUnitOfWork` and `assert_str_enum` for the unit tests.
