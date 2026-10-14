@@ -85,7 +85,7 @@ use tracing::{info, warn};
 use fc_platform::api::middleware::{AppState, AuthLayer};
 use fc_platform::cors::{cors_layer, AllowedOrigins};
 use fc_platform::repository::{CorsOriginRepository, Repositories};
-use fc_platform::usecase::PgUnitOfWork;
+use fc_platform::usecase::{Caller, PgUnitOfWork};
 
 use fc_common::config::{
     env_bool, env_first, env_first_bool_go, env_first_parse, env_or, env_or_parse,
@@ -874,7 +874,7 @@ async fn init_platform(
     // Sync code-defined roles
     {
         let role_sync = RoleSyncService::new(Arc::new(RoleRepository::new(pg_pool)));
-        if let Err(e) = role_sync.sync_code_defined_roles().await {
+        if let Err(e) = role_sync.sync_code_defined_roles(&Caller::system()).await {
             warn!("Role sync failed: {}", e);
         }
     }

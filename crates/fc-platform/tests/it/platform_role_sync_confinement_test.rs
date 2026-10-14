@@ -14,6 +14,7 @@ use axum::http::StatusCode;
 use fc_platform::role::entity::{roles, AuthRole, RoleSource};
 use fc_platform::service::RoleSyncService;
 use fc_platform::shared::error::PlatformError;
+use fc_platform::usecase::Caller;
 use serde_json::json;
 use support::{assert_status, TestApp};
 
@@ -22,6 +23,11 @@ fn code_role(name: &str, permissions: &[&str]) -> AuthRole {
     role.source = RoleSource::Code;
     role.permissions = permissions.iter().map(|p| p.to_string()).collect();
     role
+}
+
+/// The boot sync's caller (the confinement holds for it too).
+fn system() -> Caller {
+    Caller::system()
 }
 
 fn with(extra: &[AuthRole]) -> Vec<AuthRole> {
@@ -64,26 +70,29 @@ async fn the_platform_role_sync_confines_permissions_to_their_application() {
     let app = TestApp::setup().await;
     let sync = RoleSyncService::new(app.repos.role_repo.clone());
 
-    sync.sync_catalogue(&with(&[]))
+    sync.sync_catalogue(&with(&[]), &system())
         .await
         .expect("the built-in catalogue is confined");
-    sync.sync_catalogue(&with(&[code_role(
-        "confcat",
-        &["platform:confcat:thing:view"],
-    )]))
+    sync.sync_catalogue(
+        &with(&[code_role("confcat", &["platform:confcat:thing:view"])]),
+        &system(),
+    )
     .await
     .expect("an own-application permission");
 
     // An existing catalogue role gaining another application's permission:
     // the whole sync is refused, a new role planned before it included.
     let err = sync
-        .sync_catalogue(&with(&[
-            code_role("confcat-new", &["platform:confcat:thing:view"]),
-            code_role(
-                "confcat",
-                &["platform:confcat:thing:view", "other:thing:view"],
-            ),
-        ]))
+        .sync_catalogue(
+            &with(&[
+                code_role("confcat-new", &["platform:confcat:thing:view"]),
+                code_role(
+                    "confcat",
+                    &["platform:confcat:thing:view", "other:thing:view"],
+                ),
+            ]),
+            &system(),
+        )
         .await
         .expect_err("another application's permission");
     assert_outside(err, "other:thing:view");
@@ -96,10 +105,13 @@ async fn the_platform_role_sync_confines_permissions_to_their_application() {
 
     // The stale sweep removes it; a new catalogue role holding another
     // application's permission is refused and not created.
-    sync.sync_catalogue(&with(&[])).await.unwrap();
+    sync.sync_catalogue(&with(&[]), &system()).await.unwrap();
     assert_eq!(permissions_of(&app, "platform:confcat").await, None);
     let err = sync
-        .sync_catalogue(&with(&[code_role("confcat", &["other:thing:view"])]))
+        .sync_catalogue(
+            &with(&[code_role("confcat", &["other:thing:view"])]),
+            &system(),
+        )
         .await
         .expect_err("a new role with another application's permission");
     assert_outside(err, "other:thing:view");
@@ -112,11 +124,13 @@ async fn the_platform_role_sync_confines_permissions_to_their_application() {
         &["platform:legacy:thing:view", "other:thing:view"],
     );
     app.repos.role_repo.insert(&legacy).await.unwrap();
-    sync.sync_catalogue(&with(&[legacy.clone()]))
+    sync.sync_catalogue(&with(&[legacy.clone()]), &system())
         .await
         .expect("a held foreign permission is not an addition");
     legacy.permissions.remove("other:thing:view");
-    sync.sync_catalogue(&with(&[legacy])).await.unwrap();
+    sync.sync_catalogue(&with(&[legacy]), &system())
+        .await
+        .unwrap();
     assert_eq!(
         permissions_of(&app, "platform:legacy").await,
         Some(vec!["platform:legacy:thing:view".to_string()]),

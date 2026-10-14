@@ -86,7 +86,7 @@ use fc_queue::EmbeddedQueue;
 use fc_platform::api::event_type_filters_router;
 use fc_platform::api::middleware::{AppState, AuthLayer};
 use fc_platform::repository::{Repositories, RoleRepository};
-use fc_platform::usecase::PgUnitOfWork;
+use fc_platform::usecase::{Caller, PgUnitOfWork};
 
 /// FlowCatalyst Development Monolith — top-level CLI.
 ///
@@ -779,7 +779,7 @@ async fn main() -> Result<()> {
     // Sync code-defined roles to database
     {
         let role_sync = RoleSyncService::new(Arc::new(RoleRepository::new(&pg_pool)));
-        if let Err(e) = role_sync.sync_code_defined_roles().await {
+        if let Err(e) = role_sync.sync_code_defined_roles(&Caller::system()).await {
             tracing::warn!("Role sync failed: {}", e);
         }
     }

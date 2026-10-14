@@ -50,7 +50,7 @@ use fc_platform::repository::{Repositories, RoleRepository};
 use fc_platform::shared::server_setup::{
     init_auth_services, AuthInitConfig, PlatformContext, PlatformRoutesConfig,
 };
-use fc_platform::usecase::PgUnitOfWork;
+use fc_platform::usecase::{Caller, PgUnitOfWork};
 
 use super::*;
 use crate::fn_cli::{self, Io};
@@ -146,7 +146,7 @@ async fn start_platform(database_url: &str, api_port: u16, slot: HostSlot) -> Re
         .await
         .expect("platform application");
     RoleSyncService::new(Arc::new(RoleRepository::new(&pool)))
-        .sync_code_defined_roles()
+        .sync_code_defined_roles(&Caller::system())
         .await
         .expect("role sync");
 

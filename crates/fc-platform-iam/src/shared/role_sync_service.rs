@@ -15,11 +15,13 @@
 use std::collections::{BTreeSet, HashSet};
 use tracing::{info, warn};
 
+use crate::role::ceiling;
 use crate::role::entity::roles;
 use crate::role::entity::{AuthRole, RoleSource};
 use crate::role::operations::require_confined;
 use crate::role::repository::RoleRepository;
 use fc_platform_core::shared::error::Result;
+use fc_platform_core::usecase::Caller;
 use std::sync::Arc;
 
 /// Counts returned from `sync_code_defined_roles` so callers (the BFF
@@ -43,10 +45,11 @@ impl RoleSyncService {
         Self { role_repo }
     }
 
-    /// Sync all code-defined roles to the database.
-    /// Call this at application startup or via the BFF sync-platform endpoint.
-    pub async fn sync_code_defined_roles(&self) -> Result<RoleSyncCounts> {
-        self.sync_catalogue(&roles::all()).await
+    /// Sync all code-defined roles to the database, for `caller`.
+    /// Call this at application startup (as [`Caller::system`]) or via the
+    /// BFF sync-platform endpoint (as the requesting principal).
+    pub async fn sync_code_defined_roles(&self, caller: &Caller) -> Result<RoleSyncCounts> {
+        self.sync_catalogue(&roles::all(), caller).await
     }
 
     /// [`Self::sync_code_defined_roles`] with `code_roles` in place of the
@@ -57,16 +60,35 @@ impl RoleSyncService {
     /// application's permissions, with no super-admin exception (the
     /// catalogue sync never crosses applications), 400
     /// `PERMISSION_OUTSIDE_APPLICATION`. Only what the sync adds is checked:
-    /// a new role's permissions, an existing `CODE` role's additions. Every
-    /// role is checked before the first write, so a refused sync writes
-    /// nothing. The built-in catalogue is all `platform:` roles holding
-    /// `platform:` permissions, so it syncs as before.
-    pub async fn sync_catalogue(&self, code_roles: &[AuthRole]) -> Result<RoleSyncCounts> {
+    /// a new role's permissions, an existing `CODE` role's additions. The
+    /// built-in catalogue is all `platform:` roles holding `platform:`
+    /// permissions, so it syncs as before.
+    ///
+    /// The permission ceiling (Go F10, `c56a68c`; owner approval
+    /// 2026-10-14): every platform permission the sync adds to or removes
+    /// from a role (an existing `CODE` role's change, a new role's
+    /// permissions, a swept stale role's) must be one `caller` holds, 403
+    /// `PERMISSION_ABOVE_CALLER`. The change is collected over the whole sync
+    /// (per catalogue role its added then its removed permissions, then the
+    /// swept roles'), after confinement. A same-named role of another source
+    /// is skipped untouched and a stale role still assigned is kept, so
+    /// neither is checked. The boot sync runs as [`Caller::system`], which
+    /// holds every permission.
+    ///
+    /// Every check runs before the first write, so a refused sync writes
+    /// nothing.
+    pub async fn sync_catalogue(
+        &self,
+        code_roles: &[AuthRole],
+        caller: &Caller,
+    ) -> Result<RoleSyncCounts> {
         info!("Syncing code-defined roles to database...");
 
         let total = code_roles.len() as u32;
         let mut created = 0u32;
         let mut updated = 0u32;
+        // Every permission the sync adds or removes, for the ceiling.
+        let mut changed: Vec<String> = Vec::new();
 
         let mut stored = Vec::with_capacity(code_roles.len());
         for role_def in code_roles {
@@ -79,16 +101,28 @@ impl RoleSyncService {
                         .map(String::as_str)
                         .collect();
                     require_confined(existing.owning_application_code(), added, false)?;
+                    changed.extend(ceiling::changed(
+                        &sorted(&existing.permissions),
+                        &sorted(&role_def.permissions),
+                    ));
                 }
                 Some(_) => {}
                 None => {
                     let permissions: BTreeSet<&str> =
                         role_def.permissions.iter().map(String::as_str).collect();
                     require_confined(role_def.owning_application_code(), permissions, false)?;
+                    changed.extend(sorted(&role_def.permissions));
                 }
             }
             stored.push(existing);
         }
+
+        let stale = self.stale_code_roles(code_roles).await?;
+        for role in &stale {
+            changed.extend(sorted(&role.permissions));
+        }
+
+        ceiling::require_permissions(Some(caller), changed.iter().map(String::as_str))?;
 
         for (role_def, existing) in code_roles.iter().zip(stored) {
             // Check if role exists
@@ -127,7 +161,11 @@ impl RoleSyncService {
         }
 
         // Remove stale CODE roles
-        let removed = self.remove_stale_code_roles(code_roles).await? as u32;
+        for role in &stale {
+            info!("Removing stale CODE role: {}", role.name);
+            self.role_repo.delete(&role.id).await?;
+        }
+        let removed = stale.len() as u32;
 
         info!(created, updated, removed, total, "Code role sync complete",);
 
@@ -139,19 +177,20 @@ impl RoleSyncService {
         })
     }
 
-    /// Remove CODE-sourced roles from the database that no longer exist in code.
+    /// The CODE-sourced roles in the database that no longer exist in code
+    /// and may be removed.
     ///
-    /// Refuses to remove a role that is still assigned to principals. The
-    /// operator is expected to re-assign or strip those users before the
-    /// role can be deleted — silently dropping assignments was the source of
-    /// a referential-integrity bug (`iam_principal_roles.role_name` has no
+    /// A role still assigned to principals is kept. The operator is expected
+    /// to re-assign or strip those users before the role can be deleted —
+    /// silently dropping assignments was the source of a
+    /// referential-integrity bug (`iam_principal_roles.role_name` has no
     /// DB-level FK; integrity is enforced in code via this guard + the
     /// `RoleRepository` delete cascade).
-    async fn remove_stale_code_roles(&self, code_roles: &[AuthRole]) -> Result<usize> {
+    async fn stale_code_roles(&self, code_roles: &[AuthRole]) -> Result<Vec<AuthRole>> {
         let code_role_names: HashSet<&str> = code_roles.iter().map(|r| r.name.as_str()).collect();
 
         let code_roles_in_db = self.role_repo.find_by_source(RoleSource::Code).await?;
-        let mut removed = 0;
+        let mut stale = Vec::new();
 
         for db_role in code_roles_in_db {
             if code_role_names.contains(db_role.name.as_str()) {
@@ -169,13 +208,19 @@ impl RoleSyncService {
                 continue;
             }
 
-            info!("Removing stale CODE role: {}", db_role.name);
-            self.role_repo.delete(&db_role.id).await?;
-            removed += 1;
+            stale.push(db_role);
         }
 
-        Ok(removed)
+        Ok(stale)
     }
+}
+
+/// `permissions` in a stable order (a role holds a set), for the ceiling's
+/// message.
+fn sorted(permissions: &HashSet<String>) -> Vec<String> {
+    let mut sorted: Vec<String> = permissions.iter().cloned().collect();
+    sorted.sort();
+    sorted
 }
 
 #[cfg(test)]

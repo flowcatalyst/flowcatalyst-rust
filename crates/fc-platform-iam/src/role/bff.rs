@@ -31,7 +31,7 @@ use fc_platform_core::shared::api_common::CreatedResponse;
 use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
-use fc_platform_core::usecase::{ExecutionContext, PgUnitOfWork, UseCase};
+use fc_platform_core::usecase::{Caller, ExecutionContext, PgUnitOfWork, UseCase};
 use std::collections::HashSet;
 
 // ── Response DTOs ──────────────────────────────────────────────────────────
@@ -859,7 +859,7 @@ pub async fn sync_platform_roles(
 
     let counts = state
         .role_sync_service
-        .sync_code_defined_roles()
+        .sync_code_defined_roles(&Caller::from_auth(&auth.0))
         .await
         .map_err(sync_platform_roles_error)?;
 
@@ -872,8 +872,9 @@ pub async fn sync_platform_roles(
 }
 
 /// A refusal the sync answers itself (confinement's 400
-/// `PERMISSION_OUTSIDE_APPLICATION`) reaches the caller as it is; anything
-/// else is a 500.
+/// `PERMISSION_OUTSIDE_APPLICATION`, the permission ceiling's 403
+/// `PERMISSION_ABOVE_CALLER`) reaches the caller as it is; anything else is a
+/// 500.
 fn sync_platform_roles_error(e: PlatformError) -> PlatformError {
     if let PlatformError::Coded { status, .. } = &e {
         if status.is_client_error() {
