@@ -1,0 +1,25 @@
+# Schema objects Rust creates that Go's migrations do not: the ONLY differences the schema
+# fingerprint test (crates/fc-platform/tests/it/schema_fingerprint_test.rs) allows.
+# One line prefix per entry, matched against the fingerprint line. Every entry must match at
+# least one line (a stale entry fails the test), and Go has no object that Rust lacks.
+# All are additive and nullable/unused by Go: Go reads with explicit column lists.
+
+# Rust's own function registry (migration 062). Parity plan D1: fng_* is the schema of record
+# (migration 079); fnr_* stays until the function code moves to fng_* in P4, then is dropped.
+table fnr_
+column fnr_
+index fnr_
+constraint fnr_
+
+# Rust 058
+column app_client_configs.base_url_override 
+column app_client_configs.config_json 
+# Rust 059
+column iam_principal_roles.assigned_by 
+# Rust 060
+column iam_service_accounts.wh_header_name 
+column iam_service_accounts.wh_password_ref 
+column iam_service_accounts.wh_signature_header 
+column iam_service_accounts.wh_username 
+# Rust 061
+column msg_dispatch_jobs_read.queue 
