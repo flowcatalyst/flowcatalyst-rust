@@ -1,0 +1,157 @@
+# Known differences between this platform's OpenAPI document and Go's lock.
+# A RATCHET (see openapi_go_contract_test.rs): the test fails if the current gaps differ from
+# this list in either direction. Closing a gap means deleting its line in the same change;
+# a new gap is a regression. Regenerate with:
+#   OPENAPI_UPDATE_BASELINE=1 cargo test -p fc-platform --test it -- openapi_go_contract_test
+# Kinds: go-only, operation-id, request, response, rust-only, schema-missing.
+go-only: DELETE /api/applications/{}/invitations/{}
+go-only: DELETE /api/functions/{}/config/{}
+go-only: DELETE /api/functions/{}/db/{}
+go-only: DELETE /api/functions/{}/routes/{}
+go-only: GET /.well-known/jwks.json
+go-only: GET /.well-known/openid-configuration
+go-only: GET /api/applications/{}/invitations
+go-only: GET /api/applications/{}/users
+go-only: GET /api/applications/{}/users/{}
+go-only: GET /api/functions/{}/routes
+go-only: GET /api/functions/{}/settings
+go-only: GET /api/me
+go-only: GET /api/me/applications
+go-only: GET /api/me/clients
+go-only: GET /api/me/clients/{}
+go-only: GET /api/me/clients/{}/applications
+go-only: GET /control/functions/artifacts/{}
+go-only: GET /control/functions/desired
+go-only: GET /oauth/userinfo
+go-only: PATCH /api/functions/{}
+go-only: POST /api/applications/{}/invitations/{}/resend
+go-only: POST /api/applications/{}/users
+go-only: POST /api/audit-logs/batch
+go-only: POST /api/dispatch-jobs/batch
+go-only: POST /api/dispatch-jobs/requeue-by-filter
+go-only: POST /api/dispatch-jobs/requeue-by-filter/preview
+go-only: POST /control/functions/dispatch-jobs
+go-only: POST /control/functions/events
+go-only: POST /control/functions/heartbeat
+go-only: POST /oauth/introspect
+go-only: POST /oauth/revoke
+go-only: POST /oauth/token
+go-only: PUT /api/functions/{}/config/{}
+go-only: PUT /api/functions/{}/db/{}
+go-only: PUT /api/functions/{}/routes
+operation-id: DELETE /api/function-domains/{} (go deleteFunctionDomain)
+operation-id: DELETE /api/functions/{} (go deleteFunction)
+operation-id: DELETE /api/functions/{}/aliases/{} (go deleteFunctionAlias)
+operation-id: DELETE /api/functions/{}/secrets/{} (go deleteFunctionSecret)
+operation-id: GET /api/function-domains (go listFunctionDomains)
+operation-id: GET /api/functions (go listFunctions)
+operation-id: GET /api/functions/{} (go getFunction)
+operation-id: GET /api/functions/{}/aliases (go listFunctionAliases)
+operation-id: GET /api/functions/{}/versions (go listFunctionVersions)
+operation-id: GET /api/functions/{}/versions/{} (go getFunctionVersion)
+operation-id: POST /api/dispatch-jobs (go createDispatchJob)
+operation-id: POST /api/function-domains (go createFunctionDomain)
+operation-id: POST /api/functions (go createFunction)
+operation-id: POST /api/functions/{}/versions (go publishFunctionVersion)
+operation-id: POST /api/functions/{}/versions/{}/retire (go retireFunctionVersion)
+operation-id: PUT /api/functions/{}/aliases/{} (go putFunctionAlias)
+operation-id: PUT /api/functions/{}/artifacts/{} (go putFunctionArtifact)
+operation-id: PUT /api/functions/{}/secrets/{} (go putFunctionSecret)
+request: POST /api/function-domains (go Some("CreateDomainRequest"), rust Some("ClaimRequest"))
+request: POST /api/functions/{}/versions (go Some("PublishVersionRequest"), rust Some("PublishRequest"))
+request: PUT /api/functions/{}/aliases/{} (go Some("PutAliasRequest"), rust Some("PromoteRequest"))
+request: PUT /api/functions/{}/secrets/{} (go Some("PutSettingRequest"), rust Some("SetSecretRequest"))
+response: DELETE /api/functions/{}/aliases/{} (go Some(("200", Some("WiringResponse"))), rust Some(("204", None)))
+response: GET /api/functions (go Some(("200", Some("OffsetPageFunctionResponse"))), rust Some(("200", Some("PaginatedResponse_FunctionResponse"))))
+response: POST /api/dispatch-jobs (go Some(("201", Some("DispatchJobCreatedResponse"))), rust Some(("201", Some("CreatedResponse"))))
+response: POST /api/function-domains (go Some(("201", Some("CreatedResponse"))), rust Some(("201", Some("DomainResponse"))))
+response: POST /api/functions (go Some(("201", Some("CreatedResponse"))), rust Some(("201", Some("FunctionResponse"))))
+response: POST /api/functions/{}/versions (go Some(("200", Some("VersionResponse"))), rust Some(("200", Some("PublishResponse"))))
+response: PUT /api/functions/{}/aliases/{} (go Some(("200", Some("PutAliasResponse"))), rust Some(("200", Some("PromoteResponse"))))
+response: PUT /api/functions/{}/artifacts/{} (go Some(("201", None)), rust Some(("200", Some("UploadArtifactResponse"))))
+response: PUT /api/functions/{}/secrets/{} (go Some(("200", Some("SettingResponse"))), rust Some(("204", None)))
+rust-only: GET /api/function-domains/{}
+rust-only: GET /api/function-policies
+rust-only: GET /api/function-policies/{}
+rust-only: GET /api/function-pools
+rust-only: GET /api/function-routes
+rust-only: GET /api/functions/{}/config
+rust-only: GET /api/functions/{}/secrets
+rust-only: GET /api/functions/{}/status
+rust-only: GET /api/monitoring/circuit-breakers
+rust-only: GET /api/monitoring/dashboard
+rust-only: GET /api/monitoring/in-flight-messages
+rust-only: GET /api/monitoring/pool-stats
+rust-only: GET /api/monitoring/standby-status
+rust-only: GET /auth/check-domain
+rust-only: GET /auth/me
+rust-only: POST /api/functions/{}/manifest/check
+rust-only: POST /auth/login
+rust-only: POST /auth/logout
+rust-only: POST /auth/refresh
+rust-only: PUT /api/function-policies/{}
+rust-only: PUT /api/functions/{}
+rust-only: PUT /api/functions/{}/config
+schema-missing: ApplicationInvitation
+schema-missing: ApplicationInvitationList
+schema-missing: ApplicationUser
+schema-missing: ApplicationUserList
+schema-missing: AuditBatchItem
+schema-missing: AuditBatchRequest
+schema-missing: AuditBatchResponse
+schema-missing: AuditBatchResult
+schema-missing: BatchItem
+schema-missing: BudgetReport
+schema-missing: CreateDomainRequest
+schema-missing: Desired
+schema-missing: Dispatch
+schema-missing: DispatchJobBatchRequest
+schema-missing: DispatchJobBatchResponse
+schema-missing: DispatchJobBatchResult
+schema-missing: DispatchJobCreatedResponse
+schema-missing: DispatchRequest
+schema-missing: DispatchResponse
+schema-missing: EmitRequest
+schema-missing: EmitResponse
+schema-missing: Event
+schema-missing: Function
+schema-missing: Heartbeat
+schema-missing: IntrospectResponse
+schema-missing: InviteApplicationUserRequest
+schema-missing: InviteApplicationUserResponse
+schema-missing: JWK
+schema-missing: JWKSResponse
+schema-missing: KV
+schema-missing: Limits
+schema-missing: LimitsDTO
+schema-missing: Metadata
+schema-missing: MyApplicationResponse
+schema-missing: MyApplicationsListResponse
+schema-missing: MyClientResponse
+schema-missing: MyClientsListResponse
+schema-missing: OAuthErrorBody
+schema-missing: OIDCDiscoveryDocument
+schema-missing: OffsetPageFunctionResponse
+schema-missing: PublishVersionRequest
+schema-missing: PutAliasRequest
+schema-missing: PutAliasResponse
+schema-missing: PutRouteRequest
+schema-missing: PutSettingRequest
+schema-missing: RequeueByFilterPreviewRequest
+schema-missing: RequeueByFilterPreviewResponse
+schema-missing: RequeueByFilterRequest
+schema-missing: RequeueByFilterResponse
+schema-missing: ResendInvitationRequest
+schema-missing: ResendInvitationResponse
+schema-missing: Route
+schema-missing: RouteResponse
+schema-missing: SettingResponse
+schema-missing: TokenAuth
+schema-missing: TokenForm
+schema-missing: TokenIntrospectForm
+schema-missing: TokenResponse
+schema-missing: UserInfoResponse
+schema-missing: Version
+schema-missing: VersionReport
+schema-missing: WhoamiResponse
+schema-missing: WiringResponse

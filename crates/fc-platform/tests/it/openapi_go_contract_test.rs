@@ -11,8 +11,23 @@
 //! The document is built the way the binaries build it (no database: the pool
 //! is lazy and never connected).
 //!
-//! `OPENAPI_DUMP=<file>` writes the document for tooling (`just regen-sdks`
-//! diffs, `docs/sdks.md` measurements).
+//! Known gaps are a ratchet, not an assertion of emptiness: every difference
+//! from Go's contract (Go-only operations, differing operationIds, missing
+//! schemas, differing request or response schemas, Rust-only operations) is
+//! listed in `tests/data/openapi_go_gaps.baseline.txt`. The test fails when the
+//! current gaps differ from the baseline in either direction: a NEW gap is a
+//! regression; a gap that was CLOSED must be removed from the baseline in the
+//! same change, so the baseline never goes stale. `OPENAPI_UPDATE_BASELINE=1`
+//! rewrites the baseline from the current gaps.
+//!
+//! Environment:
+//! - `GO_LOCK_PATH=<file>` compares against that Go lock instead of the vendored
+//!   copy `frontend/openapi/openapi.json` (the weekly spec diff points it at
+//!   `../flowcatalyst-go/api/openapi.lock.json`; the baseline then differs
+//!   from the vendored one by exactly what Go changed since the last refresh).
+//! - `OPENAPI_DUMP=<file>` writes the document for tooling (`just regen-sdks`
+//!   diffs, `docs/sdks.md` measurements).
+//! - `OPENAPI_REPORT=1` prints the gap list.
 
 use fc_platform::shared::id::ApplicationId;
 use std::collections::{BTreeMap, BTreeSet};
@@ -84,13 +99,17 @@ fn rust_document() -> Value {
     serde_json::to_value(&openapi).expect("serialise document")
 }
 
+/// Go's lock: `GO_LOCK_PATH` if set, else the vendored copy.
 fn go_document() -> Value {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../frontend/openapi/openapi.json"
-    );
-    serde_json::from_str(&fs::read_to_string(path).expect("Go lockfile copy"))
-        .expect("Go lockfile parses")
+    let path = env::var("GO_LOCK_PATH").unwrap_or_else(|_| {
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../frontend/openapi/openapi.json"
+        )
+        .to_string()
+    });
+    serde_json::from_str(&fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}")))
+        .unwrap_or_else(|e| panic!("{path} parses: {e}"))
 }
 
 /// `(METHOD, path with parameters as {}) -> operationId`.
@@ -128,72 +147,11 @@ fn normalise_path(path: &str) -> String {
     out
 }
 
-#[tokio::test]
-async fn shared_operations_carry_gos_operation_ids() {
-    let rust = rust_document();
-    if let Ok(path) = env::var("OPENAPI_DUMP") {
-        fs::write(&path, serde_json::to_vec_pretty(&rust).unwrap()).unwrap();
-    }
-    let go = go_document();
-    let rust_ops = operations(&rust);
-    let go_ops = operations(&go);
-
-    let mut mismatched = Vec::new();
-    let mut shared = 0;
-    for (key, go_id) in &go_ops {
-        if let Some(rust_id) = rust_ops.get(key) {
-            shared += 1;
-            if rust_id != go_id {
-                mismatched.push(format!("{} {}: rust {rust_id}, go {go_id}", key.0, key.1));
-            }
-        }
-    }
-    let go_only: Vec<_> = go_ops
-        .keys()
-        .filter(|k| !rust_ops.contains_key(*k))
-        .map(|(m, p)| format!("{m} {p}"))
-        .collect();
-    let rust_only: Vec<_> = rust_ops
-        .keys()
-        .filter(|k| !go_ops.contains_key(*k))
-        .map(|(m, p)| format!("{m} {p}"))
-        .collect();
-    println!(
-        "operations: go {}, rust {}, shared {shared}, operationId mismatches {}",
-        go_ops.len(),
-        rust_ops.len(),
-        mismatched.len()
-    );
-    if env::var("OPENAPI_REPORT").is_ok() {
-        println!("-- mismatched\n{}", mismatched.join("\n"));
-        println!("-- go only\n{}", go_only.join("\n"));
-        println!("-- rust only\n{}", rust_only.join("\n"));
-    }
-
-    // Duplicate operationIds break every generator.
-    let mut seen = BTreeSet::new();
-    let dupes: Vec<_> = rust_ops
-        .values()
-        .filter(|id| !seen.insert(id.as_str()))
-        .collect();
-    assert!(dupes.is_empty(), "duplicate operationIds: {dupes:?}");
-
-    assert!(
-        mismatched.is_empty(),
-        "operations documented by both platforms must carry Go's operationId:\n{}",
-        mismatched.join("\n")
-    );
-    assert!(
-        go_only.is_empty(),
-        "operations Go documents but this platform does not:\n{}",
-        go_only.join("\n")
-    );
-}
-
-/// Go's component schemas this document does not carry, and why. None:
-/// Go's two orphans (the debug BFF routes' `RawDispatchJobResponse` and
-/// `RawEventResponse`) are carried as Go carries them.
-const SCHEMAS_NOT_DOCUMENTED: &[(&str, &str)] = &[];
+/// Path of the checked-in baseline of known gaps.
+const BASELINE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/data/openapi_go_gaps.baseline.txt"
+);
 
 /// The schema an operation's JSON request body or first success response
 /// names (`$ref`, or `[$ref]` for an array of them).
@@ -231,45 +189,120 @@ fn operation<'a>(doc: &'a Value, method: &str, path: &str) -> Option<&'a Value> 
         .and_then(|(_, item)| item.get(method.to_lowercase()))
 }
 
-#[tokio::test]
-async fn shared_operations_name_gos_schemas() {
-    let rust = rust_document();
-    let go = go_document();
-
-    // Every schema Go names exists under the same name.
-    let rust_schemas = rust["components"]["schemas"].as_object().unwrap();
-    let missing: Vec<_> = go["components"]["schemas"]
-        .as_object()
-        .unwrap()
-        .keys()
-        .filter(|name| !rust_schemas.contains_key(*name))
-        .filter(|name| !SCHEMAS_NOT_DOCUMENTED.iter().any(|(n, _)| n == name))
-        .cloned()
-        .collect();
-    assert!(missing.is_empty(), "Go schemas missing here: {missing:?}");
-
-    // Every shared operation names the same request schema and the same
-    // success status and schema.
-    let mut diffs = Vec::new();
-    for (method, path) in operations(&go).keys() {
-        let (Some(g), Some(r)) = (operation(&go, method, path), operation(&rust, method, path))
-        else {
-            continue;
-        };
-        if request_schema(g) != request_schema(r) {
-            diffs.push(format!(
-                "{method} {path} request: go {:?}, rust {:?}",
-                request_schema(g),
-                request_schema(r)
-            ));
-        }
-        let (gs, rs) = (success_response(g), success_response(r));
-        // `createEvent` also documents the 200 of an idempotent replay.
-        let replay = method == "POST" && path == "/api/events";
-        let same = gs == rs || (replay && gs.as_ref().map(|s| &s.1) == rs.as_ref().map(|s| &s.1));
-        if !same {
-            diffs.push(format!("{method} {path} response: go {gs:?}, rust {rs:?}"));
+/// Every difference from Go's contract, one sorted line each.
+fn gaps(rust: &Value, go: &Value) -> BTreeSet<String> {
+    let rust_ops = operations(rust);
+    let go_ops = operations(go);
+    let mut out = BTreeSet::new();
+    for (key, go_id) in &go_ops {
+        let (method, path) = (&key.0, &key.1);
+        match rust_ops.get(key) {
+            None => {
+                out.insert(format!("go-only: {method} {path}"));
+            }
+            Some(rust_id) => {
+                if rust_id != go_id {
+                    out.insert(format!("operation-id: {method} {path} (go {go_id})"));
+                }
+                let (Some(g), Some(r)) =
+                    (operation(go, method, path), operation(rust, method, path))
+                else {
+                    continue;
+                };
+                if request_schema(g) != request_schema(r) {
+                    out.insert(format!(
+                        "request: {method} {path} (go {:?}, rust {:?})",
+                        request_schema(g),
+                        request_schema(r)
+                    ));
+                }
+                let (gs, rs) = (success_response(g), success_response(r));
+                // `createEvent` also documents the 200 of an idempotent replay.
+                let replay = method == "POST" && path == "/api/events";
+                let same =
+                    gs == rs || (replay && gs.as_ref().map(|s| &s.1) == rs.as_ref().map(|s| &s.1));
+                if !same {
+                    out.insert(format!(
+                        "response: {method} {path} (go {gs:?}, rust {rs:?})"
+                    ));
+                }
+            }
         }
     }
-    assert!(diffs.is_empty(), "{}", diffs.join("\n"));
+    for key in rust_ops.keys().filter(|k| !go_ops.contains_key(*k)) {
+        out.insert(format!("rust-only: {} {}", key.0, key.1));
+    }
+    let rust_schemas = rust["components"]["schemas"].as_object().unwrap();
+    for name in go["components"]["schemas"].as_object().unwrap().keys() {
+        if !rust_schemas.contains_key(name) {
+            out.insert(format!("schema-missing: {name}"));
+        }
+    }
+    out
+}
+
+fn read_baseline() -> BTreeSet<String> {
+    fs::read_to_string(BASELINE)
+        .unwrap_or_default()
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(str::to_string)
+        .collect()
+}
+
+const BASELINE_HEADER: &str = "\
+# Known differences between this platform's OpenAPI document and Go's lock.
+# A RATCHET (see openapi_go_contract_test.rs): the test fails if the current gaps differ from
+# this list in either direction. Closing a gap means deleting its line in the same change;
+# a new gap is a regression. Regenerate with:
+#   OPENAPI_UPDATE_BASELINE=1 cargo test -p fc-platform --test it -- openapi_go_contract_test
+# Kinds: go-only, operation-id, request, response, rust-only, schema-missing.
+";
+
+#[tokio::test]
+async fn gaps_with_gos_contract_match_the_baseline() {
+    let rust = rust_document();
+    if let Ok(path) = env::var("OPENAPI_DUMP") {
+        fs::write(&path, serde_json::to_vec_pretty(&rust).unwrap()).unwrap();
+    }
+    let go = go_document();
+    let current = gaps(&rust, &go);
+    let rust_ops = operations(&rust);
+    let go_ops = operations(&go);
+    println!(
+        "operations: go {}, rust {}, shared {}; gaps {}",
+        go_ops.len(),
+        rust_ops.len(),
+        go_ops.keys().filter(|k| rust_ops.contains_key(*k)).count(),
+        current.len()
+    );
+    if env::var("OPENAPI_REPORT").is_ok() {
+        println!("{}", current.iter().cloned().collect::<Vec<_>>().join("\n"));
+    }
+
+    // Duplicate operationIds break every generator.
+    let mut seen = BTreeSet::new();
+    let dupes: Vec<_> = rust_ops
+        .values()
+        .filter(|id| !seen.insert(id.as_str()))
+        .collect();
+    assert!(dupes.is_empty(), "duplicate operationIds: {dupes:?}");
+
+    if env::var("OPENAPI_UPDATE_BASELINE").is_ok() {
+        let body: String = current.iter().map(|l| format!("{l}\n")).collect();
+        fs::write(BASELINE, format!("{BASELINE_HEADER}{body}")).unwrap();
+        return;
+    }
+    let baseline = read_baseline();
+    let new: Vec<_> = current.difference(&baseline).cloned().collect();
+    let closed: Vec<_> = baseline.difference(&current).cloned().collect();
+    assert!(
+        new.is_empty() && closed.is_empty(),
+        "OpenAPI gaps differ from tests/data/openapi_go_gaps.baseline.txt.\n\
+         NEW gaps (a regression, or Go moved: re-vendor and record it):\n{}\n\
+         CLOSED gaps (delete these lines from the baseline):\n{}",
+        new.join("\n"),
+        closed.join("\n")
+    );
 }
