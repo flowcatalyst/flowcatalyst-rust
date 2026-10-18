@@ -248,9 +248,12 @@ async fn go_then_rust() {
     let tracked = strings(
         &pool,
         "SELECT migration_id::text FROM _schema_migrations \
-         WHERE migration_id LIKE '0%function%' ORDER BY migration_id",
+         WHERE migration_id LIKE '0%function%' AND migration_id NOT LIKE '%\\_go\\_%' \
+         ORDER BY migration_id",
     )
     .await;
+    // Only 062 of Rust's own: the retired fn_* migrations never run. The `_go_` ones
+    // (079 onward, Go's fng_* mirrors) are not part of this assertion.
     assert_eq!(tracked, ["062_function_registry_fnr"]);
 }
 

@@ -367,6 +367,129 @@ fn core_migrations() -> &'static [(&'static str, &'static str)] {
             "070_platform_event_schema_fixes",
             include_str!("../../../migrations/070_platform_event_schema_fixes.sql"),
         ),
+        // 071-094: Go's migrations 035-052, 055 and 059-082 that Rust lacked, one
+        // each, so a database Rust creates ends schema-compatible with Go at 082
+        // (docs/go-mirror/migration-mapping.md). Go's SQL, idempotent.
+        // Go 035_persist_boundary_columns.sql.
+        (
+            "071_go_persist_boundary_columns",
+            include_str!("../../../migrations/071_go_persist_boundary_columns.sql"),
+        ),
+        // Go 036_read_projection_indexes.sql.
+        (
+            "072_go_read_projection_indexes",
+            include_str!("../../../migrations/072_go_read_projection_indexes.sql"),
+        ),
+        // Go 037_login_throttle_and_index_cleanup.sql.
+        (
+            "073_go_login_throttle_and_index_cleanup",
+            include_str!("../../../migrations/073_go_login_throttle_and_index_cleanup.sql"),
+        ),
+        // Go 048_dispatch_mode_default.sql.
+        (
+            "074_go_dispatch_mode_default",
+            include_str!("../../../migrations/074_go_dispatch_mode_default.sql"),
+        ),
+        // Go 049_partition_login_attempts.sql.
+        (
+            "075_go_partition_login_attempts",
+            include_str!("../../../migrations/075_go_partition_login_attempts.sql"),
+        ),
+        // Go 051_x06_enum_check_constraints.sql.
+        (
+            "076_go_enum_check_constraints",
+            include_str!("../../../migrations/076_go_enum_check_constraints.sql"),
+        ),
+        // Go 052_x06_dispatch_job_enum_check_constraints.sql.
+        (
+            "077_go_dispatch_job_enum_check_constraints",
+            include_str!("../../../migrations/077_go_dispatch_job_enum_check_constraints.sql"),
+        ),
+        // Go 055_platform_event_schema_version.sql.
+        (
+            "078_go_platform_event_schema_version",
+            include_str!("../../../migrations/078_go_platform_event_schema_version.sql"),
+        ),
+        // Go 059_functions.sql.
+        (
+            "079_go_functions_fng",
+            include_str!("../../../migrations/079_go_functions_fng.sql"),
+        ),
+        // Go 060_scheduled_job_instance_not_before.sql.
+        (
+            "080_go_scheduled_job_instance_not_before",
+            include_str!("../../../migrations/080_go_scheduled_job_instance_not_before.sql"),
+        ),
+        // Go 061_function_version_runtime.sql.
+        (
+            "081_go_function_version_runtime",
+            include_str!("../../../migrations/081_go_function_version_runtime.sql"),
+        ),
+        // Go 062_function_routes.sql.
+        (
+            "082_go_function_routes",
+            include_str!("../../../migrations/082_go_function_routes.sql"),
+        ),
+        // Go 063_scrub_function_setting_audit.sql.
+        (
+            "083_go_scrub_function_setting_audit",
+            include_str!("../../../migrations/083_go_scrub_function_setting_audit.sql"),
+        ),
+        // Go 064_function_route_alias_prefixes.sql.
+        (
+            "084_go_function_route_alias_prefixes",
+            include_str!("../../../migrations/084_go_function_route_alias_prefixes.sql"),
+        ),
+        // Go 073_function_event_type_codes.sql.
+        (
+            "085_go_function_event_type_codes",
+            include_str!("../../../migrations/085_go_function_event_type_codes.sql"),
+        ),
+        // Go 074_function_event_type_reshape.sql.
+        (
+            "086_go_function_event_type_reshape",
+            include_str!("../../../migrations/086_go_function_event_type_reshape.sql"),
+        ),
+        // Go 075_connection_service_account_principal_ids.sql.
+        (
+            "087_go_connection_service_account_principal_ids",
+            include_str!("../../../migrations/087_go_connection_service_account_principal_ids.sql"),
+        ),
+        // Go 076_normalise_role_assignment_names.sql.
+        (
+            "088_go_normalise_role_assignment_names",
+            include_str!("../../../migrations/088_go_normalise_role_assignment_names.sql"),
+        ),
+        // Go 077_backfill_role_application_id.sql.
+        (
+            "089_go_backfill_role_application_id",
+            include_str!("../../../migrations/089_go_backfill_role_application_id.sql"),
+        ),
+        // Go 078_dispatch_pool_application_owner.sql.
+        (
+            "090_go_dispatch_pool_application_owner",
+            include_str!("../../../migrations/090_go_dispatch_pool_application_owner.sql"),
+        ),
+        // Go 079_application_service_dispatch_pool_sync.sql.
+        (
+            "091_go_application_service_dispatch_pool_sync",
+            include_str!("../../../migrations/091_go_application_service_dispatch_pool_sync.sql"),
+        ),
+        // Go 080_application_service_admin_pages.sql.
+        (
+            "092_go_application_service_admin_pages",
+            include_str!("../../../migrations/092_go_application_service_admin_pages.sql"),
+        ),
+        // Go 081_function_version_requeue_revision.sql.
+        (
+            "093_go_function_version_requeue_revision",
+            include_str!("../../../migrations/093_go_function_version_requeue_revision.sql"),
+        ),
+        // Go 082_dispatch_job_connection.sql.
+        (
+            "094_go_dispatch_job_connection",
+            include_str!("../../../migrations/094_go_dispatch_job_connection.sql"),
+        ),
     ]
 }
 
@@ -751,6 +874,143 @@ pub async fn run_migrations_with(
                AND indexname = 'idx_dispatch_jobs_status_group') \
              AND NOT EXISTS (SELECT 1 FROM information_schema.tables \
              WHERE table_schema = 'public' AND table_name = 'msg_dispatch_queue')",
+        ),
+
+        // 067-070 are data migrations Go carries as 069-072. They used to have no
+        // probe, so the pre-tracker backfill recorded them as applied on a database
+        // Go had migrated only part of the way, and they never ran there. Each probe
+        // below is true only when the effect is visible (a migration whose rows are
+        // absent reads as applied, which is right: it has nothing to do).
+        (
+            "067_application_service_batch_permissions",
+            "SELECT NOT EXISTS (SELECT 1 FROM iam_roles r WHERE r.name = 'platform:application-service') \
+             OR EXISTS (SELECT 1 FROM iam_role_permissions rp JOIN iam_roles r ON r.id = rp.role_id \
+             WHERE r.name = 'platform:application-service' \
+               AND rp.permission = 'platform:admin:batch:audit-logs-write')",
+        ),
+        (
+            "068_client_event_type_codes",
+            "SELECT NOT EXISTS (SELECT 1 FROM msg_event_types WHERE code LIKE 'platform:iam:client:%')",
+        ),
+        (
+            "069_prune_unemitted_event_types",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'public' AND table_name = 'msg_subscription_event_types_archive') \
+             AND NOT EXISTS (SELECT 1 FROM msg_event_types WHERE code IN (\
+             'platform:admin:edm:created','platform:admin:edm:deleted','platform:admin:edm:updated',\
+             'platform:admin:idp:created','platform:admin:idp:deleted','platform:admin:idp:updated',\
+             'platform:iam:anchor-domain:created','platform:iam:anchor-domain:deleted',\
+             'platform:iam:auth-config:created','platform:iam:auth-config:deleted',\
+             'platform:iam:auth-config:updated','platform:iam:role:created',\
+             'platform:iam:role:deleted','platform:iam:role:updated','platform:iam:roles:synced'))",
+        ),
+        // 070 replaces seeded 1.0 schemas that did not describe the emitted data;
+        // a corrected dispatch-pool schema (poolId) means Go's 072 or this ran.
+        (
+            "070_platform_event_schema_fixes",
+            "SELECT NOT EXISTS (SELECT 1 FROM msg_event_type_spec_versions sv \
+             JOIN msg_event_types et ON et.id = sv.event_type_id \
+             WHERE et.code = 'platform:admin:dispatch-pool:created' \
+               AND sv.schema_content::text LIKE '%dispatchPoolId%')",
+        ),
+        // 071-094 mirror Go 035-052, 055 and 059-082. A probe is true where Go's
+        // (or an earlier Rust run's) effect is visible; every one of these is
+        // idempotent, so a false probe only means the migration runs.
+        (
+            "071_go_persist_boundary_columns",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'oauth_idp_role_mappings' AND column_name = 'idp_type')",
+        ),
+        (
+            "072_go_read_projection_indexes",
+            "SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'idx_msg_events_read_type_created') AND EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'idx_msg_dispatch_jobs_read_status_created')",
+        ),
+        (
+            "073_go_login_throttle_and_index_cleanup",
+            "SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'idx_iam_login_attempts_failure_throttle') AND NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'idx_msg_events_read_time')",
+        ),
+        (
+            "074_go_dispatch_mode_default",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'msg_dispatch_jobs' AND column_name = 'mode' AND column_default LIKE '%NEXT_ON_ERROR%')",
+        ),
+        (
+            "075_go_partition_login_attempts",
+            "SELECT EXISTS (SELECT 1 FROM pg_partitioned_table pt JOIN pg_class c ON c.oid = pt.partrelid WHERE c.relname = 'iam_login_attempts')",
+        ),
+        (
+            "076_go_enum_check_constraints",
+            "SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_tnt_clients_status') AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_iam_login_attempts_outcome') AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_msg_subscriptions_status')",
+        ),
+        (
+            "077_go_dispatch_job_enum_check_constraints",
+            "SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_msg_dispatch_jobs_status') AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_msg_dispatch_job_attempts_error_type')",
+        ),
+        (
+            "078_go_platform_event_schema_version",
+            "SELECT NOT EXISTS (SELECT 1 FROM msg_event_type_spec_versions sv JOIN msg_event_types et ON et.id = sv.event_type_id WHERE et.code LIKE 'platform:%' AND sv.version = 'v1')",
+        ),
+        (
+            "079_go_functions_fng",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'fng_functions') AND EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'fng_pool_revisions') AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'msg_subscriptions' AND column_name = 'function_id') AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'msg_scheduled_jobs' AND column_name = 'function_id')",
+        ),
+        (
+            "080_go_scheduled_job_instance_not_before",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'msg_scheduled_job_instances' AND column_name = 'not_before')",
+        ),
+        (
+            "081_go_function_version_runtime",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'fng_versions' AND column_name = 'runtime')",
+        ),
+        (
+            "082_go_function_routes",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'fng_routes') AND EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'fng_domains')",
+        ),
+        (
+            "083_go_scrub_function_setting_audit",
+            "SELECT NOT EXISTS (SELECT 1 FROM aud_logs WHERE operation = 'PutSettingCommand' AND operation_json ? 'functionId' AND operation_json->>'kind' IN ('SECRET', 'DB') AND operation_json ? 'value' AND operation_json->>'value' IS DISTINCT FROM '***')",
+        ),
+        (
+            "084_go_function_route_alias_prefixes",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'fng_routes' AND column_name = 'alias_prefixes')",
+        ),
+        (
+            "085_go_function_event_type_codes",
+            "SELECT NOT EXISTS (SELECT 1 FROM msg_event_types WHERE code = 'platform:admin:function:deleted')",
+        ),
+        (
+            "086_go_function_event_type_reshape",
+            "SELECT NOT EXISTS (SELECT 1 FROM msg_event_types WHERE code IN ('platform:admin:function:created','platform:admin:function:updated','platform:admin:function-version:published','platform:admin:function-version:retired','platform:admin:function-alias:set','platform:admin:function-alias:deleted','platform:admin:function-domain:claimed','platform:admin:function-domain:released'))",
+        ),
+        (
+            "087_go_connection_service_account_principal_ids",
+            "SELECT NOT EXISTS (SELECT 1 FROM msg_connections c JOIN iam_principals p ON c.service_account_id = p.id WHERE p.service_account_id IS NOT NULL)",
+        ),
+        (
+            "088_go_normalise_role_assignment_names",
+            "SELECT NOT EXISTS (SELECT 1 FROM iam_principal_roles WHERE role_name ~ '\\s')",
+        ),
+        (
+            "089_go_backfill_role_application_id",
+            "SELECT NOT EXISTS (SELECT 1 FROM iam_roles r JOIN app_applications a ON a.code = r.application_code WHERE r.application_id IS NULL AND r.application_code IS NOT NULL AND r.application_code <> '')",
+        ),
+        (
+            "090_go_dispatch_pool_application_owner",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'msg_dispatch_pools' AND column_name = 'application_id')",
+        ),
+        (
+            "091_go_application_service_dispatch_pool_sync",
+            "SELECT NOT EXISTS (SELECT 1 FROM iam_roles r WHERE r.name = 'platform:application-service') OR EXISTS (SELECT 1 FROM iam_role_permissions rp JOIN iam_roles r ON r.id = rp.role_id WHERE r.name = 'platform:application-service' AND rp.permission = 'platform:messaging:dispatch-pool:sync')",
+        ),
+        (
+            "092_go_application_service_admin_pages",
+            "SELECT NOT EXISTS (SELECT 1 FROM iam_roles r WHERE r.name = 'platform:application-service') OR EXISTS (SELECT 1 FROM iam_role_permissions rp JOIN iam_roles r ON r.id = rp.role_id WHERE r.name = 'platform:application-service' AND rp.permission = 'platform:application-service:invitation:manage')",
+        ),
+        (
+            "093_go_function_version_requeue_revision",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'fng_versions' AND column_name = 'requeued_at_revision')",
+        ),
+        (
+            "094_go_dispatch_job_connection",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'msg_dispatch_jobs' AND column_name = 'connection_id')",
         ),
     ];
 
