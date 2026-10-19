@@ -21,6 +21,7 @@ use fc_platform_core::principal_kind::UserScope;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::shared::id::ClientId;
 use fc_platform_iam::auth::config_entity::IdpRoleMapping;
+use fc_platform_iam::role::name as role_name;
 use fc_platform_iam::{
     auth::config_repository::IdpRoleMappingRepository, principal::repository::PrincipalRepository,
 };
@@ -185,6 +186,17 @@ impl OidcSyncService {
                 let mapping = self.find_idp_role_mapping(idp_role_name).await?;
 
                 if let Some(mapping) = mapping {
+                    // Go F18: a mapped platform role of the wrong shape is
+                    // never stored (it would be minted into the token).
+                    if !role_name::is_valid_name(&mapping.platform_role_name) {
+                        warn!(
+                            principal_id = %principal.id,
+                            idp_role = %idp_role_name,
+                            internal_role = %mapping.platform_role_name,
+                            "Skipped IDP role: the mapped platform role name is malformed"
+                        );
+                        continue;
+                    }
                     // This IDP role is authorized - map to internal role name
                     authorized_role_names.insert(mapping.platform_role_name.clone());
                     debug!(
@@ -270,6 +282,16 @@ impl OidcSyncService {
                 let mapping = self.find_idp_role_mapping(idp_role_name).await?;
 
                 if let Some(mapping) = mapping {
+                    // Go F18: see `sync_idp_roles`.
+                    if !role_name::is_valid_name(&mapping.platform_role_name) {
+                        warn!(
+                            principal_id = %principal.id,
+                            idp_role = %idp_role_name,
+                            internal_role = %mapping.platform_role_name,
+                            "Skipped IDP role: the mapped platform role name is malformed"
+                        );
+                        continue;
+                    }
                     // Check against the provider's allow-list, if it has one
                     if let Some(allowed) = allowed_role_names {
                         if !allowed.contains(&mapping.platform_role_name) {

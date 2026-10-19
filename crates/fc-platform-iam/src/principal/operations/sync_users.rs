@@ -28,12 +28,13 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use super::events::{PrincipalsSynced, UserCreated, UserUpdated};
 use crate::principal::entity::{Principal, PrincipalSyncBatch};
 use crate::role::ceiling;
+use crate::role::name as role_name;
 use crate::service_account::entity::{AssignmentSource, RoleAssignment};
 use crate::{principal::repository::PrincipalRepository, role::repository::RoleRepository};
 use fc_platform_core::principal_kind::UserScope;
@@ -176,18 +177,45 @@ impl<U: UnitOfWork> UseCase for SyncUsersUseCase<U> {
         let mut row_events = Vec::with_capacity(command.principals.len());
         let (mut created, mut updated) = (0u32, 0u32);
 
+        // Go F18 (the F15 rule on the platform route, anchor caller): a name
+        // that is not a role, a malformed one included, is skipped and
+        // reported on the rollup, never stored, so it can never reach a
+        // token. One query for every name the payload carries.
+        let mut named: Vec<String> = Vec::new();
+        for r in command.principals.iter().flat_map(|p| &p.roles) {
+            let name = r.to_lowercase();
+            if role_name::is_valid_name(&name) && !named.contains(&name) {
+                named.push(name);
+            }
+        }
+        let known: HashSet<String> = self
+            .role_repo
+            .find_by_codes(&named)
+            .await
+            .map_err(|e| UseCaseError::commit(format!("Failed to load roles: {e}")))?
+            .into_iter()
+            .map(|r| r.name)
+            .collect();
+        let mut skipped: Vec<String> = Vec::new();
+
         for (input, email) in command.principals.iter().zip(&emails) {
-            let roles: Vec<RoleAssignment> = input
-                .roles
-                .iter()
-                .map(|r| RoleAssignment {
-                    role: r.to_lowercase(),
+            let mut roles: Vec<RoleAssignment> = Vec::with_capacity(input.roles.len());
+            for r in &input.roles {
+                let name = r.to_lowercase();
+                if !known.contains(&name) {
+                    if !skipped.contains(&name) {
+                        skipped.push(name);
+                    }
+                    continue;
+                }
+                roles.push(RoleAssignment {
+                    role: name,
                     client_id: None,
                     assignment_source: Some(AssignmentSource::SdkSync),
                     assigned_at: now,
                     assigned_by: None,
-                })
-                .collect();
+                });
+            }
             let hash = input.password_hash.as_deref().filter(|h| !h.is_empty());
 
             let current = saved.remove(email).or_else(|| existing.remove(email));
@@ -255,7 +283,7 @@ impl<U: UnitOfWork> UseCase for SyncUsersUseCase<U> {
             updated,
             deactivated: 0,
             synced_emails: emails,
-            skipped_roles: Vec::new(),
+            skipped_roles: skipped,
         };
 
         // Go's usecaseop.Sync: each row's event and audit row, then the

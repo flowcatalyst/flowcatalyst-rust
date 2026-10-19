@@ -320,7 +320,7 @@ async fn create_idp_role_mapping_emits_event_and_audit_log() {
             json!({
                 "idpType": "azure-ad",
                 "idpRoleName": "fc-admins",
-                "platformRoleName": "admin",
+                "platformRoleName": "platform:admin",
             }),
         )
         .await;

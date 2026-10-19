@@ -203,11 +203,13 @@ async fn the_application_sync_skips_names_that_are_not_roles() {
     }
 }
 
-/// The platform route is unchanged: an anchor's unknown name is stored as an
-/// assignment, and the response has no `skippedRoles`.
+/// The platform route follows the same rule since Go F18 (`52c51e68`): a name
+/// that is not a role (unknown or malformed) is skipped and never stored, so it
+/// can never reach a token. The response still has no `skippedRoles` (the
+/// route's schema has no such member); the rollup event carries them.
 #[tokio::test]
 #[ignore = "requires Docker"]
-async fn the_platform_sync_is_unchanged() {
+async fn the_platform_sync_skips_names_that_are_not_roles_without_reporting_them() {
     let app = setup().await;
     let token = app.anchor_admin_token().await;
     let (status, body) = read_json(
@@ -223,6 +225,7 @@ async fn the_platform_sync_is_unchanged() {
     assert!(body.get("skippedRoles").is_none(), "{body}");
     assert_eq!(
         roles_of(&app, "e@unkrolesdk.test").await,
-        Some(s(&["unkrolesdk:ghost"]))
+        Some(vec![]),
+        "the unknown name is not stored"
     );
 }

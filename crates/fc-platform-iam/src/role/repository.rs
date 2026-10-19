@@ -270,6 +270,19 @@ impl RoleRepository {
         self.hydrate_roles(rows).await
     }
 
+    /// The id of the application with this code; `None` when there is none.
+    /// The domain's way of keeping `iam_roles.application_id` derivable from
+    /// `application_code` (Go F18 `ApplicationIDByCode`): a role is written
+    /// with the id of the application that owns it.
+    pub async fn application_id_by_code(&self, code: &str) -> Result<Option<ApplicationId>> {
+        let id: Option<String> =
+            sqlx::query_scalar("SELECT id FROM app_applications WHERE code = $1")
+                .bind(code)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(id.map(ApplicationId::from_wire))
+    }
+
     /// The distinct application codes roles use, sorted (Go
     /// `RoleApplicationCodes`).
     pub async fn find_application_codes(&self) -> Result<Vec<String>> {

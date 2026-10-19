@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use super::events::ServiceAccountRolesAssigned;
 use crate::role::ceiling;
+use crate::role::name;
 use crate::role::repository::RoleRepository;
 use crate::service_account::entity::{AssignmentSource, RoleAssignment};
 use crate::service_account::repository::ServiceAccountRepository;
@@ -59,8 +60,12 @@ impl<U: UnitOfWork> UseCase for AssignRolesUseCase<U> {
     type Command = AssignRolesCommand;
     type Event = ServiceAccountRolesAssigned;
 
-    async fn validate(&self, _command: &AssignRolesCommand) -> Result<(), UseCaseError> {
-        Ok(())
+    /// Go F18: every name is shape-checked, 400 `INVALID_ROLE_NAME`. This
+    /// path stored whatever string it was sent (`example: dispatcher`), and
+    /// token minting copied it into the `roles` claim. Existence
+    /// (`ROLE_NOT_FOUND`) is checked in `execute`, after the ceiling.
+    async fn validate(&self, command: &AssignRolesCommand) -> Result<(), UseCaseError> {
+        name::validate_names(&command.roles)
     }
 
     /// Anchors only (`can_update_service_accounts`, checked with the permission
@@ -106,6 +111,10 @@ impl<U: UnitOfWork> UseCase for AssignRolesUseCase<U> {
                 ),
             )?;
 
+        // Go F18: every name must be an existing role (400 `ROLE_NOT_FOUND`);
+        // the assignments are built from the stored roles' own names.
+        let resolved = name::resolve_names(&self.role_repo, &command.roles).await?;
+
         // Calculate diff
         let current_roles: HashSet<String> = service_account
             .roles
@@ -119,8 +128,7 @@ impl<U: UnitOfWork> UseCase for AssignRolesUseCase<U> {
 
         // Replace roles, as Go does (every assignment is made now), recording
         // who made them.
-        service_account.roles = command
-            .roles
+        service_account.roles = resolved
             .iter()
             .map(|r| {
                 RoleAssignment::with_source(r, AssignmentSource::AdminAssigned)

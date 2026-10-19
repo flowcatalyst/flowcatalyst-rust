@@ -177,10 +177,16 @@ pub async fn seed_builtin_roles(pool: &PgPool) -> error::Result<()> {
     let repo = RoleRepository::new(pool);
     let mut inserted = 0;
 
-    for role in roles::all() {
+    // Go F18: platform roles carry the platform application's id like any
+    // other application's roles. If the row is somehow absent the id stays
+    // null and the next role sync heals it.
+    let platform_application_id = repo.application_id_by_code("platform").await?;
+
+    for mut role in roles::all() {
         if repo.find_by_name(&role.name).await?.is_some() {
             continue;
         }
+        role.application_id = platform_application_id.clone();
         repo.insert(&role).await?;
         info!(role = %role.name, "Seeded built-in role");
         inserted += 1;

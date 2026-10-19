@@ -13,6 +13,7 @@ use std::sync::Arc;
 use super::events::{RolePermissionGranted, RolePermissionRevoked};
 use super::permission_events::{PermissionDefined, PermissionDeleted};
 use crate::role::ceiling;
+use crate::role::name;
 use crate::role::permission_catalog::CatalogPermission;
 use crate::role::permission_repository::PermissionCatalogRepository;
 use crate::role::repository::RoleRepository;
@@ -74,7 +75,9 @@ impl<U: UnitOfWork> UseCase for GrantPermissionUseCase<U> {
     type Event = RolePermissionGranted;
 
     async fn validate(&self, command: &GrantPermissionCommand) -> Result<(), UseCaseError> {
-        require_names(&command.role_name, &command.permission)
+        require_names(&command.role_name, &command.permission)?;
+        // Go F18: rejected as sent, never trimmed.
+        name::validate_permission(&command.permission)
     }
 
     /// The role ceiling (owner ruling 14): only a permission the caller holds may

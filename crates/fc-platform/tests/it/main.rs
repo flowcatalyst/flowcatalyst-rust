@@ -110,6 +110,7 @@ mod read_scope_bug_fixes_test;
 mod requeue_by_filter_test;
 mod role_catalogue_go_parity_test;
 mod role_ceiling_extras_test;
+mod role_name_validation_test;
 mod route_auth_convention_test;
 mod route_wiring_convention_test;
 mod router_token_contract_test;

@@ -8,6 +8,7 @@ use std::sync::Arc;
 use super::events::RolesAssigned;
 use crate::principal::repository::PrincipalRepository;
 use crate::role::ceiling;
+use crate::role::name;
 use crate::role::repository::RoleRepository;
 use crate::service_account::entity::{AssignmentSource, RoleAssignment};
 use fc_platform_core::principal_kind::PrincipalType;
@@ -58,6 +59,10 @@ impl<U: UnitOfWork> UseCase for AssignUserRolesUseCase<U> {
                 "User ID is required",
             ));
         }
+
+        // Go F18: shape first (400 `INVALID_ROLE_NAME`); existence is checked
+        // against the roles in `execute`.
+        name::validate_names(&command.roles)?;
 
         Ok(())
     }

@@ -7,6 +7,7 @@ use std::sync::Arc;
 use super::events::RoleCreated;
 use crate::role::ceiling;
 use crate::role::entity::{AuthRole, RoleSource};
+use crate::role::name;
 use crate::role::repository::RoleRepository;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
@@ -95,6 +96,14 @@ impl<U: UnitOfWork> UseCase for CreateRoleUseCase<U> {
             ));
         }
 
+        // Go F18: rejected as sent, never trimmed. The name is the canonical
+        // `{application}:{role}` the roles are assigned and minted by.
+        name::validate_name(&format!(
+            "{}:{}",
+            command.application_code, command.role_name
+        ))?;
+        name::validate_permissions(&command.permissions)?;
+
         Ok(())
     }
 
@@ -144,8 +153,23 @@ impl<U: UnitOfWork> UseCase for CreateRoleUseCase<U> {
             ));
         }
 
+        // Go F18: the role is written with the id of the application that
+        // owns it, and a role for an application that does not exist is
+        // refused.
+        let application_id = self
+            .role_repo
+            .application_id_by_code(&app_code)
+            .await?
+            .ok_or_else(|| {
+                UseCaseError::validation(
+                    "APPLICATION_NOT_FOUND",
+                    format!("Application '{}' does not exist", command.application_code),
+                )
+            })?;
+
         // Create the role entity
         let mut role = AuthRole::new(&app_code, &role_name, display_name);
+        role.application_id = Some(application_id);
         role.source = command.source;
 
         if let Some(desc) = &command.description {

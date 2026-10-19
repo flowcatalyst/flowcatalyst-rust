@@ -27,6 +27,21 @@ fn nobody_token(app: &TestApp) -> String {
 }
 
 async fn create_role(app: &TestApp, token: &str, name: &str) -> String {
+    // A role is created for an application that exists (Go F18).
+    if app
+        .repos
+        .application_repo
+        .find_by_code("parity")
+        .await
+        .unwrap()
+        .is_none()
+    {
+        app.repos
+            .application_repo
+            .insert(&Application::new("parity", "parity"))
+            .await
+            .unwrap();
+    }
     let body = assert_status(
         app.post(
             "/api/roles",

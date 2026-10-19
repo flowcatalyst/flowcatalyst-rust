@@ -21,6 +21,7 @@ use super::events::{RoleCreated, RoleDeleted, RoleUpdated, RolesSynced};
 use crate::application::repository::ApplicationRepository;
 use crate::role::ceiling;
 use crate::role::entity::{AuthRole, RoleSource};
+use crate::role::name;
 use crate::role::repository::RoleRepository;
 use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::usecase::AuditMasked;
@@ -93,6 +94,14 @@ impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
                 "ROLES_REQUIRED",
                 "At least one role must be provided",
             ));
+        }
+
+        // Go F18: every role name and permission is shape-checked up front,
+        // so one malformed entry refuses the whole sync before any write.
+        for input in &command.roles {
+            let short = short_role_name(&input.name.to_lowercase(), &command.application_code);
+            name::validate_name(&format!("{}:{}", command.application_code, short))?;
+            name::validate_permissions(&input.permissions)?;
         }
 
         Ok(())
@@ -180,6 +189,12 @@ impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
                     // Only update SDK-sourced roles
                     if role.source == RoleSource::Sdk {
                         let mut updated = role.clone();
+                        // Go F18: a row of this application written without
+                        // its id (the admin create used to leave it null) is
+                        // this application's role: adopt it.
+                        if updated.application_id.is_none() {
+                            updated.application_id = Some(application.id.clone());
+                        }
                         updated.display_name = input
                             .display_name
                             .clone()

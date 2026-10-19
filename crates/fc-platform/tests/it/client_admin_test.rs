@@ -183,6 +183,17 @@ async fn a_client_admin_assigns_only_its_clients_application_roles() {
             .await
             .expect("insert role");
     }
+    // Platform roles carry the platform application's id like any other
+    // application's roles (Go F18), so "a platform role" is the application
+    // code `platform`, not a missing id: backfilling the id must not open
+    // the role to a client administrator.
+    sqlx::query(
+        "UPDATE iam_roles SET application_id = (SELECT id FROM app_applications WHERE code = 'platform') \
+         WHERE application_code = 'platform'",
+    )
+    .execute(&f.app.pool)
+    .await
+    .expect("backfill the platform application id");
     let mut member = Principal::new_user("r@ca.test", UserScope::Client)
         .with_client_id(ClientId::parse(&f.mine).unwrap());
     // A platform role the client administrator can neither grant nor strip.

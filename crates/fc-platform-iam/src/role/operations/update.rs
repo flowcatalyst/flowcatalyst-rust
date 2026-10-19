@@ -9,6 +9,7 @@ use std::sync::Arc;
 use super::events::RoleUpdated;
 use crate::role::ceiling;
 use crate::role::entity::RoleSource;
+use crate::role::name;
 use crate::role::repository::RoleRepository;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
@@ -84,6 +85,11 @@ impl<U: UnitOfWork> UseCase for UpdateRoleUseCase<U> {
                 "NO_UPDATES",
                 "At least one field must be provided for update",
             ));
+        }
+
+        // Go F18: a malformed permission is rejected as sent, never trimmed.
+        if let Some(permissions) = &command.permissions {
+            name::validate_permissions(permissions)?;
         }
 
         Ok(())

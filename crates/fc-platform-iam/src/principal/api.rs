@@ -850,18 +850,20 @@ pub(super) async fn assert_assignable_roles(
                 details: Default::default(),
             });
         };
-        match role.application_id.as_ref() {
+        // Go F18: a platform role is `application_code == platform`, not a
+        // missing id; backfilling its id must not open it to a client admin.
+        match role.application_id.as_ref().filter(|_| !role.is_platform()) {
             None => {
                 return Err(PlatformError::forbidden_code(
                     "PLATFORM_ROLE_FORBIDDEN",
                     "client administrators cannot assign platform roles",
-                ))
+                ));
             }
             Some(app) if !allowed.contains(app) => {
                 return Err(PlatformError::forbidden_code(
                     "ROLE_APP_FORBIDDEN",
                     "role belongs to an application the client cannot access",
-                ))
+                ));
             }
             Some(_) => {}
         }
@@ -883,6 +885,7 @@ async fn protected_role_names(
         .filter(|name| {
             definitions
                 .get(name.as_str())
+                .filter(|r| !r.is_platform())
                 .and_then(|r| r.application_id.as_ref())
                 .is_none_or(|app| !allowed.contains(app))
         })
@@ -2167,13 +2170,17 @@ pub async fn bulk_import_principals(
             if !anchor {
                 let refused = r.roles.iter().find_map(|name| match definitions.get(name) {
                     None => Some(format!("role not found: {name}")),
-                    Some(role) => match role.application_id.as_ref() {
-                        None => Some("client administrators cannot assign platform roles".into()),
-                        Some(app) if !entitled.contains(app) => {
-                            Some("role belongs to an application the client cannot access".into())
+                    Some(role) => {
+                        match role.application_id.as_ref().filter(|_| !role.is_platform()) {
+                            None => {
+                                Some("client administrators cannot assign platform roles".into())
+                            }
+                            Some(app) if !entitled.contains(app) => Some(
+                                "role belongs to an application the client cannot access".into(),
+                            ),
+                            _ => None,
                         }
-                        _ => None,
-                    },
+                    }
                 });
                 if let Some(msg) = refused {
                     results.push(row(n, email, "error", Some(msg)));

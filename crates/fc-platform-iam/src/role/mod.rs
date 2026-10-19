@@ -6,6 +6,7 @@ pub mod api;
 pub mod bff;
 pub mod ceiling;
 pub mod entity;
+pub mod name;
 pub mod operations;
 pub mod permission_catalog;
 pub mod permission_repository;

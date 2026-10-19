@@ -21,6 +21,7 @@ use crate::role::entity::{AuthRole, RoleSource};
 use crate::role::operations::require_confined;
 use crate::role::repository::RoleRepository;
 use fc_platform_core::shared::error::Result;
+use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::usecase::Caller;
 use std::sync::Arc;
 
@@ -132,6 +133,12 @@ impl RoleSyncService {
                     existing.display_name = role_def.display_name.clone();
                     existing.description = role_def.description.clone();
                     existing.permissions = role_def.permissions.clone();
+                    // Go F18: heal a row written without its application's id.
+                    if existing.application_id.is_none() {
+                        existing.application_id = self
+                            .owner_application_id(existing.owning_application_code())
+                            .await?;
+                    }
                     existing.updated_at = chrono::Utc::now();
                     self.role_repo.update(&existing).await?;
                     updated += 1;
@@ -154,6 +161,9 @@ impl RoleSyncService {
                 role.description = role_def.description.clone();
                 role.permissions = role_def.permissions.clone();
                 role.source = RoleSource::Code;
+                role.application_id = self
+                    .owner_application_id(role.owning_application_code())
+                    .await?;
 
                 self.role_repo.insert(&role).await?;
                 created += 1;
@@ -175,6 +185,22 @@ impl RoleSyncService {
             removed,
             total,
         })
+    }
+
+    /// The id a role of application `code` carries (Go F18
+    /// `ownerApplicationID`). An application that does not exist yields
+    /// `None` with a warning rather than an error: the built-in catalogue
+    /// must still be installable on a database whose `platform` application
+    /// row has not been seeded yet; the next sync heals the row.
+    async fn owner_application_id(&self, code: &str) -> Result<Option<ApplicationId>> {
+        let id = self.role_repo.application_id_by_code(code).await?;
+        if id.is_none() {
+            warn!(
+                application_code = code,
+                "role written without an application id: no such application"
+            );
+        }
+        Ok(id)
     }
 
     /// The CODE-sourced roles in the database that no longer exist in code

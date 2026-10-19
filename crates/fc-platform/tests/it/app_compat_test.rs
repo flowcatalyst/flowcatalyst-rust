@@ -17,7 +17,7 @@ use fc_platform::auth::config_entity::AnchorDomain;
 use fc_platform::auth::oauth_entity::OAuthClient;
 use fc_platform::client::entity::Client;
 use fc_platform::domain::{Principal, UserScope};
-use fc_platform::role::entity::permissions;
+use fc_platform::role::entity::{permissions, AuthRole};
 use support::{read_json, TestApp};
 
 /// An unauthenticated JSON POST (login, logout).
@@ -150,6 +150,13 @@ async fn integral_syncs_a_user_with_its_password_hash() {
     let app = TestApp::setup().await;
     let token = app.anchor_admin_token().await;
     let hash = "$2y$10$eImiTXuWVxfM37uY4JANjQ==eImiTXuWVxfM37uY4JANjQ.abcdefg";
+    // The sync assigns only roles that exist (Go F18: a name that is not a
+    // role is skipped, never stored).
+    app.repos
+        .role_repo
+        .insert(&AuthRole::new("hr", "manager", "Manager"))
+        .await
+        .unwrap();
 
     let (status, body) = read_json(
         app.post(

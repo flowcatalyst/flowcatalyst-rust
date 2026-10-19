@@ -51,6 +51,7 @@ use crate::application::repository::ApplicationRepository;
 use crate::principal::entity::{Principal, PrincipalSyncBatch};
 use crate::principal::repository::PrincipalRepository;
 use crate::role::ceiling;
+use crate::role::name as role_name;
 use crate::role::repository::RoleRepository;
 use crate::service_account::entity::{AssignmentSource, RoleAssignment};
 use fc_platform_core::permissions;
@@ -284,7 +285,14 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
             let mut roles: Vec<RoleAssignment> = Vec::with_capacity(input.roles.len());
             for r in &input.roles {
                 let name = r.to_lowercase();
-                match owners.get(&name) {
+                // Go F18: a malformed name is not a role, whatever is stored:
+                // skipped and reported like any unknown name, never stored.
+                let owner = if role_name::is_valid_name(&name) {
+                    owners.get(&name)
+                } else {
+                    None
+                };
+                match owner {
                     None => {
                         if !skipped.contains(&name) {
                             skipped.push(name);

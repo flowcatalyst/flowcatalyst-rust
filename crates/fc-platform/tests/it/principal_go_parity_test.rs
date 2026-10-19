@@ -12,6 +12,7 @@ use serde_json::{json, Value};
 use fc_platform::application::entity::Application;
 use fc_platform::client::entity::Client;
 use fc_platform::domain::{Principal, UserScope};
+use fc_platform::role::entity::roles;
 use support::{read_json, TestApp};
 
 async fn create_client(app: &TestApp, identifier: &str) -> String {
@@ -385,6 +386,8 @@ async fn service_account_events_carry_the_account_id() {
     let prn = body["principalId"].as_str().unwrap().to_string();
     assert!(sac.starts_with("sac_"), "{body}");
     assert!(prn.starts_with("prn_"), "{body}");
+    // The assignment names an existing role (Go F18).
+    app.repos.role_repo.insert(&roles::viewer()).await.unwrap();
 
     let path = format!("/api/service-accounts/{sac}");
     let resp = app

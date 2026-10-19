@@ -8,6 +8,7 @@ use super::events::IdpRoleMappingCreated;
 use crate::auth::config_entity::IdpRoleMapping;
 use crate::auth::config_repository::IdpRoleMappingRepository;
 use crate::role::ceiling;
+use crate::role::name;
 use crate::role::repository::RoleRepository;
 use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::usecase::AuditMasked;
@@ -63,6 +64,10 @@ impl<U: UnitOfWork> UseCase for CreateIdpRoleMappingUseCase<U> {
                 "Platform role name is required",
             ));
         }
+        // Go F18: the platform role is a canonical role name; a malformed one
+        // is refused, never trimmed (existence is checked when the mapping is
+        // applied at login).
+        name::validate_name(&command.platform_role_name)?;
         Ok(())
     }
 
