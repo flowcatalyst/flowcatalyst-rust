@@ -649,6 +649,33 @@ impl PlatformError {
     }
 }
 
+/// `text` with every URL's query string replaced by `?REDACTED` (a presigned
+/// URL carries its signature there): anything after a `?` in an `http(s)://`
+/// token, up to whitespace or a quote.
+pub fn redact_url_queries(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("http") {
+        let (head, tail) = rest.split_at(start);
+        out.push_str(head);
+        let is_url = tail.starts_with("http://") || tail.starts_with("https://");
+        let end = tail
+            .find(|c: char| c.is_whitespace() || c == '"' || c == '\'')
+            .unwrap_or(tail.len());
+        let token = &tail[..end];
+        match (is_url, token.find('?')) {
+            (true, Some(q)) => {
+                out.push_str(&token[..q]);
+                out.push_str("?REDACTED");
+            }
+            _ => out.push_str(token),
+        }
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 impl IntoResponse for PlatformError {
     fn into_response(self) -> Response {
         if let PlatformError::SessionEndpoint {
@@ -679,8 +706,18 @@ impl IntoResponse for PlatformError {
         }
         let (status, error_code) = self.status_and_code();
 
-        if status == StatusCode::INTERNAL_SERVER_ERROR {
-            tracing::error!(error = %self, "Internal server error");
+        // Every 5xx is logged ONCE, with its cause: the wire envelope hides it,
+        // so without this line a failure leaves no trace at all (Go logs from
+        // the huma error constructor: code, cause, status). The request's
+        // method and path come from the request span the binaries' trace layer
+        // opens. A URL's query string (a presigned URL's signature) is redacted.
+        if status.is_server_error() {
+            tracing::error!(
+                code = %error_code,
+                status = status.as_u16(),
+                error = %redact_url_queries(&self.to_string()),
+                "internal error response"
+            );
         }
 
         // A 500 carries its code and a fixed message; the cause (SQL error
@@ -839,5 +876,103 @@ mod go_envelope_tests {
             v,
             serde_json::json!({"error": "VALIDATION", "message": "name is required"})
         );
+    }
+
+    /// Go `internal_log_test.go`: every 5xx is logged once, with its code, its
+    /// status and its cause; a 4xx is not; a URL's query string is redacted.
+    mod five_xx_logging {
+        use super::*;
+        use std::io::{self, Write};
+        use std::sync::{Arc, Mutex};
+        use tracing::subscriber::with_default;
+        use tracing_subscriber::fmt::MakeWriter;
+
+        #[derive(Clone, Default)]
+        struct Capture(Arc<Mutex<Vec<u8>>>);
+
+        impl Write for Capture {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> MakeWriter<'a> for Capture {
+            type Writer = Capture;
+            fn make_writer(&'a self) -> Capture {
+                self.clone()
+            }
+        }
+
+        fn logged(err: PlatformError) -> String {
+            let capture = Capture::default();
+            let subscriber = tracing_subscriber::fmt()
+                .with_writer(capture.clone())
+                .with_ansi(false)
+                .finish();
+            with_default(subscriber, || {
+                drop(err.into_response());
+            });
+            let bytes = capture.0.lock().unwrap().clone();
+            String::from_utf8(bytes).unwrap()
+        }
+
+        #[test]
+        fn an_internal_error_logs_its_cause() {
+            let line = logged(PlatformError::internal(
+                "artifact store exists failed: boom",
+            ));
+            assert_eq!(line.matches("internal error response").count(), 1, "{line}");
+            assert!(
+                line.contains("artifact store exists failed: boom"),
+                "{line}"
+            );
+            assert!(line.contains("status=500"), "{line}");
+        }
+
+        #[test]
+        fn every_5xx_is_logged_not_only_500() {
+            let line = logged(PlatformError::Coded {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                code: "ARTIFACT_STORE_NOT_CONFIGURED".to_string(),
+                message: "no store".to_string(),
+                details: Default::default(),
+            });
+            assert!(
+                line.contains("status=503") && line.contains("ARTIFACT_STORE_NOT_CONFIGURED"),
+                "{line}"
+            );
+        }
+
+        #[test]
+        fn a_client_error_is_not_logged() {
+            let line = logged(PlatformError::not_found("Thing", "t_1"));
+            assert!(line.is_empty(), "{line}");
+        }
+
+        #[test]
+        fn a_presigned_url_signature_never_reaches_the_log() {
+            let line = logged(PlatformError::internal(
+                "get \"https://b.s3.amazonaws.com/k?X-Amz-Signature=SECRET&X-Amz-Credential=AKIA\" failed",
+            ));
+            assert!(
+                line.contains("https://b.s3.amazonaws.com/k?REDACTED"),
+                "{line}"
+            );
+            assert!(!line.contains("SECRET") && !line.contains("AKIA"), "{line}");
+        }
+
+        #[test]
+        fn redaction_touches_only_urls() {
+            assert_eq!(redact_url_queries("what? no url"), "what? no url");
+            assert_eq!(
+                redact_url_queries("a http://h/p?q=1 b https://h2/?z c"),
+                "a http://h/p?REDACTED b https://h2/?REDACTED c"
+            );
+            assert_eq!(redact_url_queries("http is a word"), "http is a word");
+        }
     }
 }

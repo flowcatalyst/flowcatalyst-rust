@@ -95,6 +95,114 @@ pub trait ArtifactBlobStore: Send + Sync {
     /// Every blob of a function. Best-effort callers only: a failure is a
     /// WARN, never a failed function delete.
     async fn delete_all(&self, function_id: &str) -> Result<(), ArtifactError>;
+
+    /// Where the store lives, for diagnostics only (Go `Describer`). Never
+    /// credentials.
+    fn describe(&self) -> StoreLocation {
+        StoreLocation::default()
+    }
+}
+
+/// Where a store lives: the kind (`s3` or `file`), its bucket (S3 only) and
+/// its prefix (S3) or directory (file).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StoreLocation {
+    pub kind: &'static str,
+    pub bucket: String,
+    pub prefix: String,
+}
+
+/// A store whose every transport failure says which store, which operation
+/// and which digest it was (Go `WithDiagnostics`), so a 500's log line alone
+/// diagnoses it. The cause is kept as the SDK worded it. `NotFound` and
+/// `BadRef` pass through untouched: callers match on them. No credentials, no
+/// presigned URLs.
+pub struct DiagnosedBlobStore {
+    inner: Arc<dyn ArtifactBlobStore>,
+    location: StoreLocation,
+}
+
+impl DiagnosedBlobStore {
+    pub fn new(inner: Arc<dyn ArtifactBlobStore>) -> Self {
+        let location = inner.describe();
+        Self { inner, location }
+    }
+
+    fn wrap<T>(
+        &self,
+        op: &str,
+        digest: Option<&Digest>,
+        result: Result<T, ArtifactError>,
+    ) -> Result<T, ArtifactError> {
+        match result {
+            Err(ArtifactError::Transport(cause)) => {
+                let mut loc = format!("store={}", self.location.kind);
+                if !self.location.bucket.is_empty() {
+                    loc.push_str(&format!(" bucket={}", self.location.bucket));
+                }
+                if !self.location.prefix.is_empty() {
+                    loc.push_str(&format!(" prefix={}", self.location.prefix));
+                }
+                let digest = digest.map(|d| d.hex().to_string()).unwrap_or_default();
+                Err(ArtifactError::Transport(format!(
+                    "artifact store {loc} op={op} digest={digest}: {cause}"
+                )))
+            }
+            other => other,
+        }
+    }
+}
+
+#[async_trait]
+impl ArtifactBlobStore for DiagnosedBlobStore {
+    async fn put(
+        &self,
+        function_id: &str,
+        digest: &Digest,
+        file: &Path,
+    ) -> Result<(), ArtifactError> {
+        self.wrap(
+            "put",
+            Some(digest),
+            self.inner.put(function_id, digest, file).await,
+        )
+    }
+
+    async fn exists(&self, function_id: &str, digest: &Digest) -> Result<bool, ArtifactError> {
+        self.wrap(
+            "exists",
+            Some(digest),
+            self.inner.exists(function_id, digest).await,
+        )
+    }
+
+    async fn open(
+        &self,
+        function_id: &str,
+        digest: &Digest,
+    ) -> Result<ArtifactStream, ArtifactError> {
+        self.wrap(
+            "open",
+            Some(digest),
+            self.inner.open(function_id, digest).await,
+        )
+    }
+
+    async fn size(&self, function_id: &str, digest: &Digest) -> Result<u64, ArtifactError> {
+        self.wrap(
+            "size",
+            Some(digest),
+            self.inner.size(function_id, digest).await,
+        )
+    }
+
+    async fn delete_all(&self, function_id: &str) -> Result<(), ArtifactError> {
+        self.wrap("delete", None, self.inner.delete_all(function_id).await)
+    }
+
+    fn describe(&self) -> StoreLocation {
+        self.location.clone()
+    }
 }
 
 /// Why `FC_FN_ARTIFACT_STORE` cannot be turned into a store. `Display` is the
@@ -130,13 +238,17 @@ pub fn configure(spec: &str) -> Result<Option<Arc<dyn ArtifactBlobStore>>, Artif
     if let Some(rest) = spec.strip_prefix("file://") {
         let dir = file_dir(spec, rest)?;
         let store = FileArtifactBlobStore::new(dir)?;
-        return Ok(Some(Arc::new(store)));
+        return Ok(Some(Arc::new(DiagnosedBlobStore::new(Arc::new(store)))));
     }
     if let Some(rest) = spec.strip_prefix("s3://") {
         let (bucket, prefix) = s3_location(spec, rest)?;
-        return Ok(Some(Arc::new(S3ArtifactBlobStore::from_environment(
-            bucket, prefix,
-        ))));
+        // The startup self-check logs the effective S3 configuration and
+        // whether the credential chain resolves. It runs in the background
+        // and never fails startup: a bad chain is reported here and again,
+        // with full detail, on the first request that needs S3.
+        s3::spawn_startup_self_check(bucket.clone(), prefix.clone());
+        let store = S3ArtifactBlobStore::from_environment(bucket, prefix);
+        return Ok(Some(Arc::new(DiagnosedBlobStore::new(Arc::new(store)))));
     }
     Err(ArtifactStoreSpecError::Unrecognised {
         spec: spec.to_string(),
@@ -466,5 +578,63 @@ mod tests {
         assert_eq!(status.as_u16(), 413);
         assert_eq!(code, "ARTIFACT_TOO_LARGE");
         assert_eq!(message, "artifact exceeds the 268435456-byte limit");
+    }
+
+    /// A store that always fails with `result`.
+    struct Failing(ArtifactError);
+
+    #[async_trait]
+    impl ArtifactBlobStore for Failing {
+        async fn put(&self, _: &str, _: &Digest, _: &Path) -> Result<(), ArtifactError> {
+            Err(self.0.clone())
+        }
+        async fn exists(&self, _: &str, _: &Digest) -> Result<bool, ArtifactError> {
+            Err(self.0.clone())
+        }
+        async fn open(&self, _: &str, _: &Digest) -> Result<ArtifactStream, ArtifactError> {
+            Err(self.0.clone())
+        }
+        async fn size(&self, _: &str, _: &Digest) -> Result<u64, ArtifactError> {
+            Err(self.0.clone())
+        }
+        async fn delete_all(&self, _: &str) -> Result<(), ArtifactError> {
+            Err(self.0.clone())
+        }
+        fn describe(&self) -> StoreLocation {
+            StoreLocation {
+                kind: "s3",
+                bucket: "my-bucket".into(),
+                prefix: "fn-artifacts".into(),
+            }
+        }
+    }
+
+    /// Go `diag_test.go`: a transport failure names the store, the operation
+    /// and the digest, keeps the cause; the sentinels pass through untouched.
+    #[tokio::test]
+    async fn a_transport_failure_names_the_store_the_operation_and_the_digest() {
+        let d = Digest::parse(&format!("sha256:{}", "c".repeat(64))).unwrap();
+        let wrapped = DiagnosedBlobStore::new(Arc::new(Failing(ArtifactError::Transport(
+            "s3 head_object: boom".into(),
+        ))));
+        let ArtifactError::Transport(msg) = wrapped.exists("fn1", &d).await.unwrap_err() else {
+            panic!("a transport failure stays one");
+        };
+        for want in [
+            "store=s3",
+            "bucket=my-bucket",
+            "prefix=fn-artifacts",
+            "op=exists",
+            &format!("digest={}", "c".repeat(64)),
+            "s3 head_object: boom",
+        ] {
+            assert!(msg.contains(want), "{want:?} missing from {msg:?}");
+        }
+        assert_eq!(wrapped.describe().bucket, "my-bucket");
+
+        for sentinel in [ArtifactError::NotFound, ArtifactError::BadRef("x".into())] {
+            let store = DiagnosedBlobStore::new(Arc::new(Failing(sentinel.clone())));
+            assert_eq!(store.size("fn1", &d).await.unwrap_err(), sentinel);
+        }
     }
 }

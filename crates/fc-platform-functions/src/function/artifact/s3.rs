@@ -13,11 +13,17 @@ use std::path::Path;
 
 use async_trait::async_trait;
 use aws_sdk_s3::config::http::HttpResponse;
-use aws_sdk_s3::config::{BehaviorVersion, RequestChecksumCalculation, ResponseChecksumValidation};
+use aws_sdk_s3::config::{
+    BehaviorVersion, ProvideCredentials, RequestChecksumCalculation, ResponseChecksumValidation,
+    SharedCredentialsProvider,
+};
 use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::Client;
+use std::time::Duration;
+use tokio::runtime::Handle;
 use tokio::sync::OnceCell;
+use tokio::time::timeout;
 
 use super::{keys, ArtifactBlobStore, ArtifactError, ArtifactStream};
 use crate::function::Digest;
@@ -47,8 +53,137 @@ fn status_of<E>(e: &SdkError<E, HttpResponse>) -> Option<u16> {
     e.raw_response().map(|r| r.status().as_u16())
 }
 
-fn transport<E: fmt::Debug, R: fmt::Debug>(e: SdkError<E, R>) -> ArtifactError {
-    ArtifactError::Transport(format!("{e:?}"))
+/// An SDK failure with the operation, keeping the SDK's text (which names
+/// the access-denied code, the credentials failure or the HTTP status) and
+/// adding a short hint for the two classes that are configuration problems
+/// (Go `s3Err`).
+fn transport<E: fmt::Debug, R: fmt::Debug>(op: &str, e: SdkError<E, R>) -> ArtifactError {
+    ArtifactError::Transport(annotate(op, &format!("{e:?}")))
+}
+
+fn annotate(op: &str, text: &str) -> String {
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("credentialsnotloaded")
+        || lower.contains("no providers in chain")
+        || lower.contains("failed to load credentials")
+        || lower.contains("failed to retrieve credentials")
+        || lower.contains("nocredentialproviders")
+    {
+        format!("s3 {op} (credentials not resolvable by the AWS default chain): {text}")
+    } else if text.contains("AccessDenied")
+        || lower.contains("statuscode: 403")
+        || text.contains("status: 403")
+    {
+        format!(
+            "s3 {op} (access denied: check the task role's s3 permissions on the bucket/prefix): {text}"
+        )
+    } else {
+        format!("s3 {op}: {text}")
+    }
+}
+
+/// What the startup self-check found (Go `logS3SelfCheck`). Values are never
+/// reported, only whether the credential chain resolves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelfCheck {
+    pub region: Option<String>,
+    /// The SDK gave no credentials provider at all.
+    pub no_provider: bool,
+    pub credentials_resolved: bool,
+    /// Whether the resolved credentials expire (a role session) or are static.
+    pub credentials_expire: bool,
+    pub error: Option<String>,
+}
+
+/// Resolve the credential chain once, with a 5 s bound.
+pub async fn self_check(
+    region: Option<String>,
+    provider: Option<SharedCredentialsProvider>,
+) -> SelfCheck {
+    let Some(provider) = provider else {
+        return SelfCheck {
+            region,
+            no_provider: true,
+            credentials_resolved: false,
+            credentials_expire: false,
+            error: None,
+        };
+    };
+    match timeout(Duration::from_secs(5), provider.provide_credentials()).await {
+        Ok(Ok(c)) => SelfCheck {
+            region,
+            no_provider: false,
+            credentials_resolved: true,
+            credentials_expire: c.expiry().is_some(),
+            error: None,
+        },
+        Ok(Err(e)) => SelfCheck {
+            region,
+            no_provider: false,
+            credentials_resolved: false,
+            credentials_expire: false,
+            error: Some(format!("{e:?}")),
+        },
+        Err(_) => SelfCheck {
+            region,
+            no_provider: false,
+            credentials_resolved: false,
+            credentials_expire: false,
+            error: Some("timed out after 5s resolving credentials".to_string()),
+        },
+    }
+}
+
+/// Log the effective S3 configuration and whether the credential chain
+/// resolves; never fails startup.
+fn log_self_check(bucket: &str, prefix: &str, check: &SelfCheck) {
+    let region = check.region.as_deref().unwrap_or("");
+    if check.no_provider {
+        tracing::warn!(
+            store_kind = "s3",
+            bucket,
+            prefix,
+            region,
+            "artifact store: s3 configured but no credentials provider"
+        );
+    } else if !check.credentials_resolved {
+        tracing::error!(
+            store_kind = "s3",
+            bucket,
+            prefix,
+            region,
+            credentials_resolved = false,
+            error = check.error.as_deref().unwrap_or(""),
+            "artifact store: s3 credentials did NOT resolve"
+        );
+    } else {
+        tracing::info!(
+            store_kind = "s3",
+            bucket,
+            prefix,
+            region,
+            credentials_resolved = true,
+            credentials_expire = check.credentials_expire,
+            "artifact store: s3 configured"
+        );
+    }
+}
+
+/// Run the startup self-check in the background when a runtime is running (the
+/// store is built in synchronous wiring; loading the AWS configuration is not).
+pub(super) fn spawn_startup_self_check(bucket: String, prefix: String) {
+    let Ok(handle) = Handle::try_current() else {
+        return;
+    };
+    handle.spawn(async move {
+        let shared = aws_config::load_defaults(BehaviorVersion::latest()).await;
+        let check = self_check(
+            shared.region().map(|r| r.to_string()),
+            shared.credentials_provider(),
+        )
+        .await;
+        log_self_check(&bucket, &prefix, &check);
+    });
 }
 
 impl S3ArtifactBlobStore {
@@ -112,13 +247,21 @@ impl S3ArtifactBlobStore {
         {
             Ok(out) => Ok(Some(out.content_length().unwrap_or(0).max(0) as u64)),
             Err(e) if status_of(&e) == Some(404) => Ok(None),
-            Err(e) => Err(transport(e)),
+            Err(e) => Err(transport("head_object", e)),
         }
     }
 }
 
 #[async_trait]
 impl ArtifactBlobStore for S3ArtifactBlobStore {
+    fn describe(&self) -> super::StoreLocation {
+        super::StoreLocation {
+            kind: "s3",
+            bucket: self.bucket.clone(),
+            prefix: self.prefix.clone(),
+        }
+    }
+
     async fn put(
         &self,
         function_id: &str,
@@ -140,7 +283,7 @@ impl ArtifactBlobStore for S3ArtifactBlobStore {
             .body(body)
             .send()
             .await
-            .map_err(transport)?;
+            .map_err(|e| transport("put_object", e))?;
         Ok(())
     }
 
@@ -166,7 +309,7 @@ impl ArtifactBlobStore for S3ArtifactBlobStore {
         {
             Ok(out) => Ok(Box::pin(out.body.into_async_read())),
             Err(e) if status_of(&e) == Some(404) => Err(ArtifactError::NotFound),
-            Err(e) => Err(transport(e)),
+            Err(e) => Err(transport("get_object", e)),
         }
     }
 
@@ -187,7 +330,7 @@ impl ArtifactBlobStore for S3ArtifactBlobStore {
                 .set_continuation_token(token.take())
                 .send()
                 .await
-                .map_err(transport)?;
+                .map_err(|e| transport("list_objects_v2", e))?;
             for object in page.contents() {
                 if let Some(key) = object.key() {
                     client
@@ -196,7 +339,7 @@ impl ArtifactBlobStore for S3ArtifactBlobStore {
                         .key(key)
                         .send()
                         .await
-                        .map_err(transport)?;
+                        .map_err(|e| transport("delete_object", e))?;
                 }
             }
             match (page.is_truncated(), page.next_continuation_token()) {
@@ -456,5 +599,76 @@ mod tests {
             Err(ArtifactError::BadRef(_))
         ));
         assert!(fake.objects.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn sdk_failures_get_a_configuration_hint() {
+        let creds = annotate("get_object", "CredentialsNotLoaded(...)");
+        assert!(
+            creds.contains("credentials not resolvable by the AWS default chain"),
+            "{creds}"
+        );
+        assert!(
+            creds.contains("CredentialsNotLoaded"),
+            "the SDK's text is kept: {creds}"
+        );
+        let denied = annotate("put_object", "ServiceError { code: \"AccessDenied\" }");
+        assert!(
+            denied.contains("access denied: check the task role's s3 permissions"),
+            "{denied}"
+        );
+        assert!(denied.contains("AccessDenied"), "{denied}");
+        assert_eq!(annotate("head_object", "boom"), "s3 head_object: boom");
+    }
+
+    #[tokio::test]
+    #[expect(
+        deprecated,
+        reason = "aws-config's profile-file types are the only public way to build a credential provider that deterministically fails"
+    )]
+    async fn the_self_check_reports_whether_credentials_resolve() {
+        use aws_sdk_s3::config::Credentials;
+        use std::time::SystemTime;
+        let region = Some("eu-west-1".to_string());
+
+        // A role-style credential (it expires) resolves.
+        let expiring = Credentials::new("k", "s", None, Some(SystemTime::now()), "test");
+        let ok = self_check(
+            region.clone(),
+            Some(SharedCredentialsProvider::new(expiring)),
+        )
+        .await;
+        assert!(
+            ok.credentials_resolved && ok.credentials_expire && ok.error.is_none(),
+            "{ok:?}"
+        );
+        assert_eq!(ok.region.as_deref(), Some("eu-west-1"));
+
+        // A static one resolves and does not expire.
+        let fixed = Credentials::new("k", "s", None, None, "test");
+        let ok = self_check(region.clone(), Some(SharedCredentialsProvider::new(fixed))).await;
+        assert!(ok.credentials_resolved && !ok.credentials_expire, "{ok:?}");
+
+        // A chain that cannot resolve is reported, with its error, not hidden:
+        // a profile that does not exist in (empty) config files.
+        use aws_config::profile::profile_file::{ProfileFileKind, ProfileFiles};
+        use aws_config::profile::ProfileFileCredentialsProvider;
+        let files = ProfileFiles::builder()
+            .with_contents(ProfileFileKind::Config, "")
+            .with_contents(ProfileFileKind::Credentials, "")
+            .build();
+        let broken = ProfileFileCredentialsProvider::builder()
+            .profile_files(files)
+            .profile_name("no-such-profile")
+            .build();
+        let bad = self_check(region.clone(), Some(SharedCredentialsProvider::new(broken))).await;
+        assert!(
+            !bad.credentials_resolved && bad.error.is_some() && !bad.no_provider,
+            "{bad:?}"
+        );
+
+        // No provider at all is its own finding.
+        let none = self_check(region, None).await;
+        assert!(none.no_provider && !none.credentials_resolved, "{none:?}");
     }
 }

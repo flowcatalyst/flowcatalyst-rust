@@ -66,6 +66,14 @@ async fn is_file(path: &Path) -> bool {
 
 #[async_trait]
 impl ArtifactBlobStore for FileArtifactBlobStore {
+    fn describe(&self) -> super::StoreLocation {
+        super::StoreLocation {
+            kind: "file",
+            bucket: String::new(),
+            prefix: self.dir.display().to_string(),
+        }
+    }
+
     #[expect(
         clippy::expect_used,
         reason = "a blob path is always built under the store root"
