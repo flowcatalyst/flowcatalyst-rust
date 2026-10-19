@@ -254,9 +254,12 @@ Anchor and partner principals can switch active client in the UI (`POST /auth/cl
 |---|---|---|
 | Access token (programmable) | `FC_ACCESS_TOKEN_EXPIRY_SECS` | 1 h |
 | Session cookie (browser) | `FC_SESSION_TOKEN_EXPIRY_SECS` | 8 h |
-| Refresh token | `FC_REFRESH_TOKEN_EXPIRY_SECS` | 30 d |
+| Refresh token | `FC_REFRESH_TOKEN_EXPIRY_SECS` (alias `OIDC_REFRESH_TOKEN_TTL`) | 7 d |
+| `fcdev login` refresh token | `FC_FCDEV_LOGIN_REFRESH_TTL_SECS` | 7 d |
 
 Session lifetime is the most user-visible. 8 h covers a working day without re-login; longer is convenient but inflates the blast radius of a compromised cookie. Most operators leave the defaults.
+
+`fcdev login` (the CLI's browser sign-in against a remote platform) uses the built-in public OAuth client `fcdev-cli`, seeded and re-asserted at every start: authorization code + PKCE (`S256` only), `authorization_code` and `refresh_token` grants only, the user's own roles (`api_access`), redirects `http://127.0.0.1/callback` and `http://[::1]/callback`. For that client only, `/oauth/authorize` accepts any port on those two loopback redirects (RFC 8252 section 7.3; never `localhost`, never `https`, never another host or path). Its refresh family has an ABSOLUTE lifetime (`FC_FCDEV_LOGIN_REFRESH_TTL_SECS`, default 7 days): rotation copies the first deadline forward, so the person signs in again about weekly. Every token response that carries a `refresh_token` also carries `refresh_expires_in` (seconds until that deadline). Deactivating the client in the console switches fcdev logins off and a restart does not turn them back on. The `fcdev` CLI itself stays Go-only.
 
 Refresh tokens implement single-use rotation: each refresh issues a new refresh token and invalidates the previous. Replay of an already-rotated refresh token triggers a token-family revoke (the entire chain rooted at the original login is invalidated). This is the standard OAuth best-practice for confidential clients with stolen-token detection.
 

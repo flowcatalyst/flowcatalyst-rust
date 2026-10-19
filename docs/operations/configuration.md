@@ -112,7 +112,8 @@ See [high-availability.md](high-availability.md).
 | `FC_JWT_ISSUER` | — | derived from `FC_EXTERNAL_BASE_URL` | JWT `iss` claim |
 | `FC_ACCESS_TOKEN_EXPIRY_SECS` | — | `3600` (1 h) | Access token TTL |
 | `FC_SESSION_TOKEN_EXPIRY_SECS` | — | `28800` (8 h) | Session cookie TTL |
-| `FC_REFRESH_TOKEN_EXPIRY_SECS` | — | `2592000` (30 d) | Refresh token TTL |
+| `FC_REFRESH_TOKEN_EXPIRY_SECS` | `OIDC_REFRESH_TOKEN_TTL` | `604800` (7 d) | Refresh token TTL (the family's absolute cap) |
+| `FC_FCDEV_LOGIN_REFRESH_TTL_SECS` | — | `604800` (7 d) | Absolute lifetime of an `fcdev login` (the built-in public client `fcdev-cli`), counted from the sign-in; a refresh never extends it. Independent of the setting above. Unset, unparseable or not positive means the default |
 | `FLOWCATALYST_APP_KEY` | — | — | AES-256 key for encrypting OIDC client secrets at rest. **Required in prod.** |
 | `FC_SESSION_COOKIE_SAME_SITE` | — | `Lax` | `Lax` or `Strict` |
 
@@ -361,7 +362,7 @@ function host, Rust or Java, talks to it.
 
 | Variable | Default | Description |
 |---|---|---|
-| `FC_FN_ARTIFACT_STORE` | unset (uploads refused) | Where uploaded artifacts live: `s3://bucket[/prefix]` or `file:///abs/dir`. Hosts download through the platform (`platform://` refs, `GET /control/functions/artifacts/{versionId}`), so they need no access to it |
+| `FC_FN_ARTIFACT_STORE` | unset (uploads refused) | Where uploaded artifacts live: `s3://bucket[/prefix]` or `file:///abs/dir`. Hosts download through the platform (`platform://` refs, `GET /control/functions/artifacts/{versionId}`), so they need no access to it. With an `s3://` store the platform logs at start (`artifact store: s3 configured`) the bucket, prefix and region and whether the AWS credential chain resolves (`credentials_resolved`); a chain that does not resolve is an ERROR line, never a failed start. A failing store call names the store, operation and digest in the 500's log line |
 | `FC_FN_POOL_URL` | `http://fn-{pool}:8080` | The URL a pool's hosts are reached at (subscription and scheduled-job targets are `<url>/functions/<address><path>`). `{pool}` is optional; one per pool is the norm, so the service for pool `jvm` is `fn-jvm` |
 | `FC_FN_SIGNATURES` / `FC_FN_TRUST_ROOT` | `required` / Sigstore public-good | Publish-time signature check (`off` only with `FLOWCATALYST_DEV_MODE=true`). A private Sigstore needs the same `trusted_root.json` on the platform and every host |
 | `FC_FN_DEFAULT_MAX_DURATION_MS` / `FC_FN_DEFAULT_MAX_CONCURRENCY` / `FC_FN_DEFAULT_WASM_MEMORY_MB` / `FC_FN_DEFAULT_DB_POOL_SIZE` | `30000` / `32` / `64` / `4` | Limits a manifest leaves out |

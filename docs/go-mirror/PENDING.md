@@ -18,7 +18,7 @@ no row here is a protocol failure. Sizes: S under half a day, M about a day, L s
 | F22 | `e3a9fbb5` | Version FAILED state, publish-replay reset, heartbeat fencing (`requeued_at_revision`, Go 081). Applies to the Go function model only (P4). | M | P4 | pending (column done) |
 | F23 | `7ce31723` | `describe.dispatches[]`, pool and connection resolution for function dispatch. | L | P4 | pending |
 | F24 | `e599f1de` | `POST /control/functions/dispatch-jobs`, `msg_dispatch_jobs.connection_id` (Go 082, Rust 094), paused-connection claim, connection-signed subscription-less jobs. | L | P1, P3 | pending (column done) |
-| F25 | `8254cf0c` | `fcdev-cli` public client, RFC 8252 loopback redirect, `FC_FCDEV_LOGIN_REFRESH_TTL_SECS`, `refresh_expires_in`. Platform half only (the CLI stays Go: D6). | M | none | pending |
+| F25 | `8254cf0c` | Done (batch D): `fcdev-cli` public client seeded at start, RFC 8252 loopback redirect for that client only, `FC_FCDEV_LOGIN_REFRESH_TTL_SECS` absolute refresh lifetime, `refresh_expires_in`. Platform half only (the CLI stays Go: D6). The inactive-user refusal on the code grant was already here; Go's test ported. `refresh_expires_in` is pinned by a schema unit test until the `/oauth/token` stub lands (P5). | M | none | done (`123247c1`); Rust mirror in `docs/go-mirror/2026-10-19-batch-d-fcdev-login-and-small-items.md` |
 | F26 | `c7ffd7c2` | Done (batch B): built-in `platform:function-deployer` (the six permissions of Go's seed; the function permissions already exist in the Rust catalogue). No migration; the start-up/`sync-platform` role sync creates it. | S | none | done (`01ed215c`) |
 | F27 | (in progress, Go session) | Go migration bootstrap hazard A: goose must not be seeded from Rust's `_schema_migrations` by number past 030. A Go-repo change; Rust has no code to mirror, but P1's G3 fingerprint test assumes it. | S | none | pending (Go side) |
 
@@ -26,12 +26,12 @@ no row here is a protocol failure. Sizes: S under half a day, M about a day, L s
 
 | Go change | Commit(s) | Size | Status |
 |---|---|---|---|
-| Requeue-by-filter API and SPA dialog | `165feb6d`, `5496c3ff` | M | pending |
-| Last all-applications admin guard (`LAST_ALL_APPLICATIONS_ADMIN`, `confirmSelfRestriction`) | `9966a2fa`, `01fead7e` | M | pending |
-| `x-sdk` tagging and spec stubs for plain handlers (13 documented-by-Go-only operations) | `21f9734d` | M | pending |
+| Requeue-by-filter API and SPA dialog | `165feb6d`, `5496c3ff` | M | API done (`3aa51476`; baseline: 2 operations and 4 schemas closed); SPA dialog pending (P5) |
+| Last all-applications admin guard (`LAST_ALL_APPLICATIONS_ADMIN`, `confirmSelfRestriction`) | `9966a2fa`, `01fead7e` | M | API done (`dab7e18e`); SPA confirm pending (P5) |
+| `x-sdk` tagging and spec stubs for plain handlers (13 documented-by-Go-only operations) | `21f9734d` | M | tagging done (`98a2ae89`); the stubs and the per-SDK app/admin split pending (P5) |
 | Router: urgent poll-loop acks, missing-SQS-queue tolerance, h2 PING, NATS pull expiry, dashboard modal, HOL reservation schedule | `c34f230a`, `c52d1150`, `c6b534d6`, `5cbe502e` | 4 x S | pending |
 | Scheduler: `msg_scheduled_job_instances.not_before` (Go 060, Rust 080) | Go 060 | S | pending (column done) |
-| 5xx logging, S3 startup self-check | `c0d27994` | S | pending |
+| 5xx logging, S3 startup self-check | `c0d27994` | S | done (`aaf78687`) |
 | SPA: F8/F10 locks, credential confirm, ConfirmDialog width, requeue, F20/F25 pages | `90e41132`, `5a712d75`, `c38933f0`, `77d35c9c` | M | pending |
 | Licence Apache-2.0 | `7baee1ce` | S | pending (decision D7) |
 
