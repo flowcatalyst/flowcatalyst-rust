@@ -45,8 +45,8 @@ async fn seed_jobs(
     .expect("seed write table");
     sqlx::query(
         "INSERT INTO msg_dispatch_jobs_read
-             (id, code, target_url, client_id, kind, protocol, mode, status, max_retries, attempt_count, created_at, updated_at)
-         SELECT $1 || lpad(n::text, 8, '0'), $2, 'http://example.invalid/hook', $4, 'EVENT', 'HTTP_WEBHOOK', 'IMMEDIATE', $3, 3, 3, $6, $6
+             (id, code, target_url, client_id, kind, protocol, mode, status, max_retries, attempt_count, retry_strategy, created_at, updated_at)
+         SELECT $1 || lpad(n::text, 8, '0'), $2, 'http://example.invalid/hook', $4, 'EVENT', 'HTTP_WEBHOOK', 'IMMEDIATE', $3, 3, 3, 'exponential', $6, $6
            FROM generate_series(1, $5::int) n",
     )
     .bind(prefix)
@@ -561,4 +561,209 @@ async fn an_empty_filter_means_every_job() {
     );
     assert_eq!(statuses_of(&app, &failed).await, map(&[("PENDING", 20)]));
     assert_eq!(statuses_of(&app, &done).await, map(&[("COMPLETED", 10)]));
+}
+
+/// The list, the preview count and the id walk build their WHERE in one
+/// place (`dispatch_job::read_conditions`), so for any filter they select the
+/// same jobs. Every filter below goes through both repositories.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn the_list_the_count_and_the_walk_select_the_same_jobs() {
+    use fc_platform_messaging::dispatch_job::refs::Refs;
+    use fc_platform_messaging::dispatch_job::repository::DispatchJobReadFilter;
+    use fc_platform_messaging::dispatch_job::DispatchJobRepository;
+    use fc_platform_messaging::dispatch_job_actions::repository::{
+        DispatchJobActionsRepository, MatchFilter,
+    };
+
+    let (app, _) = setup().await;
+    seed_jobs(
+        &app,
+        "eqv_a",
+        "shop:orders:order:created",
+        "FAILED",
+        Some(CLIENT_A),
+        4,
+    )
+    .await;
+    seed_jobs(
+        &app,
+        "eqv_b",
+        "shop:orders:order:shipped",
+        "PENDING",
+        Some(CLIENT_B),
+        3,
+    )
+    .await;
+    seed_jobs(
+        &app,
+        "eqv_c",
+        "crm:leads:lead:created",
+        "COMPLETED",
+        None,
+        2,
+    )
+    .await;
+    seed_jobs(
+        &app,
+        "eqv_d",
+        "shop:orders:order:created",
+        "ERROR",
+        Some(CLIENT_A),
+        2,
+    )
+    .await;
+
+    let list = DispatchJobRepository::new(&app.pool);
+    let actions = DispatchJobActionsRepository::new(&app.pool);
+    let reach = vec![CLIENT_A.to_string()];
+    let s = |v: &[&str]| v.iter().map(|x| (*x).to_string()).collect::<Vec<_>>();
+
+    // (the list's filter, the same filter for the walk)
+    struct Case {
+        name: &'static str,
+        status: Option<&'static str>,
+        statuses: Vec<String>,
+        client_id: Option<&'static str>,
+        client_ids: Vec<String>,
+        accessible: Option<Vec<String>>,
+        codes: Vec<String>,
+        event_types: Vec<String>,
+        applications: Vec<String>,
+        aggregates: Vec<String>,
+    }
+    let base = || Case {
+        name: "",
+        status: None,
+        statuses: vec![],
+        client_id: None,
+        client_ids: vec![],
+        accessible: None,
+        codes: vec![],
+        event_types: vec![],
+        applications: vec![],
+        aggregates: vec![],
+    };
+    let cases = vec![
+        Case {
+            name: "everything",
+            ..base()
+        },
+        Case {
+            name: "one status",
+            status: Some("FAILED"),
+            ..base()
+        },
+        Case {
+            name: "statuses",
+            statuses: s(&["FAILED", "ERROR"]),
+            ..base()
+        },
+        Case {
+            name: "one client",
+            client_id: Some(CLIENT_A),
+            ..base()
+        },
+        Case {
+            name: "clients",
+            client_ids: s(&[CLIENT_A, CLIENT_B]),
+            ..base()
+        },
+        Case {
+            name: "a tenant's reach",
+            accessible: Some(reach.clone()),
+            ..base()
+        },
+        Case {
+            name: "codes",
+            codes: s(&["crm:leads:lead:created"]),
+            ..base()
+        },
+        Case {
+            name: "event types",
+            event_types: s(&["shop:orders:order:shipped"]),
+            ..base()
+        },
+        Case {
+            name: "applications",
+            applications: s(&["shop"]),
+            ..base()
+        },
+        Case {
+            name: "aggregates",
+            aggregates: s(&["order"]),
+            ..base()
+        },
+        Case {
+            name: "combined",
+            statuses: s(&["FAILED", "PENDING"]),
+            applications: s(&["shop"]),
+            accessible: Some(reach),
+            ..base()
+        },
+    ];
+    for c in cases {
+        let empty: Vec<String> = vec![];
+        let filter = DispatchJobReadFilter {
+            status: c.status,
+            statuses: &c.statuses,
+            client_id: c.client_id,
+            client_ids: &c.client_ids,
+            accessible: c.accessible.as_deref(),
+            accessible_applications: None,
+            dispatch_pool_id: None,
+            subscription_id: None,
+            code: None,
+            codes: &c.codes,
+            source: None,
+            message_group: None,
+            applications: &c.applications,
+            subdomains: &empty,
+            aggregates: &c.aggregates,
+            event_types: &c.event_types,
+            subscription_ids: &empty,
+            refs: None,
+            since: None,
+            until: None,
+            ascending: true,
+            limit: 1000,
+            offset: 0,
+        };
+        let mut listed: Vec<String> = list
+            .find_read_filtered(&filter)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|j| j.id)
+            .collect();
+        listed.sort();
+        let m = MatchFilter {
+            status: c.status.map(str::to_string),
+            statuses: c.statuses.clone(),
+            client_id: c.client_id.map(str::to_string),
+            client_ids: c.client_ids.clone(),
+            accessible: c.accessible.clone(),
+            codes: c.codes.clone(),
+            event_types: c.event_types.clone(),
+            applications: c.applications.clone(),
+            aggregates: c.aggregates.clone(),
+            refs: Refs::default(),
+            ..MatchFilter::default()
+        };
+        let walked = actions.matching_ids(&m, 1000).await.unwrap();
+        let counted: i64 = actions
+            .count_matches(&m)
+            .await
+            .unwrap()
+            .iter()
+            .map(|b| b.count)
+            .sum();
+        assert_eq!(listed, walked, "{}: the list and the walk differ", c.name);
+        assert_eq!(
+            counted as usize,
+            listed.len(),
+            "{}: the count differs",
+            c.name
+        );
+    }
 }

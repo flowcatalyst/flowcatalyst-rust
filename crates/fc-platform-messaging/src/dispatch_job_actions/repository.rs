@@ -9,7 +9,8 @@ use std::collections::BTreeSet;
 
 use crate::dispatch_job::entity::DispatchStatus;
 use crate::dispatch_job::lifecycle;
-use crate::dispatch_job::refs::{push_refs, resolve_refs, Refs};
+use crate::dispatch_job::read_conditions::{push_read_conditions, ReadConditions};
+use crate::dispatch_job::refs::{resolve_refs, Refs};
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase::unit_of_work::HasId;
 use fc_platform_core::usecase::DbTx;
@@ -86,7 +87,8 @@ pub struct JobEditView {
 
 /// What a requeue-by-filter selects (Go `dispatchjob.FilterParams`): the
 /// list's filter plus the two walk-only members. The match count and the id
-/// walk build their WHERE in [`push_conditions`], one place, so they cannot
+/// walk build their WHERE in [`push_read_conditions`], the builder the list
+/// shares, so they cannot
 /// select different jobs.
 #[derive(Debug, Default, Clone)]
 pub struct MatchFilter {
@@ -134,56 +136,36 @@ pub struct MatchBucket {
     pub count: i64,
 }
 
-/// The filter's conditions on the read projection, as Go's
-/// `FilterParams.where`.
-fn push_conditions(qb: &mut QueryBuilder<'_, Postgres>, f: &MatchFilter) {
-    fn eq(qb: &mut QueryBuilder<'_, Postgres>, col: &str, v: &Option<String>) {
-        if let Some(v) = v {
-            qb.push(format!(" AND {col} = ")).push_bind(v.clone());
+impl MatchFilter {
+    /// The filter's WHERE conditions, in the form the shared builder takes
+    /// (the dispatch-job list builds the same ones from its own filter): Go's
+    /// `FilterParams.where`.
+    fn conditions(&self) -> ReadConditions<'_> {
+        ReadConditions {
+            status: self.status.as_deref(),
+            statuses: &self.statuses,
+            status_in: &self.status_in,
+            client_id: self.client_id.as_deref(),
+            client_ids: &self.client_ids,
+            accessible: self.accessible.as_deref(),
+            exclude_platform_scoped: self.exclude_platform_scoped,
+            dispatch_pool_id: self.dispatch_pool_id.as_deref(),
+            subscription_id: self.subscription_id.as_deref(),
+            code: self.code.as_deref(),
+            codes: &self.codes,
+            source: self.source.as_deref(),
+            message_group: self.message_group.as_deref(),
+            applications: &self.applications,
+            subdomains: &self.subdomains,
+            aggregates: &self.aggregates,
+            event_types: &self.event_types,
+            subscription_ids: &self.subscription_ids,
+            refs: Some(&self.refs),
+            since: self.since,
+            until: self.until,
+            after_id: self.after_id.as_deref(),
+            ..ReadConditions::default()
         }
-    }
-    fn any(qb: &mut QueryBuilder<'_, Postgres>, col: &str, v: &[String]) {
-        if !v.is_empty() {
-            qb.push(format!(" AND {col} = ANY("))
-                .push_bind(v.to_vec())
-                .push(")");
-        }
-    }
-    eq(qb, "status", &f.status);
-    any(qb, "status", &f.statuses);
-    any(qb, "status", &f.status_in);
-    eq(qb, "client_id", &f.client_id);
-    any(qb, "client_id", &f.client_ids);
-    if let Some(ids) = &f.accessible {
-        // SECURITY: SQL-level tenant scoping. The OR group is parenthesised so
-        // it ANDs with the caller's other filters.
-        qb.push(" AND (client_id IS NULL OR client_id = ANY(")
-            .push_bind(ids.clone())
-            .push("))");
-    }
-    if f.exclude_platform_scoped {
-        qb.push(" AND client_id IS NOT NULL");
-    }
-    eq(qb, "dispatch_pool_id", &f.dispatch_pool_id);
-    eq(qb, "subscription_id", &f.subscription_id);
-    eq(qb, "code", &f.code);
-    any(qb, "code", &f.codes);
-    eq(qb, "source", &f.source);
-    eq(qb, "message_group", &f.message_group);
-    any(qb, "application", &f.applications);
-    any(qb, "subdomain", &f.subdomains);
-    any(qb, "aggregate", &f.aggregates);
-    any(qb, "code", &f.event_types);
-    any(qb, "subscription_id", &f.subscription_ids);
-    push_refs(qb, &f.refs);
-    if let Some(t) = f.since {
-        qb.push(" AND created_at >= ").push_bind(t);
-    }
-    if let Some(t) = f.until {
-        qb.push(" AND created_at <= ").push_bind(t);
-    }
-    if let Some(id) = &f.after_id {
-        qb.push(" AND id > ").push_bind(id.clone());
     }
 }
 
@@ -203,7 +185,7 @@ impl DispatchJobActionsRepository {
         let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
             "SELECT status, client_id, count(*) FROM msg_dispatch_jobs_read WHERE TRUE",
         );
-        push_conditions(&mut qb, f);
+        push_read_conditions(&mut qb, &f.conditions());
         qb.push(" GROUP BY status, client_id");
         let rows: Vec<(String, Option<String>, i64)> =
             qb.build_query_as().fetch_all(&self.pool).await?;
@@ -224,7 +206,7 @@ impl DispatchJobActionsRepository {
     pub async fn matching_ids(&self, f: &MatchFilter, limit: i64) -> Result<Vec<String>> {
         let mut qb: QueryBuilder<Postgres> =
             QueryBuilder::new("SELECT id FROM msg_dispatch_jobs_read WHERE TRUE");
-        push_conditions(&mut qb, f);
+        push_read_conditions(&mut qb, &f.conditions());
         qb.push(" ORDER BY id LIMIT ").push_bind(limit);
         let rows: Vec<(String,)> = qb.build_query_as().fetch_all(&self.pool).await?;
         Ok(rows.into_iter().map(|(id,)| id).collect())

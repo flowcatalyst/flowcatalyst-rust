@@ -9,7 +9,8 @@ use crate::dispatch_job::entity::{
 use crate::dispatch_job::entity::{parse_dispatch_mode, parse_dispatch_status};
 use crate::dispatch_job::entity::{DispatchJob, DispatchJobRead, DispatchStatus};
 use crate::dispatch_job::lifecycle;
-use crate::dispatch_job::refs::{push_refs, resolve_refs, Refs};
+use crate::dispatch_job::read_conditions::{push_read_conditions, ReadConditions};
+use crate::dispatch_job::refs::{resolve_refs, Refs};
 use chrono::{DateTime, Utc};
 use fc_common::DispatchMode;
 use fc_platform_core::shared::api_common::DecodedCursor;
@@ -356,6 +357,36 @@ pub struct DispatchJobReadFilter<'a> {
     pub ascending: bool,
     pub limit: i64,
     pub offset: i64,
+}
+
+impl<'a> DispatchJobReadFilter<'a> {
+    /// The filter's WHERE conditions, in the form the shared builder takes
+    /// (the requeue-by-filter match builds the same ones from its own filter).
+    pub fn conditions(&self) -> ReadConditions<'a> {
+        ReadConditions {
+            status: self.status,
+            statuses: self.statuses,
+            client_id: self.client_id,
+            client_ids: self.client_ids,
+            accessible: self.accessible,
+            accessible_applications: self.accessible_applications,
+            dispatch_pool_id: self.dispatch_pool_id,
+            subscription_id: self.subscription_id,
+            code: self.code,
+            codes: self.codes,
+            source: self.source,
+            message_group: self.message_group,
+            applications: self.applications,
+            subdomains: self.subdomains,
+            aggregates: self.aggregates,
+            event_types: self.event_types,
+            subscription_ids: self.subscription_ids,
+            refs: self.refs,
+            since: self.since,
+            until: self.until,
+            ..ReadConditions::default()
+        }
+    }
 }
 
 /// The optional filters of [`DispatchJobRepository::find_with_filters`], by
@@ -876,52 +907,7 @@ impl DispatchJobRepository {
     ) -> Result<Vec<DispatchJobRead>> {
         let mut qb: QueryBuilder<Postgres> =
             QueryBuilder::new("SELECT * FROM msg_dispatch_jobs_read WHERE TRUE");
-        let eq = |qb: &mut QueryBuilder<Postgres>, col: &str, v: Option<&str>| {
-            if let Some(v) = v {
-                qb.push(format!(" AND {col} = ")).push_bind(v.to_string());
-            }
-        };
-        let any = |qb: &mut QueryBuilder<Postgres>, col: &str, v: &[String]| {
-            if !v.is_empty() {
-                qb.push(format!(" AND {col} = ANY("))
-                    .push_bind(v.to_vec())
-                    .push(")");
-            }
-        };
-        eq(&mut qb, "status", f.status);
-        any(&mut qb, "status", f.statuses);
-        eq(&mut qb, "client_id", f.client_id);
-        any(&mut qb, "client_id", f.client_ids);
-        if let Some(ids) = f.accessible {
-            qb.push(" AND (client_id IS NULL OR client_id = ANY(")
-                .push_bind(ids.to_vec())
-                .push("))");
-        }
-        if let Some(codes) = f.accessible_applications {
-            qb.push(" AND application = ANY(")
-                .push_bind(codes.to_vec())
-                .push(")");
-        }
-        eq(&mut qb, "dispatch_pool_id", f.dispatch_pool_id);
-        eq(&mut qb, "subscription_id", f.subscription_id);
-        eq(&mut qb, "code", f.code);
-        any(&mut qb, "code", f.codes);
-        eq(&mut qb, "source", f.source);
-        eq(&mut qb, "message_group", f.message_group);
-        any(&mut qb, "application", f.applications);
-        any(&mut qb, "subdomain", f.subdomains);
-        any(&mut qb, "aggregate", f.aggregates);
-        any(&mut qb, "code", f.event_types);
-        any(&mut qb, "subscription_id", f.subscription_ids);
-        if let Some(refs) = f.refs {
-            push_refs(&mut qb, refs);
-        }
-        if let Some(t) = f.since {
-            qb.push(" AND created_at >= ").push_bind(t);
-        }
-        if let Some(t) = f.until {
-            qb.push(" AND created_at <= ").push_bind(t);
-        }
+        push_read_conditions(&mut qb, &f.conditions());
         qb.push(if f.ascending {
             " ORDER BY created_at ASC"
         } else {
