@@ -984,6 +984,43 @@ mod tests {
         assert!(checks::can_read_applications(&svc).is_err());
     }
 
+    /// Go F21 `CanReadRolesConfined` / `CanReadPermissionCatalog`: the
+    /// `/api/roles` reads admit the console permission or the matching
+    /// application-service one; a holder of only the latter is not an
+    /// all-roles reader; the two are not interchangeable; the console gate
+    /// admits neither.
+    #[test]
+    fn role_read_gates() {
+        let role_view = create_test_context(
+            vec!["platform:application-service:role:view"],
+            "CLIENT",
+            vec![],
+        );
+        let perm_view = create_test_context(
+            vec!["platform:application-service:permission:view"],
+            "CLIENT",
+            vec![],
+        );
+        let console = create_test_context(vec!["platform:iam:role:view"], "CLIENT", vec![]);
+
+        assert!(checks::can_read_roles_confined(&role_view).is_ok());
+        assert!(!checks::can_read_all_roles(&role_view));
+        assert!(checks::can_read_roles_confined(&perm_view).is_err());
+        assert!(checks::can_read_permission_catalog(&perm_view).is_ok());
+        assert!(!checks::can_read_all_permissions(&perm_view));
+        assert!(checks::can_read_permission_catalog(&role_view).is_err());
+
+        assert!(checks::can_read_roles_confined(&console).is_ok());
+        assert!(checks::can_read_permission_catalog(&console).is_ok());
+        assert!(checks::can_read_all_roles(&console));
+        assert!(checks::can_read_all_permissions(&console));
+
+        // The console gate (BFF, server-rendered UI) admits neither.
+        assert!(checks::can_read_roles(&role_view).is_err());
+        assert!(checks::can_read_roles(&perm_view).is_err());
+        assert!(checks::can_read_roles(&console).is_ok());
+    }
+
     /// Go `TestCanSyncApplicationOpenAPIAdmitsApplicationService`: the SDK
     /// definitions sync publishes an application's OpenAPI document as the
     /// application's own service account.

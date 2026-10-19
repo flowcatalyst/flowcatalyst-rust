@@ -129,7 +129,7 @@ pub async fn list_roles(
     Path(app_code): Path<String>,
     Query(query): Query<ListRolesQuery>,
 ) -> Result<Json<ListRolesResponse>, PlatformError> {
-    checks::can_read_roles(&auth.0)?;
+    checks::can_read_roles_confined(&auth.0)?;
     state
         .app_access
         .require_application_access(&auth.0, &app_code)

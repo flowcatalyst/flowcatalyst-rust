@@ -27,6 +27,8 @@ pub fn routes(ctx: &PlatformContext) -> AggregateRoutes {
             .merge(role_permissions_router(RolePermissionsState::new(
                 &ctx.repos.pool,
                 ctx.repos.role_repo.clone(),
+                ctx.repos.application_repo.clone(),
+                ctx.app_access.clone(),
                 ctx.unit_of_work.clone(),
             ))),
         plain: Router::new()
@@ -56,6 +58,7 @@ pub fn roles_state(ctx: &PlatformContext) -> RolesState {
     RolesState {
         role_repo: repo.clone(),
         application_repo: ctx.repos.application_repo.clone(),
+        app_access: ctx.app_access.clone(),
         create_use_case: Arc::new(CreateRoleUseCase::new(repo.clone(), uow.clone())),
         update_use_case: Arc::new(UpdateRoleUseCase::new(repo.clone(), uow.clone())),
         delete_use_case: Arc::new(DeleteRoleUseCase::new(repo.clone(), uow.clone())),

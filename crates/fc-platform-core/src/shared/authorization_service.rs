@@ -1492,12 +1492,25 @@ pub mod checks {
         }
     }
 
-    /// Roles and the permission catalogue, read (`/api/roles/*`, and the
-    /// application-scoped SDK list): `platform:iam:role:view` as Go's
-    /// `CanReadRoles` (auth.go:588), or role manage, or the
-    /// application-service role view. Refused as Go: 403
-    /// `PERMISSION_REQUIRED`.
+    /// Roles and the permission catalogue, read by the console (the BFF and
+    /// the server-rendered UI): `platform:iam:role:view` as Go's
+    /// `CanReadRoles` (auth.go:588), or role manage. The application-service
+    /// permissions are not admitted here (Go F21); `/api/roles` reads use
+    /// [`can_read_roles_confined`]. Refused as Go: 403 `PERMISSION_REQUIRED`.
     pub fn can_read_roles(context: &impl Authority) -> Result<()> {
+        require_any_permission(
+            context,
+            &[permissions::iam::ROLE_READ, permissions::iam::ROLE_MANAGE],
+        )
+    }
+
+    /// The guard on the `/api/roles` read routes (Go F21
+    /// `CanReadRolesConfined`): the console permission of [`can_read_roles`],
+    /// or the application-service `role:view` an application's service account
+    /// holds. A caller admitted only by the second is confined by the handler
+    /// to the roles of the applications it is bound to
+    /// ([`can_read_all_roles`] false). Also the application-scoped SDK list.
+    pub fn can_read_roles_confined(context: &impl Authority) -> Result<()> {
         require_any_permission(
             context,
             &[
@@ -1506,6 +1519,36 @@ pub mod checks {
                 permissions::application_service::ROLE_READ,
             ],
         )
+    }
+
+    /// Whether the caller reads roles without the per-application
+    /// confinement: it holds the console role permission (Go F21
+    /// `CanReadAllRoles`).
+    pub fn can_read_all_roles(context: &impl Authority) -> bool {
+        context.has_any_permission(&[permissions::iam::ROLE_READ, permissions::iam::ROLE_MANAGE])
+    }
+
+    /// The guard on the permission-catalogue reads (Go F21
+    /// `CanReadPermissionCatalog`): the console role permission, or the
+    /// application-service `permission:view`, which is confined to the
+    /// permissions of the caller's own applications
+    /// ([`can_read_all_permissions`] false). The two application-service
+    /// permissions are not interchangeable.
+    pub fn can_read_permission_catalog(context: &impl Authority) -> Result<()> {
+        require_any_permission(
+            context,
+            &[
+                permissions::iam::ROLE_READ,
+                permissions::iam::ROLE_MANAGE,
+                permissions::application_service::PERMISSION_READ,
+            ],
+        )
+    }
+
+    /// Whether the caller reads the whole permission catalogue: it holds the
+    /// console role permission (Go F21 `CanReadAllPermissions`).
+    pub fn can_read_all_permissions(context: &impl Authority) -> bool {
+        can_read_all_roles(context)
     }
 
     /// Create a single role through the application-scoped SDK surface.

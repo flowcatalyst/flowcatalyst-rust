@@ -27,6 +27,8 @@ use crate::role::operations::{
 use crate::role::permission_catalog::CatalogPermission;
 use crate::role::permission_repository::PermissionCatalogRepository;
 use crate::role::repository::RoleRepository;
+use crate::shared::app_scope::{confined_applications, first_segment, ConfinedApplications};
+use crate::shared::authorization_service::ApplicationAccessService;
 use fc_platform_core::permissions;
 use fc_platform_core::shared::api_common::CreatedResponse;
 use fc_platform_core::shared::api_common::PaginationParams;
@@ -164,6 +166,9 @@ pub struct RolesQuery {
 pub struct RolesState {
     pub role_repo: Arc<RoleRepository>,
     pub application_repo: Arc<ApplicationRepository>,
+    /// Resolves an application-scoped caller's bound applications for the
+    /// read confinement (Go F21).
+    pub app_access: Arc<ApplicationAccessService>,
     pub create_use_case: Arc<CreateRoleUseCase<PgUnitOfWork>>,
     pub update_use_case: Arc<UpdateRoleUseCase<PgUnitOfWork>>,
     pub delete_use_case: Arc<DeleteRoleUseCase<PgUnitOfWork>>,
@@ -225,6 +230,53 @@ async fn resolve_role(repo: &RoleRepository, id_or_name: &str) -> Result<AuthRol
     repo.find_by_name(id_or_name)
         .await?
         .ok_or_else(|| PlatformError::not_found("Role", id_or_name))
+}
+
+/// The applications a role read is confined to (Go F21 `confinement`): none
+/// for a caller holding the console role permission or reaching every
+/// application; for a caller admitted only by the application-service
+/// `role:view`, the applications it is bound to (403 for one bound to none).
+async fn role_read_scope(
+    app_access: &ApplicationAccessService,
+    applications: &ApplicationRepository,
+    auth: &Authenticated,
+) -> Result<Option<ConfinedApplications>, PlatformError> {
+    if checks::can_read_all_roles(&auth.0) {
+        return Ok(None);
+    }
+    confined_applications(app_access, applications, &auth.0).await
+}
+
+/// [`role_read_scope`] for the permission catalogue, which the
+/// application-service `permission:view` (not `role:view`) opens.
+async fn permission_read_scope(
+    app_access: &ApplicationAccessService,
+    applications: &ApplicationRepository,
+    auth: &Authenticated,
+) -> Result<Option<ConfinedApplications>, PlatformError> {
+    if checks::can_read_all_permissions(&auth.0) {
+        return Ok(None);
+    }
+    confined_applications(app_access, applications, &auth.0).await
+}
+
+/// Whether a role belongs to a bound application: by its application id when
+/// it has one, else (a legacy row) by its application code. A role linked to
+/// another application's id is never matched by its code (Go F21 `owns`).
+fn owns_role(scope: Option<&ConfinedApplications>, role: &AuthRole) -> bool {
+    let Some(scope) = scope else {
+        return true;
+    };
+    match &role.application_id {
+        Some(id) => scope.allows_id(id),
+        None => scope.allows_code(&role.application_code),
+    }
+}
+
+/// A permission code belongs to a bound application when its first segment
+/// is one of the bound codes.
+fn owns_permission(scope: Option<&ConfinedApplications>, code: &str) -> bool {
+    scope.is_none_or(|s| s.allows_code(first_segment(code)))
 }
 
 /// Create a new role
@@ -292,9 +344,14 @@ pub async fn get_role(
     auth: Authenticated,
     Path(role_name): Path<String>,
 ) -> Result<Json<RoleResponse>, PlatformError> {
-    checks::can_read_roles(&auth.0)?;
+    checks::can_read_roles_confined(&auth.0)?;
+    let scope = role_read_scope(&state.app_access, &state.application_repo, &auth).await?;
 
     let role = resolve_role(&state.role_repo, &role_name).await?;
+    // Another application's role answers the same 404 as a missing one.
+    if !owns_role(scope.as_ref(), &role) {
+        return Err(PlatformError::not_found("Role", &role_name));
+    }
     Ok(Json(role.into()))
 }
 
@@ -318,12 +375,14 @@ pub async fn get_role_by_code(
     auth: Authenticated,
     Path(code): Path<String>,
 ) -> Result<Json<RoleResponse>, PlatformError> {
-    checks::can_read_roles(&auth.0)?;
+    checks::can_read_roles_confined(&auth.0)?;
+    let scope = role_read_scope(&state.app_access, &state.application_repo, &auth).await?;
 
     let role = state
         .role_repo
         .find_by_name(&code)
         .await?
+        .filter(|r| owns_role(scope.as_ref(), r))
         .ok_or_else(|| PlatformError::not_found("Role", &code))?;
 
     Ok(Json(role.into()))
@@ -346,7 +405,8 @@ pub async fn list_roles(
     auth: Authenticated,
     Query(query): Query<RolesQuery>,
 ) -> Result<Json<RoleListResponse>, PlatformError> {
-    checks::can_read_roles(&auth.0)?;
+    checks::can_read_roles_confined(&auth.0)?;
+    let scope = role_read_scope(&state.app_access, &state.application_repo, &auth).await?;
 
     let source: Option<RoleSource> = enum_str::parse_opt(query.source.as_deref())?;
 
@@ -359,7 +419,11 @@ pub async fn list_roles(
         )
         .await?;
 
-    let roles: Vec<RoleResponse> = roles.into_iter().map(|r| r.into()).collect();
+    let roles: Vec<RoleResponse> = roles
+        .into_iter()
+        .filter(|r| owns_role(scope.as_ref(), r))
+        .map(|r| r.into())
+        .collect();
 
     let total = roles.len();
     Ok(Json(RoleListResponse { roles, total }))
@@ -457,9 +521,13 @@ pub async fn get_filter_applications(
     State(state): State<RolesState>,
     auth: Authenticated,
 ) -> Result<Json<ApplicationFilterListResponse>, PlatformError> {
-    checks::can_read_roles(&auth.0)?;
+    checks::can_read_roles_confined(&auth.0)?;
+    let scope = role_read_scope(&state.app_access, &state.application_repo, &auth).await?;
 
-    let application_codes = state.role_repo.find_application_codes().await?;
+    let mut application_codes = state.role_repo.find_application_codes().await?;
+    if let Some(scope) = &scope {
+        application_codes.retain(|c| scope.allows_code(c));
+    }
     Ok(Json(ApplicationFilterListResponse { application_codes }))
 }
 
@@ -479,13 +547,15 @@ pub async fn list_permissions(
     State(state): State<RolesState>,
     auth: Authenticated,
 ) -> Result<Json<PermissionListResponse>, PlatformError> {
-    checks::can_read_roles(&auth.0)?;
+    checks::can_read_permission_catalog(&auth.0)?;
+    let scope = permission_read_scope(&state.app_access, &state.application_repo, &auth).await?;
 
     let permissions: Vec<PermissionResponse> = state
         .permission_repo
         .find_all()
         .await?
         .into_iter()
+        .filter(|p| owns_permission(scope.as_ref(), &p.code))
         .map(Into::into)
         .collect();
     let total = permissions.len();
@@ -512,12 +582,14 @@ pub async fn get_permission(
     auth: Authenticated,
     Path(permission): Path<String>,
 ) -> Result<Json<PermissionResponse>, PlatformError> {
-    checks::can_read_roles(&auth.0)?;
+    checks::can_read_permission_catalog(&auth.0)?;
+    let scope = permission_read_scope(&state.app_access, &state.application_repo, &auth).await?;
 
     let found = state
         .permission_repo
         .find_by_code(&permission)
         .await?
+        .filter(|p| owns_permission(scope.as_ref(), &p.code))
         .ok_or_else(|| PlatformError::not_found("Permission", &permission))?;
 
     Ok(Json(found.into()))
@@ -543,14 +615,19 @@ pub async fn get_roles_by_source(
     auth: Authenticated,
     Path(source): Path<String>,
 ) -> Result<Json<Vec<RoleResponse>>, PlatformError> {
-    checks::can_read_roles(&auth.0)?;
+    checks::can_read_roles_confined(&auth.0)?;
+    let scope = role_read_scope(&state.app_access, &state.application_repo, &auth).await?;
 
     // Go `role.ParseSource`: the exact upper-case names only.
     let source: RoleSource = source.parse().map_err(|_| {
         PlatformError::bad_request_code("INVALID_SOURCE", "source must be CODE, DATABASE, or SDK")
     })?;
     let roles = state.role_repo.find_by_source(source).await?;
-    let response: Vec<RoleResponse> = roles.into_iter().map(|r| r.into()).collect();
+    let response: Vec<RoleResponse> = roles
+        .into_iter()
+        .filter(|r| owns_role(scope.as_ref(), r))
+        .map(|r| r.into())
+        .collect();
     Ok(Json(response))
 }
 
@@ -573,11 +650,25 @@ pub async fn get_roles_by_application_id(
     auth: Authenticated,
     Path(application_id): Path<String>,
 ) -> Result<Json<Vec<RoleResponse>>, PlatformError> {
-    checks::can_read_roles(&auth.0)?;
+    checks::can_read_roles_confined(&auth.0)?;
+    let scope = role_read_scope(&state.app_access, &state.application_repo, &auth).await?;
 
+    let application_id = ApplicationId::from_wire(application_id);
+    // A confined caller names only an application it is bound to; a foreign
+    // or unknown id is one 403 (as the application routes answer), never a
+    // list.
+    if scope
+        .as_ref()
+        .is_some_and(|s| !s.allows_id(&application_id))
+    {
+        return Err(PlatformError::forbidden_code(
+            "APPLICATION_ACCESS_REQUIRED",
+            "not authorised for this application",
+        ));
+    }
     let roles = state
         .role_repo
-        .find_by_application_id(&ApplicationId::from_wire(application_id))
+        .find_by_application_id(&application_id)
         .await?;
     let response: Vec<RoleResponse> = roles.into_iter().map(|r| r.into()).collect();
     Ok(Json(response))
@@ -603,6 +694,10 @@ pub async fn get_roles_by_application_id(
 #[derive(Clone)]
 pub struct RolePermissionsState {
     pub role_repo: Arc<RoleRepository>,
+    /// For the read confinement of `GET /api/roles/{roleName}/permissions`
+    /// (Go F21).
+    pub application_repo: Arc<ApplicationRepository>,
+    pub app_access: Arc<ApplicationAccessService>,
     pub permission_repo: Arc<PermissionCatalogRepository>,
     pub grant_use_case: Arc<GrantPermissionUseCase<PgUnitOfWork>>,
     pub revoke_use_case: Arc<RevokePermissionUseCase<PgUnitOfWork>>,
@@ -614,6 +709,8 @@ impl RolePermissionsState {
     pub fn new(
         pool: &sqlx::PgPool,
         role_repo: Arc<RoleRepository>,
+        application_repo: Arc<ApplicationRepository>,
+        app_access: Arc<ApplicationAccessService>,
         uow: Arc<PgUnitOfWork>,
     ) -> Self {
         let permission_repo = Arc::new(PermissionCatalogRepository::new(pool));
@@ -626,6 +723,8 @@ impl RolePermissionsState {
             )),
             delete_use_case: Arc::new(DeletePermissionUseCase::new(permission_repo.clone(), uow)),
             role_repo,
+            application_repo,
+            app_access,
             permission_repo,
         }
     }
@@ -671,11 +770,13 @@ pub async fn list_role_permissions(
     auth: Authenticated,
     Path(role_name): Path<String>,
 ) -> Result<Json<RolePermissionListResponse>, PlatformError> {
-    checks::can_read_roles(&auth.0)?;
+    checks::can_read_roles_confined(&auth.0)?;
+    let scope = role_read_scope(&state.app_access, &state.application_repo, &auth).await?;
     let role = state
         .role_repo
         .find_by_name(&role_name)
         .await?
+        .filter(|r| owns_role(scope.as_ref(), r))
         .ok_or_else(|| PlatformError::not_found("Role", &role_name))?;
     let mut permissions: Vec<String> = role.permissions.into_iter().collect();
     permissions.sort();
