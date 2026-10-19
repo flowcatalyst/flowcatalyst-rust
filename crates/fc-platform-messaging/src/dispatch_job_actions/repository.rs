@@ -50,6 +50,34 @@ impl HasId for JobStatusFlip {
     }
 }
 
+/// A job's payload and content type are replaced, its status untouched (Go
+/// `EditPayloadPersister`).
+#[derive(Debug, Clone)]
+pub struct JobPayloadEdit {
+    pub id: String,
+    pub created_at: DateTime<Utc>,
+    pub payload: String,
+    pub content_type: Option<String>,
+}
+
+impl HasId for JobPayloadEdit {
+    fn id(&self) -> &str {
+        &self.id
+    }
+}
+
+/// What the payload edit decides on: the stored status (spelled as stored:
+/// `ERROR` is not `FAILED` here), scope and current payload.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct JobEditView {
+    pub id: String,
+    pub client_id: Option<String>,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub payload: Option<String>,
+    pub payload_content_type: String,
+}
+
 /// What a requeue-by-filter selects (Go `dispatchjob.FilterParams`): the
 /// list's filter plus the two walk-only members. The match count and the id
 /// walk build their WHERE in [`push_conditions`], one place, so they cannot
@@ -181,6 +209,18 @@ impl DispatchJobActionsRepository {
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
+    /// The facts a payload edit decides on, read from the write table.
+    pub async fn edit_view(&self, id: &str) -> Result<Option<JobEditView>> {
+        Ok(sqlx::query_as::<_, JobEditView>(
+            "SELECT id, client_id, status, created_at, payload, \
+                    COALESCE(payload_content_type, 'application/json') AS payload_content_type \
+               FROM msg_dispatch_jobs WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?)
+    }
+
     pub async fn heads(&self, ids: &[String]) -> Result<Vec<JobHead>> {
         if ids.is_empty() {
             return Ok(Vec::new());
@@ -245,5 +285,33 @@ impl Persist<JobStatusFlip> for DispatchJobActionsRepository {
 
     async fn delete(&self, _f: &JobStatusFlip, _tx: &mut DbTx<'_>) -> Result<()> {
         Err(PlatformError::internal("a status change is not deleted"))
+    }
+}
+
+impl Persist<JobPayloadEdit> for DispatchJobActionsRepository {
+    async fn persist(&self, e: &JobPayloadEdit, tx: &mut DbTx<'_>) -> Result<()> {
+        // The status guard is in the statement: a job that moved (it was
+        // claimed) between the use case's read and this write is left alone,
+        // and the unit of work rolls back rather than record an event for a
+        // change that did not happen.
+        let done = lifecycle::edit_payload(
+            &mut **tx.inner,
+            &e.id,
+            e.created_at,
+            &e.payload,
+            e.content_type.as_deref(),
+        )
+        .await?;
+        if !done {
+            return Err(PlatformError::business_rule(
+                "NOT_EDITABLE",
+                "dispatch job changed status while its payload was being edited; a payload can be edited only while the job is PENDING or FAILED",
+            ));
+        }
+        Ok(())
+    }
+
+    async fn delete(&self, _e: &JobPayloadEdit, _tx: &mut DbTx<'_>) -> Result<()> {
+        Err(PlatformError::internal("a payload edit is not deleted"))
     }
 }

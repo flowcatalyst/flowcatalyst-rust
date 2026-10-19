@@ -88,6 +88,10 @@ pub mod admin {
     // Dispatch job access (messaging context in DB)
     pub const DISPATCH_JOB_READ: &str = "platform:messaging:dispatch-job:view";
     pub const DISPATCH_JOB_VIEW_RAW: &str = "platform:messaging:dispatch-job:view-raw";
+    /// Edit the payload of a PENDING or FAILED dispatch job. The write actions
+    /// on a dispatch job each have their own permission (they were all
+    /// `dispatch-job:view` before Go's split).
+    pub const DISPATCH_JOB_EDIT_PAYLOAD: &str = "platform:messaging:dispatch-job:edit-payload";
 
     // Scheduled job management (messaging context in DB)
     pub const SCHEDULED_JOB_READ: &str = "platform:messaging:scheduled-job:view";
@@ -216,6 +220,7 @@ pub mod admin {
         EVENT_VIEW_RAW,
         DISPATCH_JOB_READ,
         DISPATCH_JOB_VIEW_RAW,
+        DISPATCH_JOB_EDIT_PAYLOAD,
         SCHEDULED_JOB_READ,
         SCHEDULED_JOB_CREATE,
         SCHEDULED_JOB_UPDATE,

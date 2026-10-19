@@ -67,7 +67,8 @@ use fc_platform_messaging::connection::operations::{
     ConnectionCreated, ConnectionDeleted, ConnectionUpdated,
 };
 use fc_platform_messaging::dispatch_job_actions::operations::{
-    DispatchJobSettled, DispatchJobsResent, CANCELLED_EVENT, COMPLETED_EVENT,
+    DispatchJobPayloadEdited, DispatchJobSettled, DispatchJobsResent, CANCELLED_EVENT,
+    COMPLETED_EVENT, PAYLOAD_EDITED_EVENT,
 };
 use fc_platform_messaging::dispatch_pool::operations::{
     DispatchPoolArchived, DispatchPoolCreated, DispatchPoolDeleted, DispatchPoolUpdated,
@@ -210,6 +211,17 @@ fn samples() -> Vec<(String, Value)> {
         emitted(&DispatchJobSettled {
             metadata: meta(COMPLETED_EVENT),
             dispatch_job_id: "dj_1".into(),
+        }),
+        emitted(&DispatchJobPayloadEdited {
+            metadata: meta(PAYLOAD_EDITED_EVENT),
+            dispatch_job_id: "dj_1".into(),
+            status: "FAILED".into(),
+            previous_size: 12,
+            previous_sha256: "a".repeat(64),
+            size: 20,
+            sha256: "b".repeat(64),
+            previous_content_type: "application/json".into(),
+            content_type: "application/xml".into(),
         }),
         emitted(&DispatchJobsResent {
             metadata: meta(DispatchJobsResent::EVENT_TYPE),
@@ -540,6 +552,7 @@ fn every_newly_catalogued_code_is_sampled() {
         "platform:iam:user:developer-credential-set",
         "platform:messaging:dispatch-job:cancelled",
         "platform:messaging:dispatch-job:completed",
+        "platform:messaging:dispatch-job:payload-edited",
         "platform:messaging:dispatch-jobs:resent",
         "platform:portal:app:created",
         "platform:portal:app:deleted",

@@ -984,6 +984,12 @@ pub mod checks {
         context.has_permission(permissions::admin::DISPATCH_JOB_READ)
     }
 
+    /// Editing the payload of a dispatch job (Go `DispatchJobEditPayloadPerm`
+    /// through `CanWritePermission`): its own permission, not `dispatch-job:view`.
+    pub fn can_edit_dispatch_job_payloads(context: &impl Authority) -> Result<()> {
+        require_permission(context, permissions::admin::DISPATCH_JOB_EDIT_PAYLOAD)
+    }
+
     /// Application-scoped user reads (list, get): the application-service
     /// `user:view` an application's service account holds, or the IAM user
     /// view; the route confines either to the application in its path (Go F20

@@ -12,7 +12,9 @@ use axum::Router;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use super::api::DispatchJobActionsState;
-use super::operations::{RequeueDispatchJobsUseCase, SettleDispatchJobUseCase};
+use super::operations::{
+    EditDispatchJobPayloadUseCase, RequeueDispatchJobsUseCase, SettleDispatchJobUseCase,
+};
 use super::repository::DispatchJobActionsRepository;
 use crate::dispatch_job::delivery_credentials::DeliveryCredentials;
 use crate::shared::platform_context::{AggregateRoutes, PlatformContext};
@@ -46,6 +48,10 @@ pub fn dispatch_job_actions_state(ctx: &PlatformContext) -> DispatchJobActionsSt
             ctx.unit_of_work.clone(),
         )),
         settle_use_case: Arc::new(SettleDispatchJobUseCase::new(
+            repo.clone(),
+            ctx.unit_of_work.clone(),
+        )),
+        edit_payload_use_case: Arc::new(EditDispatchJobPayloadUseCase::new(
             repo,
             ctx.unit_of_work.clone(),
         )),
@@ -63,6 +69,9 @@ pub fn dispatch_job_actions_router(state: DispatchJobActionsState) -> OpenApiRou
         ))
         .routes(routes!(
             crate::dispatch_job_actions::api::api_complete_dispatch_job
+        ))
+        .routes(routes!(
+            crate::dispatch_job_actions::api::api_edit_dispatch_job_payload
         ))
         .routes(routes!(
             crate::dispatch_job_actions::api::api_sign_dispatch_job
@@ -87,6 +96,9 @@ pub fn dispatch_job_actions_router(state: DispatchJobActionsState) -> OpenApiRou
         ))
         .routes(routes!(
             crate::dispatch_job_actions::api::bff_complete_dispatch_job
+        ))
+        .routes(routes!(
+            crate::dispatch_job_actions::api::bff_edit_dispatch_job_payload
         ))
         .routes(routes!(
             crate::dispatch_job_actions::api::bff_sign_dispatch_job

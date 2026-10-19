@@ -4735,6 +4735,33 @@
         ],
         "type": "object"
       },
+      "EditPayloadRequest": {
+        "additionalProperties": true,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/EditPayloadRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "payload": {
+            "description": "The new payload text (UTF-8, at most 256 KiB; valid JSON when the content type is JSON)",
+            "minLength": 1,
+            "type": "string"
+          },
+          "payloadContentType": {
+            "description": "New media type; omit to keep the job's",
+            "type": "string"
+          }
+        },
+        "required": [
+          "payload"
+        ],
+        "type": "object"
+      },
       "EmitRequest": {
         "additionalProperties": true,
         "properties": {
@@ -16827,6 +16854,58 @@
           }
         },
         "summary": "Mark a FAILED dispatch job COMPLETED (delivered out of band)",
+        "tags": [
+          "dispatch-jobs"
+        ],
+        "x-sdk": "admin"
+      }
+    },
+    "/api/dispatch-jobs/{id}/payload": {
+      "put": {
+        "operationId": "editDispatchJobPayload",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditPayloadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DispatchJobResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Replace the payload of a PENDING or FAILED dispatch job (status and attempts are unchanged)",
         "tags": [
           "dispatch-jobs"
         ],

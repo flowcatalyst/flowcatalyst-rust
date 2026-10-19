@@ -1037,6 +1037,47 @@ where
     .await
 }
 
+/// The statuses an operator may rewrite a job's payload in: not being
+/// delivered (PENDING) or settled failed (FAILED, and its legacy alias
+/// ERROR). QUEUED and PROCESSING are refused: the delivery handler reads the
+/// job once before it claims it, so an edit during a delivery could neither
+/// take effect nor be told apart from one that did.
+pub const EDITABLE_STATUSES: [&str; 3] = ["PENDING", "FAILED", "ERROR"];
+
+/// Replaces a job's payload (and, when `content_type` is `Some`, its content
+/// type) WITHOUT changing its status or attempt count; the operator requeues
+/// afterwards. The status guard is in the statement: `false` (and nothing
+/// changed) when the job is in any other status. `updated_at` moves, so the
+/// scheduler's optimistic mark-QUEUED of a claim that read the old payload is
+/// refused and the job is claimed again, and the stream projector re-projects
+/// the row.
+pub async fn edit_payload<'e, E>(
+    ex: E,
+    id: &str,
+    created_at: DateTime<Utc>,
+    payload: &str,
+    content_type: Option<&str>,
+) -> Result<bool, Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    let guard: Vec<String> = EDITABLE_STATUSES.iter().map(|s| format!("'{s}'")).collect();
+    let sql = format!(
+        "UPDATE msg_dispatch_jobs SET payload = $3, \
+         payload_content_type = COALESCE($4, payload_content_type), updated_at = NOW() \
+         WHERE id = $1 AND created_at = $2 AND status || '' IN ({})",
+        guard.join(", ")
+    );
+    let done = sqlx::query(&sql)
+        .bind(id)
+        .bind(created_at)
+        .bind(payload)
+        .bind(content_type)
+        .execute(ex)
+        .await?;
+    Ok(done.rows_affected() == 1)
+}
+
 // ─── Leaving PENDING ────────────────────────────────────────────────────────
 
 /// The scheduler marks exactly the published jobs QUEUED, and only the row

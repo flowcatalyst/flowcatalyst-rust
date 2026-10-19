@@ -782,6 +782,13 @@ fn get_builtin_permissions() -> Vec<BffPermissionResponse> {
         perm(
             "platform",
             "messaging",
+            "dispatch-job",
+            "edit-payload",
+            "Edit the payload of a PENDING or FAILED dispatch job",
+        ),
+        perm(
+            "platform",
+            "messaging",
             "dispatch-pool",
             "view",
             "View dispatch pools",

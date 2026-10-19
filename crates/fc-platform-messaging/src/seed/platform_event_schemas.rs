@@ -678,6 +678,22 @@ fn emitted_beyond_go_catalogue(m: &mut HashMap<&'static str, Value>) {
     ] {
         m.insert(code, id_and("dispatchJobId", &[]));
     }
+    // Go `29e8cb11`: the payload edit records sizes and digests, never the payload.
+    m.insert(
+        "platform:messaging:dispatch-job:payload-edited",
+        id_and(
+            "dispatchJobId",
+            &[
+                req_str("status"),
+                req_u32("previousSize"),
+                req_str("previousSha256"),
+                req_u32("size"),
+                req_str("sha256"),
+                req_str("contentType"),
+                req_str("previousContentType"),
+            ],
+        ),
+    );
     m.insert(
         "platform:messaging:dispatch-jobs:resent",
         obj(&[req_str_array("ids")]),

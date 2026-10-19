@@ -342,7 +342,7 @@ pub fn definitions() -> Vec<SyncEventTypeInput> {
         &mut defs,
         &schemas,
         "platform:messaging:dispatch-job",
-        &["cancelled", "completed"],
+        &["cancelled", "completed", "payload-edited"],
     );
     push(
         &mut defs,

@@ -57,6 +57,13 @@ const AUTH_CHECK_PATTERNS: &[&str] = &[
     // CanReportScheduledJobInstances): the messaging scheduled-job writes or
     // the application-service instance write.
     "can_report_",
+    // Dispatch-job operator actions, each its own permission since Go's split
+    // of `dispatch-job:view` (Go `29e8cb11`, `ad37de21`).
+    "can_edit_",
+    "can_requeue_",
+    "can_redrive_",
+    "can_cancel_",
+    "can_complete_",
     // AuthorizationService method calls
     ".authorize(",
     // AuthContext inline checks (used in conditionals that return 403)

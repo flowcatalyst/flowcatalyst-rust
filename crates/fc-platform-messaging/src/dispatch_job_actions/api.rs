@@ -20,7 +20,8 @@ use std::sync::Arc;
 use utoipa::ToSchema;
 
 use super::operations::{
-    RequeueDispatchJobsUseCase, ResendCommand, SettleDispatchJobUseCase, StatusFlipCommand,
+    EditDispatchJobPayloadUseCase, EditPayloadCommand, RequeueDispatchJobsUseCase, ResendCommand,
+    SettleDispatchJobUseCase, StatusFlipCommand,
 };
 use super::repository::DispatchJobActionsRepository;
 use crate::dispatch_job::api::DispatchJobResponse;
@@ -43,6 +44,7 @@ pub struct DispatchJobActionsState {
     pub credentials: Arc<DeliveryCredentials>,
     pub requeue_use_case: Arc<RequeueDispatchJobsUseCase<PgUnitOfWork>>,
     pub settle_use_case: Arc<SettleDispatchJobUseCase<PgUnitOfWork>>,
+    pub edit_payload_use_case: Arc<EditDispatchJobPayloadUseCase<PgUnitOfWork>>,
 }
 
 /// Go `RequeueRequest`.
@@ -51,6 +53,18 @@ pub struct RequeueRequest {
     #[serde(default)]
     #[schema(required = true)]
     pub ids: Vec<String>,
+}
+
+/// Go `EditPayloadRequest`: the body of `PUT /dispatch-jobs/{id}/payload`.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EditPayloadRequest {
+    /// The new payload text (UTF-8, at most 256 KiB; valid JSON when the content type is JSON)
+    #[schema(min_length = 1)]
+    pub payload: String,
+    /// New media type; omit to keep the job's
+    #[serde(default)]
+    pub payload_content_type: Option<String>,
 }
 
 /// Go `RequeueResponse`.
@@ -143,6 +157,37 @@ async fn settle(
             },
             ExecutionContext::from_auth(&auth.0),
         )
+        .await
+        .into_result()?;
+    let job = state
+        .dispatch_job_repo
+        .find_by_id(&id)
+        .await?
+        .ok_or_else(|| PlatformError::not_found_code("DispatchJob", &id))?;
+    Ok(Json(job.into()))
+}
+
+/// Go `editPayload`: validate the body's shape (before the job is read, as Go's
+/// `Validate` runs first), load the job (404), then run the use case (scope,
+/// status rule, JSON check), and answer the reloaded job.
+async fn edit_payload(
+    state: &DispatchJobActionsState,
+    auth: &Authenticated,
+    id: String,
+    req: EditPayloadRequest,
+) -> Result<Json<DispatchJobResponse>, PlatformError> {
+    let command = EditPayloadCommand {
+        id: id.clone(),
+        payload: req.payload,
+        payload_content_type: req.payload_content_type,
+    };
+    command.validate_shape().map_err(PlatformError::from)?;
+    if state.repo.edit_view(&id).await?.is_none() {
+        return Err(PlatformError::not_found_code("DispatchJob", &id));
+    }
+    state
+        .edit_payload_use_case
+        .run(command, ExecutionContext::from_auth(&auth.0))
         .await
         .into_result()?;
     let job = state
@@ -304,6 +349,25 @@ pub async fn api_complete_dispatch_job(
     settle(&state, &auth, id, DispatchStatus::Completed).await
 }
 
+/// Replace the payload of a PENDING or FAILED dispatch job (Go
+/// `editDispatchJobPayload`). Status and attempts are unchanged; the operator
+/// requeues afterwards.
+#[utoipa::path(put, path = "/api/dispatch-jobs/{id}/payload", tag = "dispatch-jobs",
+    operation_id = "editDispatchJobPayload", request_body = EditPayloadRequest,
+    params(("id" = String, Path, description = "Dispatch job id")),
+    responses((status = 200, description = "The job", body = DispatchJobResponse),
+               (status = 409, description = "NOT_EDITABLE: the job is not PENDING or FAILED")),
+    security(("bearer_auth" = [])))]
+pub async fn api_edit_dispatch_job_payload(
+    State(state): State<DispatchJobActionsState>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+    Json(req): Json<EditPayloadRequest>,
+) -> Result<Json<DispatchJobResponse>, PlatformError> {
+    checks::can_edit_dispatch_job_payloads(&auth.0)?;
+    edit_payload(&state, &auth, id, req).await
+}
+
 /// The delivery a send would make now, signed as it would be; nothing is
 /// sent or written (Go `signDispatchJob`).
 #[utoipa::path(post, path = "/api/dispatch-jobs/{id}/sign", tag = "dispatch-jobs",
@@ -361,6 +425,21 @@ pub async fn bff_complete_dispatch_job(
 ) -> Result<Json<DispatchJobResponse>, PlatformError> {
     checks::can_read_dispatch_jobs(&auth.0)?;
     settle(&state, &auth, id, DispatchStatus::Completed).await
+}
+
+/// BFF twin of [`api_edit_dispatch_job_payload`].
+#[utoipa::path(put, path = "/bff/dispatch-jobs/{id}/payload", tag = "bff-dispatch-jobs",
+    operation_id = "editDispatchJobPayloadBff", request_body = EditPayloadRequest,
+    params(("id" = String, Path, description = "Dispatch job id")),
+    responses((status = 200, description = "The job", body = DispatchJobResponse)))]
+pub async fn bff_edit_dispatch_job_payload(
+    State(state): State<DispatchJobActionsState>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+    Json(req): Json<EditPayloadRequest>,
+) -> Result<Json<DispatchJobResponse>, PlatformError> {
+    checks::can_edit_dispatch_job_payloads(&auth.0)?;
+    edit_payload(&state, &auth, id, req).await
 }
 
 /// BFF twin of [`api_sign_dispatch_job`].

@@ -296,6 +296,58 @@ async fn requeue_from_every_status_ends_pending_with_a_fresh_budget() {
     }
 }
 
+/// Editing a payload rewrites the payload (and optionally the content type)
+/// in PENDING, FAILED and the legacy ERROR only, leaving status and
+/// attempts alone and moving `updated_at`; every other status is refused.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn edit_payload_rewrites_editable_statuses_only() {
+    let (pool, _c) = setup_db().await;
+    let created_at = Utc::now() - Duration::minutes(5);
+    for (i, from) in STATUSES.into_iter().chain(["ERROR"]).enumerate() {
+        let id = format!("e{i:012}");
+        insert_job(&pool, &id, from, None, 1, "IMMEDIATE", created_at).await;
+        let before = row(&pool, &id).await;
+        let done = lifecycle::edit_payload(&pool, &id, created_at, "{\"fixed\":true}", None)
+            .await
+            .unwrap();
+        let editable = matches!(from, "PENDING" | "FAILED" | "ERROR");
+        assert_eq!(done, editable, "{from}");
+        let after = row(&pool, &id).await;
+        if editable {
+            assert_eq!(after.status, before.status, "{from}: status is not touched");
+            assert_eq!(after.attempt_count, before.attempt_count);
+            assert!(after.updated_at > before.updated_at, "updated_at moves");
+            let (payload, ct): (Option<String>, String) = sqlx::query_as(
+                "SELECT payload, payload_content_type FROM msg_dispatch_jobs WHERE id = $1",
+            )
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(payload.as_deref(), Some("{\"fixed\":true}"));
+            assert!(!ct.is_empty());
+        } else {
+            assert_eq!(after, before, "{from} is untouched");
+        }
+    }
+    // A given content type replaces the stored one.
+    let id = "e_ct000000000";
+    insert_job(&pool, id, "FAILED", None, 1, "IMMEDIATE", created_at).await;
+    assert!(
+        lifecycle::edit_payload(&pool, id, created_at, "a,b", Some("text/csv"))
+            .await
+            .unwrap()
+    );
+    let ct: String =
+        sqlx::query_scalar("SELECT payload_content_type FROM msg_dispatch_jobs WHERE id = $1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(ct, "text/csv");
+}
+
 /// Operator cancel and complete move a FAILED job only; every other status
 /// is left alone (the check is in the statement).
 #[tokio::test]
