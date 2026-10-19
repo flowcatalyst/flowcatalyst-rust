@@ -313,6 +313,7 @@ pub fn oauth_state(ctx: &PlatformContext) -> OAuthState {
         encryption_service: ctx.encryption.clone(),
         portal: Some(ctx.portal.clone()),
         fcdev_refresh_ttl_secs: crate::auth::fcdev::refresh_ttl_secs_from_env(),
+        token_ownership: crate::auth::oauth_api::TokenOwnership::from_env(),
     }
 }
 

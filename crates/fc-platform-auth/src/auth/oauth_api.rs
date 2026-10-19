@@ -268,6 +268,8 @@ pub struct OAuthState {
     /// (`FC_FCDEV_LOGIN_REFRESH_TTL_SECS`). Zero or negative selects the
     /// default. Other clients use the process-wide refresh lifetime.
     pub fcdev_refresh_ttl_secs: i64,
+    /// Who may revoke or introspect whose tokens (identity review B1).
+    pub token_ownership: TokenOwnership,
 }
 
 /// Authorization endpoint - initiates the OAuth2 flow
@@ -887,14 +889,77 @@ async fn authenticate_client(
     Ok(client)
 }
 
+/// Who is calling `/oauth/introspect` or `/oauth/revoke`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TokenCaller {
+    /// An authenticated OAuth client (`client_id`).
+    Client(String),
+    /// A bearer-authenticated principal.
+    Principal { sub: String, anchor: bool },
+}
+
+impl TokenCaller {
+    /// Whether a refresh token is the caller's own to revoke (RFC 7009 s2.1:
+    /// issued to this client): a client revokes tokens issued to it; a
+    /// principal revokes its own, and an anchor administrator anyone's.
+    fn owns_refresh_token(&self, token: &RefreshToken) -> bool {
+        match self {
+            TokenCaller::Client(id) => token.oauth_client_id.as_deref() == Some(id.as_str()),
+            TokenCaller::Principal { sub, anchor } => {
+                *anchor || token.principal_id.to_string() == *sub
+            }
+        }
+    }
+
+    /// Whether an access token is the caller's to introspect: minted through
+    /// this client, or the principal's own (an anchor sees all).
+    fn owns_access_token(&self, claims: &AccessTokenClaims) -> bool {
+        match self {
+            TokenCaller::Client(id) => claims.azp.as_deref() == Some(id.as_str()),
+            TokenCaller::Principal { sub, anchor } => *anchor || claims.sub == *sub,
+        }
+    }
+}
+
+/// Ownership rules for `/oauth/revoke` and `/oauth/introspect`
+/// (identity review B1). The defaults keep what callers get today for
+/// introspection and apply RFC 7009 ownership to revocation.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TokenOwnership {
+    /// `FC_OAUTH_REVOKE_ANY_TOKEN=true` restores the earlier behaviour: any
+    /// authenticated caller may revoke any refresh token it can name.
+    pub revoke_any: bool,
+    /// `FC_OAUTH_INTROSPECT_OWN_TOKENS_ONLY=true` makes introspection answer
+    /// `active: false` for a token the caller does not own. Off by default:
+    /// resource servers introspect tokens that were issued to others.
+    pub introspect_own_only: bool,
+}
+
+impl TokenOwnership {
+    pub fn from_env() -> Self {
+        let flag = |name: &str| {
+            std::env::var(name).ok().is_some_and(|v| {
+                matches!(
+                    v.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
+        };
+        Self {
+            revoke_any: flag("FC_OAUTH_REVOKE_ANY_TOKEN"),
+            introspect_own_only: flag("FC_OAUTH_INTROSPECT_OWN_TOKENS_ONLY"),
+        }
+    }
+}
+
 /// Authenticate a client or bearer token for protected endpoints (introspect/revoke).
-/// Returns the authenticated client_id, or an error response.
+/// Returns who is calling, or an error response.
 async fn authenticate_client_or_bearer(
     state: &OAuthState,
     headers: &HeaderMap,
     client_id_body: Option<&str>,
     client_secret_body: Option<&str>,
-) -> Result<String, Response> {
+) -> Result<TokenCaller, Response> {
     // Try Bearer token first
     if let Some(auth_header) = headers
         .get(header::AUTHORIZATION)
@@ -902,7 +967,11 @@ async fn authenticate_client_or_bearer(
     {
         if let Some(token) = extract_bearer_token(auth_header) {
             return match state.auth_service.validate_token(token) {
-                Ok(claims) => Ok(claims.sub),
+                Ok(claims) => Ok(TokenCaller::Principal {
+                    anchor: claims.tier
+                        == Some(fc_platform_core::principal_kind::UserScope::Anchor),
+                    sub: claims.sub,
+                }),
                 Err(_) => Err((
                     StatusCode::UNAUTHORIZED,
                     Json(ErrorResponse {
@@ -918,7 +987,7 @@ async fn authenticate_client_or_bearer(
 
     // Try client credentials (Basic auth or body)
     let client = authenticate_client(state, headers, client_id_body, client_secret_body).await?;
-    Ok(client.client_id)
+    Ok(TokenCaller::Client(client.client_id))
 }
 
 /// Token endpoint - exchanges authorization code for tokens
@@ -2464,7 +2533,7 @@ pub async fn introspect(
     Form(req): Form<IntrospectRequestFull>,
 ) -> Response {
     // P1-4: Require authentication (Bearer token or client credentials)
-    if let Err(resp) = authenticate_client_or_bearer(
+    let caller = match authenticate_client_or_bearer(
         &state,
         &headers,
         req.client_id.as_deref(),
@@ -2472,11 +2541,19 @@ pub async fn introspect(
     )
     .await
     {
-        return resp;
-    }
+        Ok(caller) => caller,
+        Err(resp) => return resp,
+    };
 
-    // Try to validate as access token
-    match state.auth_service.validate_token(&req.token) {
+    // Try to validate as access token. With
+    // `FC_OAUTH_INTROSPECT_OWN_TOKENS_ONLY` a token the caller does not own
+    // reads as inactive, like an invalid one.
+    let validated = state
+        .auth_service
+        .validate_token(&req.token)
+        .ok()
+        .filter(|c| !state.token_ownership.introspect_own_only || caller.owns_access_token(c));
+    match validated.ok_or(()) {
         Ok(claims) => (
             StatusCode::OK,
             Json(IntrospectResponse {
@@ -2553,7 +2630,7 @@ pub async fn revoke(
     Form(req): Form<RevokeRequestFull>,
 ) -> Response {
     // P1-5: Require authentication (Bearer token or client credentials)
-    if let Err(resp) = authenticate_client_or_bearer(
+    let caller = match authenticate_client_or_bearer(
         &state,
         &headers,
         req.client_id.as_deref(),
@@ -2561,26 +2638,34 @@ pub async fn revoke(
     )
     .await
     {
-        return resp;
+        Ok(caller) => caller,
+        Err(resp) => return resp,
+    };
+
+    // The token is hashed whichever type the caller says it is: JWT access
+    // tokens are stateless and cannot be revoked server-side without a
+    // blocklist, so only a refresh token is ever revoked here.
+    let token_hash = RefreshToken::hash_token(&req.token);
+
+    // RFC 7009 s2.1: only the token's own client (or its principal, or an
+    // anchor administrator) may revoke it. A token that is not the caller's
+    // is left alone and answered like any other (200, below).
+    // `FC_OAUTH_REVOKE_ANY_TOKEN=true` skips the check.
+    if !state.token_ownership.revoke_any {
+        match state.refresh_token_repo.find_by_hash(&token_hash).await {
+            Ok(Some(stored)) if !caller.owns_refresh_token(&stored) => {
+                warn!(caller = ?caller, "revoke refused: the refresh token belongs to another client or principal");
+                return StatusCode::OK.into_response();
+            }
+            Ok(_) => {}
+            Err(e) => {
+                warn!(error = %e, "Failed to look up refresh token for revocation");
+                return StatusCode::OK.into_response();
+            }
+        }
     }
-
-    // Determine token type
-    let is_refresh = req.token_type_hint.as_deref() == Some("refresh_token");
-
-    if is_refresh {
-        // Revoke refresh token by hash
-        let token_hash = RefreshToken::hash_token(&req.token);
-        if let Err(e) = state.refresh_token_repo.revoke_by_hash(&token_hash).await {
-            warn!(error = %e, "Failed to revoke refresh token");
-        }
-    } else {
-        // For access tokens (JWTs), we can try revoking as refresh token too
-        // since the caller might not know the token type. JWT access tokens
-        // are stateless and can't be revoked server-side without a blocklist.
-        let token_hash = RefreshToken::hash_token(&req.token);
-        if let Err(e) = state.refresh_token_repo.revoke_by_hash(&token_hash).await {
-            warn!(error = %e, "Failed to revoke refresh token");
-        }
+    if let Err(e) = state.refresh_token_repo.revoke_by_hash(&token_hash).await {
+        warn!(error = %e, "Failed to revoke refresh token");
     }
 
     // RFC 7009: Always return 200, even if token was invalid
@@ -2590,6 +2675,57 @@ pub async fn revoke(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── token ownership (identity review B1) ──────────────────────────
+
+    fn refresh_token_of(principal: &str, client: Option<&str>) -> RefreshToken {
+        let mut t = RefreshToken::new(
+            "hash".to_string(),
+            fc_platform_core::shared::id::PrincipalId::from_wire(principal),
+        );
+        t.oauth_client_id = client.map(str::to_string);
+        t
+    }
+
+    #[test]
+    fn a_client_owns_the_refresh_tokens_issued_to_it() {
+        let t = refresh_token_of("prn_a", Some("app-1"));
+        assert!(TokenCaller::Client("app-1".into()).owns_refresh_token(&t));
+        assert!(!TokenCaller::Client("app-2".into()).owns_refresh_token(&t));
+        // A token with no client is no client's.
+        let orphan = refresh_token_of("prn_a", None);
+        assert!(!TokenCaller::Client("app-1".into()).owns_refresh_token(&orphan));
+    }
+
+    #[test]
+    fn a_principal_owns_its_own_tokens_and_an_anchor_all() {
+        let t = refresh_token_of("prn_a", Some("app-1"));
+        let me = |sub: &str, anchor| TokenCaller::Principal {
+            sub: sub.into(),
+            anchor,
+        };
+        assert!(me("prn_a", false).owns_refresh_token(&t));
+        assert!(!me("prn_b", false).owns_refresh_token(&t));
+        assert!(me("prn_b", true).owns_refresh_token(&t));
+    }
+
+    #[test]
+    fn access_token_ownership_follows_the_minting_client_and_subject() {
+        let claims: AccessTokenClaims = serde_json::from_value(serde_json::json!({
+            "sub": "prn_a", "iss": "i", "aud": "a", "exp": 2, "iat": 1, "jti": "j",
+            "type": "USER", "tier": "PARTNER", "azp": "app-1"
+        }))
+        .unwrap();
+        assert!(TokenCaller::Client("app-1".into()).owns_access_token(&claims));
+        assert!(!TokenCaller::Client("app-2".into()).owns_access_token(&claims));
+        let p = |sub: &str, anchor| TokenCaller::Principal {
+            sub: sub.into(),
+            anchor,
+        };
+        assert!(p("prn_a", false).owns_access_token(&claims));
+        assert!(!p("prn_b", false).owns_access_token(&claims));
+        assert!(p("prn_b", true).owns_access_token(&claims));
+    }
 
     // ── generate_random_string ────────────────────────────────────────
 
