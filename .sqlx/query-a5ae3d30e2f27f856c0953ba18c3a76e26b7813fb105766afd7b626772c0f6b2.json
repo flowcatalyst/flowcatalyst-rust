@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE msg_dispatch_pools SET\n                code = $2,\n                name = $3,\n                description = $4,\n                rate_limit = $5,\n                concurrency = $6,\n                client_id = $7,\n                client_identifier = $8,\n                status = $9,\n                updated_at = $10,\n                application_id = $11\n             WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Int4",
+        "Int4",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Timestamptz",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a5ae3d30e2f27f856c0953ba18c3a76e26b7813fb105766afd7b626772c0f6b2"
+}

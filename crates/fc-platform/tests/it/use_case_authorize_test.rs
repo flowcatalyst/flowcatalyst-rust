@@ -7,7 +7,7 @@
 //! Docker.
 
 use crate::support;
-use fc_platform::shared::id::PrincipalId;
+use fc_platform::shared::id::{ApplicationId, PrincipalId};
 use fc_platform_core::shared::id::ClientId;
 
 use std::collections::HashSet;
@@ -17,7 +17,7 @@ use axum::response::IntoResponse;
 use fc_platform::checks;
 use fc_platform::client::entity::Client;
 use fc_platform::role::entity::roles;
-use fc_platform::shared::authorization_service::{AuthContext, Credential};
+use fc_platform::shared::authorization_service::{ApplicationScope, AuthContext, Credential};
 use fc_platform::usecase::{ExecutionContext, UseCase, UseCaseError};
 use fc_platform::{PlatformError, PrincipalType, UserScope};
 use std::fmt;
@@ -386,6 +386,7 @@ async fn dispatch_pool_writes_check_scope_in_the_use_case() {
         SyncDispatchPoolsUseCase,
     };
     let app = setup().await;
+    let authz_app = ApplicationId::generate();
     let pool = fc_platform::DispatchPool::new("authz-pool", "Authz pool");
     app.repos.dispatch_pool_repo.insert(&pool).await.unwrap();
     let client_admin = || {
@@ -425,11 +426,12 @@ async fn dispatch_pool_writes_check_scope_in_the_use_case() {
         .run(
             SyncDispatchPoolsCommand {
                 application_code: "authz".to_string(),
+                application_id: authz_app.clone(),
                 pools: vec![],
                 remove_unlisted: true,
                 protected_ids: Default::default(),
             },
-            client_admin(),
+            client_admin().with_application_scope(ApplicationScope::All),
         )
         .await,
     );

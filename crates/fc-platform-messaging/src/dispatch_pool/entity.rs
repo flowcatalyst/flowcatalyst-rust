@@ -1,6 +1,7 @@
 //! DispatchPool Entity — matches TypeScript DispatchPool domain
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::DispatchPoolId;
 use serde::{Deserialize, Serialize};
@@ -33,6 +34,12 @@ pub struct DispatchPool {
     pub concurrency: i32,
     pub client_id: Option<ClientId>,
     pub client_identifier: Option<String>,
+    /// The application that owns the pool: set when an application's SDK sync
+    /// creates it, `None` for pools made in the admin UI/API and for pools
+    /// that predate ownership. An application-scoped sync may change only
+    /// pools it owns (Go F19). Never on the wire.
+    #[serde(skip)]
+    pub application_id: Option<ApplicationId>,
     pub status: DispatchPoolStatus,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -50,6 +57,7 @@ impl DispatchPool {
             concurrency: 10,
             client_id: None,
             client_identifier: None,
+            application_id: None,
             status: DispatchPoolStatus::Active,
             created_at: now,
             updated_at: now,

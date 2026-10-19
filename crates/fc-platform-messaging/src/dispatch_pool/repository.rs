@@ -1,6 +1,7 @@
 //! DispatchPool Repository — PostgreSQL via SQLx
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::DispatchPoolId;
 use sqlx::PgPool;
@@ -27,6 +28,7 @@ struct DispatchPoolRow {
     status: Stored<DispatchPoolStatus>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+    application_id: Option<String>,
 }
 
 impl TryFrom<DispatchPoolRow> for DispatchPool {
@@ -40,6 +42,12 @@ impl TryFrom<DispatchPoolRow> for DispatchPool {
             &r.id,
         )?;
         let status = r.status.decode("msg_dispatch_pools", "status", &r.id)?;
+        let application_id = decode_id_opt(
+            r.application_id.as_deref(),
+            "msg_dispatch_pools",
+            "application_id",
+            &r.id,
+        )?;
         Ok(Self {
             id,
             code: r.code,
@@ -49,6 +57,7 @@ impl TryFrom<DispatchPoolRow> for DispatchPool {
             concurrency: r.concurrency,
             client_id,
             client_identifier: r.client_identifier,
+            application_id,
             status,
             created_at: r.created_at,
             updated_at: r.updated_at,
@@ -85,8 +94,8 @@ impl DispatchPoolRepository {
     pub async fn insert(&self, pool: &DispatchPool) -> Result<()> {
         let now = Utc::now();
         sqlx::query!(
-            "INSERT INTO msg_dispatch_pools (id, code, name, description, rate_limit, concurrency, client_id, client_identifier, status, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+            "INSERT INTO msg_dispatch_pools (id, code, name, description, rate_limit, concurrency, client_id, client_identifier, status, created_at, updated_at, application_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
             &pool.id as &DispatchPoolId,
             &pool.code,
             &pool.name,
@@ -97,7 +106,8 @@ impl DispatchPoolRepository {
             pool.client_identifier.as_ref(),
             pool.status as DispatchPoolStatus,
             now,
-            now
+            now,
+            &pool.application_id as &Option<ApplicationId>
         )
         .execute(&self.pool)
         .await?;
@@ -109,7 +119,7 @@ impl DispatchPoolRepository {
             DispatchPoolRow,
             "SELECT id, code, name, description, rate_limit, concurrency, client_id, \
                     client_identifier, status AS \"status: Stored<DispatchPoolStatus>\", \
-                    created_at, updated_at \
+                    created_at, updated_at, application_id \
                     FROM msg_dispatch_pools WHERE id = $1",
             id as &DispatchPoolId
         )
@@ -127,7 +137,7 @@ impl DispatchPoolRepository {
             DispatchPoolRow,
             "SELECT id, code, name, description, rate_limit, concurrency, client_id, \
                     client_identifier, status AS \"status: Stored<DispatchPoolStatus>\", \
-                    created_at, updated_at \
+                    created_at, updated_at, application_id \
                     FROM msg_dispatch_pools WHERE id = ANY($1)",
             ids as &[DispatchPoolId]
         )
@@ -146,7 +156,7 @@ impl DispatchPoolRepository {
                 DispatchPoolRow,
                 "SELECT id, code, name, description, rate_limit, concurrency, client_id, \
                     client_identifier, status AS \"status: Stored<DispatchPoolStatus>\", \
-                    created_at, updated_at \
+                    created_at, updated_at, application_id \
                     FROM msg_dispatch_pools WHERE code = $1 AND client_id = $2",
                 code,
                 cid as &ClientId
@@ -158,7 +168,7 @@ impl DispatchPoolRepository {
                 DispatchPoolRow,
                 "SELECT id, code, name, description, rate_limit, concurrency, client_id, \
                     client_identifier, status AS \"status: Stored<DispatchPoolStatus>\", \
-                    created_at, updated_at \
+                    created_at, updated_at, application_id \
                     FROM msg_dispatch_pools WHERE code = $1 AND client_id IS NULL",
                 code
             )
@@ -179,7 +189,7 @@ impl DispatchPoolRepository {
             DispatchPoolRow,
             "SELECT id, code, name, description, rate_limit, concurrency, client_id, \
                     client_identifier, status AS \"status: Stored<DispatchPoolStatus>\", \
-                    created_at, updated_at \
+                    created_at, updated_at, application_id \
                     FROM msg_dispatch_pools WHERE code = ANY($1) AND client_id IS NULL",
             codes
         )
@@ -193,7 +203,7 @@ impl DispatchPoolRepository {
             DispatchPoolRow,
             "SELECT id, code, name, description, rate_limit, concurrency, client_id, \
                     client_identifier, status AS \"status: Stored<DispatchPoolStatus>\", \
-                    created_at, updated_at \
+                    created_at, updated_at, application_id \
                     FROM msg_dispatch_pools ORDER BY code ASC"
         )
         .fetch_all(&self.pool)
@@ -206,7 +216,7 @@ impl DispatchPoolRepository {
             DispatchPoolRow,
             "SELECT id, code, name, description, rate_limit, concurrency, client_id, \
                     client_identifier, status AS \"status: Stored<DispatchPoolStatus>\", \
-                    created_at, updated_at \
+                    created_at, updated_at, application_id \
                     FROM msg_dispatch_pools WHERE status = $1 ORDER BY code ASC",
             status as DispatchPoolStatus
         )
@@ -226,7 +236,7 @@ impl DispatchPoolRepository {
             DispatchPoolRow,
             "SELECT id, code, name, description, rate_limit, concurrency, client_id, \
                     client_identifier, status AS \"status: Stored<DispatchPoolStatus>\", \
-                    created_at, updated_at \
+                    created_at, updated_at, application_id \
                     FROM msg_dispatch_pools \
              WHERE ($1::text IS NULL OR status = $1) \
                AND ($2::text IS NULL OR client_id = $2) \
@@ -246,7 +256,7 @@ impl DispatchPoolRepository {
             DispatchPoolRow,
             "SELECT id, code, name, description, rate_limit, concurrency, client_id, \
                     client_identifier, status AS \"status: Stored<DispatchPoolStatus>\", \
-                    created_at, updated_at \
+                    created_at, updated_at, application_id \
                     FROM msg_dispatch_pools WHERE code ILIKE $1 OR name ILIKE $1",
             &pattern
         )
@@ -260,7 +270,7 @@ impl DispatchPoolRepository {
             DispatchPoolRow,
             "SELECT id, code, name, description, rate_limit, concurrency, client_id, \
                     client_identifier, status AS \"status: Stored<DispatchPoolStatus>\", \
-                    created_at, updated_at \
+                    created_at, updated_at, application_id \
                     FROM msg_dispatch_pools WHERE status = $1",
             DispatchPoolStatus::Active as DispatchPoolStatus
         )
@@ -275,7 +285,7 @@ impl DispatchPoolRepository {
                 DispatchPoolRow,
                 "SELECT id, code, name, description, rate_limit, concurrency, client_id, \
                     client_identifier, status AS \"status: Stored<DispatchPoolStatus>\", \
-                    created_at, updated_at \
+                    created_at, updated_at, application_id \
                     FROM msg_dispatch_pools WHERE client_id = $1 OR client_id IS NULL",
                 cid as &ClientId
             )
@@ -286,7 +296,7 @@ impl DispatchPoolRepository {
                 DispatchPoolRow,
                 "SELECT id, code, name, description, rate_limit, concurrency, client_id, \
                     client_identifier, status AS \"status: Stored<DispatchPoolStatus>\", \
-                    created_at, updated_at \
+                    created_at, updated_at, application_id \
                     FROM msg_dispatch_pools WHERE client_id IS NULL"
             )
             .fetch_all(&self.pool)
@@ -306,7 +316,8 @@ impl DispatchPoolRepository {
                 client_id = $7,
                 client_identifier = $8,
                 status = $9,
-                updated_at = $10
+                updated_at = $10,
+                application_id = $11
              WHERE id = $1",
             &pool.id as &DispatchPoolId,
             &pool.code,
@@ -317,7 +328,8 @@ impl DispatchPoolRepository {
             &pool.client_id as &Option<ClientId>,
             pool.client_identifier.as_ref(),
             pool.status as DispatchPoolStatus,
-            Utc::now()
+            Utc::now(),
+            &pool.application_id as &Option<ApplicationId>
         )
         .execute(&self.pool)
         .await?;
@@ -347,8 +359,8 @@ impl Persist<DispatchPool> for DispatchPoolRepository {
     async fn persist(&self, p: &DispatchPool, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
         sqlx::query!(
-            "INSERT INTO msg_dispatch_pools (id, code, name, description, rate_limit, concurrency, client_id, client_identifier, status, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            "INSERT INTO msg_dispatch_pools (id, code, name, description, rate_limit, concurrency, client_id, client_identifier, status, created_at, updated_at, application_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
              ON CONFLICT (id) DO UPDATE SET
                 code = EXCLUDED.code,
                 name = EXCLUDED.name,
@@ -358,7 +370,8 @@ impl Persist<DispatchPool> for DispatchPoolRepository {
                 client_id = EXCLUDED.client_id,
                 client_identifier = EXCLUDED.client_identifier,
                 status = EXCLUDED.status,
-                updated_at = EXCLUDED.updated_at",
+                updated_at = EXCLUDED.updated_at,
+                application_id = EXCLUDED.application_id",
             &p.id as &DispatchPoolId,
             &p.code,
             &p.name,
@@ -369,7 +382,8 @@ impl Persist<DispatchPool> for DispatchPoolRepository {
             p.client_identifier.as_ref(),
             p.status as DispatchPoolStatus,
             now,
-            now
+            now,
+            &p.application_id as &Option<ApplicationId>
         )
         .execute(&mut **tx.inner)
         .await?;

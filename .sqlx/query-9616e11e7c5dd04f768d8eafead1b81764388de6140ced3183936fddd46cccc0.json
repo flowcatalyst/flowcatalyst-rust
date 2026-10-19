@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, code, name, description, rate_limit, concurrency, client_id, client_identifier, status AS \"status: Stored<DispatchPoolStatus>\", created_at, updated_at FROM msg_dispatch_pools WHERE code ILIKE $1 OR name ILIKE $1",
+  "query": "SELECT id, code, name, description, rate_limit, concurrency, client_id, client_identifier, status AS \"status: Stored<DispatchPoolStatus>\", created_at, updated_at, application_id FROM msg_dispatch_pools WHERE id = ANY($1)",
   "describe": {
     "columns": [
       {
@@ -57,11 +57,16 @@
         "ordinal": 10,
         "name": "updated_at",
         "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "application_id",
+        "type_info": "Varchar"
       }
     ],
     "parameters": {
       "Left": [
-        "Text"
+        "TextArray"
       ]
     },
     "nullable": [
@@ -75,8 +80,9 @@
       true,
       false,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "71c492d204986986e61cf7ee46ebc3d5075b677941365f83b9174bb5e87a92a0"
+  "hash": "9616e11e7c5dd04f768d8eafead1b81764388de6140ced3183936fddd46cccc0"
 }

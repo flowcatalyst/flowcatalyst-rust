@@ -1106,6 +1106,7 @@ async fn sdk_syncs_leave_a_functions_pool_and_jobs_alone() {
     use fc_platform::scheduled_job::operations::{
         ScheduledJobSyncEntry, SyncScheduledJobsCommand, SyncScheduledJobsUseCase,
     };
+    use fc_platform::shared::id::ApplicationId;
     use fc_platform::usecase::{ExecutionContext, UseCase};
 
     let app = TestApp::setup().await;
@@ -1133,6 +1134,7 @@ async fn sdk_syncs_leave_a_functions_pool_and_jobs_alone() {
     );
     let command = SyncDispatchPoolsCommand {
         application_code: "billing".into(),
+        application_id: ApplicationId::generate(),
         pools: vec![SyncDispatchPoolInput {
             code: pool_key(&fid),
             name: "hijacked".into(),
@@ -1165,6 +1167,7 @@ async fn sdk_syncs_leave_a_functions_pool_and_jobs_alone() {
     );
     let command = SyncDispatchPoolsCommand {
         application_code: "billing".into(),
+        application_id: ApplicationId::generate(),
         pools: vec![],
         remove_unlisted: true,
         protected_ids: objects

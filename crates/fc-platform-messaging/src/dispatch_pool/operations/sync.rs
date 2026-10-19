@@ -14,6 +14,8 @@ use crate::dispatch_pool::entity::DispatchPool;
 use crate::dispatch_pool::entity::DispatchPoolStatus;
 use crate::dispatch_pool::repository::DispatchPoolRepository;
 use fc_platform_core::permissions;
+use fc_platform_core::shared::authorization_service::ApplicationScope;
+use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
@@ -54,6 +56,10 @@ fn default_concurrency() -> u32 {
 #[serde(rename_all = "camelCase")]
 pub struct SyncDispatchPoolsCommand {
     pub application_code: String,
+    /// The target application (resolved from `application_code` by the
+    /// handler): the owner of the pools this sync creates and, for a caller
+    /// confined to applications, the only owner whose pools it may change.
+    pub application_id: ApplicationId,
     pub pools: Vec<SyncDispatchPoolInput>,
     #[serde(default)]
     pub remove_unlisted: bool,
@@ -126,16 +132,26 @@ impl<U: UnitOfWork> UseCase for SyncDispatchPoolsUseCase<U> {
         Ok(())
     }
 
-    /// Dispatch pools are platform-global, so `removeUnlisted` is a
-    /// platform-wide sweep: anchor or super-admin only (Go
-    /// `dispatchpool/operations/sync.go`: 403
-    /// `ANCHOR_REQUIRED_FOR_PLATFORM_SWEEP`). The SDK handler resolves the
+    /// The caller must reach the target application (Go `CanAccessApplication`:
+    /// 403 `FORBIDDEN` "Not authorised for application '<code>'"). A
+    /// `removeUnlisted` sweep is anchor or super-admin only (403
+    /// `ANCHOR_REQUIRED_FOR_PLATFORM_SWEEP`); what it may archive is narrowed
+    /// in `execute` by pool ownership (Go F19). The SDK handler resolves the
     /// `/{appCode}` application within the caller's scope before the body.
     async fn authorize(
         &self,
         command: &SyncDispatchPoolsCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
+        if !ctx.caller().allows_application(&command.application_id) {
+            return Err(UseCaseError::forbidden(
+                "FORBIDDEN",
+                format!(
+                    "Not authorised for application '{}'",
+                    command.application_code
+                ),
+            ));
+        }
         if command.remove_unlisted
             && !ctx.caller().is_anchor()
             && !ctx.caller().has_permission(permissions::ADMIN_ALL)
@@ -163,15 +179,47 @@ impl<U: UnitOfWork> UseCase for SyncDispatchPoolsUseCase<U> {
         let mut saves: Vec<DispatchPool> = Vec::new();
         let mut rows: Vec<RecordedEvent> = Vec::new();
 
+        // The sync's pools are the client-less ones: (code, client_id) is
+        // unique, so a client's pool may share a code with a platform one and
+        // must never be mistaken for it (Go F19).
+        // A code held by a client's pool cannot be created here by a caller
+        // confined to applications.
+        let client_codes: BTreeSet<&str> = existing
+            .iter()
+            .filter(|p| p.client_id.is_some())
+            .map(|p| p.code.as_str())
+            .collect();
+        // An all-applications caller (a platform admin) may change any pool;
+        // every other caller only the pools the target application owns.
+        let all_apps = matches!(
+            ctx.caller().application_scope(),
+            Some(ApplicationScope::All)
+        );
+        let owns = |p: &DispatchPool| p.application_id.as_ref() == Some(&command.application_id);
+
         // Plan every row before anything is written (Go's `usecaseop.Sync`).
         for input in &command.pools {
             synced_codes.push(input.code.clone());
 
-            let existing_pool = existing.iter().find(|p| p.code == input.code);
+            let existing_pool = existing
+                .iter()
+                .find(|p| p.client_id.is_none() && p.code == input.code);
             match existing_pool {
                 Some(pool) if command.protected_ids.contains(pool.id.as_str()) => {}
                 Some(pool) => {
+                    if !all_apps && !owns(pool) {
+                        return Err(UseCaseError::forbidden(
+                            "DISPATCH_POOL_NOT_OWNED",
+                            format!(
+                                "Dispatch pool '{}' is not owned by application '{}' (it belongs to another application or the platform); only a platform administrator may sync it",
+                                input.code, command.application_code
+                            ),
+                        ));
+                    }
                     let mut updated = pool.clone();
+                    if updated.application_id.is_none() {
+                        updated.application_id = Some(command.application_id.clone());
+                    }
                     updated.name = input.name.clone();
                     updated.description = input.description.clone();
                     updated.rate_limit = input.rate_limit.map(|r| r as i32);
@@ -186,7 +234,17 @@ impl<U: UnitOfWork> UseCase for SyncDispatchPoolsUseCase<U> {
                     updated_count += 1;
                 }
                 None => {
+                    if !all_apps && client_codes.contains(input.code.as_str()) {
+                        return Err(UseCaseError::forbidden(
+                            "DISPATCH_POOL_NOT_OWNED",
+                            format!(
+                                "Dispatch pool code '{}' is not available to application '{}'",
+                                input.code, command.application_code
+                            ),
+                        ));
+                    }
                     let mut pool = DispatchPool::new(&input.code, &input.name);
+                    pool.application_id = Some(command.application_id.clone());
                     pool.description = input.description.clone();
                     pool.rate_limit = input.rate_limit.map(|r| r as i32);
                     pool.concurrency = input.concurrency as i32;
@@ -205,6 +263,8 @@ impl<U: UnitOfWork> UseCase for SyncDispatchPoolsUseCase<U> {
                 if !synced_codes.contains(&pool.code)
                     && pool.status != DispatchPoolStatus::Archived
                     && !command.protected_ids.contains(pool.id.as_str())
+                    // An application sweeps only its own pools (Go F19).
+                    && (all_apps || owns(pool))
                 {
                     let mut archived = pool.clone();
                     archived.archive();
@@ -252,6 +312,7 @@ mod tests {
     fn test_command_serialization() {
         let cmd = SyncDispatchPoolsCommand {
             application_code: "orders".to_string(),
+            application_id: ApplicationId::generate(),
             pools: vec![],
             remove_unlisted: false,
             protected_ids: Default::default(),

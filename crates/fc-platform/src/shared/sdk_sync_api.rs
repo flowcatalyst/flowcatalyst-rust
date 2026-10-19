@@ -628,15 +628,17 @@ pub(super) async fn sync_dispatch_pools(
     Json(req): Json<SyncDispatchPoolsRequest>,
 ) -> Result<Json<SyncResultResponse>, PlatformError> {
     checks::can_sync_dispatch_pools(&auth.0)?;
-    state
+    let application = state
         .app_access
         .require_application_access(&auth.0, &app_code)
         .await?;
-    // The use case refuses a non-anchor's platform-wide sweep
-    // (removeUnlisted), as Go's does.
+    // The use case confines a caller bound to applications to the pools its
+    // application owns (DISPATCH_POOL_NOT_OWNED, Go F19) and refuses a
+    // non-anchor's platform-wide sweep (removeUnlisted), as Go's does.
 
     let command = SyncDispatchPoolsCommand {
         application_code: app_code,
+        application_id: application.id,
         pools: req
             .pools
             .into_iter()
@@ -657,7 +659,8 @@ pub(super) async fn sync_dispatch_pools(
             .collect(),
     };
 
-    let ctx = ExecutionContext::from_auth(&auth.0);
+    let ctx = ExecutionContext::from_auth(&auth.0)
+        .with_application_scope(state.app_access.scope_for(&auth.0.principal_id).await?);
 
     match state
         .sync_dispatch_pools_use_case
