@@ -29,6 +29,7 @@
 // Core aggregates
 pub mod app_docs;
 pub mod application;
+pub mod appusers;
 pub use fc_platform_iam::application_openapi_spec;
 pub mod client;
 pub mod principal;

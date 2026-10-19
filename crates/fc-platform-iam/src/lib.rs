@@ -13,6 +13,7 @@
 pub mod app_docs;
 pub mod application;
 pub mod application_openapi_spec;
+pub mod appusers;
 pub mod audit;
 pub mod auth;
 pub mod client;

@@ -65,6 +65,7 @@ pub fn build(ctx: &PlatformContext) -> (Router, serde_json::Value) {
         .merge(crate::dispatch_job_actions::routes(ctx))
         .merge(crate::app_docs::routes(ctx))
         .merge(crate::application::routes(ctx))
+        .merge(crate::appusers::routes(ctx))
         .merge(crate::email_domain_mapping::routes(ctx))
         .merge(crate::service_account::routes(ctx))
         .merge(crate::platform_config::routes(ctx))

@@ -1085,7 +1085,7 @@ fn go_email_pattern() -> &'static regex::Regex {
 /// Go `resolveInviteRedirect` (principal/api/api.go:756-767): absent or
 /// blank is none; otherwise an absolute http(s) URL with a host and no
 /// user info.
-pub(super) fn resolve_invite_redirect(raw: Option<&str>) -> Result<Option<String>, PlatformError> {
+pub(crate) fn resolve_invite_redirect(raw: Option<&str>) -> Result<Option<String>, PlatformError> {
     let Some(uri) = raw.map(str::trim).filter(|u| !u.is_empty()) else {
         return Ok(None);
     };

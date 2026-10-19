@@ -4,15 +4,11 @@
 # a new gap is a regression. Regenerate with:
 #   OPENAPI_UPDATE_BASELINE=1 cargo test -p fc-platform --test it -- openapi_go_contract_test
 # Kinds: go-only, operation-id, request, response, rust-only, schema-missing.
-go-only: DELETE /api/applications/{}/invitations/{}
 go-only: DELETE /api/functions/{}/config/{}
 go-only: DELETE /api/functions/{}/db/{}
 go-only: DELETE /api/functions/{}/routes/{}
 go-only: GET /.well-known/jwks.json
 go-only: GET /.well-known/openid-configuration
-go-only: GET /api/applications/{}/invitations
-go-only: GET /api/applications/{}/users
-go-only: GET /api/applications/{}/users/{}
 go-only: GET /api/functions/{}/routes
 go-only: GET /api/functions/{}/settings
 go-only: GET /api/me
@@ -24,8 +20,6 @@ go-only: GET /control/functions/artifacts/{}
 go-only: GET /control/functions/desired
 go-only: GET /oauth/userinfo
 go-only: PATCH /api/functions/{}
-go-only: POST /api/applications/{}/invitations/{}/resend
-go-only: POST /api/applications/{}/users
 go-only: POST /api/audit-logs/batch
 go-only: POST /api/dispatch-jobs/batch
 go-only: POST /api/dispatch-jobs/requeue-by-filter
@@ -92,10 +86,6 @@ rust-only: POST /auth/refresh
 rust-only: PUT /api/function-policies/{}
 rust-only: PUT /api/functions/{}
 rust-only: PUT /api/functions/{}/config
-schema-missing: ApplicationInvitation
-schema-missing: ApplicationInvitationList
-schema-missing: ApplicationUser
-schema-missing: ApplicationUserList
 schema-missing: AuditBatchItem
 schema-missing: AuditBatchRequest
 schema-missing: AuditBatchResponse
@@ -117,8 +107,6 @@ schema-missing: Event
 schema-missing: Function
 schema-missing: Heartbeat
 schema-missing: IntrospectResponse
-schema-missing: InviteApplicationUserRequest
-schema-missing: InviteApplicationUserResponse
 schema-missing: JWK
 schema-missing: JWKSResponse
 schema-missing: KV
@@ -141,8 +129,6 @@ schema-missing: RequeueByFilterPreviewRequest
 schema-missing: RequeueByFilterPreviewResponse
 schema-missing: RequeueByFilterRequest
 schema-missing: RequeueByFilterResponse
-schema-missing: ResendInvitationRequest
-schema-missing: ResendInvitationResponse
 schema-missing: Route
 schema-missing: RouteResponse
 schema-missing: SettingResponse
