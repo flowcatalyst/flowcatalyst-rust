@@ -250,6 +250,14 @@ pub struct SetApplicationAccessRequest {
     /// (Go's rule, principal/api/api.go:1204).
     #[serde(default)]
     pub all_applications: Option<bool>,
+
+    // Must be true when the caller removes THEIR OWN all-applications flag
+    // (allApplications=false on their own principal): afterwards they can no
+    // longer grant all-applications access. Without it the request is rejected
+    // 409 SELF_RESTRICTION_REQUIRES_CONFIRMATION. Ignored otherwise. (Go
+    // `confirmSelfRestriction`; a plain comment so the schema stays Go's.)
+    #[serde(default)]
+    pub confirm_self_restriction: Option<bool>,
 }
 
 /// Application access response

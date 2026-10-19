@@ -82,6 +82,7 @@ mod ingest_app_scope_test;
 mod ingest_client_code_test;
 mod ingest_security_test;
 mod junction_cascade_convention_test;
+mod last_admin_test;
 mod load_tests;
 mod login_backoff_integration_tests;
 mod login_csrf_test;

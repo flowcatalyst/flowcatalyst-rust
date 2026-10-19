@@ -10,6 +10,7 @@ use fc_platform_core::shared::id::PrincipalId;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{ExternalIdentity, Principal, PrincipalType, UserIdentity, UserScope};
+use super::last_admin;
 use crate::developer_credential::DeveloperCredential;
 use crate::identity_provider::entity::IdentityProviderType;
 use crate::principal::entity::PrincipalSyncBatch;
@@ -1111,6 +1112,8 @@ impl Persist<PrincipalSyncBatch> for PrincipalRepository {
         if ps.is_empty() {
             return Ok(());
         }
+        // Never demote the last all-applications administrator.
+        last_admin::guard_on_batch(tx, ps).await?;
         let now = Utc::now();
         let ids: Vec<&str> = ps.iter().map(|p| p.id.as_str()).collect();
         let types: Vec<&str> = ps.iter().map(|p| p.principal_type.as_str()).collect();
@@ -1233,6 +1236,8 @@ impl HasId for Principal {
 
 impl Persist<Principal> for PrincipalRepository {
     async fn persist(&self, p: &Principal, tx: &mut DbTx<'_>) -> Result<()> {
+        // Never demote the last all-applications administrator (last_admin.rs).
+        last_admin::guard_on_persist(tx, p).await?;
         let now = Utc::now();
         let email_domain = p
             .user_identity
@@ -1387,6 +1392,7 @@ impl Persist<Principal> for PrincipalRepository {
     }
 
     async fn delete(&self, p: &Principal, tx: &mut DbTx<'_>) -> Result<()> {
+        last_admin::guard_on_delete(tx, p).await?;
         sqlx::query!(
             "DELETE FROM iam_principal_roles WHERE principal_id = $1",
             &p.id as &PrincipalId

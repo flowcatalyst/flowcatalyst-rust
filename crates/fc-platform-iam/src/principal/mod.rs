@@ -5,6 +5,7 @@
 pub mod admin;
 pub mod api;
 pub mod entity;
+pub mod last_admin;
 pub mod operations;
 pub mod repository;
 

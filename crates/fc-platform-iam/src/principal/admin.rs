@@ -7,6 +7,7 @@
 //! both surfaces enforce the same rules and write through the same use
 //! cases.
 
+use axum::http::StatusCode;
 use fc_platform_core::shared::id::ApplicationId;
 use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::PrincipalId;
@@ -961,6 +962,24 @@ pub async fn set_application_access(
     // Loaded to shape the set, as Go's controller does; the use case applies
     // the reach rule.
     let principal = load_user_to_shape(state, id).await?;
+
+    // Removing your OWN all-applications flag strips your ability to grant it
+    // to anyone (including yourself back), so it needs an explicit
+    // confirmation (Go `assignApplicationAccess`, principal/api/api.go).
+    if ctx.principal_id == principal.id
+        && principal.all_applications
+        && req.all_applications == Some(false)
+        && req.confirm_self_restriction != Some(true)
+    {
+        return Err(PlatformError::Coded {
+            status: StatusCode::CONFLICT,
+            code: "SELF_RESTRICTION_REQUIRES_CONFIRMATION".to_string(),
+            message: "You are removing your own all-applications access: you will no longer be able to grant \
+                      all-applications access to anyone (including yourself). Resend with confirmSelfRestriction=true to proceed."
+                .to_string(),
+            details: Default::default(),
+        });
+    }
 
     // Granting every application needs a caller that reaches every
     // application itself: checked here, where Go's controller checks it,
