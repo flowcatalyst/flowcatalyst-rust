@@ -15,6 +15,7 @@ use chrono::Utc;
 use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::shared::id::PrincipalId;
 use serde::{Deserialize, Serialize};
+use std::env;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 use utoipa::{IntoParams, ToSchema};
@@ -928,13 +929,13 @@ impl Default for TokenOwnership {
 impl TokenOwnership {
     pub fn from_env() -> Self {
         let flag = |name: &str, default: bool| {
-            std::env::var(name).ok().map_or(default, |v| {
-                match v.trim().to_ascii_lowercase().as_str() {
+            env::var(name)
+                .ok()
+                .map_or(default, |v| match v.trim().to_ascii_lowercase().as_str() {
                     "1" | "true" | "yes" | "on" => true,
                     "0" | "false" | "no" | "off" => false,
                     _ => default,
-                }
-            })
+                })
         };
         Self {
             revoke_enforce_client: flag("FC_OAUTH_REVOKE_ENFORCE_CLIENT", true),
@@ -2680,10 +2681,7 @@ mod tests {
     // ── token ownership (identity review B1) ──────────────────────────
 
     fn refresh_token_of(principal: &str, client: Option<&str>) -> RefreshToken {
-        let mut t = RefreshToken::new(
-            "hash".to_string(),
-            fc_platform_core::shared::id::PrincipalId::from_wire(principal),
-        );
+        let mut t = RefreshToken::new("hash".to_string(), PrincipalId::from_wire(principal));
         t.oauth_client_id = client.map(str::to_string);
         t
     }

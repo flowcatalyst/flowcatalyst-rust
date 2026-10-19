@@ -11,8 +11,10 @@ use fc_platform::client::entity::Client;
 use fc_platform::domain::{Principal, UserScope};
 use fc_platform::role::entity::AuthRole;
 use fc_platform::service_account::entity::AssignmentSource;
+use fc_platform::usecase::ExecutionContext;
 use fc_platform::OidcSyncService;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use support::assert_status;
 use support::TestApp;
 use tower::ServiceExt;
@@ -360,8 +362,7 @@ async fn a_mapping_to_an_unknown_role_is_refused_at_write_when_required() {
         .run(cmd("staff", "f33:ghost"), anchor_caller())
         .await
         .into_result()
-        .err()
-        .expect("refused");
+        .expect_err("refused");
     assert_eq!(err.code(), "ROLE_NOT_FOUND");
     assert_eq!(
         app.repos
@@ -393,17 +394,17 @@ async fn a_mapping_to_an_unknown_role_is_refused_at_write_when_required() {
         .expect("accepted while the switch is off");
 }
 
-fn anchor_caller() -> fc_platform::usecase::ExecutionContext {
+fn anchor_caller() -> ExecutionContext {
     use fc_platform::shared::authorization_service::{AuthContext, Credential};
     use fc_platform::shared::id::PrincipalId;
-    fc_platform::usecase::ExecutionContext::from_auth(&AuthContext {
+    ExecutionContext::from_auth(&AuthContext {
         principal_id: PrincipalId::parse("prn_caller000001").unwrap(),
         principal_type: fc_platform::PrincipalType::User,
         scope: UserScope::Anchor,
         email: Some("anchor@f33.test".to_string()),
         name: "Anchor".to_string(),
         accessible_clients: vec![],
-        permissions: std::collections::HashSet::new(),
+        permissions: HashSet::new(),
         roles: vec![],
         credential: Credential::BearerToken,
     })

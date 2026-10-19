@@ -4,7 +4,9 @@
 //! `cleanup_draining_pools`).
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use tracing::{error, info, warn};
 
@@ -20,9 +22,9 @@ use super::QueueManager;
 
 /// A queue first seen missing less than this long ago is probed on every
 /// config tick (a new client's queue, created on its first publish).
-const YOUNG_MISSING_QUEUE_AGE: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+const YOUNG_MISSING_QUEUE_AGE: Duration = Duration::from_secs(10 * 60);
 /// Every missing queue is probed at least this often.
-const FULL_MISSING_RECHECK_EVERY: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+const FULL_MISSING_RECHECK_EVERY: Duration = Duration::from_secs(5 * 60);
 use std::sync::atomic::Ordering;
 
 /// Upper bound on consumers being built at once during a config sync.
@@ -557,7 +559,7 @@ impl QueueManager {
     /// [`FULL_MISSING_RECHECK_EVERY`], the cadence the router used for all of
     /// them before.
     pub async fn recheck_missing_queues_paced(self: &Arc<Self>) {
-        let now = std::time::Instant::now();
+        let now = Instant::now();
         let full = {
             let mut last = self.last_full_recheck.lock();
             let due = last.is_none_or(|t| now.duration_since(t) >= FULL_MISSING_RECHECK_EVERY);
@@ -568,7 +570,7 @@ impl QueueManager {
         };
         // First-seen time per missing queue; entries for queues no longer
         // missing are dropped.
-        let young: std::collections::HashSet<String> = {
+        let young: HashSet<String> = {
             let missing = self.missing_queues.lock();
             let mut since = self.missing_since.lock();
             since.retain(|name, _| missing.contains_key(name));

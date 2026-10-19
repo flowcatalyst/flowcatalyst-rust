@@ -18,6 +18,7 @@
 use crate::support;
 
 use axum::http::StatusCode;
+use fc_platform::role::entity::AuthRole;
 use serde_json::json;
 
 use support::{assert_status, TestApp};
@@ -315,9 +316,7 @@ async fn create_idp_role_mapping_emits_event_and_audit_log() {
     // Go F33: the mapped role has to exist when the mapping is written.
     app.repos
         .role_repo
-        .insert(&fc_platform::role::entity::AuthRole::new(
-            "platform", "admin", "Admin",
-        ))
+        .insert(&AuthRole::new("platform", "admin", "Admin"))
         .await
         .unwrap();
 

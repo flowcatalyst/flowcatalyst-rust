@@ -160,8 +160,8 @@ pub struct QueueManager {
     /// a queue that only just went missing (a new client's, created on its
     /// first publish) is probed on every config tick, the rest on a slow
     /// cadence (Go F29 `missingSince` / `lastFullRecheck`).
-    missing_since: Mutex<HashMap<String, std::time::Instant>>,
-    last_full_recheck: Mutex<Option<std::time::Instant>>,
+    missing_since: Mutex<HashMap<String, Instant>>,
+    last_full_recheck: Mutex<Option<Instant>>,
 
     /// Per-queue poll counters for the Prometheus surface, keyed by queue
     /// name so a rebuilt consumer keeps counting instead of resetting the

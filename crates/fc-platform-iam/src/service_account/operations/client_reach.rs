@@ -6,6 +6,7 @@
 
 use fc_platform_core::shared::id::ClientId;
 use std::collections::HashSet;
+use std::env;
 
 use crate::client::repository::ClientRepository;
 use fc_platform_core::usecase::UseCaseError;
@@ -17,7 +18,7 @@ use fc_platform_core::usecase::UseCaseError;
 /// `scope: ANCHOR`, and a client may send `CLIENT` with no links, both of
 /// which are accepted today. Turn it on once the SPA is on Go's fix.
 pub fn scope_reach_strict_from_env() -> bool {
-    std::env::var("FC_SERVICE_ACCOUNT_SCOPE_REACH_STRICT").is_ok_and(|v| {
+    env::var("FC_SERVICE_ACCOUNT_SCOPE_REACH_STRICT").is_ok_and(|v| {
         matches!(
             v.trim().to_ascii_lowercase().as_str(),
             "1" | "true" | "yes" | "on"

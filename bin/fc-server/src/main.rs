@@ -85,6 +85,7 @@ use tracing::{info, warn};
 use fc_platform::api::middleware::{AppState, AuthLayer};
 use fc_platform::cors::{cors_layer, AllowedOrigins};
 use fc_platform::repository::{CorsOriginRepository, Repositories};
+use fc_platform::usecase::unit_of_work::set_router_config_hook;
 use fc_platform::usecase::{Caller, PgUnitOfWork};
 
 use fc_common::config::{
@@ -485,9 +486,7 @@ async fn main() -> Result<()> {
             // dispatch queue is consumed within about a second rather than at
             // the next poll.
             if let Some(sync) = runtime.config_sync.clone() {
-                fc_platform::usecase::unit_of_work::set_router_config_hook(Some(Arc::new(
-                    move || sync.nudge(),
-                )));
+                set_router_config_hook(Some(Arc::new(move || sync.nudge())));
             }
             let prefix = env
                 .http_prefix

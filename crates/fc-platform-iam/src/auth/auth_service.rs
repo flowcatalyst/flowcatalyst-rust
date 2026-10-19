@@ -20,6 +20,7 @@ use std::env;
 use std::fs;
 use std::path::Path;
 use std::result;
+use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 use tracing::{info, warn};
 
@@ -61,8 +62,8 @@ fn parse_leeway(raw: Option<&str>) -> u64 {
 /// A deployment whose token consumers run on skewed clocks can set it back
 /// (60 restores the old behaviour).
 pub fn jwt_leeway_secs() -> u64 {
-    static LEEWAY: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    *LEEWAY.get_or_init(|| parse_leeway(std::env::var(JWT_LEEWAY_ENV).ok().as_deref()))
+    static LEEWAY: OnceLock<u64> = OnceLock::new();
+    *LEEWAY.get_or_init(|| parse_leeway(env::var(JWT_LEEWAY_ENV).ok().as_deref()))
 }
 
 /// The F34 allowlist on a `token_use` marker: `api`, or none (an empty marker
@@ -787,7 +788,7 @@ pub struct AuthService {
     /// Cache of validated tokens: token string → claims (avoids repeated RSA verification)
     token_cache: DashMap<String, CachedClaims>,
     /// When the cache was last swept of stale entries.
-    token_cache_swept: std::sync::Mutex<Instant>,
+    token_cache_swept: Mutex<Instant>,
 }
 
 impl AuthService {
@@ -826,7 +827,7 @@ impl AuthService {
             rsa_components: Some(rsa_components),
             previous_keys: Vec::new(),
             token_cache: DashMap::new(),
-            token_cache_swept: std::sync::Mutex::new(Instant::now()),
+            token_cache_swept: Mutex::new(Instant::now()),
         })
     }
 
@@ -882,7 +883,7 @@ impl AuthService {
             rsa_components: None,
             previous_keys: Vec::new(),
             token_cache: DashMap::new(),
-            token_cache_swept: std::sync::Mutex::new(Instant::now()),
+            token_cache_swept: Mutex::new(Instant::now()),
         }
     }
 

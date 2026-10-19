@@ -12,6 +12,7 @@ use fc_platform::auth::fcdev;
 use fc_platform::auth::oauth_entity::{GrantType, OAuthClient};
 use fc_platform::auth::password_service::PasswordService;
 use fc_platform::domain::{Principal, UserScope};
+use fc_platform::shared::database::seed_fcdev_cli_client;
 use serde_json::{json, Value};
 use sha2::Digest as _;
 use std::time::{Duration, Instant};
@@ -93,9 +94,7 @@ struct Rig {
 async fn rig(email: &str) -> Rig {
     support::set_app_key();
     let app = TestApp::setup().await;
-    fc_platform::shared::database::seed_fcdev_cli_client(&app.pool)
-        .await
-        .unwrap();
+    seed_fcdev_cli_client(&app.pool).await.unwrap();
     let user = Principal::new_user(email, UserScope::Anchor);
     app.repos.principal_repo.insert(&user).await.unwrap();
     Rig { app, user }

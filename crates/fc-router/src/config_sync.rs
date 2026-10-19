@@ -3,10 +3,13 @@
 //! Periodically fetches configuration from a central service and applies changes
 //! to the router without restart. Mirrors the Java QueueManager.scheduledSync() behavior.
 
+use reqwest::header::{ETAG, IF_NONE_MATCH};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Notify;
+use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
@@ -323,7 +326,7 @@ pub struct ConfigSyncService {
     /// comparison). Only used while `source_cache` holds that URL's document.
     etags: parking_lot::Mutex<HashMap<String, String>>,
     /// Set by [`Self::nudge`]; [`Self::run`] re-fetches soon after.
-    nudges: tokio::sync::Notify,
+    nudges: Notify,
 }
 
 impl ConfigSyncService {
@@ -352,7 +355,7 @@ impl ConfigSyncService {
             watch_warning: parking_lot::Mutex::new(None),
             credentials: None,
             etags: parking_lot::Mutex::new(HashMap::new()),
-            nudges: tokio::sync::Notify::new(),
+            nudges: Notify::new(),
         }
     }
 
@@ -591,7 +594,7 @@ impl ConfigSyncService {
         let validator = self.etags.lock().get(url).cloned();
         let cached = self.source_cache.lock().get(url).cloned();
         if let (Some(etag), Some(_)) = (&validator, &cached) {
-            request = request.header(reqwest::header::IF_NONE_MATCH, etag);
+            request = request.header(IF_NONE_MATCH, etag);
         }
         // The credential goes to this router's own platform and nowhere
         // else. A minting failure is an attempt failure like a transport
@@ -649,7 +652,7 @@ impl ConfigSyncService {
 
         let new_etag = response
             .headers()
-            .get(reqwest::header::ETAG)
+            .get(ETAG)
             .and_then(|v| v.to_str().ok())
             .map(str::to_string);
         let body = response.text().await.map_err(|e| ConfigSyncError::Body {
@@ -876,7 +879,7 @@ impl ConfigSyncService {
                             _ = time::sleep(delay) => {}
                         }
                         // Fold nudges that arrived while waiting into this fetch.
-                        let _ = tokio::time::timeout(Duration::ZERO, self.nudges.notified()).await;
+                        drop(timeout(Duration::ZERO, self.nudges.notified()).await);
                         match self.apply_latest().await {
                             Ok(_) => self.clear_watch_warning(),
                             Err(e) => {

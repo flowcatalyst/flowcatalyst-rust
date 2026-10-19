@@ -5,6 +5,7 @@
 //! The deployed task definition (`inhance/iac/compute/fc-router.ts`) is the
 //! contract; `docs/parity/router-env-vs-go.md` maps every variable it sets.
 
+use crate::config_sync::DEFAULT_SYNC_INTERVAL;
 use std::time::Duration;
 
 use fc_common::config::parse_go_bool;
@@ -21,7 +22,7 @@ use std::fmt::Formatter;
 
 /// Go `ServerConfig.ConfigPollInterval`'s fallback for an unset, zero or
 /// negative interval.
-pub const DEFAULT_CONFIG_INTERVAL: Duration = crate::config_sync::DEFAULT_SYNC_INTERVAL;
+pub const DEFAULT_CONFIG_INTERVAL: Duration = DEFAULT_SYNC_INTERVAL;
 
 /// Go `defaultNotifyBatchInterval`.
 pub const DEFAULT_NOTIFY_BATCH_INTERVAL_SECS: u64 = 300;

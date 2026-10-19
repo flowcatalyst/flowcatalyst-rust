@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::env;
 use std::sync::Arc;
 
 use super::events::IdpRoleMappingCreated;
@@ -42,7 +43,7 @@ pub struct CreateIdpRoleMappingUseCase<U: UnitOfWork> {
 /// roles appear when it first syncs); either way the login skips a mapping
 /// whose role is missing, with a warning, and applies the rest.
 pub fn require_mapped_role_from_env() -> bool {
-    std::env::var("FC_IDP_MAPPING_REQUIRE_ROLE").is_ok_and(|v| {
+    env::var("FC_IDP_MAPPING_REQUIRE_ROLE").is_ok_and(|v| {
         matches!(
             v.trim().to_ascii_lowercase().as_str(),
             "1" | "true" | "yes" | "on"

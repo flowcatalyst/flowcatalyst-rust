@@ -45,6 +45,7 @@
 //! process leaves a claim behind. At-least-once: after such a death the
 //! subscriber may see the message twice.
 
+use fc_common::delivery_outcome::{is_delivery_rejected, DELIVERY_OUTCOME_HEADER};
 use fc_platform_core::shared::id::ClientId;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -844,7 +845,7 @@ async fn exchange(request: reqwest::RequestBuilder) -> DeliveryResult {
     let retry_after = retry_after_or_default(response.headers());
     let outcome = response
         .headers()
-        .get(fc_common::delivery_outcome::DELIVERY_OUTCOME_HEADER)
+        .get(DELIVERY_OUTCOME_HEADER)
         .and_then(|v| v.to_str().ok())
         .map(str::to_string);
     let capped = read_capped(response, DELIVERY_RESPONSE_CAP).await;
@@ -878,7 +879,7 @@ async fn exchange(request: reqwest::RequestBuilder) -> DeliveryResult {
             ..DeliveryResult::default()
         };
     }
-    if fc_common::delivery_outcome::is_delivery_rejected(code, outcome.as_deref()) {
+    if is_delivery_rejected(code, outcome.as_deref()) {
         return DeliveryResult {
             rejected: true,
             status: Some(code),

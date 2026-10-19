@@ -6,6 +6,7 @@ use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Algorithm, Argon2, Params, Version,
 };
+use std::sync::OnceLock;
 use tracing::{debug, warn};
 
 use argon2::password_hash;
@@ -214,7 +215,7 @@ pub struct PasswordService {
     policy: PasswordPolicy,
     /// Fixed hash `equalize_timing` verifies against, built on first use at
     /// this service's own parameters.
-    timing_dummy: std::sync::OnceLock<Option<String>>,
+    timing_dummy: OnceLock<Option<String>>,
 }
 
 /// A bcrypt hash, as PHP's `password_hash` (`$2y$`) and other bcrypt
@@ -233,7 +234,7 @@ impl PasswordService {
             argon2,
             config,
             policy,
-            timing_dummy: std::sync::OnceLock::new(),
+            timing_dummy: OnceLock::new(),
         }
     }
 
@@ -455,6 +456,7 @@ impl Default for PasswordService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     /// A PHP `password_hash()` bcrypt hash: the same algorithm the bcrypt
     /// crate writes as `$2b$`, spelled `$2y$`.
@@ -472,12 +474,12 @@ mod tests {
         let service = PasswordService::new(Argon2Config::default(), PasswordPolicy::lenient());
         let real = service.rehash_password("a-real-password").unwrap();
         service.equalize_timing("warm-up");
-        let t = std::time::Instant::now();
+        let t = Instant::now();
         for _ in 0..3 {
             assert!(!service.verify_password("wrong", &real).unwrap());
         }
         let verify = t.elapsed();
-        let t = std::time::Instant::now();
+        let t = Instant::now();
         for _ in 0..3 {
             service.equalize_timing("wrong");
         }

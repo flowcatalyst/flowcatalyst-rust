@@ -15,11 +15,13 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{routing, Router};
+use fc_common::netguard::dev_policy;
 use fc_common::tsid::{self, EntityType};
 use fc_platform::scheduled_job::scheduler::{ScheduledJobDispatcher, ScheduledJobSchedulerConfig};
 use fc_platform::{ScheduledJobInstanceRepository, ScheduledJobRepository};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
+use tokio::time::sleep;
 
 #[derive(Clone)]
 struct Canned {
@@ -119,7 +121,7 @@ async fn run_until(app: &TestApp, mut done: impl FnMut() -> bool) {
     let (stop, rx) = broadcast::channel(1);
     let config = ScheduledJobSchedulerConfig {
         dispatch_interval: Duration::from_millis(100),
-        delivery_policy: fc_common::netguard::dev_policy(),
+        delivery_policy: dev_policy(),
         ..ScheduledJobSchedulerConfig::default()
     };
     let client = reqwest::Client::builder()
@@ -140,7 +142,7 @@ async fn run_until(app: &TestApp, mut done: impl FnMut() -> bool) {
             Instant::now() < deadline,
             "the dispatcher did not get there"
         );
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        sleep(Duration::from_millis(50)).await;
     }
     stop.send(()).unwrap();
     task.await.unwrap();
@@ -161,7 +163,7 @@ async fn a_429_defers_without_spending_an_attempt_and_waits_for_not_before() {
     let t = target.clone();
     run_until(&app, move || t.hits.load(Ordering::SeqCst) >= 1).await;
     // Let the deferral's write land, then give the next ticks time to (wrongly) retry.
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    sleep(Duration::from_millis(300)).await;
     let r = row(&app, &id).await;
     assert_eq!(r.status, "QUEUED");
     assert_eq!(r.attempts, 0, "a deferral spends no attempt");
@@ -194,7 +196,7 @@ async fn a_429_defers_without_spending_an_attempt_and_waits_for_not_before() {
         .unwrap();
     let t = target.clone();
     run_until(&app, move || t.hits.load(Ordering::SeqCst) > hits_then).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(200)).await;
     assert_eq!(row(&app, &id).await.status, "DELIVERED");
 }
 
@@ -210,7 +212,7 @@ async fn a_reject_outcome_is_terminal_with_attempts_left() {
     let rejected = queued_firing(&app, "sjdsp-reject", &url).await;
     let t = target.clone();
     run_until(&app, move || t.hits.load(Ordering::SeqCst) >= 1).await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    sleep(Duration::from_millis(300)).await;
     let r = row(&app, &rejected).await;
     assert_eq!(r.status, "DELIVERY_FAILED");
     assert!(
@@ -228,7 +230,7 @@ async fn a_reject_outcome_is_terminal_with_attempts_left() {
     let before = target.hits.load(Ordering::SeqCst);
     let t = target.clone();
     run_until(&app, move || t.hits.load(Ordering::SeqCst) > before).await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    sleep(Duration::from_millis(100)).await;
     let r = row(&app, &plain).await;
     assert!(
         r.status == "QUEUED" || r.status == "DELIVERED",

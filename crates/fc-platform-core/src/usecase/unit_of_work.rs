@@ -15,6 +15,7 @@
 
 use std::future::Future;
 use std::sync::Arc;
+use std::sync::RwLock;
 
 use chrono::Utc;
 use serde::Serialize;
@@ -37,8 +38,7 @@ use std::sync;
 
 type RouterConfigHook = Arc<dyn Fn() + Send + Sync>;
 
-static ROUTER_CONFIG_HOOK: std::sync::RwLock<Option<RouterConfigHook>> =
-    std::sync::RwLock::new(None);
+static ROUTER_CONFIG_HOOK: RwLock<Option<RouterConfigHook>> = RwLock::new(None);
 
 /// Register `hook`, called when a domain event is written that can change the
 /// router's configuration document: a client, dispatch pool or subscription
@@ -492,7 +492,7 @@ impl PgUnitOfWork {
             )));
         }
 
-        notify_router_config(&row.event_type);
+        notify_router_config(row.event_type);
         Ok(())
     }
 

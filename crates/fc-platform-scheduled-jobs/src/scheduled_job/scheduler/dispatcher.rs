@@ -17,9 +17,12 @@
 //!
 //! Per CLAUDE.md, all writes here bypass UoW (platform-infrastructure path).
 
+use chrono::{DateTime, Utc};
+use fc_common::delivery_outcome::{is_delivery_rejected, DELIVERY_OUTCOME_HEADER};
 use fc_platform_core::shared::id::ScheduledJobId;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use fc_platform_core::shared::error::PlatformError;
 use serde::Serialize;
@@ -306,10 +309,10 @@ impl ScheduledJobDispatcher {
                 DispatchOutcome::Requeued
             }
             Ok(resp)
-                if fc_common::delivery_outcome::is_delivery_rejected(
+                if is_delivery_rejected(
                     resp.status().as_u16(),
                     resp.headers()
-                        .get(fc_common::delivery_outcome::DELIVERY_OUTCOME_HEADER)
+                        .get(DELIVERY_OUTCOME_HEADER)
                         .and_then(|v| v.to_str().ok()),
                 ) =>
             {
@@ -418,20 +421,20 @@ impl ScheduledJobDispatcher {
 
 /// How long a 429 asks to wait: `Retry-After` in seconds or as an HTTP date,
 /// default 30 s, at most an hour (Go `retryAfter`).
-pub fn retry_after(value: Option<&str>, now: chrono::DateTime<chrono::Utc>) -> std::time::Duration {
-    const DEFAULT: std::time::Duration = std::time::Duration::from_secs(30);
-    const MAX: std::time::Duration = std::time::Duration::from_secs(3600);
+pub fn retry_after(value: Option<&str>, now: DateTime<Utc>) -> Duration {
+    const DEFAULT: Duration = Duration::from_secs(30);
+    const MAX: Duration = Duration::from_secs(3600);
     let Some(v) = value.map(str::trim).filter(|v| !v.is_empty()) else {
         return DEFAULT;
     };
     if let Ok(secs) = v.parse::<i64>() {
-        return std::time::Duration::from_secs(secs.max(0) as u64).min(MAX);
+        return Duration::from_secs(secs.max(0) as u64).min(MAX);
     }
     if let Ok(when) = chrono::DateTime::parse_from_rfc2822(v) {
         let secs = (when.with_timezone(&chrono::Utc) - now)
             .num_seconds()
             .max(0);
-        return std::time::Duration::from_secs(secs as u64).min(MAX);
+        return Duration::from_secs(secs as u64).min(MAX);
     }
     DEFAULT
 }

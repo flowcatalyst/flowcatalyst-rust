@@ -6,6 +6,9 @@ use fc_platform_core::shared::id::ClientAuthConfigId;
 use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::IdpRoleMappingId;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::env;
+use std::sync::{Mutex, OnceLock};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -158,7 +161,7 @@ impl ClientAuthConfig {
 /// warning names it once. Off by default because an operator may have
 /// registered a prefix pattern that relies on the partial match.
 pub fn oidc_issuer_pattern_strict() -> bool {
-    static STRICT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    static STRICT: OnceLock<bool> = OnceLock::new();
     *STRICT.get_or_init(|| env_flag("FC_OIDC_ISSUER_PATTERN_STRICT"))
 }
 
@@ -166,12 +169,12 @@ pub fn oidc_issuer_pattern_strict() -> bool {
 /// (`FC_OIDC_REJECT_UNVERIFIED_EMAIL`, default false; same switch as Go's).
 /// Off by default: some IdPs send `false` for accounts the tenant trusts.
 pub fn oidc_reject_unverified_email() -> bool {
-    static REJECT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    static REJECT: OnceLock<bool> = OnceLock::new();
     *REJECT.get_or_init(|| env_flag("FC_OIDC_REJECT_UNVERIFIED_EMAIL"))
 }
 
 fn env_flag(name: &str) -> bool {
-    std::env::var(name).is_ok_and(|v| {
+    env::var(name).is_ok_and(|v| {
         matches!(
             v.trim().to_ascii_lowercase().as_str(),
             "1" | "true" | "yes" | "on"
@@ -199,8 +202,7 @@ fn issuer_matches_pattern_with(pattern: &str, issuer: &str, strict: bool) -> boo
 }
 
 fn warn_unanchored_once(pattern: &str) {
-    static WARNED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
-        std::sync::OnceLock::new();
+    static WARNED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
     let seen = WARNED.get_or_init(Default::default);
     if let Ok(mut seen) = seen.lock() {
         if seen.insert(pattern.to_string()) {

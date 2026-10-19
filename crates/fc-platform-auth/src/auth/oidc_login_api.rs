@@ -20,6 +20,9 @@ use axum_extra::extract::Host;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::OptionIdExt;
+use fc_platform_iam::auth::auth_service::jwt_leeway_secs;
+use fc_platform_iam::auth::config_entity::{issuer_matches_pattern, oidc_reject_unverified_email};
+use jsonwebtoken::errors::ErrorKind;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -1262,7 +1265,7 @@ async fn validate_id_token_with_jwks(
 
     // Build validation — checks signature, exp, iss, aud
     let mut validation = Validation::new(algorithm);
-    validation.leeway = fc_platform_iam::auth::auth_service::jwt_leeway_secs();
+    validation.leeway = jwt_leeway_secs();
 
     // Set issuer validation — for multi-tenant, extract actual issuer from token first
     // and validate against pattern; for single-tenant, validate against configured issuer
@@ -1315,7 +1318,7 @@ async fn validate_id_token_with_jwks(
                 verified = Some(data);
                 break;
             }
-            Err(e) if matches!(e.kind(), jsonwebtoken::errors::ErrorKind::InvalidSignature) => {
+            Err(e) if matches!(e.kind(), ErrorKind::InvalidSignature) => {
                 failure = Some(IdTokenError::Signature(e));
             }
             Err(e) => return Err(IdTokenError::Signature(e)),
@@ -1366,10 +1369,7 @@ async fn validate_id_token_with_jwks(
     // the `email` claim itself. Refused only when
     // `FC_OIDC_REJECT_UNVERIFIED_EMAIL` is on; an absent claim is always
     // accepted (many IdPs, Entra among them, omit it).
-    check_email_verified(
-        &payload,
-        fc_platform_iam::auth::config_entity::oidc_reject_unverified_email(),
-    )?;
+    check_email_verified(&payload, oidc_reject_unverified_email())?;
 
     // Reject Entra external/guest users whose UPN contains #EXT#
     // (e.g. "user_domain.co.za#EXT#@tenant.onmicrosoft.com").
@@ -1460,7 +1460,7 @@ fn is_valid_issuer_for_idp(idp: &IdentityProvider, issuer: &str) -> bool {
     // Pattern match for multi-tenant IDPs
     if idp.oidc_multi_tenant {
         if let Some(ref pattern) = idp.oidc_issuer_pattern {
-            return fc_platform_iam::auth::config_entity::issuer_matches_pattern(pattern, issuer);
+            return issuer_matches_pattern(pattern, issuer);
         }
     }
     false
@@ -2049,6 +2049,10 @@ mod tests {
     use fc_platform_iam::auth::auth_service::AuthConfig;
     use jsonwebtoken::{encode, EncodingKey, Header};
     use serde_json::json;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex as StdMutex;
+    use tokio::net::TcpListener;
+    use tokio::task::JoinHandle;
 
     const TENANT_ISSUER: &str = "https://login.microsoftonline.com/tenant-a/v2.0";
 
@@ -2166,9 +2170,9 @@ mod tests {
     /// A fake IdP: discovery plus a JWKS that tests swap, counting JWKS hits.
     struct FakeIdp {
         base: String,
-        keys: std::sync::Arc<std::sync::Mutex<Vec<JwkKey>>>,
-        jwks_hits: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-        server: tokio::task::JoinHandle<()>,
+        keys: Arc<StdMutex<Vec<JwkKey>>>,
+        jwks_hits: Arc<AtomicUsize>,
+        server: JoinHandle<()>,
     }
 
     impl Drop for FakeIdp {
@@ -2179,17 +2183,16 @@ mod tests {
 
     async fn fake_idp(published: Vec<JwkKey>) -> FakeIdp {
         use axum::{extract::State, routing::get, Json, Router};
-        use std::sync::atomic::Ordering;
         #[derive(Clone)]
         struct St {
             base: String,
-            keys: std::sync::Arc<std::sync::Mutex<Vec<JwkKey>>>,
-            hits: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+            keys: Arc<StdMutex<Vec<JwkKey>>>,
+            hits: Arc<AtomicUsize>,
         }
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
-        let keys = std::sync::Arc::new(std::sync::Mutex::new(published));
-        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let keys = Arc::new(StdMutex::new(published));
+        let hits = Arc::new(AtomicUsize::new(0));
         let st = St {
             base: base.clone(),
             keys: keys.clone(),
@@ -2268,20 +2271,14 @@ mod tests {
         validate_id_token_with_jwks(&token_for(&idp_srv.base, &k1, true), &idp, "n-1", &cache)
             .await
             .unwrap();
-        assert_eq!(
-            idp_srv.jwks_hits.load(std::sync::atomic::Ordering::SeqCst),
-            1
-        );
+        assert_eq!(idp_srv.jwks_hits.load(Ordering::SeqCst), 1);
 
         // The IdP rotates.
         *idp_srv.keys.lock().unwrap() = vec![k2.jwk.clone()];
         validate_id_token_with_jwks(&token_for(&idp_srv.base, &k2, true), &idp, "n-1", &cache)
             .await
             .expect("a rotated key is found after a refetch");
-        assert_eq!(
-            idp_srv.jwks_hits.load(std::sync::atomic::Ordering::SeqCst),
-            2
-        );
+        assert_eq!(idp_srv.jwks_hits.load(Ordering::SeqCst), 2);
     }
 
     /// The refetch is rate-limited: tokens naming a kid the IdP never
@@ -2308,10 +2305,7 @@ mod tests {
             assert!(matches!(err, IdTokenError::NoMatchingKey(_)), "{err}");
         }
         // Fetched once at the start; the set was fresh, so no refetch yet.
-        assert_eq!(
-            idp_srv.jwks_hits.load(std::sync::atomic::Ordering::SeqCst),
-            1
-        );
+        assert_eq!(idp_srv.jwks_hits.load(Ordering::SeqCst), 1);
 
         // Age the entry past the interval: exactly one refetch, then limited.
         let cache = JwksCache::new(900).with_min_kid_refetch_secs(0);
@@ -2326,7 +2320,7 @@ mod tests {
             .unwrap_err();
             assert!(matches!(err, IdTokenError::NoMatchingKey(_)), "{err}");
         }
-        assert!(idp_srv.jwks_hits.load(std::sync::atomic::Ordering::SeqCst) >= 2);
+        assert!(idp_srv.jwks_hits.load(Ordering::SeqCst) >= 2);
     }
 
     /// A token without a `kid` is verified against each published key (it used

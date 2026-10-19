@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::id::ConnectionId;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -378,7 +379,7 @@ fn subscription_changed(cur: &Subscription, next: &Subscription) -> bool {
     {
         return true;
     }
-    let codes = |s: &Subscription| -> std::collections::BTreeSet<String> {
+    let codes = |s: &Subscription| -> BTreeSet<String> {
         s.event_types
             .iter()
             .map(|b| b.event_type_code.clone())
