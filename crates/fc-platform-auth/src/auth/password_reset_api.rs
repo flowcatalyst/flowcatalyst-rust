@@ -128,8 +128,15 @@ pub struct ConfirmResponse {
 
 /// `u` when it is a same-site relative path: one leading `/`, not `//` or
 /// `/\` (which browsers read as host-relative). Go `safeRelativeReturnURL`.
-fn safe_relative_return_url(u: &str) -> Option<String> {
-    (u.starts_with('/') && !u.starts_with("//") && !u.starts_with("/\\")).then(|| u.to_string())
+/// Any control character refuses it too: browsers drop ASCII tab, CR and LF
+/// anywhere in a URL, so `/<TAB>/evil.com` is read as `//evil.com` (Go
+/// a24f549b).
+pub(crate) fn safe_relative_return_url(u: &str) -> Option<String> {
+    (u.starts_with('/')
+        && !u.starts_with("//")
+        && !u.starts_with("/\\")
+        && !u.chars().any(|c| c.is_ascii_control()))
+    .then(|| u.to_string())
 }
 
 /// A self-service reset may only resume the OAuth authorize round-trip the
@@ -580,6 +587,27 @@ async fn try_issue_password_setup(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn return_urls_with_control_characters_are_refused() {
+        for bad in [
+            "/\t/evil.com",
+            "/\n/evil.com",
+            "/\r/evil.com",
+            "/\0/evil.com",
+            "/ok\x7f",
+            "//evil.com",
+            "/\\evil.com",
+            "https://evil.com",
+            "",
+            "x",
+        ] {
+            assert_eq!(super::safe_relative_return_url(bad), None, "{bad:?}");
+        }
+        for ok in ["/ok", "/oauth/authorize?client_id=a&state=b", "/a/b?c=d#e"] {
+            assert_eq!(super::safe_relative_return_url(ok).as_deref(), Some(ok));
+        }
+    }
+
     use super::*;
     use fc_platform_iam::auth::password_reset_emailer::generate_raw_token;
 

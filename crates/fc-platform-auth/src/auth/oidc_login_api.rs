@@ -1512,11 +1512,11 @@ fn determine_redirect_url(
 
     // Return to specified URL or default to dashboard
     if let Some(ref return_url) = login_state.return_url {
-        if !return_url.is_empty() {
-            if return_url.starts_with('/') {
-                return format!("{}{}", base_url, return_url);
-            }
-            return return_url.clone();
+        // Only a same-site relative path is honoured; an absolute, `//host`,
+        // backslash or control-character form is an open redirect (Go
+        // `safeRelativeReturnURL`) and falls through to the dashboard.
+        if let Some(safe) = super::password_reset_api::safe_relative_return_url(return_url) {
+            return format!("{}{}", base_url, safe);
         }
     }
 
