@@ -133,9 +133,7 @@ impl ClientAuthConfig {
             }
         }
         if let Some(ref pattern) = self.oidc_issuer_pattern {
-            if let Ok(re) = regex::Regex::new(pattern) {
-                return re.is_match(issuer);
-            }
+            return issuer_matches_pattern(pattern, issuer);
         }
         false
     }
@@ -149,6 +147,68 @@ impl ClientAuthConfig {
         clients.extend(self.additional_client_ids.iter().cloned());
         clients.extend(self.granted_client_ids.iter().cloned());
         clients
+    }
+}
+
+/// Whether a multi-tenant issuer pattern must match the WHOLE issuer
+/// (`FC_OIDC_ISSUER_PATTERN_STRICT`, default false; same switch as Go's).
+/// Off, a pattern is searched for inside the issuer, as before; an
+/// unanchored pattern then also matches an issuer that merely CONTAINS a
+/// match (`https://evil.example/?x=login.microsoftonline.com/...`), so a
+/// warning names it once. Off by default because an operator may have
+/// registered a prefix pattern that relies on the partial match.
+pub fn oidc_issuer_pattern_strict() -> bool {
+    static STRICT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *STRICT.get_or_init(|| env_flag("FC_OIDC_ISSUER_PATTERN_STRICT"))
+}
+
+/// Whether an upstream id_token carrying `email_verified: false` is refused
+/// (`FC_OIDC_REJECT_UNVERIFIED_EMAIL`, default false; same switch as Go's).
+/// Off by default: some IdPs send `false` for accounts the tenant trusts.
+pub fn oidc_reject_unverified_email() -> bool {
+    static REJECT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *REJECT.get_or_init(|| env_flag("FC_OIDC_REJECT_UNVERIFIED_EMAIL"))
+}
+
+fn env_flag(name: &str) -> bool {
+    std::env::var(name).is_ok_and(|v| {
+        matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
+}
+
+/// Whether `issuer` satisfies the multi-tenant issuer `pattern`.
+pub fn issuer_matches_pattern(pattern: &str, issuer: &str) -> bool {
+    issuer_matches_pattern_with(pattern, issuer, oidc_issuer_pattern_strict())
+}
+
+fn issuer_matches_pattern_with(pattern: &str, issuer: &str, strict: bool) -> bool {
+    if strict {
+        // Full match: the pattern must cover the whole issuer.
+        return regex::Regex::new(&format!("^(?:{pattern})$")).is_ok_and(|re| re.is_match(issuer));
+    }
+    let Ok(re) = regex::Regex::new(pattern) else {
+        return false;
+    };
+    if !(pattern.starts_with('^') && pattern.ends_with('$') && !pattern.ends_with("\\$")) {
+        warn_unanchored_once(pattern);
+    }
+    re.is_match(issuer)
+}
+
+fn warn_unanchored_once(pattern: &str) {
+    static WARNED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    let seen = WARNED.get_or_init(Default::default);
+    if let Ok(mut seen) = seen.lock() {
+        if seen.insert(pattern.to_string()) {
+            tracing::warn!(
+                pattern,
+                "OIDC issuer pattern is not anchored with ^...$; any issuer that merely CONTAINS a match is accepted. Anchor it or set FC_OIDC_ISSUER_PATTERN_STRICT=true"
+            );
+        }
     }
 }
 
@@ -179,5 +239,37 @@ impl IdpRoleMapping {
             created_at: now,
             updated_at: now,
         }
+    }
+}
+
+#[cfg(test)]
+mod issuer_pattern_tests {
+    use super::issuer_matches_pattern_with as m;
+
+    const ENTRA: &str = r"https://login\.microsoftonline\.com/[^/]+/v2\.0";
+
+    /// B3: an unanchored pattern is satisfied by a substring today (the
+    /// default keeps that); strict makes it a full match, and an anchored
+    /// pattern behaves the same either way.
+    #[test]
+    fn strict_makes_the_pattern_a_full_match() {
+        let hostile = "https://evil.example/?x=https://login.microsoftonline.com/t/v2.0";
+        let real = "https://login.microsoftonline.com/tenant-a/v2.0";
+        assert!(
+            m(ENTRA, hostile, false),
+            "the default keeps the partial match"
+        );
+        assert!(!m(ENTRA, hostile, true));
+        assert!(m(ENTRA, real, true) && m(ENTRA, real, false));
+        let anchored = format!("^{ENTRA}$");
+        assert!(!m(&anchored, hostile, false) && !m(&anchored, hostile, true));
+        assert!(m(&anchored, real, false) && m(&anchored, real, true));
+        // Alternation stays inside the group in strict mode.
+        assert!(!m("a|b", "xbx", true));
+        assert!(m("a|b", "b", true));
+        assert!(
+            !m("(", "(", false) && !m("(", "(", true),
+            "a bad pattern matches nothing"
+        );
     }
 }

@@ -1204,6 +1204,8 @@ enum IdTokenError {
         "External guest accounts are not supported. Please sign in with your home organization."
     )]
     ExternalGuest,
+    #[error("The identity provider reports this email address as unverified")]
+    EmailNotVerified,
 }
 
 /// Validate an ID token using JWKS signature verification.
@@ -1360,6 +1362,15 @@ async fn validate_id_token_with_jwks(
         .ok_or(IdTokenError::MissingEmail)?
         .to_lowercase();
 
+    // `email_verified: false` (a bool, or the string "false" some IdPs send) on
+    // the `email` claim itself. Refused only when
+    // `FC_OIDC_REJECT_UNVERIFIED_EMAIL` is on; an absent claim is always
+    // accepted (many IdPs, Entra among them, omit it).
+    check_email_verified(
+        &payload,
+        fc_platform_iam::auth::config_entity::oidc_reject_unverified_email(),
+    )?;
+
     // Reject Entra external/guest users whose UPN contains #EXT#
     // (e.g. "user_domain.co.za#EXT#@tenant.onmicrosoft.com").
     // Guest accounts are managed by a different organization and bypass
@@ -1418,6 +1429,27 @@ fn audience_contains(aud: &serde_json::Value, client_id: &str) -> bool {
     }
 }
 
+/// Refuse an explicit `email_verified: false` on the `email` claim when
+/// `reject` is on; everything else passes.
+fn check_email_verified(payload: &serde_json::Value, reject: bool) -> Result<(), IdTokenError> {
+    if reject && payload["email"].is_string() && claim_explicitly_false(&payload["email_verified"])
+    {
+        return Err(IdTokenError::EmailNotVerified);
+    }
+    Ok(())
+}
+
+/// A JSON claim that is the boolean `false` or the string `"false"` (any
+/// case); absent, null or any other value is not.
+#[allow(clippy::wildcard_enum_match_arm)] // serde_json::Value is foreign
+fn claim_explicitly_false(v: &serde_json::Value) -> bool {
+    match v {
+        serde_json::Value::Bool(b) => !b,
+        serde_json::Value::String(s) => s.trim().eq_ignore_ascii_case("false"),
+        _ => false,
+    }
+}
+
 fn is_valid_issuer_for_idp(idp: &IdentityProvider, issuer: &str) -> bool {
     // Exact match against configured issuer URL
     if let Some(ref issuer_url) = idp.oidc_issuer_url {
@@ -1428,9 +1460,7 @@ fn is_valid_issuer_for_idp(idp: &IdentityProvider, issuer: &str) -> bool {
     // Pattern match for multi-tenant IDPs
     if idp.oidc_multi_tenant {
         if let Some(ref pattern) = idp.oidc_issuer_pattern {
-            if let Ok(re) = regex::Regex::new(pattern) {
-                return re.is_match(issuer);
-            }
+            return fc_platform_iam::auth::config_entity::issuer_matches_pattern(pattern, issuer);
         }
     }
     false
@@ -1987,6 +2017,11 @@ pub(crate) async fn portal_verify_callback(
                 "EXTERNAL_GUEST",
                 "external guest accounts are not supported".to_string(),
             ),
+            IdTokenError::EmailNotVerified => (
+                StatusCode::FORBIDDEN,
+                "EMAIL_NOT_VERIFIED",
+                "the identity provider reports this email address as unverified".to_string(),
+            ),
             other @ (IdTokenError::MissingIssuerUrl
             | IdTokenError::MissingClientId
             | IdTokenError::InvalidHeader(_)
@@ -2316,6 +2351,37 @@ mod tests {
         .await
         .unwrap_err();
         assert!(matches!(err, IdTokenError::Signature(_)), "{err}");
+    }
+
+    #[test]
+    fn email_verified_is_false_only_when_explicitly_false() {
+        for f in [json!(false), json!("false"), json!(" FALSE ")] {
+            assert!(claim_explicitly_false(&f), "{f}");
+        }
+        for ok in [json!(true), json!("true"), json!(null), json!(0), json!({})] {
+            assert!(!claim_explicitly_false(&ok), "{ok}");
+        }
+        // Absent reads as null.
+        assert!(!claim_explicitly_false(&json!({})["email_verified"]));
+    }
+
+    /// B2: with the switch on, an explicit false is refused; absent, true and
+    /// a preferred_username-only token pass. Off (the default) refuses nothing.
+    #[test]
+    fn unverified_email_is_refused_only_when_switched_on() {
+        let unverified = json!({"email": "a@x.test", "email_verified": false});
+        assert!(matches!(
+            check_email_verified(&unverified, true),
+            Err(IdTokenError::EmailNotVerified)
+        ));
+        assert!(check_email_verified(&unverified, false).is_ok());
+        for ok in [
+            json!({"email": "a@x.test"}),
+            json!({"email": "a@x.test", "email_verified": true}),
+            json!({"preferred_username": "a@x.test", "email_verified": false}),
+        ] {
+            assert!(check_email_verified(&ok, true).is_ok(), "{ok}");
+        }
     }
 
     #[test]
