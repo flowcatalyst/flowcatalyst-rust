@@ -20,12 +20,14 @@ use crate::dispatch_job::entity::{
 use crate::dispatch_job::repository::DispatchJobRepository;
 use crate::dispatch_job::repository::RecordedAttempt;
 use crate::dispatch_job::signing_guard::SigningGuard;
+use crate::dispatch_job::window::{enforce_window, parse_timestamp, Window, WindowResponse};
 use crate::dispatch_job_actions::api::RequestSummary;
 use crate::shared::app_scope::{first_segment, AppScopeGuard};
 use crate::shared::batch_api;
 use crate::shared::batch_api::SuppliedJobIds;
 use crate::subscription::operations::create;
-use axum::http::StatusCode;
+use axum::http::{HeaderName, HeaderValue, StatusCode};
+use axum::response::{IntoResponse, Response};
 use fc_platform_core::directory::ClientDirectory;
 use fc_platform_core::permissions;
 use fc_platform_core::shared::api_common::CreatedResponse;
@@ -333,7 +335,7 @@ pub struct DispatchJobsQuery {
     pub code: Option<String>,
     /// Exact message group
     pub message_group: Option<String>,
-    /// RFC 3339 lower bound on createdAt (an unparsable value is ignored)
+    /// RFC 3339 lower bound on createdAt (an unparsable value is ignored). No since and no until: the last 24 hours; wider than FC_DISPATCH_JOB_MAX_WINDOW_DAYS (31) is 400 WINDOW_TOO_LARGE
     pub since: Option<String>,
     /// RFC 3339 upper bound on createdAt (an unparsable value is ignored)
     pub until: Option<String>,
@@ -388,6 +390,9 @@ pub struct DispatchJobsState {
     pub signing: Arc<SigningGuard>,
     /// Confines an application-scoped caller to its own applications' jobs.
     pub app_scope: Arc<AppScopeGuard>,
+    /// The widest `created_at` window a list-shaped read may ask for
+    /// (`FC_DISPATCH_JOB_MAX_WINDOW_DAYS`); below 1 means the default 31.
+    pub max_window_days: i64,
 }
 
 // ============================================================================
@@ -729,6 +734,27 @@ pub async fn get_dispatch_job(
     Ok(Json(job.into()))
 }
 
+/// A list answer: a bare JSON array (the SPA and the SDKs bind it directly)
+/// with the applied time window in response headers (Go `DispatchJobListOut`).
+pub struct WindowedList {
+    pub window: Window,
+    pub rows: Vec<DispatchJobReadResponse>,
+}
+
+impl IntoResponse for WindowedList {
+    fn into_response(self) -> Response {
+        let mut response = Json(self.rows).into_response();
+        for (name, value) in self.window.header_values() {
+            if let Ok(value) = HeaderValue::from_str(&value) {
+                response
+                    .headers_mut()
+                    .insert(HeaderName::from_static(name), value);
+            }
+        }
+        response
+    }
+}
+
 /// List dispatch jobs. Returns the most recent rows matching the filters;
 /// no pagination — see `DispatchJobsQuery` for the rationale.
 #[utoipa::path(
@@ -738,7 +764,13 @@ pub async fn get_dispatch_job(
     operation_id = "listDispatchJobs",
     params(DispatchJobsQuery),
     responses(
-        (status = 200, description = "List of dispatch jobs", body = Vec<DispatchJobReadResponse>)
+        (status = 200, description = "List of dispatch jobs", body = Vec<DispatchJobReadResponse>,
+         headers(
+            ("X-Window-From" = String, description = "Start of the created_at window the list was held to (RFC3339, UTC)"),
+            ("X-Window-To" = String, description = "End of the window (RFC3339, UTC); now when the request gave no until"),
+            ("X-Window-Defaulted" = String, description = "true when the server supplied a bound the request did not (no since/until: the last 24 hours)")
+         )),
+        (status = 400, description = "INVALID_WINDOW or WINDOW_TOO_LARGE")
     ),
     security(("bearer_auth" = []))
 )]
@@ -746,7 +778,7 @@ pub async fn list_dispatch_jobs(
     State(state): State<DispatchJobsState>,
     auth: Authenticated,
     Query(query): Query<DispatchJobsQuery>,
-) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
+) -> Result<WindowedList, PlatformError> {
     checks::can_read_dispatch_jobs_or_own(&auth.0)?;
     let confined = read_confinement(&state, &auth).await?;
     list_dispatch_jobs_unchecked(&state, &auth, query, confined.as_deref()).await
@@ -760,7 +792,7 @@ pub async fn list_dispatch_jobs_unchecked(
     auth: &Authenticated,
     query: DispatchJobsQuery,
     confined: Option<&[String]>,
-) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
+) -> Result<WindowedList, PlatformError> {
     let statuses = split_csv(query.statuses.as_deref());
     let client_ids = split_csv(query.client_ids.as_deref());
     let applications = split_csv(query.applications.as_deref());
@@ -772,11 +804,14 @@ pub async fn list_dispatch_jobs_unchecked(
     } else {
         Some(caller_reach::client_ids(&auth.0))
     };
-    let ts = |v: Option<&str>| {
-        v.filter(|v| !v.is_empty())
-            .and_then(|v| chrono::DateTime::parse_from_rfc3339(v).ok())
-            .map(|t| t.with_timezone(&chrono::Utc))
-    };
+    // An unparsable bound is ignored on the list (and the default window
+    // applies), as before; the window then holds the read (Go `scoped`).
+    let window = enforce_window(
+        parse_timestamp("since", query.since.as_deref(), false)?,
+        parse_timestamp("until", query.until.as_deref(), false)?,
+        chrono::Utc::now(),
+        state.max_window_days,
+    )?;
     fn non_empty(v: &Option<String>) -> Option<&str> {
         v.as_deref().filter(|v| !v.is_empty())
     }
@@ -799,8 +834,8 @@ pub async fn list_dispatch_jobs_unchecked(
         applications: &applications,
         subdomains: &subdomains,
         aggregates: &aggregates,
-        since: ts(query.since.as_deref()),
-        until: ts(query.until.as_deref()),
+        since: Some(window.since),
+        until: window.until,
         ascending: query.sort.as_deref() == Some("createdAt.asc"),
         limit,
         offset: query.offset.unwrap_or(0).max(0),
@@ -810,7 +845,10 @@ pub async fn list_dispatch_jobs_unchecked(
         .into_iter()
         .map(DispatchJobReadResponse::from)
         .collect();
-    with_client_identifiers(state, items).await.map(Json)
+    Ok(WindowedList {
+        window: window.window,
+        rows: with_client_identifiers(state, items).await?,
+    })
 }
 
 /// Go's `withClientIdentifier`: each row's `clientIdentifier`, looked up in
@@ -1258,26 +1296,50 @@ pub struct DispatchJobFilterOptionsResponse {
     pub dispatch_pool_ids: Vec<String>,
     pub subscription_ids: Vec<String>,
     pub kinds: Vec<String>,
+    /// The created_at window the values were read from.
+    pub window: WindowResponse,
+}
+
+/// The window of a filter-options read: Go's `filterOptionsInput`.
+#[derive(Debug, Default, Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+#[into_params(parameter_in = Query)]
+pub struct FilterOptionsQuery {
+    /// RFC3339; start of the created_at window the values are read from (default: 24 hours before until/now)
+    pub since: Option<String>,
+    /// RFC3339; end of the window (default: now)
+    pub until: Option<String>,
 }
 
 /// Get filter options for dispatch jobs
 ///
-/// Returns distinct values from the read projection for the filter dropdowns.
+/// Returns distinct values from the read projection, within the created_at
+/// window (default the last 24 hours), for the filter dropdowns.
 #[utoipa::path(
     get,
     path = "/filter-options",
     tag = "dispatch-jobs",
     operation_id = "dispatchJobFilterOptions",
+    params(FilterOptionsQuery),
     responses(
-        (status = 200, description = "Filter options", body = DispatchJobFilterOptionsResponse)
+        (status = 200, description = "Filter options", body = DispatchJobFilterOptionsResponse),
+        (status = 400, description = "INVALID_TIMESTAMP, INVALID_WINDOW or WINDOW_TOO_LARGE")
     ),
     security(("bearer_auth" = []))
 )]
 pub async fn get_filter_options(
     State(state): State<DispatchJobsState>,
     auth: Authenticated,
+    Query(query): Query<FilterOptionsQuery>,
 ) -> Result<Json<DispatchJobFilterOptionsResponse>, PlatformError> {
     checks::can_read_dispatch_jobs(&auth.0)?;
+    // Strict: an unparseable bound is a 400 here (Go `toParams(true)`).
+    let window = enforce_window(
+        parse_timestamp("since", query.since.as_deref(), true)?,
+        parse_timestamp("until", query.until.as_deref(), true)?,
+        chrono::Utc::now(),
+        state.max_window_days,
+    )?;
 
     // Scoped as the list is (Go bug 18): a client user sees the values of
     // platform jobs and its own tenants' jobs only; an anchor every job.
@@ -1285,13 +1347,14 @@ pub async fn get_filter_options(
         (!auth.0.is_anchor()).then(|| caller_reach::client_ids(&auth.0));
     let scope = accessible.as_deref();
     let repo = &state.dispatch_job_repo;
+    let (since, until) = (Some(window.since), window.until);
     let (statuses, codes, client_ids, dispatch_pool_ids, subscription_ids, kinds) = tokio::try_join!(
-        repo.distinct_read_values("status", scope),
-        repo.distinct_read_values("code", scope),
-        repo.distinct_read_values("client_id", scope),
-        repo.distinct_read_values("dispatch_pool_id", scope),
-        repo.distinct_read_values("subscription_id", scope),
-        repo.distinct_read_values("kind", scope),
+        repo.distinct_read_values("status", scope, since, until),
+        repo.distinct_read_values("code", scope, since, until),
+        repo.distinct_read_values("client_id", scope, since, until),
+        repo.distinct_read_values("dispatch_pool_id", scope, since, until),
+        repo.distinct_read_values("subscription_id", scope, since, until),
+        repo.distinct_read_values("kind", scope, since, until),
     )?;
 
     Ok(Json(DispatchJobFilterOptionsResponse {
@@ -1301,6 +1364,7 @@ pub async fn get_filter_options(
         dispatch_pool_ids,
         subscription_ids,
         kinds,
+        window: window.window.into(),
     }))
 }
 
@@ -1361,7 +1425,12 @@ pub struct PaginatedDispatchJobsResponse {
     operation_id = "listDispatchJobsRawAlias",
     params(DispatchJobsQuery),
     responses(
-        (status = 200, description = "Dispatch jobs", body = Vec<DispatchJobReadResponse>)
+        (status = 200, description = "Dispatch jobs", body = Vec<DispatchJobReadResponse>,
+         headers(
+            ("X-Window-From" = String, description = "Start of the created_at window the list was held to (RFC3339, UTC)"),
+            ("X-Window-To" = String, description = "End of the window (RFC3339, UTC); now when the request gave no until"),
+            ("X-Window-Defaulted" = String, description = "true when the server supplied a bound the request did not (no since/until: the last 24 hours)")
+         ))
     ),
     security(("bearer_auth" = []))
 )]
@@ -1369,7 +1438,7 @@ pub async fn list_dispatch_jobs_raw(
     State(state): State<DispatchJobsState>,
     auth: Authenticated,
     Query(query): Query<DispatchJobsQuery>,
-) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
+) -> Result<WindowedList, PlatformError> {
     checks::can_read_dispatch_jobs_raw(&auth.0)?;
     list_dispatch_jobs_unchecked(&state, &auth, query, None).await
 }

@@ -32,6 +32,7 @@ use utoipa::ToSchema;
 use super::api::DispatchJobActionsState;
 use super::operations::{reaches, ResendCommand};
 use super::repository::MatchFilter;
+use crate::dispatch_job::window::{enforce_window, parse_timestamp, Window, WindowResponse};
 
 /// How many ids go to one requeue run.
 pub const RESEND_BATCH_SIZE: usize = 500;
@@ -106,19 +107,6 @@ impl DispatchJobFilter {
     /// here. The list ignores one (and shows more rows), but a bulk requeue
     /// that silently dropped a bound would reset more jobs than was asked for.
     pub fn to_match_filter(&self) -> Result<MatchFilter, PlatformError> {
-        let ts = |name: &str, v: &Option<String>| -> Result<Option<DateTime<Utc>>, PlatformError> {
-            match v.as_deref().filter(|v| !v.is_empty()) {
-                None => Ok(None),
-                Some(v) => DateTime::parse_from_rfc3339(v)
-                    .map(|t| Some(t.with_timezone(&Utc)))
-                    .map_err(|_| {
-                        PlatformError::bad_request_code(
-                            "INVALID_TIMESTAMP",
-                            format!("{name} must be an RFC3339 timestamp"),
-                        )
-                    }),
-            }
-        };
         Ok(MatchFilter {
             status: non_empty(&self.status),
             statuses: split_csv(self.statuses.as_deref()),
@@ -133,8 +121,8 @@ impl DispatchJobFilter {
             applications: split_csv(self.applications.as_deref()),
             subdomains: split_csv(self.subdomains.as_deref()),
             aggregates: split_csv(self.aggregates.as_deref()),
-            since: ts("since", &self.since)?,
-            until: ts("until", &self.until)?,
+            since: parse_timestamp("since", self.since.as_deref(), true)?,
+            until: parse_timestamp("until", self.until.as_deref(), true)?,
             ..MatchFilter::default()
         })
     }
@@ -160,6 +148,8 @@ pub struct RequeueByFilterPreviewResponse {
     /// How many of them a requeue would reset for this caller; send it back as confirmCount
     #[schema(value_type = i64)]
     pub eligible_count: i64,
+    /// The created_at window the counts cover
+    pub window: WindowResponse,
 }
 
 /// Body of `POST …/requeue-by-filter`: the list's filter, the eligible count
@@ -190,6 +180,8 @@ pub struct RequeueByFilterResponse {
     /// Eligible jobs still matching after the run; run again to continue
     #[schema(value_type = i64)]
     pub remaining: i64,
+    /// The created_at window the run was held to
+    pub window: WindowResponse,
 }
 
 /// A caller's view of what a filter matches (Go `MatchSummary`).
@@ -227,17 +219,31 @@ async fn summarize(
     Ok(s)
 }
 
+/// The filter held to its time window (Go `scoped`): none given is the last 24
+/// hours, wider than the configured maximum is a 400.
+fn windowed(
+    state: &DispatchJobActionsState,
+    filter: &DispatchJobFilter,
+) -> Result<(MatchFilter, Window), PlatformError> {
+    let mut f = filter.to_match_filter()?;
+    let enforced = enforce_window(f.since, f.until, Utc::now(), state.max_window_days)?;
+    f.since = Some(enforced.since);
+    f.until = enforced.until;
+    Ok((f, enforced.window))
+}
+
 async fn preview(
     state: &DispatchJobActionsState,
     auth: &Authenticated,
     filter: &DispatchJobFilter,
 ) -> Result<Json<RequeueByFilterPreviewResponse>, PlatformError> {
-    let f = filter.to_match_filter()?;
+    let (f, window) = windowed(state, filter)?;
     let s = summarize(state, auth, f).await?;
     Ok(Json(RequeueByFilterPreviewResponse {
         count: s.count,
         by_status: s.by_status,
         eligible_count: s.eligible,
+        window: window.into(),
     }))
 }
 
@@ -263,7 +269,7 @@ async fn requeue_by_filter(
     auth: &Authenticated,
     req: RequeueByFilterRequest,
 ) -> Result<Json<RequeueByFilterResponse>, PlatformError> {
-    let f = req.filter.to_match_filter()?;
+    let (f, window) = windowed(state, &req.filter)?;
     let confirm = req.confirm_count;
     if confirm < 0 {
         return Err(PlatformError::bad_request_code(
@@ -355,6 +361,7 @@ async fn requeue_by_filter(
             requeued,
             truncated: false,
             remaining: 0,
+            window: window.into(),
         }));
     }
     // Stopped at the budget: count what is left after the last id handed out.
@@ -365,6 +372,7 @@ async fn requeue_by_filter(
         requeued,
         truncated: left.eligible > 0,
         remaining: left.eligible,
+        window: window.into(),
     }))
 }
 

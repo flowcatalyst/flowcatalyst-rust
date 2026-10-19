@@ -121,20 +121,40 @@ async fn client_viewer(app: &TestApp, client: &str, perms: &[&str]) -> String {
     app.auth_service.generate_access_token(&user).unwrap()
 }
 
+/// A successful answer carries the `created_at` window it was held to (the
+/// jobs are seeded an hour old, so the default last 24 hours covers them); the
+/// tests below compare the rest of the body.
+fn take_window(status: StatusCode, mut body: Value) -> (StatusCode, Value) {
+    if status == StatusCode::OK {
+        let window = body
+            .as_object_mut()
+            .and_then(|o| o.remove("window"))
+            .unwrap_or_else(|| panic!("no window in {body}"));
+        assert_eq!(window["defaulted"], true, "{window}");
+        assert!(
+            window["from"].is_string() && window["to"].is_string(),
+            "{window}"
+        );
+    }
+    (status, body)
+}
+
 async fn preview(app: &TestApp, token: &str, body: Value) -> (StatusCode, Value) {
-    read_json(
+    let (status, body) = read_json(
         app.post("/api/dispatch-jobs/requeue-by-filter/preview", token, body)
             .await,
     )
-    .await
+    .await;
+    take_window(status, body)
 }
 
 async fn run(app: &TestApp, token: &str, body: Value) -> (StatusCode, Value) {
-    read_json(
+    let (status, body) = read_json(
         app.post("/api/dispatch-jobs/requeue-by-filter", token, body)
             .await,
     )
-    .await
+    .await;
+    take_window(status, body)
 }
 
 #[tokio::test]
@@ -429,6 +449,7 @@ async fn the_wire_on_both_tiers() {
         .await,
     )
     .await;
+    let (status, body) = take_window(status, body);
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         body,
@@ -459,6 +480,7 @@ async fn the_wire_on_both_tiers() {
         .await,
     )
     .await;
+    let (status, body) = take_window(status, body);
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         body,

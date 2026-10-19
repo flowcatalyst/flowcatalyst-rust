@@ -9,6 +9,7 @@ pub mod lifecycle;
 pub mod reaper;
 pub mod repository;
 pub mod signing_guard;
+pub mod window;
 
 // Re-export main types
 pub use entity::{DispatchJob, DispatchStatus};

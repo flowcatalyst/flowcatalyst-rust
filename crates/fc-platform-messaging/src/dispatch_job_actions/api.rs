@@ -45,6 +45,9 @@ pub struct DispatchJobActionsState {
     pub requeue_use_case: Arc<RequeueDispatchJobsUseCase<PgUnitOfWork>>,
     pub settle_use_case: Arc<SettleDispatchJobUseCase<PgUnitOfWork>>,
     pub edit_payload_use_case: Arc<EditDispatchJobPayloadUseCase<PgUnitOfWork>>,
+    /// The widest `created_at` window a requeue-by-filter may ask for
+    /// (`FC_DISPATCH_JOB_MAX_WINDOW_DAYS`); below 1 means the default 31.
+    pub max_window_days: i64,
 }
 
 /// Go `RequeueRequest`.

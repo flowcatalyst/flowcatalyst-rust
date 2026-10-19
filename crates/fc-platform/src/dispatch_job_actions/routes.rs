@@ -55,6 +55,7 @@ pub fn dispatch_job_actions_state(ctx: &PlatformContext) -> DispatchJobActionsSt
             repo,
             ctx.unit_of_work.clone(),
         )),
+        max_window_days: crate::dispatch_job::window::max_window_days_from_env(),
     }
 }
 

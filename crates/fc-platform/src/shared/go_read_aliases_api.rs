@@ -15,7 +15,9 @@ use axum::{
 
 use crate::dispatch_job::api::get_jobs_for_event;
 use crate::dispatch_job::api::list_dispatch_jobs_unchecked;
-use crate::dispatch_job::api::{DispatchJobReadResponse, DispatchJobsQuery, DispatchJobsState};
+use crate::dispatch_job::api::{
+    DispatchJobReadResponse, DispatchJobsQuery, DispatchJobsState, WindowedList,
+};
 use crate::event::api;
 use crate::event::api::{EventListItem, EventsQuery, EventsState};
 use crate::shared::authorization_service::checks;
@@ -68,13 +70,18 @@ pub async fn bff_list_events_raw(
 /// (Go `listDispatchJobsRaw`).
 #[utoipa::path(get, path = "/api/dispatch-jobs/list-raw", tag = "dispatch-jobs",
     operation_id = "listDispatchJobsRaw", params(DispatchJobsQuery),
-    responses((status = 200, description = "Dispatch jobs", body = Vec<DispatchJobReadResponse>)),
+    responses((status = 200, description = "Dispatch jobs", body = Vec<DispatchJobReadResponse>,
+        headers(
+            ("X-Window-From" = String, description = "Start of the created_at window the list was held to (RFC3339, UTC)"),
+            ("X-Window-To" = String, description = "End of the window (RFC3339, UTC); now when the request gave no until"),
+            ("X-Window-Defaulted" = String, description = "true when the server supplied a bound the request did not (no since/until: the last 24 hours)")
+        ))),
     security(("bearer_auth" = [])))]
 pub async fn api_list_dispatch_jobs_raw(
     State(state): State<ReadAliasesState>,
     auth: Authenticated,
     Query(q): Query<DispatchJobsQuery>,
-) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
+) -> Result<WindowedList, PlatformError> {
     // Go's `listRaw` asks `dispatch-job:view-raw` only.
     checks::can_read_dispatch_jobs_raw(&auth.0)?;
     list_dispatch_jobs_unchecked(&state.dispatch_jobs, &auth, q, None).await
@@ -88,7 +95,7 @@ pub async fn bff_list_dispatch_jobs_raw(
     State(state): State<ReadAliasesState>,
     auth: Authenticated,
     Query(q): Query<DispatchJobsQuery>,
-) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
+) -> Result<WindowedList, PlatformError> {
     // Go's `listRaw` asks `dispatch-job:view-raw` only.
     checks::can_read_dispatch_jobs_raw(&auth.0)?;
     list_dispatch_jobs_unchecked(&state.dispatch_jobs, &auth, q, None).await

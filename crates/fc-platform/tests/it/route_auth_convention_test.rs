@@ -224,6 +224,12 @@ const AUTH_CHECK_PATTERNS: &[&str] = &[
     "can_sync_",
     "can_add_",
     "can_report_",
+    // Dispatch-job operator actions (Go `29e8cb11`, `ad37de21`).
+    "can_edit_",
+    "can_requeue_",
+    "can_redrive_",
+    "can_cancel_",
+    "can_complete_",
     "can_view_",
     ".authorize(",
     ".is_anchor()",

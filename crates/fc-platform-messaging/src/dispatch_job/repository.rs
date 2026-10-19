@@ -940,11 +940,14 @@ impl DispatchJobRepository {
     }
 
     /// Distinct non-null values of one whitelisted read-projection column,
-    /// sorted, at most 200 (Go `DistinctValues`).
+    /// sorted, at most 200, of the jobs created within `[since, until]` (either
+    /// may be `None`: an open end; Go `DistinctValues`).
     pub async fn distinct_read_values(
         &self,
         column: &str,
         accessible: Option<&[String]>,
+        since: Option<DateTime<Utc>>,
+        until: Option<DateTime<Utc>>,
     ) -> Result<Vec<String>> {
         const ALLOWED: &[&str] = &[
             "status",
@@ -969,6 +972,14 @@ impl DispatchJobRepository {
             qb.push(" AND (client_id IS NULL OR client_id = ANY(")
                 .push_bind(ids.to_vec())
                 .push("))");
+        }
+        // The created_at window: the callers always pass a `since`, so the
+        // read prunes to the window's partitions.
+        if let Some(t) = since {
+            qb.push(" AND created_at >= ").push_bind(t);
+        }
+        if let Some(t) = until {
+            qb.push(" AND created_at <= ").push_bind(t);
         }
         qb.push(" ORDER BY 1 LIMIT 200");
         let rows: Vec<(String,)> = qb.build_query_as().fetch_all(&self.pool).await?;

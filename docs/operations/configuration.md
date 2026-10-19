@@ -130,6 +130,14 @@ See [identity-and-auth.md](identity-and-auth.md) for IDP setup, rotation procedu
 
 ---
 
+## Dispatch-job reads (platform)
+
+| Variable | Default | Description |
+|---|---|---|
+| `FC_DISPATCH_JOB_MAX_WINDOW_DAYS` | `31` | Widest `created_at` window a dispatch-job list-shaped read may cover: `GET /api/dispatch-jobs` (and `/bff`), `/list-raw`, `/raw`, `/filter-options`, `POST /api/dispatch-jobs/requeue-by-filter` and its `/preview`. A read that names no `since`/`until` is held to the last 24 hours and the response echoes the window (`X-Window-From`, `X-Window-To`, `X-Window-Defaulted` on the two lists, `window` in the other bodies); a wider one is `400 WINDOW_TOO_LARGE`. Lookups keyed by one job or event (by id, `/raw`-by-id, attempts, by-event, sign) are exempt. Unset, unparseable or not positive means the default. Keep it at or below the read-table partition retention, or the window reads partitions that are gone |
+
+---
+
 ## Delivery policy (every binary)
 
 A URL the platform will POST to (a subscription's endpoint, a scheduled job's
