@@ -17,8 +17,14 @@
 //! Gate: anchor and `platform:messaging:dispatch-pool:view` (the `router`
 //! role holds exactly that).
 
-use axum::{extract::State, Json};
+use axum::{
+    extract::State,
+    http::{header, HeaderMap, HeaderValue, StatusCode},
+    response::{IntoResponse, Response},
+    Json,
+};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use utoipa::ToSchema;
 
@@ -151,14 +157,41 @@ pub fn build_document(
     }
 }
 
-/// The message router's configuration document (Go `getRouterConfig`).
+/// A strong validator for the rendered document: a hash of its JSON, which is
+/// deterministic (pools are ordered by code, tenants in a fixed order).
+fn etag_of(document: &RouterConfigDocument) -> Result<String, serde_json::Error> {
+    let json = serde_json::to_vec(document)?;
+    let sum = Sha256::digest(&json);
+    Ok(format!("\"{}\"", hex::encode(&sum[..16])))
+}
+
+/// Whether an `If-None-Match` value names `etag`: a list, weak validators
+/// (`W/"..."`) and `*` understood (Go `etagMatches`).
+fn etag_matches(if_none_match: &str, etag: &str) -> bool {
+    if_none_match.split(',').any(|v| {
+        let v = v.trim();
+        let v = v.strip_prefix("W/").unwrap_or(v);
+        v == "*" || v == etag
+    })
+}
+
+/// The message router's configuration document (Go `getRouterConfig`). The
+/// answer carries an `ETag`; a router that sends it back as `If-None-Match`
+/// gets a `304` while nothing changed, so it can poll every few seconds (Go
+/// F29). The document is built either way: what the validator saves is the
+/// transfer and the router's parse and compare.
 #[utoipa::path(
     get,
     path = "/api/dispatch/router-config",
     tag = "dispatch",
     operation_id = "getRouterConfig",
+    params(
+        ("If-None-Match" = Option<String>, Header, description = "An ETag from an earlier answer; 304 when the document is unchanged")
+    ),
     responses(
-        (status = 200, description = "Pools and queues", body = RouterConfigDocument),
+        (status = 200, description = "Pools and queues", body = RouterConfigDocument,
+            headers(("ETag" = String, description = "Strong validator of the document"))),
+        (status = 304, description = "Unchanged since the ETag in If-None-Match"),
         (status = 403, description = "Not an anchor holding platform:messaging:dispatch-pool:view")
     ),
     security(("bearer_auth" = []))
@@ -166,7 +199,8 @@ pub fn build_document(
 pub async fn get_router_config(
     State(state): State<RouterConfigState>,
     auth: Authenticated,
-) -> Result<Json<RouterConfigDocument>, PlatformError> {
+    headers: HeaderMap,
+) -> Result<Response, PlatformError> {
     checks::require_anchor_scope(&auth.0)?;
     checks::require_permission(&auth.0, permissions::admin::DISPATCH_POOL_READ)?;
     let (pools, subscriptions, clients) = tokio::try_join!(
@@ -174,16 +208,51 @@ pub async fn get_router_config(
         state.repo.active_subscriptions(),
         state.repo.client_identifiers()
     )?;
-    Ok(Json(build_document(
-        &state.settings,
-        &pools,
-        &subscriptions,
-        &clients,
-    )))
+    let document = build_document(&state.settings, &pools, &subscriptions, &clients);
+    let etag = etag_of(&document).map_err(|e| PlatformError::Internal {
+        message: format!("rendering the router config failed: {e}"),
+    })?;
+    let etag_header = HeaderValue::from_str(&etag).map_err(|e| PlatformError::Internal {
+        message: format!("router config ETag is not a header value: {e}"),
+    })?;
+    let unchanged = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| etag_matches(v, &etag));
+    if unchanged {
+        return Ok((StatusCode::NOT_MODIFIED, [(header::ETAG, etag_header)]).into_response());
+    }
+    Ok(([(header::ETAG, etag_header)], Json(document)).into_response())
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn etag_matching_understands_lists_weak_validators_and_star() {
+        let tag = "\"abc123\"";
+        assert!(etag_matches("\"abc123\"", tag));
+        assert!(etag_matches("W/\"abc123\"", tag));
+        assert!(etag_matches("\"zzz\", W/\"abc123\"", tag));
+        assert!(etag_matches("*", tag));
+        assert!(!etag_matches("\"zzz\"", tag));
+        assert!(!etag_matches("", tag));
+    }
+
+    #[test]
+    fn the_etag_is_stable_and_changes_with_the_document() {
+        let doc = |conc| RouterConfigDocument {
+            processing_pools: vec![RouterPoolConfig {
+                code: "p".into(),
+                concurrency: conc,
+                rate_limit_per_minute: None,
+            }],
+            queues: vec![],
+        };
+        assert_eq!(etag_of(&doc(1)).unwrap(), etag_of(&doc(1)).unwrap());
+        assert_ne!(etag_of(&doc(1)).unwrap(), etag_of(&doc(2)).unwrap());
+        assert!(etag_of(&doc(1)).unwrap().starts_with('"'));
+    }
+
     use super::*;
 
     fn pool(code: &str, client: Option<&str>, conc: i32, rate: Option<i32>) -> RouterPoolRow {

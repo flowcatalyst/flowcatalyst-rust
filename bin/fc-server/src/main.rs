@@ -480,6 +480,15 @@ async fn main() -> Result<()> {
         Some(env) => {
             info!("Starting message router subsystem...");
             let (runtime, router_app) = start_router(&env, active_rx.clone()).await?;
+            // Go F29: a client, dispatch pool or subscription written by this
+            // process nudges the router's config watcher, so a new client's
+            // dispatch queue is consumed within about a second rather than at
+            // the next poll.
+            if let Some(sync) = runtime.config_sync.clone() {
+                fc_platform::usecase::unit_of_work::set_router_config_hook(Some(Arc::new(
+                    move || sync.nudge(),
+                )));
+            }
             let prefix = env
                 .http_prefix
                 .clone()

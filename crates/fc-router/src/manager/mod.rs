@@ -155,6 +155,13 @@ pub struct QueueManager {
     /// logged once per streak rather than on every recheck, and what
     /// [`Self::recheck_missing_queues`] walks. Keyed by queue name.
     missing_queues: Mutex<HashMap<String, fc_common::QueueConfig>>,
+    /// When each missing queue was first seen missing by the paced recheck,
+    /// and when that recheck last probed all of them. They pace the recheck:
+    /// a queue that only just went missing (a new client's, created on its
+    /// first publish) is probed on every config tick, the rest on a slow
+    /// cadence (Go F29 `missingSince` / `lastFullRecheck`).
+    missing_since: Mutex<HashMap<String, std::time::Instant>>,
+    last_full_recheck: Mutex<Option<std::time::Instant>>,
 
     /// Per-queue poll counters for the Prometheus surface, keyed by queue
     /// name so a rebuilt consumer keeps counting instead of resetting the
@@ -541,6 +548,8 @@ impl QueueManagerBuilder {
             pools: DashMap::new(),
             draining_pools: Mutex::new(Vec::new()),
             missing_queues: Mutex::new(HashMap::new()),
+            missing_since: Mutex::new(HashMap::new()),
+            last_full_recheck: Mutex::new(None),
             consumer_events: DashMap::new(),
             capacity_notify: Arc::new(Notify::new()),
             synth_pools: DashMap::new(),

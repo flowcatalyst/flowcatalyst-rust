@@ -21,7 +21,7 @@ use std::fmt::Formatter;
 
 /// Go `ServerConfig.ConfigPollInterval`'s fallback for an unset, zero or
 /// negative interval.
-pub const DEFAULT_CONFIG_INTERVAL: Duration = Duration::from_secs(300);
+pub const DEFAULT_CONFIG_INTERVAL: Duration = crate::config_sync::DEFAULT_SYNC_INTERVAL;
 
 /// Go `defaultNotifyBatchInterval`.
 pub const DEFAULT_NOTIFY_BATCH_INTERVAL_SECS: u64 = 300;

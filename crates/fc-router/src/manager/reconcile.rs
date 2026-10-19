@@ -17,6 +17,12 @@ use futures::future;
 use futures::{stream, StreamExt};
 
 use super::QueueManager;
+
+/// A queue first seen missing less than this long ago is probed on every
+/// config tick (a new client's queue, created on its first publish).
+const YOUNG_MISSING_QUEUE_AGE: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+/// Every missing queue is probed at least this often.
+const FULL_MISSING_RECHECK_EVERY: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 use std::sync::atomic::Ordering;
 
 /// Upper bound on consumers being built at once during a config sync.
@@ -538,6 +544,49 @@ impl QueueManager {
     /// With nothing missing it does no work at all. Failures other than
     /// "missing" are logged and retried by the next recheck or reload.
     pub async fn recheck_missing_queues(self: &Arc<Self>) {
+        self.recheck_missing_where(|_| true).await;
+    }
+
+    /// The recheck the config tick runs (Go F29 `RecheckMissingQueuesPaced`).
+    /// The router-config document lists a queue for every client and lane, but
+    /// only the ones that have published exist, so most missing queues stay
+    /// missing; probing all of them on every (now frequent) tick would be a
+    /// broker call per unused queue per tick. A queue first seen missing less
+    /// than [`YOUNG_MISSING_QUEUE_AGE`] ago is the one a new client is about to
+    /// publish to, so it is probed on every tick; every queue is probed once per
+    /// [`FULL_MISSING_RECHECK_EVERY`], the cadence the router used for all of
+    /// them before.
+    pub async fn recheck_missing_queues_paced(self: &Arc<Self>) {
+        let now = std::time::Instant::now();
+        let full = {
+            let mut last = self.last_full_recheck.lock();
+            let due = last.is_none_or(|t| now.duration_since(t) >= FULL_MISSING_RECHECK_EVERY);
+            if due {
+                *last = Some(now);
+            }
+            due
+        };
+        // First-seen time per missing queue; entries for queues no longer
+        // missing are dropped.
+        let young: std::collections::HashSet<String> = {
+            let missing = self.missing_queues.lock();
+            let mut since = self.missing_since.lock();
+            since.retain(|name, _| missing.contains_key(name));
+            for name in missing.keys() {
+                since.entry(name.clone()).or_insert(now);
+            }
+            since
+                .iter()
+                .filter(|(_, t)| now.duration_since(**t) < YOUNG_MISSING_QUEUE_AGE)
+                .map(|(name, _)| name.clone())
+                .collect()
+        };
+        self.recheck_missing_where(|name| full || young.contains(name))
+            .await;
+    }
+
+    /// Start consumers for the missing queues `want` selects.
+    async fn recheck_missing_where(self: &Arc<Self>, want: impl Fn(&str) -> bool) {
         if !self.running.load(Ordering::SeqCst) || self.polling_stopped.load(Ordering::SeqCst) {
             return;
         }
@@ -550,7 +599,7 @@ impl QueueManager {
             .missing_queues
             .lock()
             .iter()
-            .filter(|(name, _)| self.consumers.get(name.as_str()).is_none())
+            .filter(|(name, _)| self.consumers.get(name.as_str()).is_none() && want(name))
             .map(|(name, cfg)| (name.clone(), cfg.clone()))
             .collect();
         if queues.is_empty() {
@@ -924,6 +973,56 @@ mod missing_queue_tests {
             "and it is no longer tracked as missing"
         );
         assert_eq!(warnings.warning_count(), 0);
+    }
+
+    /// F29: the config tick probes a young missing queue (a new client's)
+    /// every time, and an old one only on the slow cadence.
+    #[tokio::test]
+    async fn the_paced_recheck_probes_young_queues_each_tick_and_old_ones_slowly() {
+        use std::time::{Duration as D, Instant};
+        let factory = Arc::new(Factory {
+            exists: AtomicBool::new(false),
+        });
+        let m = manager(factory.clone(), Arc::new(WarningService::default()));
+        m.reload_config(RouterConfig {
+            processing_pools: vec![],
+            queues: vec![queue("q-live"), queue("q-new")],
+        })
+        .await
+        .unwrap();
+        assert_eq!(m.missing_queue_names(), vec!["q-new".to_string()]);
+
+        // The first paced pass is a full one and stamps the queue as young.
+        m.recheck_missing_queues_paced().await;
+        assert!(m.consumers.get("q-new").is_none());
+
+        // Young: the queue appears and the very next tick starts it.
+        factory.exists.store(true, Ordering::SeqCst);
+        m.recheck_missing_queues_paced().await;
+        assert!(
+            m.consumers.get("q-new").is_some(),
+            "a young queue is probed each tick"
+        );
+
+        // Old: back to missing, first seen long ago, a full pass just done.
+        m.detach_missing_consumer(&m.consumers.get("q-new").unwrap().clone())
+            .await;
+        factory.exists.store(true, Ordering::SeqCst);
+        let long_ago = Instant::now().checked_sub(D::from_secs(3600)).unwrap();
+        m.missing_since.lock().insert("q-new".to_string(), long_ago);
+        *m.last_full_recheck.lock() = Some(Instant::now());
+        m.recheck_missing_queues_paced().await;
+        assert!(
+            m.consumers.get("q-new").is_none(),
+            "an old missing queue waits for the slow cadence"
+        );
+        // The slow cadence comes round: every queue is probed.
+        *m.last_full_recheck.lock() = Some(Instant::now().checked_sub(D::from_secs(301)).unwrap());
+        m.recheck_missing_queues_paced().await;
+        assert!(
+            m.consumers.get("q-new").is_some(),
+            "the full pass probes it"
+        );
     }
 
     #[tokio::test]

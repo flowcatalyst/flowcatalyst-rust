@@ -43,6 +43,13 @@ pub struct ConfigSyncConfig {
 
     /// Whether to fail startup if initial sync fails
     pub fail_on_initial_sync_error: bool,
+
+    /// How long [`ConfigSyncService::run`] waits after a
+    /// [`ConfigSyncService::nudge`] before it fetches (and again before its
+    /// confirming repeat), so a change announced from inside the transaction
+    /// that makes it is committed and visible by then, and a burst of changes
+    /// is one fetch (Go F29 `NudgeDelay`).
+    pub nudge_delay: Duration,
 }
 
 impl Default for ConfigSyncConfig {
@@ -50,15 +57,23 @@ impl Default for ConfigSyncConfig {
         Self {
             enabled: false,
             config_urls: Vec::new(),
-            sync_interval: Duration::from_secs(300), // 5 minutes
-            max_retry_attempts: 12,                  // 12 attempts
-            retry_delay: Duration::from_secs(5),     // 5 seconds between retries
+            // 30 s: the fetch is conditional (If-None-Match), so an unchanged
+            // document costs a 304. It was 5 minutes, which was also how long
+            // a new client's dispatch jobs sat QUEUED (Go F29).
+            sync_interval: DEFAULT_SYNC_INTERVAL,
+            max_retry_attempts: 12,              // 12 attempts
+            retry_delay: Duration::from_secs(5), // 5 seconds between retries
             // Go: `http.Client{Timeout: 10 * time.Second}`.
             request_timeout: Duration::from_secs(10),
             fail_on_initial_sync_error: true,
+            nudge_delay: Duration::from_secs(1),
         }
     }
 }
+
+/// How often the config document is re-fetched by default (Go
+/// `defaultConfigPollInterval`).
+pub const DEFAULT_SYNC_INTERVAL: Duration = Duration::from_secs(30);
 
 impl ConfigSyncConfig {
     pub fn new(config_url: String) -> Self {
@@ -302,6 +317,13 @@ pub struct ConfigSyncService {
     /// Set by [`Self::with_credentials`]: requests to that origin, and only
     /// those, carry the platform bearer token.
     credentials: Option<PlatformCredentials>,
+    /// The validator each URL last answered with, sent back as
+    /// `If-None-Match` so an unchanged document costs a 304, not a rebuild
+    /// and a re-parse (the platform's router-config endpoint does the
+    /// comparison). Only used while `source_cache` holds that URL's document.
+    etags: parking_lot::Mutex<HashMap<String, String>>,
+    /// Set by [`Self::nudge`]; [`Self::run`] re-fetches soon after.
+    nudges: tokio::sync::Notify,
 }
 
 impl ConfigSyncService {
@@ -329,7 +351,19 @@ impl ConfigSyncService {
             source_warnings: parking_lot::Mutex::new(HashMap::new()),
             watch_warning: parking_lot::Mutex::new(None),
             credentials: None,
+            etags: parking_lot::Mutex::new(HashMap::new()),
+            nudges: tokio::sync::Notify::new(),
         }
+    }
+
+    /// Ask a running [`Self::run`] to re-fetch soon, ahead of its next tick:
+    /// the platform calls it when something that changes the router's
+    /// document was written (a client, a dispatch pool, a subscription), so a
+    /// new client's queue is consumed in about `nudge_delay` rather than at
+    /// the next poll. Never blocks; nudges that arrive while one is pending
+    /// are one.
+    pub fn nudge(&self) {
+        self.nudges.notify_one();
     }
 
     /// Authenticate every request to `platform_url`'s origin — and no other
@@ -552,6 +586,13 @@ impl ConfigSyncService {
     /// Single fetch attempt from a specific URL
     async fn fetch_config_once(&self, url: &str) -> Result<RouterConfig, ConfigSyncError> {
         let mut request = self.http_client.get(url);
+        // Validate against the document this source last gave us, if it gave
+        // a validator and we still hold the document.
+        let validator = self.etags.lock().get(url).cloned();
+        let cached = self.source_cache.lock().get(url).cloned();
+        if let (Some(etag), Some(_)) = (&validator, &cached) {
+            request = request.header(reqwest::header::IF_NONE_MATCH, etag);
+        }
         // The credential goes to this router's own platform and nowhere
         // else. A minting failure is an attempt failure like a transport
         // one: the retry loop keeps trying.
@@ -575,6 +616,12 @@ impl ConfigSyncService {
         })?;
 
         let status = response.status();
+        if status == reqwest::StatusCode::NOT_MODIFIED {
+            if let (Some(_), Some(cached)) = (&validator, cached) {
+                debug!(url = %url, "Config unchanged (304)");
+                return Ok(cached);
+            }
+        }
         if !status.is_success() {
             // A rejected token is the one failure re-minting can fix.
             if let (Some(creds), reqwest::StatusCode::UNAUTHORIZED) = (creds, status) {
@@ -600,6 +647,11 @@ impl ConfigSyncService {
             });
         }
 
+        let new_etag = response
+            .headers()
+            .get(reqwest::header::ETAG)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
         let body = response.text().await.map_err(|e| ConfigSyncError::Body {
             url: url.to_string(),
             message: e.to_string(),
@@ -621,6 +673,17 @@ impl ConfigSyncService {
                 }
             })?;
 
+        {
+            let mut etags = self.etags.lock();
+            match new_etag {
+                Some(v) => {
+                    etags.insert(url.to_string(), v);
+                }
+                None => {
+                    etags.remove(url);
+                }
+            }
+        }
         Ok(config_response.into())
     }
 
@@ -667,7 +730,7 @@ impl ConfigSyncService {
             // An unchanged config is not re-applied, but a queue it names
             // may have been created since (the platform makes each on its
             // first publish). Start consumers for any that have appeared.
-            self.queue_manager.recheck_missing_queues().await;
+            self.queue_manager.recheck_missing_queues_paced().await;
             return Ok(false);
         }
 
@@ -796,6 +859,33 @@ impl ConfigSyncService {
                         }
                     }
                 }
+                _ = self.nudges.notified() => {
+                    // Something that changes the document was just written.
+                    // Give the writer's transaction a moment to commit and
+                    // further changes a moment to arrive, fetch, and once more
+                    // to confirm (a conditional fetch is a 304 when nothing
+                    // is new).
+                    let delay = if self.config.nudge_delay.is_zero() {
+                        Duration::from_secs(1)
+                    } else {
+                        self.config.nudge_delay
+                    };
+                    for _ in 0..2 {
+                        tokio::select! {
+                            _ = shutdown.cancelled() => return,
+                            _ = time::sleep(delay) => {}
+                        }
+                        // Fold nudges that arrived while waiting into this fetch.
+                        let _ = tokio::time::timeout(Duration::ZERO, self.nudges.notified()).await;
+                        match self.apply_latest().await {
+                            Ok(_) => self.clear_watch_warning(),
+                            Err(e) => {
+                                error!(error = %e, "Configuration sync failed; the current configuration keeps running");
+                                self.raise_watch_warning(format!("Config sync failed: {}", e));
+                            }
+                        }
+                    }
+                }
                 _ = shutdown.cancelled() => {
                     info!("Config sync task shutting down");
                     return;
@@ -905,7 +995,7 @@ mod tests {
     fn test_config_sync_config_defaults() {
         let config = ConfigSyncConfig::default();
         assert!(!config.enabled);
-        assert_eq!(config.sync_interval, Duration::from_secs(300));
+        assert_eq!(config.sync_interval, Duration::from_secs(30));
         assert_eq!(config.max_retry_attempts, 12);
     }
 
@@ -1245,6 +1335,141 @@ mod tests {
             0,
             "the source's warning must be acknowledged once it recovers"
         );
+    }
+
+    /// F29: a source that sends an `ETag` is asked with `If-None-Match`, a 304
+    /// reuses the cached document, a changed ETag replaces it, and a source
+    /// without an ETag is fetched in full each time.
+    #[tokio::test]
+    async fn an_unchanged_document_is_a_304_and_a_changed_one_is_refetched() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let version = Arc::new(AtomicU32::new(1));
+        let sent_validator = Arc::new(parking_lot::Mutex::new(Vec::<Option<String>>::new()));
+        let (v, sent) = (version.clone(), sent_validator.clone());
+        Mock::given(method("GET"))
+            .respond_with(move |req: &wiremock::Request| {
+                let n = v.load(Ordering::SeqCst);
+                let tag = format!("\"v{n}\"");
+                let presented = req
+                    .headers
+                    .get("if-none-match")
+                    .and_then(|h| h.to_str().ok())
+                    .map(str::to_string);
+                sent.lock().push(presented.clone());
+                if presented.as_deref() == Some(tag.as_str()) {
+                    ResponseTemplate::new(304).insert_header("etag", tag.as_str())
+                } else {
+                    ResponseTemplate::new(200)
+                        .insert_header("etag", tag.as_str())
+                        .set_body_json(good_config_body(&format!("P{n}")))
+                }
+            })
+            .mount(&server)
+            .await;
+
+        let service = test_service(server.uri());
+        let first = service.fetch_config().await.unwrap();
+        assert_eq!(first.processing_pools[0].code, "P1");
+        // Same version: the validator goes back and the cached document is reused.
+        let second = service.fetch_config().await.unwrap();
+        assert_eq!(second.processing_pools[0].code, "P1");
+        assert_eq!(
+            sent_validator.lock().as_slice(),
+            [None, Some("\"v1\"".to_string())]
+        );
+        // The document changes: the old validator no longer matches.
+        version.store(2, Ordering::SeqCst);
+        let third = service.fetch_config().await.unwrap();
+        assert_eq!(third.processing_pools[0].code, "P2");
+        let fourth = service.fetch_config().await.unwrap();
+        assert_eq!(fourth.processing_pools[0].code, "P2");
+        assert_eq!(
+            sent_validator.lock().last().unwrap().as_deref(),
+            Some("\"v2\"")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_source_without_an_etag_is_fetched_in_full_each_time() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(|req: &wiremock::Request| {
+                assert!(
+                    req.headers.get("if-none-match").is_none(),
+                    "no validator without an ETag"
+                );
+                ResponseTemplate::new(200).set_body_json(good_config_body("PLAIN"))
+            })
+            .mount(&server)
+            .await;
+        let service = test_service(server.uri());
+        for _ in 0..3 {
+            let cfg = service.fetch_config().await.unwrap();
+            assert_eq!(cfg.processing_pools[0].code, "PLAIN");
+        }
+    }
+
+    /// F29: a nudge makes `run` fetch again soon, well ahead of the poll
+    /// interval, and then once more to confirm.
+    #[tokio::test]
+    async fn a_nudge_refetches_ahead_of_the_poll() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let calls = Arc::new(AtomicU32::new(0));
+        let c = calls.clone();
+        Mock::given(method("GET"))
+            .respond_with(move |_req: &wiremock::Request| {
+                let n = c.fetch_add(1, Ordering::SeqCst);
+                // The second fetch onward carries a new pool: the "new client".
+                let code = if n == 0 { "OLD" } else { "NEW" };
+                ResponseTemplate::new(200).set_body_json(good_config_body(code))
+            })
+            .mount(&server)
+            .await;
+
+        let mut service = test_service(server.uri());
+        service.config.sync_interval = Duration::from_secs(3600); // never ticks
+        service.config.nudge_delay = Duration::from_millis(20);
+        let service = Arc::new(service);
+        let manager = service.queue_manager.clone();
+        let token = CancellationToken::new();
+        let task = tokio::spawn(service.clone().run(token.clone()));
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while manager.get_pool("OLD").is_none() {
+            assert!(Instant::now() < deadline, "the first config must land");
+            time::sleep(Duration::from_millis(10)).await;
+        }
+        service.nudge();
+        let nudged = Instant::now();
+        while manager.get_pool("NEW").is_none() {
+            assert!(
+                Instant::now() < deadline,
+                "the nudge must fetch long before the hourly tick"
+            );
+            time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(nudged.elapsed() < Duration::from_secs(2));
+        // ... and the confirming repeat follows.
+        while calls.load(Ordering::SeqCst) < 3 {
+            assert!(Instant::now() < deadline, "the confirming fetch");
+            time::sleep(Duration::from_millis(10)).await;
+        }
+        token.cancel();
+        time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("run() exits on cancel")
+            .unwrap();
     }
 
     /// H14 (Go `Watch`): a config source that is down at boot is retried at

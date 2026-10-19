@@ -33,6 +33,51 @@ use std::any;
 #[cfg(any(test, feature = "test-support"))]
 use std::sync;
 
+// ─── Router-config hook (Go F29) ─────────────────────────────────────────────
+
+type RouterConfigHook = Arc<dyn Fn() + Send + Sync>;
+
+static ROUTER_CONFIG_HOOK: std::sync::RwLock<Option<RouterConfigHook>> =
+    std::sync::RwLock::new(None);
+
+/// Register `hook`, called when a domain event is written that can change the
+/// router's configuration document: a client, dispatch pool or subscription
+/// was created, changed or removed. A router running in this process
+/// registers its config watcher's nudge, so a new client's dispatch queue is
+/// consumed in about a second instead of at the next poll. The hook runs
+/// inside the writing transaction, so it must only signal; the router waits a
+/// moment before it fetches. A separately-run router polls the (conditional)
+/// document instead. `None` removes the hook.
+pub fn set_router_config_hook(hook: Option<RouterConfigHook>) {
+    if let Ok(mut slot) = ROUTER_CONFIG_HOOK.write() {
+        *slot = hook;
+    }
+}
+
+/// Whether an event of this type can change the router-config document (it
+/// reads clients, dispatch pools and subscriptions).
+pub fn affects_router_config(event_type: &str) -> bool {
+    [
+        "platform:admin:client:",
+        "platform:admin:dispatch-pool:",
+        "platform:admin:dispatch-pools:",
+        "platform:admin:subscription:",
+    ]
+    .iter()
+    .any(|family| event_type.starts_with(family))
+}
+
+fn notify_router_config(event_type: &str) {
+    if !affects_router_config(event_type) {
+        return;
+    }
+    if let Ok(slot) = ROUTER_CONFIG_HOOK.read() {
+        if let Some(hook) = slot.as_ref() {
+            hook();
+        }
+    }
+}
+
 // ─── Traits ──────────────────────────────────────────────────────────────────
 
 /// Trait for entities that have a unique string ID.
@@ -447,6 +492,7 @@ impl PgUnitOfWork {
             )));
         }
 
+        notify_router_config(&row.event_type);
         Ok(())
     }
 
@@ -1516,6 +1562,28 @@ mod tests {
     use super::*;
     use crate::shared::error;
     use sqlx::postgres::PgPoolOptions;
+
+    #[test]
+    fn only_client_pool_and_subscription_events_nudge_the_router() {
+        for yes in [
+            "platform:admin:client:created",
+            "platform:admin:client:deactivated",
+            "platform:admin:dispatch-pool:updated",
+            "platform:admin:dispatch-pools:synced",
+            "platform:admin:subscription:paused",
+        ] {
+            assert!(super::affects_router_config(yes), "{yes}");
+        }
+        for no in [
+            "platform:iam:user:created",
+            "platform:admin:eventtype:created",
+            "platform:admin:clients:x",
+            "platform:application-service:subscription:create",
+            "",
+        ] {
+            assert!(!super::affects_router_config(no), "{no}");
+        }
+    }
 
     struct Counter;
 

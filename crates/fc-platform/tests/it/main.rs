@@ -78,6 +78,7 @@ mod function_promote_test;
 mod function_publish_rules_golden_test;
 mod function_table_prefix_test;
 mod function_versions_test;
+mod go_catchup_test;
 mod go_field_gaps_test;
 mod go_routes_test;
 mod handler_write_convention_test;
