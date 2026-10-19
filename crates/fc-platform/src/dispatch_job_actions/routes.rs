@@ -71,6 +71,18 @@ pub fn dispatch_job_actions_router(state: DispatchJobActionsState) -> OpenApiRou
             crate::dispatch_job_actions::api::bff_requeue_dispatch_jobs
         ))
         .routes(routes!(
+            crate::dispatch_job_actions::by_filter::api_preview_requeue_by_filter
+        ))
+        .routes(routes!(
+            crate::dispatch_job_actions::by_filter::api_requeue_by_filter
+        ))
+        .routes(routes!(
+            crate::dispatch_job_actions::by_filter::bff_preview_requeue_by_filter
+        ))
+        .routes(routes!(
+            crate::dispatch_job_actions::by_filter::bff_requeue_by_filter
+        ))
+        .routes(routes!(
             crate::dispatch_job_actions::api::bff_cancel_dispatch_job
         ))
         .routes(routes!(

@@ -105,6 +105,7 @@ mod profile_only_test;
 mod prune_event_types_migration_test;
 mod read_permissions_test;
 mod read_scope_bug_fixes_test;
+mod requeue_by_filter_test;
 mod role_catalogue_go_parity_test;
 mod role_ceiling_extras_test;
 mod route_auth_convention_test;

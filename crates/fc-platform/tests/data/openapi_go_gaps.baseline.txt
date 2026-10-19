@@ -22,8 +22,6 @@ go-only: GET /oauth/userinfo
 go-only: PATCH /api/functions/{}
 go-only: POST /api/audit-logs/batch
 go-only: POST /api/dispatch-jobs/batch
-go-only: POST /api/dispatch-jobs/requeue-by-filter
-go-only: POST /api/dispatch-jobs/requeue-by-filter/preview
 go-only: POST /control/functions/dispatch-jobs
 go-only: POST /control/functions/events
 go-only: POST /control/functions/heartbeat
@@ -125,10 +123,6 @@ schema-missing: PutAliasRequest
 schema-missing: PutAliasResponse
 schema-missing: PutRouteRequest
 schema-missing: PutSettingRequest
-schema-missing: RequeueByFilterPreviewRequest
-schema-missing: RequeueByFilterPreviewResponse
-schema-missing: RequeueByFilterRequest
-schema-missing: RequeueByFilterResponse
 schema-missing: Route
 schema-missing: RouteResponse
 schema-missing: SettingResponse

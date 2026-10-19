@@ -4,5 +4,6 @@
 //! `dispatch_job/` (the scheduler's), which it only reads through.
 
 pub mod api;
+pub mod by_filter;
 pub mod operations;
 pub mod repository;

@@ -4,7 +4,7 @@
 //! follows through `updated_at`, as for every other dispatch-job write.
 
 use chrono::{DateTime, Utc};
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use crate::dispatch_job::entity::DispatchStatus;
 use crate::dispatch_job::lifecycle;
@@ -50,6 +50,94 @@ impl HasId for JobStatusFlip {
     }
 }
 
+/// What a requeue-by-filter selects (Go `dispatchjob.FilterParams`): the
+/// list's filter plus the two walk-only members. The match count and the id
+/// walk build their WHERE in [`push_conditions`], one place, so they cannot
+/// select different jobs.
+#[derive(Debug, Default, Clone)]
+pub struct MatchFilter {
+    pub status: Option<String>,
+    pub statuses: Vec<String>,
+    pub client_id: Option<String>,
+    pub client_ids: Vec<String>,
+    /// Some: only platform-scoped jobs and these clients' (a non-anchor
+    /// caller's visibility; `None` is an anchor: every job).
+    pub accessible: Option<Vec<String>>,
+    /// Drop platform-scoped jobs (`client_id IS NULL`): the id walk of a
+    /// caller that may see those jobs but not requeue them.
+    pub exclude_platform_scoped: bool,
+    pub dispatch_pool_id: Option<String>,
+    pub subscription_id: Option<String>,
+    pub code: Option<String>,
+    pub codes: Vec<String>,
+    pub source: Option<String>,
+    pub message_group: Option<String>,
+    pub applications: Vec<String>,
+    pub subdomains: Vec<String>,
+    pub aggregates: Vec<String>,
+    pub since: Option<DateTime<Utc>>,
+    pub until: Option<DateTime<Utc>>,
+    /// Keyset cursor of the id walk: only jobs whose id sorts after it.
+    pub after_id: Option<String>,
+}
+
+/// One (status, client) group of the jobs a filter matches.
+#[derive(Debug, Clone)]
+pub struct MatchBucket {
+    pub status: String,
+    pub client_id: Option<String>,
+    pub count: i64,
+}
+
+/// The filter's conditions on the read projection, as Go's
+/// `FilterParams.where`.
+fn push_conditions(qb: &mut QueryBuilder<'_, Postgres>, f: &MatchFilter) {
+    fn eq(qb: &mut QueryBuilder<'_, Postgres>, col: &str, v: &Option<String>) {
+        if let Some(v) = v {
+            qb.push(format!(" AND {col} = ")).push_bind(v.clone());
+        }
+    }
+    fn any(qb: &mut QueryBuilder<'_, Postgres>, col: &str, v: &[String]) {
+        if !v.is_empty() {
+            qb.push(format!(" AND {col} = ANY("))
+                .push_bind(v.to_vec())
+                .push(")");
+        }
+    }
+    eq(qb, "status", &f.status);
+    any(qb, "status", &f.statuses);
+    eq(qb, "client_id", &f.client_id);
+    any(qb, "client_id", &f.client_ids);
+    if let Some(ids) = &f.accessible {
+        // SECURITY: SQL-level tenant scoping. The OR group is parenthesised so
+        // it ANDs with the caller's other filters.
+        qb.push(" AND (client_id IS NULL OR client_id = ANY(")
+            .push_bind(ids.clone())
+            .push("))");
+    }
+    if f.exclude_platform_scoped {
+        qb.push(" AND client_id IS NOT NULL");
+    }
+    eq(qb, "dispatch_pool_id", &f.dispatch_pool_id);
+    eq(qb, "subscription_id", &f.subscription_id);
+    eq(qb, "code", &f.code);
+    any(qb, "code", &f.codes);
+    eq(qb, "source", &f.source);
+    eq(qb, "message_group", &f.message_group);
+    any(qb, "application", &f.applications);
+    any(qb, "subdomain", &f.subdomains);
+    any(qb, "aggregate", &f.aggregates);
+    if let Some(t) = f.since {
+        qb.push(" AND created_at >= ").push_bind(t);
+    }
+    if let Some(t) = f.until {
+        qb.push(" AND created_at <= ").push_bind(t);
+    }
+    if let Some(id) = &f.after_id {
+        qb.push(" AND id > ").push_bind(id.clone());
+    }
+}
+
 pub struct DispatchJobActionsRepository {
     pool: PgPool,
 }
@@ -57,6 +145,40 @@ pub struct DispatchJobActionsRepository {
 impl DispatchJobActionsRepository {
     pub fn new(pool: &PgPool) -> Self {
         Self { pool: pool.clone() }
+    }
+
+    /// The jobs `f` matches, grouped by status and client so a caller can apply
+    /// its own per-client rule to each group (Go `CountMatches`). Reads the
+    /// projection, like the list.
+    pub async fn count_matches(&self, f: &MatchFilter) -> Result<Vec<MatchBucket>> {
+        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
+            "SELECT status, client_id, count(*) FROM msg_dispatch_jobs_read WHERE TRUE",
+        );
+        push_conditions(&mut qb, f);
+        qb.push(" GROUP BY status, client_id");
+        let rows: Vec<(String, Option<String>, i64)> =
+            qb.build_query_as().fetch_all(&self.pool).await?;
+        Ok(rows
+            .into_iter()
+            .map(|(status, client_id, count)| MatchBucket {
+                status,
+                client_id,
+                count,
+            })
+            .collect())
+    }
+
+    /// Up to `limit` ids of the jobs `f` matches, in id order, after
+    /// `f.after_id` (Go `MatchingIDs`). Walking by id means a job that stops
+    /// matching while the walk runs (it was just requeued) cannot shift the
+    /// next page: every page starts strictly after the last id handed out.
+    pub async fn matching_ids(&self, f: &MatchFilter, limit: i64) -> Result<Vec<String>> {
+        let mut qb: QueryBuilder<Postgres> =
+            QueryBuilder::new("SELECT id FROM msg_dispatch_jobs_read WHERE TRUE");
+        push_conditions(&mut qb, f);
+        qb.push(" ORDER BY id LIMIT ").push_bind(limit);
+        let rows: Vec<(String,)> = qb.build_query_as().fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
     pub async fn heads(&self, ids: &[String]) -> Result<Vec<JobHead>> {
