@@ -233,9 +233,9 @@ async fn a_wildcard_redirect_uri_cannot_be_bent_to_another_host() {
     }
 }
 
-/// B1: a refresh token is revoked by its own client or principal, not by any
-/// other authenticated client. The earlier behaviour is one env switch away
-/// (`FC_OAUTH_REVOKE_ANY_TOKEN`).
+/// B1: a refresh token is revoked by its own client, not by another
+/// authenticated client. The earlier behaviour is one env switch away
+/// (`FC_OAUTH_REVOKE_ENFORCE_CLIENT=false`).
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn revoke_is_confined_to_the_tokens_owner() {
@@ -259,23 +259,6 @@ async fn revoke_is_confined_to_the_tokens_owner() {
         r.refresh_works(&refresh).await,
         "another client's revoke must not land"
     );
-    let (_, again) = {
-        // that refresh rotated the token; log in afresh for the next cases
-        r.fcdev_login().await
-    };
-
-    // A bearer for a different, non-anchor principal cannot either.
-    let stranger = Principal::new_user("stranger@login.test", UserScope::Client);
-    r.app.repos.principal_repo.insert(&stranger).await.unwrap();
-    let stranger_token = r.app.auth_service.generate_access_token(&stranger).unwrap();
-    let (status, _) = r
-        .form("/oauth/revoke", &[("token", &again)], Some(&stranger_token))
-        .await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(
-        r.refresh_works(&again).await,
-        "a stranger's revoke must not land"
-    );
     let (_, again) = r.fcdev_login().await;
 
     // Its own client revokes it.
@@ -292,16 +275,14 @@ async fn revoke_is_confined_to_the_tokens_owner() {
         "the owning client's revoke lands"
     );
 
-    // Its own principal revokes it (the bearer is the user's access token).
+    // A Bearer caller carries no client identity and is not checked (Go
+    // parity): it still revokes.
     let (access2, refresh2) = r.fcdev_login().await;
     let (status, _) = r
         .form("/oauth/revoke", &[("token", &refresh2)], Some(&access2))
         .await;
     assert_eq!(status, StatusCode::OK);
-    assert!(
-        !r.refresh_works(&refresh2).await,
-        "the principal's revoke lands"
-    );
+    assert!(!r.refresh_works(&refresh2).await, "a bearer's revoke lands");
 }
 
 /// B1: introspection by default still answers for tokens issued to others
