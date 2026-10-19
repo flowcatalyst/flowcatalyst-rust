@@ -20,6 +20,7 @@ use tracing::{error, info, warn};
 use utoipa::{IntoParams, ToSchema};
 
 use crate::auth::authorization_code::{Pkce, PkceMethod};
+use crate::auth::fcdev;
 use crate::auth::pending_auth_repository::{PendingAuth, PendingAuthRepository};
 use crate::auth::refresh_rotation;
 use crate::auth::refresh_rotation::Rejection;
@@ -142,6 +143,10 @@ pub struct TokenResponse {
     pub expires_in: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refresh_token: Option<String>,
+    /// Seconds until the refresh token family's absolute deadline (present with refresh_token)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = Int64)]
+    pub refresh_expires_in: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id_token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -257,6 +262,12 @@ pub struct OAuthState {
     /// is a `ptu_…` portal identity (Go `State.PortalIdentities` /
     /// `PortalApps`). `None` refuses portal codes (fail closed).
     pub portal: Option<PortalState>,
+    /// The ABSOLUTE refresh-token lifetime, in seconds, of the built-in fcdev
+    /// CLI client (`fcdev::FCDEV_CLI_CLIENT_ID`), counted from the original
+    /// sign-in; rotation never extends it. Go `State.FcdevRefreshTTL`
+    /// (`FC_FCDEV_LOGIN_REFRESH_TTL_SECS`). Zero or negative selects the
+    /// default. Other clients use the process-wide refresh lifetime.
+    pub fcdev_refresh_ttl_secs: i64,
 }
 
 /// Authorization endpoint - initiates the OAuth2 flow
@@ -339,7 +350,12 @@ pub async fn authorize(
     };
 
     // Validate redirect_uri (exact match first, then wildcard pattern matching)
-    if !matches_redirect_uri(&req.redirect_uri, &client.redirect_uris) {
+    if !fcdev::redirect_allowed(
+        &client.client_id,
+        matches_redirect_uri(&req.redirect_uri, &client.redirect_uris),
+        &req.redirect_uri,
+        &client.redirect_uris,
+    ) {
         return oauth_error(
             StatusCode::BAD_REQUEST,
             "invalid_request",
@@ -1458,6 +1474,7 @@ async fn handle_authorization_code_grant(
         .map(|s| s.split_whitespace().any(|sc| sc == "offline_access"))
         .unwrap_or(false);
 
+    let mut refresh_expires_in: Option<i64> = None;
     let refresh_token = if has_offline_access {
         let (raw_token, token_entity) = RefreshToken::generate_token_pair(principal.id.clone());
         let scopes: Vec<String> = auth_code
@@ -1465,12 +1482,22 @@ async fn handle_authorization_code_grant(
             .as_deref()
             .map(|s| s.split_whitespace().map(String::from).collect())
             .unwrap_or_default();
-        let token_entity = token_entity
+        let mut token_entity = token_entity
             .with_oauth_client(auth_code.client_id.clone())
             .with_scopes(scopes);
+        // The fcdev CLI client has its own absolute lifetime. Rotation copies
+        // `expires_at` forward unchanged, so setting it here fixes the
+        // family's deadline for good.
+        if auth_code.client_id == fcdev::FCDEV_CLI_CLIENT_ID {
+            token_entity =
+                token_entity.with_expiry(chrono::Duration::seconds(state.fcdev_refresh_ttl()));
+        }
 
         match state.refresh_token_repo.insert(&token_entity).await {
-            Ok(_) => Some(raw_token),
+            Ok(_) => {
+                refresh_expires_in = Some(secs_until(token_entity.expires_at));
+                Some(raw_token)
+            }
             Err(e) => {
                 error!(error = %e, "Failed to store refresh token");
                 return (
@@ -1500,11 +1527,28 @@ async fn handle_authorization_code_grant(
             token_type: "Bearer".to_string(),
             expires_in: state.auth_service.access_token_expiry_secs(),
             refresh_token,
+            refresh_expires_in,
             id_token,
             scope: auth_code.scope,
         }),
     )
         .into_response()
+}
+
+/// Whole seconds from now until `t`, floored at zero.
+fn secs_until(t: chrono::DateTime<Utc>) -> i64 {
+    (t - Utc::now()).num_seconds().max(0)
+}
+
+impl OAuthState {
+    /// The configured fcdev refresh lifetime, defaulting when unset.
+    fn fcdev_refresh_ttl(&self) -> i64 {
+        if self.fcdev_refresh_ttl_secs > 0 {
+            self.fcdev_refresh_ttl_secs
+        } else {
+            fcdev::DEFAULT_FCDEV_CLI_REFRESH_TTL_SECS
+        }
+    }
 }
 
 async fn handle_refresh_token_grant(
@@ -1664,6 +1708,7 @@ async fn handle_refresh_token_grant(
     };
 
     let raw_token = rotated.new_raw;
+    let refresh_expires_in = secs_until(rotated.replacement.expires_at);
 
     info!(principal_id = %principal.id, "Token refreshed via refresh_token grant");
 
@@ -1685,6 +1730,7 @@ async fn handle_refresh_token_grant(
             token_type: "Bearer".to_string(),
             expires_in: state.auth_service.access_token_expiry_secs(),
             refresh_token: Some(raw_token),
+            refresh_expires_in: Some(refresh_expires_in),
             id_token,
             scope,
         }),
@@ -1980,6 +2026,7 @@ async fn handle_client_credentials_grant(
             token_type: "Bearer".to_string(),
             expires_in: state.auth_service.access_token_expiry_secs(),
             refresh_token: None,
+            refresh_expires_in: None,
             id_token: None,
             scope: Some(granted.join(" ")).filter(|s| !s.is_empty()),
         }),
@@ -2122,6 +2169,7 @@ async fn handle_developer_credential_grant(
             token_type: "Bearer".to_string(),
             expires_in: state.auth_service.access_token_expiry_secs(),
             refresh_token: None,
+            refresh_expires_in: None,
             id_token: None,
             scope: Some(granted.join(" ")).filter(|s| !s.is_empty()),
         }),
@@ -2752,6 +2800,7 @@ mod tests {
             token_type: "Bearer".to_string(),
             expires_in: 3600,
             refresh_token: Some("rt_xyz".to_string()),
+            refresh_expires_in: Some(604_800),
             id_token: Some("id_123".to_string()),
             scope: Some("openid profile".to_string()),
         };
@@ -2760,8 +2809,48 @@ mod tests {
         assert_eq!(json["token_type"], "Bearer");
         assert_eq!(json["expires_in"], 3600);
         assert_eq!(json["refresh_token"], "rt_xyz");
+        assert_eq!(json["refresh_expires_in"], 604_800);
         assert_eq!(json["id_token"], "id_123");
         assert_eq!(json["scope"], "openid profile");
+    }
+
+    /// The schema Go's lock carries for `refresh_expires_in`
+    /// (`api/openapi.lock.json`, `TokenResponse`): optional, `int64`, with this
+    /// description. This platform's document does not describe `/oauth/token`
+    /// yet (a `go-only` line of the gap baseline), so the schema is pinned here
+    /// until the stub lands.
+    #[test]
+    fn refresh_expires_in_has_the_locked_schema() {
+        use utoipa::OpenApi;
+
+        #[derive(OpenApi)]
+        #[openapi(components(schemas(TokenResponse)))]
+        struct Doc;
+
+        let doc = serde_json::to_value(Doc::openapi()).unwrap();
+        let schema = &doc["components"]["schemas"]["TokenResponse"];
+        let prop = &schema["properties"]["refresh_expires_in"];
+        // utoipa writes an `Option` as `["integer","null"]`; the published
+        // document's shaping pass (`openapi_contract`) drops the null.
+        let ty = prop["type"].clone();
+        assert!(
+            ty == "integer" || ty == serde_json::json!(["integer", "null"]),
+            "{prop}"
+        );
+        assert_eq!(prop["format"], "int64", "{prop}");
+        assert!(
+            prop.get("example").is_none(),
+            "Go's schema has no example: {prop}"
+        );
+        assert_eq!(
+            prop["description"],
+            "Seconds until the refresh token family's absolute deadline (present with refresh_token)"
+        );
+        let required = schema["required"].as_array().cloned().unwrap_or_default();
+        assert!(
+            !required.iter().any(|r| r == "refresh_expires_in"),
+            "{required:?}"
+        );
     }
 
     #[test]
@@ -2771,11 +2860,13 @@ mod tests {
             token_type: "Bearer".to_string(),
             expires_in: 900,
             refresh_token: None,
+            refresh_expires_in: None,
             id_token: None,
             scope: None,
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert!(json.get("refresh_token").is_none());
+        assert!(json.get("refresh_expires_in").is_none());
         assert!(json.get("id_token").is_none());
         assert!(json.get("scope").is_none());
     }

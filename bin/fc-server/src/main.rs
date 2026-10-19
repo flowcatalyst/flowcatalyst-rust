@@ -781,6 +781,11 @@ async fn connect_database() -> Result<Database> {
         .await
         .map_err(|e| anyhow::anyhow!("Platform application seeding failed: {}", e))?;
 
+    // The built-in public client behind `fcdev login`, re-asserted every start.
+    database::seed_fcdev_cli_client(&pg_pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("fcdev-cli client seeding failed: {}", e))?;
+
     // Go seeds the platform event-type catalogue on every start.
     database::seed_platform_event_types(&pg_pool)
         .await

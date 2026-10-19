@@ -15,6 +15,7 @@ pub mod login_binding;
 pub mod session_cookie;
 
 // OAuth
+pub mod fcdev;
 pub mod oauth_api;
 
 // OIDC

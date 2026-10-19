@@ -61,6 +61,7 @@ mod event_source_default_test;
 mod event_type_app_scope_test;
 mod event_type_bug_fixes_test;
 mod event_type_client_ignored_test;
+mod fcdev_login_test;
 mod function_api_test;
 mod function_catalogue_test;
 mod function_control_test;
