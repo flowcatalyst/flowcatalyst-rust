@@ -29,7 +29,7 @@ use utoipa::{IntoParams, ToSchema};
 
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 
-use crate::auth::jwks_cache::{JwksCache, JwksError};
+use crate::auth::jwks_cache::{JwkKey, JwksCache, JwksError};
 use crate::auth::login_backoff;
 use crate::auth::login_backoff::BackoffDecision;
 use crate::auth::login_backoff::BackoffPolicy;
@@ -1229,36 +1229,25 @@ async fn validate_id_token_with_jwks(
     // Decode JWT header to get `kid` (key ID)
     let header = decode_header(id_token).map_err(IdTokenError::InvalidHeader)?;
 
-    // Fetch JWKS for this issuer
-    let jwks = jwks_cache.get_jwks(issuer_url).await?;
+    // Fetch JWKS for this issuer; a `kid` the cached set lacks refetches it
+    // (rate-limited), since the IdP has likely rotated its keys.
+    let jwks = jwks_cache
+        .get_jwks_for_kid(issuer_url, header.kid.as_deref())
+        .await?;
 
-    // Find the matching key by kid
-    let jwk = jwks
+    // The candidate keys: the one named by `kid`; a token without a `kid`
+    // may have been signed by any of the published keys (go-oidc tries each).
+    let candidates: Vec<&JwkKey> = jwks
         .keys
         .iter()
-        .find(|k| {
-            header
-                .kid
-                .as_ref()
-                .is_none_or(|kid| k.kid.as_ref() == Some(kid))
+        .filter(|k| match &header.kid {
+            Some(kid) => k.kid.as_ref() == Some(kid),
+            None => true,
         })
-        .ok_or_else(|| IdTokenError::NoMatchingKey(header.kid.clone()))?;
-
-    // Build DecodingKey from JWK (RSA only for now — covers Entra ID, Keycloak, Google, etc.)
-    let decoding_key = match jwk.kty.as_str() {
-        "RSA" => {
-            let n = jwk
-                .n
-                .as_ref()
-                .ok_or(IdTokenError::MissingRsaComponent("n"))?;
-            let e = jwk
-                .e
-                .as_ref()
-                .ok_or(IdTokenError::MissingRsaComponent("e"))?;
-            DecodingKey::from_rsa_components(n, e).map_err(IdTokenError::InvalidRsaKey)?
-        }
-        other => return Err(IdTokenError::UnsupportedKeyType(other.to_string())),
-    };
+        .collect();
+    if candidates.is_empty() {
+        return Err(IdTokenError::NoMatchingKey(header.kid.clone()));
+    }
 
     // Determine algorithm from header (default RS256)
     #[allow(clippy::wildcard_enum_match_arm)] // jsonwebtoken::Algorithm is foreign
@@ -1288,9 +1277,51 @@ async fn validate_id_token_with_jwks(
         validation.set_audience(&[expected_client_id]);
     }
 
-    // Decode and verify signature + standard claims
-    let token_data = decode::<serde_json::Value>(id_token, &decoding_key, &validation)
-        .map_err(IdTokenError::Signature)?;
+    // Decode and verify signature + standard claims. A key that does not
+    // verify the signature hands over to the next candidate; any other
+    // failure (expired, wrong issuer or audience) is final.
+    let mut failure: Option<IdTokenError> = None;
+    let mut verified = None;
+    for jwk in candidates {
+        // Build the key from the JWK (RSA only: Entra ID, Keycloak, Google,
+        // Okta and Auth0 sign RS256; go-oidc defaults to RS256 as well).
+        let decoding_key = match jwk.kty.as_str() {
+            "RSA" => {
+                let (Some(n), Some(e)) = (jwk.n.as_ref(), jwk.e.as_ref()) else {
+                    failure = Some(IdTokenError::MissingRsaComponent(if jwk.n.is_none() {
+                        "n"
+                    } else {
+                        "e"
+                    }));
+                    continue;
+                };
+                match DecodingKey::from_rsa_components(n, e) {
+                    Ok(k) => k,
+                    Err(e) => {
+                        failure = Some(IdTokenError::InvalidRsaKey(e));
+                        continue;
+                    }
+                }
+            }
+            other => {
+                failure = Some(IdTokenError::UnsupportedKeyType(other.to_string()));
+                continue;
+            }
+        };
+        match decode::<serde_json::Value>(id_token, &decoding_key, &validation) {
+            Ok(data) => {
+                verified = Some(data);
+                break;
+            }
+            Err(e) if matches!(e.kind(), jsonwebtoken::errors::ErrorKind::InvalidSignature) => {
+                failure = Some(IdTokenError::Signature(e));
+            }
+            Err(e) => return Err(IdTokenError::Signature(e)),
+        }
+    }
+    let Some(token_data) = verified else {
+        return Err(failure.unwrap_or(IdTokenError::NoMatchingKey(header.kid.clone())));
+    };
 
     let payload = token_data.claims;
 
@@ -1979,7 +2010,7 @@ pub(crate) async fn portal_verify_callback(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth::jwks_cache::{JwkKey, Jwks};
+    use crate::auth::jwks_cache::Jwks;
     use fc_platform_iam::auth::auth_service::AuthConfig;
     use jsonwebtoken::{encode, EncodingKey, Header};
     use serde_json::json;
@@ -2066,6 +2097,225 @@ mod tests {
                 "{aud}: {err}"
             );
         }
+    }
+
+    // ── upstream JWKS: refetch on an unknown kid, kid-less tokens ────────────
+
+    struct TestKey {
+        kid: &'static str,
+        jwk: JwkKey,
+        enc: EncodingKey,
+    }
+
+    fn test_key(kid: &'static str) -> TestKey {
+        use rsa::{pkcs8::DecodePublicKey, traits::PublicKeyParts, RsaPublicKey};
+        let (private_pem, public_pem) = AuthConfig::generate_rsa_keys(None).unwrap();
+        let public = RsaPublicKey::from_public_key_pem(&public_pem).unwrap();
+        TestKey {
+            kid,
+            jwk: JwkKey {
+                kty: "RSA".to_string(),
+                key_use: Some("sig".to_string()),
+                kid: Some(kid.to_string()),
+                alg: Some("RS256".to_string()),
+                n: Some(URL_SAFE_NO_PAD.encode(public.n().to_bytes_be())),
+                e: Some(URL_SAFE_NO_PAD.encode(public.e().to_bytes_be())),
+                x: None,
+                y: None,
+                crv: None,
+            },
+            enc: EncodingKey::from_rsa_pem(private_pem.as_bytes()).unwrap(),
+        }
+    }
+
+    /// A fake IdP: discovery plus a JWKS that tests swap, counting JWKS hits.
+    struct FakeIdp {
+        base: String,
+        keys: std::sync::Arc<std::sync::Mutex<Vec<JwkKey>>>,
+        jwks_hits: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        server: tokio::task::JoinHandle<()>,
+    }
+
+    impl Drop for FakeIdp {
+        fn drop(&mut self) {
+            self.server.abort();
+        }
+    }
+
+    async fn fake_idp(published: Vec<JwkKey>) -> FakeIdp {
+        use axum::{extract::State, routing::get, Json, Router};
+        use std::sync::atomic::Ordering;
+        #[derive(Clone)]
+        struct St {
+            base: String,
+            keys: std::sync::Arc<std::sync::Mutex<Vec<JwkKey>>>,
+            hits: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let keys = std::sync::Arc::new(std::sync::Mutex::new(published));
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let st = St {
+            base: base.clone(),
+            keys: keys.clone(),
+            hits: hits.clone(),
+        };
+        let app = Router::new()
+            .route(
+                "/.well-known/openid-configuration",
+                get(|State(st): State<St>| async move {
+                    Json(json!({ "jwks_uri": format!("{}/jwks", st.base) }))
+                }),
+            )
+            .route(
+                "/jwks",
+                get(|State(st): State<St>| async move {
+                    st.hits.fetch_add(1, Ordering::SeqCst);
+                    let keys: Vec<serde_json::Value> = st
+                        .keys
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .map(|k| {
+                            json!({"kty": k.kty, "use": k.key_use, "kid": k.kid, "alg": k.alg,
+                                   "n": k.n, "e": k.e})
+                        })
+                        .collect();
+                    Json(json!({ "keys": keys }))
+                }),
+            )
+            .with_state(st);
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        FakeIdp {
+            base,
+            keys,
+            jwks_hits: hits,
+            server,
+        }
+    }
+
+    fn single_tenant_idp(issuer: &str) -> IdentityProvider {
+        let mut idp = IdentityProvider::new("kc", "Keycloak", IdentityProviderType::Oidc);
+        idp.oidc_issuer_url = Some(issuer.to_string());
+        idp.oidc_client_id = Some("our-client".to_string());
+        idp
+    }
+
+    fn token_for(issuer: &str, key: &TestKey, with_kid: bool) -> String {
+        let mut header = Header::new(Algorithm::RS256);
+        if with_kid {
+            header.kid = Some(key.kid.to_string());
+        }
+        let now = chrono::Utc::now().timestamp();
+        encode(
+            &header,
+            &json!({
+                "iss": issuer, "sub": "s", "aud": "our-client",
+                "exp": now + 300, "iat": now, "nonce": "n-1", "email": "ada@acme.test"
+            }),
+            &key.enc,
+        )
+        .unwrap()
+    }
+
+    /// R6: the IdP rotated to a key the cached set lacks. The token names an
+    /// unknown `kid`, so the set is refetched and the login goes through,
+    /// instead of failing until the 15-minute TTL.
+    #[tokio::test]
+    async fn an_unknown_kid_refetches_the_jwks() {
+        let (k1, k2) = (test_key("k1"), test_key("k2"));
+        let idp_srv = fake_idp(vec![k1.jwk.clone()]).await;
+        let idp = single_tenant_idp(&idp_srv.base);
+        let cache = JwksCache::new(900).with_min_kid_refetch_secs(0);
+
+        validate_id_token_with_jwks(&token_for(&idp_srv.base, &k1, true), &idp, "n-1", &cache)
+            .await
+            .unwrap();
+        assert_eq!(
+            idp_srv.jwks_hits.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+
+        // The IdP rotates.
+        *idp_srv.keys.lock().unwrap() = vec![k2.jwk.clone()];
+        validate_id_token_with_jwks(&token_for(&idp_srv.base, &k2, true), &idp, "n-1", &cache)
+            .await
+            .expect("a rotated key is found after a refetch");
+        assert_eq!(
+            idp_srv.jwks_hits.load(std::sync::atomic::Ordering::SeqCst),
+            2
+        );
+    }
+
+    /// The refetch is rate-limited: tokens naming a kid the IdP never
+    /// publishes cause one refetch per interval, not one per login.
+    #[tokio::test]
+    async fn unknown_kid_refetches_are_rate_limited() {
+        let (k1, ghost) = (test_key("k1"), test_key("ghost"));
+        let idp_srv = fake_idp(vec![k1.jwk.clone()]).await;
+        let idp = single_tenant_idp(&idp_srv.base);
+        let cache = JwksCache::new(900); // 30 s minimum between refetches
+
+        validate_id_token_with_jwks(&token_for(&idp_srv.base, &k1, true), &idp, "n-1", &cache)
+            .await
+            .unwrap();
+        for _ in 0..5 {
+            let err = validate_id_token_with_jwks(
+                &token_for(&idp_srv.base, &ghost, true),
+                &idp,
+                "n-1",
+                &cache,
+            )
+            .await
+            .unwrap_err();
+            assert!(matches!(err, IdTokenError::NoMatchingKey(_)), "{err}");
+        }
+        // Fetched once at the start; the set was fresh, so no refetch yet.
+        assert_eq!(
+            idp_srv.jwks_hits.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+
+        // Age the entry past the interval: exactly one refetch, then limited.
+        let cache = JwksCache::new(900).with_min_kid_refetch_secs(0);
+        for _ in 0..3 {
+            let err = validate_id_token_with_jwks(
+                &token_for(&idp_srv.base, &ghost, true),
+                &idp,
+                "n-1",
+                &cache,
+            )
+            .await
+            .unwrap_err();
+            assert!(matches!(err, IdTokenError::NoMatchingKey(_)), "{err}");
+        }
+        assert!(idp_srv.jwks_hits.load(std::sync::atomic::Ordering::SeqCst) >= 2);
+    }
+
+    /// A token without a `kid` is verified against each published key (it used
+    /// to be tried against the first only), as go-oidc does; a token signed by
+    /// a key that is not published still fails.
+    #[tokio::test]
+    async fn a_kidless_token_is_tried_against_every_key() {
+        let (k1, k2, stranger) = (test_key("k1"), test_key("k2"), test_key("zz"));
+        let idp_srv = fake_idp(vec![k1.jwk.clone(), k2.jwk.clone()]).await;
+        let idp = single_tenant_idp(&idp_srv.base);
+        let cache = JwksCache::new(900);
+
+        validate_id_token_with_jwks(&token_for(&idp_srv.base, &k2, false), &idp, "n-1", &cache)
+            .await
+            .expect("signed by the second published key");
+        let err = validate_id_token_with_jwks(
+            &token_for(&idp_srv.base, &stranger, false),
+            &idp,
+            "n-1",
+            &cache,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, IdTokenError::Signature(_)), "{err}");
     }
 
     #[test]

@@ -29,6 +29,10 @@ pub enum JwksError {
 struct CachedJwks {
     jwks: Jwks,
     fetched_at: DateTime<Utc>,
+    /// When a refetch for an unknown `kid` was last tried (success or not),
+    /// so a token naming a key the IdP does not publish cannot make every
+    /// login a network call.
+    last_kid_refetch: Option<DateTime<Utc>>,
 }
 
 /// JWKS response
@@ -63,7 +67,12 @@ pub struct JwksCache {
     cache: Arc<RwLock<HashMap<String, CachedJwks>>>,
     http_client: reqwest::Client,
     ttl_secs: i64,
+    /// Fewest seconds between refetches for an unknown `kid` per issuer.
+    min_kid_refetch_secs: i64,
 }
+
+/// Default for [`JwksCache::min_kid_refetch_secs`].
+const MIN_KID_REFETCH_SECS: i64 = 30;
 
 impl JwksCache {
     /// Create a new JWKS cache with the given TTL (in seconds)
@@ -75,7 +84,15 @@ impl JwksCache {
                 .build()
                 .unwrap_or_default(),
             ttl_secs,
+            min_kid_refetch_secs: MIN_KID_REFETCH_SECS,
         }
+    }
+
+    /// Set the fewest seconds between unknown-`kid` refetches per issuer.
+    #[must_use]
+    pub fn with_min_kid_refetch_secs(mut self, secs: i64) -> Self {
+        self.min_kid_refetch_secs = secs;
+        self
     }
 
     /// Get JWKS for an issuer, fetching from the network if not cached or expired.
@@ -103,11 +120,64 @@ impl JwksCache {
                 CachedJwks {
                     jwks: jwks.clone(),
                     fetched_at: Utc::now(),
+                    last_kid_refetch: None,
                 },
             );
         }
 
         Ok(jwks)
+    }
+
+    /// [`Self::get_jwks`] for a token that names key `kid`: when the cached
+    /// set does not hold that key the IdP has probably rotated, so refetch
+    /// once, at most every `min_kid_refetch_secs` per issuer, instead of
+    /// failing every login until the TTL runs out (Go's go-oidc
+    /// `RemoteKeySet` refetches on an unknown key id the same way). A failed
+    /// refetch keeps the cached set.
+    pub async fn get_jwks_for_kid(
+        &self,
+        issuer_url: &str,
+        kid: Option<&str>,
+    ) -> Result<Jwks, JwksError> {
+        let jwks = self.get_jwks(issuer_url).await?;
+        let Some(kid) = kid else {
+            return Ok(jwks);
+        };
+        if jwks.keys.iter().any(|k| k.kid.as_deref() == Some(kid)) {
+            return Ok(jwks);
+        }
+        {
+            let mut cache = self.cache.write().await;
+            let Some(entry) = cache.get_mut(issuer_url) else {
+                return Ok(jwks);
+            };
+            let now = Utc::now();
+            let last = entry.last_kid_refetch.unwrap_or(entry.fetched_at);
+            if (now - last).num_seconds() < self.min_kid_refetch_secs {
+                debug!(issuer = %issuer_url, kid, "unknown kid; refetch rate-limited");
+                return Ok(jwks);
+            }
+            entry.last_kid_refetch = Some(now);
+        }
+        debug!(issuer = %issuer_url, kid, "unknown kid; refetching JWKS");
+        match self.fetch_jwks(issuer_url).await {
+            Ok(fresh) => {
+                let mut cache = self.cache.write().await;
+                cache.insert(
+                    issuer_url.to_string(),
+                    CachedJwks {
+                        jwks: fresh.clone(),
+                        fetched_at: Utc::now(),
+                        last_kid_refetch: Some(Utc::now()),
+                    },
+                );
+                Ok(fresh)
+            }
+            Err(e) => {
+                warn!(issuer = %issuer_url, error = %e, "JWKS refetch for an unknown kid failed; keeping the cached set");
+                Ok(jwks)
+            }
+        }
     }
 
     /// Fetch JWKS from the issuer's discovery endpoint
@@ -171,6 +241,7 @@ impl JwksCache {
             CachedJwks {
                 jwks,
                 fetched_at: Utc::now(),
+                last_kid_refetch: None,
             },
         );
     }
@@ -218,6 +289,7 @@ mod tests {
             CachedJwks {
                 jwks: jwks.clone(),
                 fetched_at: Utc::now(),
+                last_kid_refetch: None,
             },
         );
         inner.insert(
@@ -225,6 +297,7 @@ mod tests {
             CachedJwks {
                 jwks: jwks.clone(),
                 fetched_at: Utc::now(),
+                last_kid_refetch: None,
             },
         );
 
@@ -244,6 +317,7 @@ mod tests {
             CachedJwks {
                 jwks: jwks.clone(),
                 fetched_at: Utc::now(),
+                last_kid_refetch: None,
             },
         );
         // Inserting same key overwrites
@@ -252,6 +326,7 @@ mod tests {
             CachedJwks {
                 jwks,
                 fetched_at: Utc::now(),
+                last_kid_refetch: None,
             },
         );
 
@@ -268,6 +343,7 @@ mod tests {
                 CachedJwks {
                     jwks: Jwks { keys: vec![] },
                     fetched_at: Utc::now(),
+                    last_kid_refetch: None,
                 },
             );
         }
@@ -298,6 +374,7 @@ mod tests {
                 CachedJwks {
                     jwks: Jwks { keys: vec![] },
                     fetched_at: Utc::now() - chrono::Duration::seconds(10),
+                    last_kid_refetch: None,
                 },
             );
         }
