@@ -470,6 +470,13 @@ pub mod roles {
                 permissions::admin::EVENT_VIEW_RAW,
                 permissions::admin::DISPATCH_JOB_READ,
                 permissions::admin::DISPATCH_JOB_VIEW_RAW,
+                // The write actions are their own permissions (Go `ad37de21`).
+                // `redrive-completed` is held by no built-in role but
+                // super-admin's wildcard: grant it deliberately.
+                permissions::admin::DISPATCH_JOB_REQUEUE,
+                permissions::admin::DISPATCH_JOB_CANCEL,
+                permissions::admin::DISPATCH_JOB_COMPLETE,
+                permissions::admin::DISPATCH_JOB_EDIT_PAYLOAD,
                 permissions::admin::SCHEDULED_JOB_READ,
                 permissions::admin::SCHEDULED_JOB_CREATE,
                 permissions::admin::SCHEDULED_JOB_UPDATE,

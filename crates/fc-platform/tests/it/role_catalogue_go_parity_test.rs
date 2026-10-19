@@ -5,7 +5,8 @@
 //! `internal/platform/seed/roles.go` (`PlatformRoles`), with each permission
 //! constant resolved through `internal/platform/seed/permissions.go`, at
 //! flowcatalyst-go HEAD 73a6918; `application-service` (F19, F20) and
-//! `function-deployer` (F26) were refreshed against db12114b on 2026-10-19.
+//! `function-deployer` (F26) were refreshed against db12114b on 2026-10-19, and
+//! `messaging-admin`'s dispatch-job write permissions against ad37de21.
 //! Every Go role must exist in Rust with the
 //! same display name, description and exactly the same permission set.
 //!
@@ -200,6 +201,10 @@ const GO_ROLES: &[(&str, &str, &str, &[&str])] = &[
             "platform:messaging:event:view-raw",
             "platform:messaging:dispatch-job:view",
             "platform:messaging:dispatch-job:view-raw",
+            "platform:messaging:dispatch-job:requeue",
+            "platform:messaging:dispatch-job:cancel",
+            "platform:messaging:dispatch-job:complete",
+            "platform:messaging:dispatch-job:edit-payload",
             "platform:messaging:scheduled-job:view",
             "platform:messaging:scheduled-job:create",
             "platform:messaging:scheduled-job:update",

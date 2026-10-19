@@ -367,7 +367,7 @@ fn core_migrations() -> &'static [(&'static str, &'static str)] {
             "070_platform_event_schema_fixes",
             include_str!("../../../migrations/070_platform_event_schema_fixes.sql"),
         ),
-        // 071-094: Go's migrations 035-052, 055 and 059-082 that Rust lacked, one
+        // 071-095: Go's migrations 035-052, 055, 059-082 and 085 that Rust lacked, one
         // each, so a database Rust creates ends schema-compatible with Go at 082
         // (docs/go-mirror/migration-mapping.md). Go's SQL, idempotent.
         // Go 035_persist_boundary_columns.sql.
@@ -489,6 +489,11 @@ fn core_migrations() -> &'static [(&'static str, &'static str)] {
         (
             "094_go_dispatch_job_connection",
             include_str!("../../../migrations/094_go_dispatch_job_connection.sql"),
+        ),
+        // Go 085_dispatch_job_write_permissions.sql.
+        (
+            "095_go_dispatch_job_write_permissions",
+            include_str!("../../../migrations/095_go_dispatch_job_write_permissions.sql"),
         ),
     ]
 }
@@ -913,7 +918,7 @@ pub async fn run_migrations_with(
              WHERE et.code = 'platform:admin:dispatch-pool:created' \
                AND sv.schema_content::text LIKE '%dispatchPoolId%')",
         ),
-        // 071-094 mirror Go 035-052, 055 and 059-082. A probe is true where Go's
+        // 071-095 mirror Go 035-052, 055, 059-082 and 085. A probe is true where Go's
         // (or an earlier Rust run's) effect is visible; every one of these is
         // idempotent, so a false probe only means the migration runs.
         (
@@ -1011,6 +1016,12 @@ pub async fn run_migrations_with(
         (
             "094_go_dispatch_job_connection",
             "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'msg_dispatch_jobs' AND column_name = 'connection_id')",
+        ),
+        // 095 grants the four ordinary write permissions to every role holding
+        // dispatch-job:view (except platform:viewer): done where no such role lacks requeue.
+        (
+            "095_go_dispatch_job_write_permissions",
+            "SELECT NOT EXISTS (SELECT 1 FROM iam_role_permissions rp JOIN iam_roles r ON r.id = rp.role_id WHERE rp.permission = 'platform:messaging:dispatch-job:view' AND r.name <> 'platform:viewer' AND NOT EXISTS (SELECT 1 FROM iam_role_permissions x WHERE x.role_id = rp.role_id AND x.permission = 'platform:messaging:dispatch-job:requeue'))",
         ),
     ];
 

@@ -49,6 +49,7 @@ mod dispatch_ingest_pending_test;
 mod dispatch_job_edit_payload_test;
 mod dispatch_job_requeue_guard_test;
 mod dispatch_job_window_test;
+mod dispatch_job_write_permissions_test;
 mod dispatch_lifecycle_test;
 mod dispatch_pool_ownership_test;
 mod dispatch_pool_write_permission_test;
