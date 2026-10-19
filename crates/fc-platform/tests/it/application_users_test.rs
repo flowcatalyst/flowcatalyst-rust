@@ -663,6 +663,11 @@ async fn the_application_binding_is_enforced_on_all_six_routes() {
             ("unknown for an all-applications caller", admin_s, &admin_b),
         ] {
             assert_eq!(status, StatusCode::NOT_FOUND, "{name} {what}: {body}");
+            // Go F32: one answer for all three, whoever asks.
+            assert_eq!(
+                body["error"], "Application_NOT_FOUND",
+                "{name} {what}: {body}"
+            );
         }
     }
     // nothing was changed by any of the refused calls
