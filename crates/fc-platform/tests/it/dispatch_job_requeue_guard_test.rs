@@ -278,18 +278,21 @@ async fn a_redrive_needs_both_fields_and_both_permissions() {
             .unwrap();
     assert_eq!(attempts, 0, "a redriven job gets a fresh retry budget");
 
-    // The audit trail tells a redrive apart: the event and the audit row say so.
-    let (redrive, count, redriven_ids): (bool, i32, Value) = sqlx::query_as(
-        "SELECT (data::jsonb->>'redrive')::bool, (data::jsonb->>'redrivenCount')::int, data::jsonb->'redrivenIds'
-           FROM msg_events WHERE type = 'platform:messaging:dispatch-jobs:resent' AND data::jsonb->'ids' ? $1",
+    // The event is the ids only (when and by whom are in its metadata); the
+    // redrive mark lives in the audit row and the response, below.
+    let (data,): (Value,) = sqlx::query_as(
+        "SELECT data::jsonb FROM msg_events
+          WHERE type = 'platform:messaging:dispatch-jobs:resent' AND data::jsonb->'ids' ? $1",
     )
     .bind(&g.completed)
     .fetch_one(&app.pool)
     .await
     .unwrap();
-    assert!(redrive);
-    assert_eq!(count, 1);
-    assert_eq!(redriven_ids, json!([g.completed]));
+    assert_eq!(
+        data.as_object().unwrap().keys().collect::<Vec<_>>(),
+        ["ids"],
+        "{data}"
+    );
     let (flagged,): (bool,) = sqlx::query_as(
         "SELECT (operation_json::jsonb->>'redriveCompleted')::bool FROM aud_logs
           WHERE operation = 'ResendCommand' AND operation_json::jsonb->'ids' ? $1
@@ -301,21 +304,21 @@ async fn a_redrive_needs_both_fields_and_both_permissions() {
     .unwrap();
     assert!(flagged, "the audit row carries redriveCompleted=true");
 
-    // An ordinary requeue's event says redrive=false and leaves redrivenIds out.
+    // An ordinary requeue's audit row carries no redrive flag.
     let (status, body) = requeue(&app, &both, json!({ "ids": [g.failed] })).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    let (data,): (Value,) = sqlx::query_as(
-        "SELECT data::jsonb FROM msg_events
-          WHERE type = 'platform:messaging:dispatch-jobs:resent' AND data::jsonb->'ids' ? $1
-          ORDER BY id DESC LIMIT 1",
+    assert_eq!(body["redriven"], 0);
+    let (plain,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM aud_logs
+          WHERE operation = 'ResendCommand' AND operation_json::jsonb->'ids' ? $1
+            AND jsonb_array_length(operation_json::jsonb->'ids') = 1
+            AND operation_json::jsonb ? 'redriveCompleted'",
     )
     .bind(&g.failed)
     .fetch_one(&app.pool)
     .await
     .unwrap();
-    assert_eq!(data["redrive"], false);
-    assert!(data.get("redrivenIds").is_none(), "{data}");
-    assert_eq!(data["skippedInFlight"], 0);
+    assert_eq!(plain, 0);
 }
 
 async fn preview(app: &TestApp, token: &str, body: Value) -> Value {

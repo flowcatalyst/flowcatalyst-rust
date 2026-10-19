@@ -376,6 +376,7 @@ column msg_dispatch_jobs_read.attempt_count integer NOT NULL default=0
 column msg_dispatch_jobs_read.client_id character varying(17) NULL default=-
 column msg_dispatch_jobs_read.code character varying(200) NOT NULL default=-
 column msg_dispatch_jobs_read.completed_at timestamp with time zone NULL default=-
+column msg_dispatch_jobs_read.connection_id character varying(17) NULL default=-
 column msg_dispatch_jobs_read.correlation_id character varying(100) NULL default=-
 column msg_dispatch_jobs_read.created_at timestamp with time zone NOT NULL default=now()
 column msg_dispatch_jobs_read.descriptor character varying(255) NULL default=-
@@ -1071,13 +1072,14 @@ index msg_dispatch_jobs.idx_msg_dispatch_jobs_dirty CREATE INDEX idx_msg_dispatc
 index msg_dispatch_jobs.msg_dispatch_jobs_pkey CREATE UNIQUE INDEX msg_dispatch_jobs_pkey ON ONLY public.msg_dispatch_jobs USING btree (id, created_at)
 index msg_dispatch_jobs_read.idx_msg_dispatch_jobs_read_application CREATE INDEX idx_msg_dispatch_jobs_read_application ON ONLY public.msg_dispatch_jobs_read USING btree (application)
 index msg_dispatch_jobs_read.idx_msg_dispatch_jobs_read_client_created CREATE INDEX idx_msg_dispatch_jobs_read_client_created ON ONLY public.msg_dispatch_jobs_read USING btree (client_id, created_at DESC)
-index msg_dispatch_jobs_read.idx_msg_dispatch_jobs_read_code CREATE INDEX idx_msg_dispatch_jobs_read_code ON ONLY public.msg_dispatch_jobs_read USING btree (code)
+index msg_dispatch_jobs_read.idx_msg_dispatch_jobs_read_code_created CREATE INDEX idx_msg_dispatch_jobs_read_code_created ON ONLY public.msg_dispatch_jobs_read USING btree (code, created_at DESC)
+index msg_dispatch_jobs_read.idx_msg_dispatch_jobs_read_connection_created CREATE INDEX idx_msg_dispatch_jobs_read_connection_created ON ONLY public.msg_dispatch_jobs_read USING btree (connection_id, created_at DESC) WHERE (connection_id IS NOT NULL)
 index msg_dispatch_jobs_read.idx_msg_dispatch_jobs_read_created_at CREATE INDEX idx_msg_dispatch_jobs_read_created_at ON ONLY public.msg_dispatch_jobs_read USING btree (created_at)
 index msg_dispatch_jobs_read.idx_msg_dispatch_jobs_read_dispatch_pool_id CREATE INDEX idx_msg_dispatch_jobs_read_dispatch_pool_id ON ONLY public.msg_dispatch_jobs_read USING btree (dispatch_pool_id)
 index msg_dispatch_jobs_read.idx_msg_dispatch_jobs_read_event_id CREATE INDEX idx_msg_dispatch_jobs_read_event_id ON ONLY public.msg_dispatch_jobs_read USING btree (event_id)
 index msg_dispatch_jobs_read.idx_msg_dispatch_jobs_read_message_group CREATE INDEX idx_msg_dispatch_jobs_read_message_group ON ONLY public.msg_dispatch_jobs_read USING btree (message_group)
 index msg_dispatch_jobs_read.idx_msg_dispatch_jobs_read_status_created CREATE INDEX idx_msg_dispatch_jobs_read_status_created ON ONLY public.msg_dispatch_jobs_read USING btree (status, created_at DESC)
-index msg_dispatch_jobs_read.idx_msg_dispatch_jobs_read_subscription_id CREATE INDEX idx_msg_dispatch_jobs_read_subscription_id ON ONLY public.msg_dispatch_jobs_read USING btree (subscription_id)
+index msg_dispatch_jobs_read.idx_msg_dispatch_jobs_read_subscription_created CREATE INDEX idx_msg_dispatch_jobs_read_subscription_created ON ONLY public.msg_dispatch_jobs_read USING btree (subscription_id, created_at DESC)
 index msg_dispatch_jobs_read.msg_dispatch_jobs_read_pkey CREATE UNIQUE INDEX msg_dispatch_jobs_read_pkey ON ONLY public.msg_dispatch_jobs_read USING btree (id, created_at)
 index msg_dispatch_pools.idx_msg_dispatch_pools_application_id CREATE INDEX idx_msg_dispatch_pools_application_id ON public.msg_dispatch_pools USING btree (application_id)
 index msg_dispatch_pools.idx_msg_dispatch_pools_client_id CREATE INDEX idx_msg_dispatch_pools_client_id ON public.msg_dispatch_pools USING btree (client_id)

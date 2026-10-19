@@ -45,6 +45,7 @@ pub fn dispatch_jobs_state(ctx: &PlatformContext) -> DispatchJobsState {
         signing: ctx.signing_guard.clone(),
         app_scope: ctx.app_scope_guard.clone(),
         max_window_days: crate::dispatch_job::window::max_window_days_from_env(),
+        filter_options_cache: std::sync::Arc::default(),
     }
 }
 

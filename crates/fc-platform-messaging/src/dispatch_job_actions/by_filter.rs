@@ -18,6 +18,7 @@
 //! handler, before the filter is read).
 
 use std::collections::{BTreeMap, HashMap};
+use std::mem::take;
 
 use axum::{extract::State, http::StatusCode, Json};
 use chrono::Utc;
@@ -32,6 +33,7 @@ use utoipa::ToSchema;
 use super::api::{can_requeue_dispatch_jobs_with, resend_command, DispatchJobActionsState};
 use super::operations::reaches;
 use super::repository::MatchFilter;
+use crate::dispatch_job::refs::{parse_refs, Refs};
 use crate::dispatch_job::requeue_rules::{
     classify_for_requeue, redrive_confirmed, resettable_statuses, Verdict, REDRIVE_CONFIRMATION,
 };
@@ -87,6 +89,27 @@ pub struct DispatchJobFilter {
     /// Free-text source filter
     #[serde(default)]
     pub source: Option<String>,
+    /// Exact event type. A job's code is its event type for a job raised by an event (and the caller's own job code for an SDK or function-dispatched job). Combines with eventTypes and codes (all must hold).
+    #[serde(default)]
+    pub event_type: Option<String>,
+    /// CSV of event types (at most 10; more is 400 TOO_MANY_EVENT_TYPES)
+    #[serde(default)]
+    pub event_types: Option<String>,
+    /// CSV of subscription ids (at most 50; more is 400 TOO_MANY_SUBSCRIPTION_IDS). Combines with subscriptionId.
+    #[serde(default)]
+    pub subscription_ids: Option<String>,
+    /// Subscription code, exact; a trailing * makes it a prefix. Resolved to subscription ids first (400 TOO_MANY_MATCHES past 200); a code that matches nothing selects no jobs.
+    #[serde(default)]
+    pub subscription_code: Option<String>,
+    /// Subscription name, exact and case-insensitive; a trailing * makes it a prefix. Resolved like subscriptionCode.
+    #[serde(default)]
+    pub subscription_name: Option<String>,
+    /// Jobs delivered through this connection: the jobs of its subscriptions and the jobs that name the connection themselves (function dispatch).
+    #[serde(default)]
+    pub connection_id: Option<String>,
+    /// Connection code, exact; a trailing * makes it a prefix. Resolved to connection ids first (400 TOO_MANY_MATCHES past 50); a code that matches nothing selects no jobs.
+    #[serde(default)]
+    pub connection_code: Option<String>,
 }
 
 fn split_csv(input: Option<&str>) -> Vec<String> {
@@ -110,7 +133,19 @@ impl DispatchJobFilter {
     /// here. The list ignores one (and shows more rows), but a bulk requeue
     /// that silently dropped a bound would reset more jobs than was asked for.
     pub fn to_match_filter(&self) -> Result<MatchFilter, PlatformError> {
+        let parsed = parse_refs(
+            self.event_type.as_deref(),
+            self.event_types.as_deref(),
+            self.subscription_ids.as_deref(),
+            self.subscription_code.as_deref(),
+            self.subscription_name.as_deref(),
+            self.connection_id.as_deref(),
+            self.connection_code.as_deref(),
+        )?;
         Ok(MatchFilter {
+            event_types: parsed.event_types,
+            subscription_ids: parsed.subscription_ids,
+            refs: Refs::new(parsed.query),
             status: non_empty(&self.status),
             statuses: split_csv(self.statuses.as_deref()),
             client_id: non_empty(&self.client_id),
@@ -282,14 +317,21 @@ async fn summarize(
 
 /// The filter held to its time window (Go `scoped`): none given is the last 24
 /// hours, wider than the configured maximum is a 400.
-fn windowed(
+async fn windowed(
     state: &DispatchJobActionsState,
+    auth: &Authenticated,
     filter: &DispatchJobFilter,
 ) -> Result<(MatchFilter, Window), PlatformError> {
     let mut f = filter.to_match_filter()?;
     let enforced = enforce_window(f.since, f.until, Utc::now(), state.max_window_days)?;
     f.since = Some(enforced.since);
     f.until = enforced.until;
+    // Then the by-name references, resolved within the caller's tenants.
+    let scope = (!auth.0.is_anchor()).then(|| caller_reach::client_ids(&auth.0));
+    f.refs = state
+        .repo
+        .resolve_refs(take(&mut f.refs), scope.as_deref())
+        .await?;
     Ok((f, enforced.window))
 }
 
@@ -298,7 +340,7 @@ async fn preview(
     auth: &Authenticated,
     filter: &DispatchJobFilter,
 ) -> Result<Json<RequeueByFilterPreviewResponse>, PlatformError> {
-    let (f, window) = windowed(state, filter)?;
+    let (f, window) = windowed(state, auth, filter).await?;
     let s = summarize(state, auth, f).await?;
     let redrive_eligible_count = s.redrive_eligible();
     Ok(Json(RequeueByFilterPreviewResponse {
@@ -341,7 +383,7 @@ async fn requeue_by_filter(
     auth: &Authenticated,
     req: RequeueByFilterRequest,
 ) -> Result<Json<RequeueByFilterResponse>, PlatformError> {
-    let (f, window) = windowed(state, &req.filter)?;
+    let (f, window) = windowed(state, auth, &req.filter).await?;
     let confirm = req.confirm_count;
     if confirm < 0 {
         return Err(PlatformError::bad_request_code(

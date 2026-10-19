@@ -9,6 +9,7 @@ use crate::dispatch_job::entity::{
 use crate::dispatch_job::entity::{parse_dispatch_mode, parse_dispatch_status};
 use crate::dispatch_job::entity::{DispatchJob, DispatchJobRead, DispatchStatus};
 use crate::dispatch_job::lifecycle;
+use crate::dispatch_job::refs::{push_refs, resolve_refs, Refs};
 use chrono::{DateTime, Utc};
 use fc_common::DispatchMode;
 use fc_platform_core::shared::api_common::DecodedCursor;
@@ -342,6 +343,14 @@ pub struct DispatchJobReadFilter<'a> {
     pub applications: &'a [String],
     pub subdomains: &'a [String],
     pub aggregates: &'a [String],
+    /// Jobs whose code is one of these (a job's code is its event type for an
+    /// event-raised job); with `code`/`codes`, all must hold.
+    pub event_types: &'a [String],
+    /// Jobs of any of these subscriptions.
+    pub subscription_ids: &'a [String],
+    /// The subscription code/name and connection references, resolved to ids
+    /// ([`DispatchJobRepository::resolve_refs`]); unresolved ones match nothing.
+    pub refs: Option<&'a Refs>,
     pub since: Option<DateTime<Utc>>,
     pub until: Option<DateTime<Utc>>,
     pub ascending: bool,
@@ -853,6 +862,13 @@ impl DispatchJobRepository {
         row.map(DispatchJobRead::try_from).transpose()
     }
 
+    /// Resolves the by-name subscription and connection references of a list
+    /// request to ids (Go `ResolveRefs`), scoped to the platform's own rows
+    /// plus the caller's tenants (`scope`: `None` is an anchor).
+    pub async fn resolve_refs(&self, refs: Refs, scope: Option<&[String]>) -> Result<Refs> {
+        resolve_refs(&self.pool, refs, scope).await
+    }
+
     /// The read projection filtered as Go's `FindWithFilters`.
     pub async fn find_read_filtered(
         &self,
@@ -895,6 +911,11 @@ impl DispatchJobRepository {
         any(&mut qb, "application", f.applications);
         any(&mut qb, "subdomain", f.subdomains);
         any(&mut qb, "aggregate", f.aggregates);
+        any(&mut qb, "code", f.event_types);
+        any(&mut qb, "subscription_id", f.subscription_ids);
+        if let Some(refs) = f.refs {
+            push_refs(&mut qb, refs);
+        }
         if let Some(t) = f.since {
             qb.push(" AND created_at >= ").push_bind(t);
         }

@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 
 use crate::dispatch_job::entity::DispatchStatus;
 use crate::dispatch_job::lifecycle;
+use crate::dispatch_job::refs::{push_refs, resolve_refs, Refs};
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase::unit_of_work::HasId;
 use fc_platform_core::usecase::DbTx;
@@ -107,6 +108,13 @@ pub struct MatchFilter {
     pub subscription_id: Option<String>,
     pub code: Option<String>,
     pub codes: Vec<String>,
+    /// Jobs whose code is one of these (a job's code is its event type).
+    pub event_types: Vec<String>,
+    /// Jobs of any of these subscriptions.
+    pub subscription_ids: Vec<String>,
+    /// The by-name subscription and connection references, resolved to ids
+    /// ([`DispatchJobActionsRepository::resolve_refs`]); unresolved ones match nothing.
+    pub refs: Refs,
     pub source: Option<String>,
     pub message_group: Option<String>,
     pub applications: Vec<String>,
@@ -165,6 +173,9 @@ fn push_conditions(qb: &mut QueryBuilder<'_, Postgres>, f: &MatchFilter) {
     any(qb, "application", &f.applications);
     any(qb, "subdomain", &f.subdomains);
     any(qb, "aggregate", &f.aggregates);
+    any(qb, "code", &f.event_types);
+    any(qb, "subscription_id", &f.subscription_ids);
+    push_refs(qb, &f.refs);
     if let Some(t) = f.since {
         qb.push(" AND created_at >= ").push_bind(t);
     }
@@ -229,6 +240,12 @@ impl DispatchJobActionsRepository {
         .bind(id)
         .fetch_optional(&self.pool)
         .await?)
+    }
+
+    /// Resolves the by-name subscription and connection references to ids,
+    /// scoped to the platform's rows plus the caller's tenants (`None`: an anchor).
+    pub async fn resolve_refs(&self, refs: Refs, scope: Option<&[String]>) -> Result<Refs> {
+        resolve_refs(&self.pool, refs, scope).await
     }
 
     pub async fn heads(&self, ids: &[String]) -> Result<Vec<JobHead>> {

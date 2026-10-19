@@ -47,6 +47,7 @@ mod dispatch_descriptor_test;
 mod dispatch_fan_out_test;
 mod dispatch_ingest_pending_test;
 mod dispatch_job_edit_payload_test;
+mod dispatch_job_filters_test;
 mod dispatch_job_requeue_guard_test;
 mod dispatch_job_window_test;
 mod dispatch_job_write_permissions_test;

@@ -5,8 +5,10 @@
 pub mod api;
 pub mod delivery_credentials;
 pub mod entity;
+pub mod filter_options_cache;
 pub mod lifecycle;
 pub mod reaper;
+pub mod refs;
 pub mod repository;
 pub mod requeue_rules;
 pub mod signing_guard;

@@ -36,9 +36,12 @@ pub struct SkippedJob {
     pub reason: String,
 }
 
-/// Go `DispatchJobsResent`: the rollup of a bulk requeue. Its data carries the
-/// ids reset, whether the run re-delivered COMPLETED jobs (the dangerous case
-/// an audit reader filters on) and the counts the status guard skipped.
+/// Go `DispatchJobsResent`: the rollup of a bulk requeue. Its data is the ids
+/// reset and nothing else (owner ruling: when and by whom are in the event
+/// metadata). The redrive mark lives in the audit row's operation JSON
+/// (`redriveCompleted`, `confirmRedriveCompleted`) and in the HTTP response
+/// bodies; the other members below are for the response and are not
+/// serialised.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DispatchJobsResent {
@@ -47,15 +50,18 @@ pub struct DispatchJobsResent {
     /// Every job reset (the redriven ones included).
     pub ids: Vec<String>,
     /// True when the run re-delivered COMPLETED jobs.
+    #[serde(skip)]
     pub redrive: bool,
-    pub redriven_count: usize,
-    /// The COMPLETED jobs re-delivered; absent when none.
-    #[serde(skip_serializing_if = "Vec::is_empty", rename = "redrivenIds")]
+    /// The COMPLETED jobs re-delivered.
+    #[serde(skip)]
     pub redriven_ids: Vec<String>,
+    #[serde(skip)]
+    pub redriven_count: usize,
+    #[serde(skip)]
     pub skipped_in_flight: usize,
+    #[serde(skip)]
     pub skipped_completed: usize,
     /// The jobs found and left alone by the status guard, with the reason.
-    /// Not part of the event data (only their counts are).
     #[serde(skip)]
     pub skipped: Vec<SkippedJob>,
 }

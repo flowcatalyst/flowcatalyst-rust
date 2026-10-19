@@ -87,7 +87,7 @@ async fn poll_once(pool: &PgPool, batch_size: u32) -> Result<u32> {
                 attempt_count, last_attempt_at, completed_at, duration_millis, last_error,
                 idempotency_key, is_completed, is_terminal,
                 application, subdomain, aggregate,
-                descriptor, metadata, queue,
+                descriptor, metadata, queue, connection_id,
                 created_at, updated_at, projected_at
             )
             SELECT
@@ -116,6 +116,9 @@ async fn poll_once(pool: &PgPool, batch_size: u32) -> Result<u32> {
                 -- The job's own priority claim (set at ingest, never
                 -- changed, so the conflict arm leaves it too).
                 j.queue,
+                -- Go 086: the connection a function-dispatch job names itself
+                -- (NULL for event-raised jobs); the filter by connection reads it.
+                j.connection_id,
                 j.created_at, j.updated_at, NOW()
             FROM msg_dispatch_jobs j
             JOIN batch b ON b.id = j.id AND b.created_at = j.created_at
@@ -128,6 +131,7 @@ async fn poll_once(pool: &PgPool, batch_size: u32) -> Result<u32> {
                 last_error = EXCLUDED.last_error,
                 is_completed = EXCLUDED.is_completed,
                 is_terminal = EXCLUDED.is_terminal,
+                connection_id = EXCLUDED.connection_id,
                 updated_at = EXCLUDED.updated_at,
                 projected_at = NOW()
         )

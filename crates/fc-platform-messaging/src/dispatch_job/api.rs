@@ -17,6 +17,8 @@ use crate::dispatch_job::entity::parse_dispatch_mode;
 use crate::dispatch_job::entity::{
     DispatchAttempt, DispatchJob, DispatchJobRead, DispatchKind, DispatchMetadata, RetryStrategy,
 };
+use crate::dispatch_job::filter_options_cache::{self, FilterOptionsCache};
+use crate::dispatch_job::refs::{parse_refs, Refs};
 use crate::dispatch_job::repository::DispatchJobRepository;
 use crate::dispatch_job::repository::RecordedAttempt;
 use crate::dispatch_job::signing_guard::SigningGuard;
@@ -40,6 +42,7 @@ use fc_platform_core::usecase::check_target_url;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::slice;
+use std::time::Instant;
 
 /// Go `MetadataDTO`: one key/value tag of a dispatch job (documentation of
 /// [`DispatchMetadata`]).
@@ -355,6 +358,20 @@ pub struct DispatchJobsQuery {
     pub codes: Option<String>,
     /// Exact source
     pub source: Option<String>,
+    /// Exact event type. A job's code is its event type for a job raised by an event (and the caller's own job code for an SDK or function-dispatched job), so this filters the same column as code, by an index that also orders by createdAt. Combines with eventTypes and codes (all must hold).
+    pub event_type: Option<String>,
+    /// Event types (comma-separated; at most 10, more is 400 TOO_MANY_EVENT_TYPES)
+    pub event_types: Option<String>,
+    /// Subscription ids (comma-separated; at most 50, more is 400 TOO_MANY_SUBSCRIPTION_IDS). Combines with subscriptionId.
+    pub subscription_ids: Option<String>,
+    /// Subscription code, exact; a trailing * makes it a prefix. Resolved to subscription ids first (400 TOO_MANY_MATCHES past 200); a code that matches nothing lists no jobs.
+    pub subscription_code: Option<String>,
+    /// Subscription name, exact and case-insensitive; a trailing * makes it a prefix. Resolved like subscriptionCode.
+    pub subscription_name: Option<String>,
+    /// Jobs delivered through this connection: the jobs of its subscriptions and the jobs that name the connection themselves (function dispatch).
+    pub connection_id: Option<String>,
+    /// Connection code, exact; a trailing * makes it a prefix. Resolved to connection ids first (400 TOO_MANY_MATCHES past 50); a code that matches nothing lists no jobs.
+    pub connection_code: Option<String>,
 }
 
 /// The row count a list answers (dispatch jobs and events): `size` (the
@@ -393,6 +410,8 @@ pub struct DispatchJobsState {
     /// The widest `created_at` window a list-shaped read may ask for
     /// (`FC_DISPATCH_JOB_MAX_WINDOW_DAYS`); below 1 means the default 31.
     pub max_window_days: i64,
+    /// Keeps the filter-options answers for a minute.
+    pub filter_options_cache: Arc<FilterOptionsCache>,
 }
 
 // ============================================================================
@@ -793,6 +812,15 @@ pub async fn list_dispatch_jobs_unchecked(
     query: DispatchJobsQuery,
     confined: Option<&[String]>,
 ) -> Result<WindowedList, PlatformError> {
+    let parsed = parse_refs(
+        query.event_type.as_deref(),
+        query.event_types.as_deref(),
+        query.subscription_ids.as_deref(),
+        query.subscription_code.as_deref(),
+        query.subscription_name.as_deref(),
+        query.connection_id.as_deref(),
+        query.connection_code.as_deref(),
+    )?;
     let statuses = split_csv(query.statuses.as_deref());
     let client_ids = split_csv(query.client_ids.as_deref());
     let applications = split_csv(query.applications.as_deref());
@@ -818,7 +846,16 @@ pub async fn list_dispatch_jobs_unchecked(
     // `size` (SPA) wins over `limit` (SDK); above 1,000 is clamped to 1,000,
     // none (or not positive) is the default 100 (Go bug 21).
     let limit = list_limit(query.size, query.limit);
+    // The window first, then the by-name references resolved within the
+    // caller's tenants (Go `scoped`).
+    let refs = state
+        .dispatch_job_repo
+        .resolve_refs(Refs::new(parsed.query), accessible.as_deref())
+        .await?;
     let filter = crate::dispatch_job::repository::DispatchJobReadFilter {
+        event_types: &parsed.event_types,
+        subscription_ids: &parsed.subscription_ids,
+        refs: Some(&refs),
         status: non_empty(&query.status),
         statuses: &statuses,
         client_id: non_empty(&query.client_id),
@@ -1287,11 +1324,13 @@ pub async fn get_dispatch_job_attempts(
 
 /// Go's `DispatchJobFilterOptionsResponse`: distinct facet values of the
 /// read projection as plain string arrays.
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DispatchJobFilterOptionsResponse {
     pub statuses: Vec<String>,
     pub codes: Vec<String>,
+    /// The same list as `codes` under the name the event-type filter uses (a job's code is its event type).
+    pub event_types: Vec<String>,
     pub client_ids: Vec<String>,
     pub dispatch_pool_ids: Vec<String>,
     pub subscription_ids: Vec<String>,
@@ -1347,6 +1386,11 @@ pub async fn get_filter_options(
         (!auth.0.is_anchor()).then(|| caller_reach::client_ids(&auth.0));
     let scope = accessible.as_deref();
     let repo = &state.dispatch_job_repo;
+    let cache_key = filter_options_cache::key(scope, window.window.from, window.window.to);
+    let now = Instant::now();
+    if let Some(cached) = state.filter_options_cache.get(&cache_key, now) {
+        return Ok(Json(cached));
+    }
     let (since, until) = (Some(window.since), window.until);
     let (statuses, codes, client_ids, dispatch_pool_ids, subscription_ids, kinds) = tokio::try_join!(
         repo.distinct_read_values("status", scope, since, until),
@@ -1357,15 +1401,24 @@ pub async fn get_filter_options(
         repo.distinct_read_values("kind", scope, since, until),
     )?;
 
-    Ok(Json(DispatchJobFilterOptionsResponse {
+    // Event types come from the jobs of the window, not from the event-type
+    // catalogue: an event may be emitted without its type being registered, and
+    // a direct job's code is not an event type at all, so a catalogue-backed
+    // list would miss values the list can filter on.
+    let response = DispatchJobFilterOptionsResponse {
         statuses,
+        event_types: codes.clone(),
         codes,
         client_ids,
         dispatch_pool_ids,
         subscription_ids,
         kinds,
         window: window.window.into(),
-    }))
+    };
+    state
+        .filter_options_cache
+        .put(cache_key, now, response.clone());
+    Ok(Json(response))
 }
 
 // ============================================================================

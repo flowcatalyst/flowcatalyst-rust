@@ -4172,6 +4172,12 @@
             },
             "type": "array"
           },
+          "eventTypes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "kinds": {
             "items": {
               "type": "string"
@@ -4197,6 +4203,7 @@
         "required": [
           "statuses",
           "codes",
+          "eventTypes",
           "clientIds",
           "dispatchPoolIds",
           "subscriptionIds",
@@ -8265,7 +8272,23 @@
             "description": "CSV of codes",
             "type": "string"
           },
+          "connectionCode": {
+            "description": "Connection code, exact; a trailing * makes it a prefix. Resolved to connection ids first (400 TOO_MANY_MATCHES past 50); a code that matches nothing lists no jobs.",
+            "type": "string"
+          },
+          "connectionId": {
+            "description": "Jobs delivered through this connection: the jobs of its subscriptions and the jobs that name the connection themselves (function dispatch).",
+            "type": "string"
+          },
           "dispatchPoolId": {
+            "type": "string"
+          },
+          "eventType": {
+            "description": "Exact event type. A job's code is its event type for a job raised by an event (and the caller's own job code for an SDK or function-dispatched job), so this filters the same column as code, by an index that also orders by createdAt. Combines with eventTypes and codes (all must hold).",
+            "type": "string"
+          },
+          "eventTypes": {
+            "description": "CSV of event types (at most 10; more is 400 TOO_MANY_EVENT_TYPES)",
             "type": "string"
           },
           "messageGroup": {
@@ -8291,7 +8314,19 @@
             "description": "CSV of subdomains",
             "type": "string"
           },
+          "subscriptionCode": {
+            "description": "Subscription code, exact; a trailing * makes it a prefix. Resolved to subscription ids first (400 TOO_MANY_MATCHES past 200); a code that matches nothing lists no jobs.",
+            "type": "string"
+          },
           "subscriptionId": {
+            "type": "string"
+          },
+          "subscriptionIds": {
+            "description": "CSV of subscription ids (at most 50; more is 400 TOO_MANY_SUBSCRIPTION_IDS). Combines with subscriptionId.",
+            "type": "string"
+          },
+          "subscriptionName": {
+            "description": "Subscription name, exact and case-insensitive; a trailing * makes it a prefix. Resolved like subscriptionCode.",
             "type": "string"
           },
           "until": {
@@ -8406,7 +8441,23 @@
             "description": "The literal REDRIVE, confirming redriveCompleted.",
             "type": "string"
           },
+          "connectionCode": {
+            "description": "Connection code, exact; a trailing * makes it a prefix. Resolved to connection ids first (400 TOO_MANY_MATCHES past 50); a code that matches nothing lists no jobs.",
+            "type": "string"
+          },
+          "connectionId": {
+            "description": "Jobs delivered through this connection: the jobs of its subscriptions and the jobs that name the connection themselves (function dispatch).",
+            "type": "string"
+          },
           "dispatchPoolId": {
+            "type": "string"
+          },
+          "eventType": {
+            "description": "Exact event type. A job's code is its event type for a job raised by an event (and the caller's own job code for an SDK or function-dispatched job), so this filters the same column as code, by an index that also orders by createdAt. Combines with eventTypes and codes (all must hold).",
+            "type": "string"
+          },
+          "eventTypes": {
+            "description": "CSV of event types (at most 10; more is 400 TOO_MANY_EVENT_TYPES)",
             "type": "string"
           },
           "limit": {
@@ -8443,7 +8494,19 @@
             "description": "CSV of subdomains",
             "type": "string"
           },
+          "subscriptionCode": {
+            "description": "Subscription code, exact; a trailing * makes it a prefix. Resolved to subscription ids first (400 TOO_MANY_MATCHES past 200); a code that matches nothing lists no jobs.",
+            "type": "string"
+          },
           "subscriptionId": {
+            "type": "string"
+          },
+          "subscriptionIds": {
+            "description": "CSV of subscription ids (at most 50; more is 400 TOO_MANY_SUBSCRIPTION_IDS). Combines with subscriptionId.",
+            "type": "string"
+          },
+          "subscriptionName": {
+            "description": "Subscription name, exact and case-insensitive; a trailing * makes it a prefix. Resolved like subscriptionCode.",
             "type": "string"
           },
           "until": {
@@ -16000,6 +16063,76 @@
             }
           },
           {
+            "description": "Exact event type. A job's code is its event type for a job raised by an event (and the caller's own job code for an SDK or function-dispatched job), so this filters the same column as code, by an index that also orders by createdAt. Combines with eventTypes and codes (all must hold).",
+            "explode": false,
+            "in": "query",
+            "name": "eventType",
+            "schema": {
+              "description": "Exact event type. A job's code is its event type for a job raised by an event (and the caller's own job code for an SDK or function-dispatched job), so this filters the same column as code, by an index that also orders by createdAt. Combines with eventTypes and codes (all must hold).",
+              "type": "string"
+            }
+          },
+          {
+            "description": "CSV of event types (at most 10; more is 400 TOO_MANY_EVENT_TYPES)",
+            "explode": false,
+            "in": "query",
+            "name": "eventTypes",
+            "schema": {
+              "description": "CSV of event types (at most 10; more is 400 TOO_MANY_EVENT_TYPES)",
+              "type": "string"
+            }
+          },
+          {
+            "description": "CSV of subscription ids (at most 50; more is 400 TOO_MANY_SUBSCRIPTION_IDS). Combines with subscriptionId.",
+            "explode": false,
+            "in": "query",
+            "name": "subscriptionIds",
+            "schema": {
+              "description": "CSV of subscription ids (at most 50; more is 400 TOO_MANY_SUBSCRIPTION_IDS). Combines with subscriptionId.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Subscription code, exact; a trailing * makes it a prefix. Resolved to subscription ids first (400 TOO_MANY_MATCHES past 200); a code that matches nothing lists no jobs.",
+            "explode": false,
+            "in": "query",
+            "name": "subscriptionCode",
+            "schema": {
+              "description": "Subscription code, exact; a trailing * makes it a prefix. Resolved to subscription ids first (400 TOO_MANY_MATCHES past 200); a code that matches nothing lists no jobs.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Subscription name, exact and case-insensitive; a trailing * makes it a prefix. Resolved like subscriptionCode.",
+            "explode": false,
+            "in": "query",
+            "name": "subscriptionName",
+            "schema": {
+              "description": "Subscription name, exact and case-insensitive; a trailing * makes it a prefix. Resolved like subscriptionCode.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Jobs delivered through this connection: the jobs of its subscriptions and the jobs that name the connection themselves (function dispatch).",
+            "explode": false,
+            "in": "query",
+            "name": "connectionId",
+            "schema": {
+              "description": "Jobs delivered through this connection: the jobs of its subscriptions and the jobs that name the connection themselves (function dispatch).",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Connection code, exact; a trailing * makes it a prefix. Resolved to connection ids first (400 TOO_MANY_MATCHES past 50); a code that matches nothing lists no jobs.",
+            "explode": false,
+            "in": "query",
+            "name": "connectionCode",
+            "schema": {
+              "description": "Connection code, exact; a trailing * makes it a prefix. Resolved to connection ids first (400 TOO_MANY_MATCHES past 50); a code that matches nothing lists no jobs.",
+              "type": "string"
+            }
+          },
+          {
             "explode": false,
             "in": "query",
             "name": "limit",
@@ -16051,7 +16184,27 @@
                 }
               }
             },
-            "description": "OK"
+            "description": "OK",
+            "headers": {
+              "X-Window-Defaulted": {
+                "schema": {
+                  "description": "true when the server supplied a bound the request did not (no since/until: the last 24 hours)",
+                  "type": "string"
+                }
+              },
+              "X-Window-From": {
+                "schema": {
+                  "description": "Start of the created_at window the list was held to (RFC3339, UTC)",
+                  "type": "string"
+                }
+              },
+              "X-Window-To": {
+                "schema": {
+                  "description": "End of the window (RFC3339, UTC); now when the request gave no until",
+                  "type": "string"
+                }
+              }
+            }
           },
           "default": {
             "content": {
@@ -16180,27 +16333,7 @@
                 }
               }
             },
-            "description": "OK",
-            "headers": {
-              "X-Window-Defaulted": {
-                "schema": {
-                  "description": "true when the server supplied a bound the request did not (no since/until: the last 24 hours)",
-                  "type": "string"
-                }
-              },
-              "X-Window-From": {
-                "schema": {
-                  "description": "Start of the created_at window the list was held to (RFC3339, UTC)",
-                  "type": "string"
-                }
-              },
-              "X-Window-To": {
-                "schema": {
-                  "description": "End of the window (RFC3339, UTC); now when the request gave no until",
-                  "type": "string"
-                }
-              }
-            }
+            "description": "OK"
           },
           "default": {
             "content": {
@@ -16463,6 +16596,76 @@
             }
           },
           {
+            "description": "Exact event type. A job's code is its event type for a job raised by an event (and the caller's own job code for an SDK or function-dispatched job), so this filters the same column as code, by an index that also orders by createdAt. Combines with eventTypes and codes (all must hold).",
+            "explode": false,
+            "in": "query",
+            "name": "eventType",
+            "schema": {
+              "description": "Exact event type. A job's code is its event type for a job raised by an event (and the caller's own job code for an SDK or function-dispatched job), so this filters the same column as code, by an index that also orders by createdAt. Combines with eventTypes and codes (all must hold).",
+              "type": "string"
+            }
+          },
+          {
+            "description": "CSV of event types (at most 10; more is 400 TOO_MANY_EVENT_TYPES)",
+            "explode": false,
+            "in": "query",
+            "name": "eventTypes",
+            "schema": {
+              "description": "CSV of event types (at most 10; more is 400 TOO_MANY_EVENT_TYPES)",
+              "type": "string"
+            }
+          },
+          {
+            "description": "CSV of subscription ids (at most 50; more is 400 TOO_MANY_SUBSCRIPTION_IDS). Combines with subscriptionId.",
+            "explode": false,
+            "in": "query",
+            "name": "subscriptionIds",
+            "schema": {
+              "description": "CSV of subscription ids (at most 50; more is 400 TOO_MANY_SUBSCRIPTION_IDS). Combines with subscriptionId.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Subscription code, exact; a trailing * makes it a prefix. Resolved to subscription ids first (400 TOO_MANY_MATCHES past 200); a code that matches nothing lists no jobs.",
+            "explode": false,
+            "in": "query",
+            "name": "subscriptionCode",
+            "schema": {
+              "description": "Subscription code, exact; a trailing * makes it a prefix. Resolved to subscription ids first (400 TOO_MANY_MATCHES past 200); a code that matches nothing lists no jobs.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Subscription name, exact and case-insensitive; a trailing * makes it a prefix. Resolved like subscriptionCode.",
+            "explode": false,
+            "in": "query",
+            "name": "subscriptionName",
+            "schema": {
+              "description": "Subscription name, exact and case-insensitive; a trailing * makes it a prefix. Resolved like subscriptionCode.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Jobs delivered through this connection: the jobs of its subscriptions and the jobs that name the connection themselves (function dispatch).",
+            "explode": false,
+            "in": "query",
+            "name": "connectionId",
+            "schema": {
+              "description": "Jobs delivered through this connection: the jobs of its subscriptions and the jobs that name the connection themselves (function dispatch).",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Connection code, exact; a trailing * makes it a prefix. Resolved to connection ids first (400 TOO_MANY_MATCHES past 50); a code that matches nothing lists no jobs.",
+            "explode": false,
+            "in": "query",
+            "name": "connectionCode",
+            "schema": {
+              "description": "Connection code, exact; a trailing * makes it a prefix. Resolved to connection ids first (400 TOO_MANY_MATCHES past 50); a code that matches nothing lists no jobs.",
+              "type": "string"
+            }
+          },
+          {
             "explode": false,
             "in": "query",
             "name": "limit",
@@ -16698,6 +16901,76 @@
             }
           },
           {
+            "description": "Exact event type. A job's code is its event type for a job raised by an event (and the caller's own job code for an SDK or function-dispatched job), so this filters the same column as code, by an index that also orders by createdAt. Combines with eventTypes and codes (all must hold).",
+            "explode": false,
+            "in": "query",
+            "name": "eventType",
+            "schema": {
+              "description": "Exact event type. A job's code is its event type for a job raised by an event (and the caller's own job code for an SDK or function-dispatched job), so this filters the same column as code, by an index that also orders by createdAt. Combines with eventTypes and codes (all must hold).",
+              "type": "string"
+            }
+          },
+          {
+            "description": "CSV of event types (at most 10; more is 400 TOO_MANY_EVENT_TYPES)",
+            "explode": false,
+            "in": "query",
+            "name": "eventTypes",
+            "schema": {
+              "description": "CSV of event types (at most 10; more is 400 TOO_MANY_EVENT_TYPES)",
+              "type": "string"
+            }
+          },
+          {
+            "description": "CSV of subscription ids (at most 50; more is 400 TOO_MANY_SUBSCRIPTION_IDS). Combines with subscriptionId.",
+            "explode": false,
+            "in": "query",
+            "name": "subscriptionIds",
+            "schema": {
+              "description": "CSV of subscription ids (at most 50; more is 400 TOO_MANY_SUBSCRIPTION_IDS). Combines with subscriptionId.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Subscription code, exact; a trailing * makes it a prefix. Resolved to subscription ids first (400 TOO_MANY_MATCHES past 200); a code that matches nothing lists no jobs.",
+            "explode": false,
+            "in": "query",
+            "name": "subscriptionCode",
+            "schema": {
+              "description": "Subscription code, exact; a trailing * makes it a prefix. Resolved to subscription ids first (400 TOO_MANY_MATCHES past 200); a code that matches nothing lists no jobs.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Subscription name, exact and case-insensitive; a trailing * makes it a prefix. Resolved like subscriptionCode.",
+            "explode": false,
+            "in": "query",
+            "name": "subscriptionName",
+            "schema": {
+              "description": "Subscription name, exact and case-insensitive; a trailing * makes it a prefix. Resolved like subscriptionCode.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Jobs delivered through this connection: the jobs of its subscriptions and the jobs that name the connection themselves (function dispatch).",
+            "explode": false,
+            "in": "query",
+            "name": "connectionId",
+            "schema": {
+              "description": "Jobs delivered through this connection: the jobs of its subscriptions and the jobs that name the connection themselves (function dispatch).",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Connection code, exact; a trailing * makes it a prefix. Resolved to connection ids first (400 TOO_MANY_MATCHES past 50); a code that matches nothing lists no jobs.",
+            "explode": false,
+            "in": "query",
+            "name": "connectionCode",
+            "schema": {
+              "description": "Connection code, exact; a trailing * makes it a prefix. Resolved to connection ids first (400 TOO_MANY_MATCHES past 50); a code that matches nothing lists no jobs.",
+              "type": "string"
+            }
+          },
+          {
             "explode": false,
             "in": "query",
             "name": "limit",
@@ -16749,7 +17022,27 @@
                 }
               }
             },
-            "description": "OK"
+            "description": "OK",
+            "headers": {
+              "X-Window-Defaulted": {
+                "schema": {
+                  "description": "true when the server supplied a bound the request did not (no since/until: the last 24 hours)",
+                  "type": "string"
+                }
+              },
+              "X-Window-From": {
+                "schema": {
+                  "description": "Start of the created_at window the list was held to (RFC3339, UTC)",
+                  "type": "string"
+                }
+              },
+              "X-Window-To": {
+                "schema": {
+                  "description": "End of the window (RFC3339, UTC); now when the request gave no until",
+                  "type": "string"
+                }
+              }
+            }
           },
           "default": {
             "content": {
@@ -16874,27 +17167,7 @@
                 }
               }
             },
-            "description": "OK",
-            "headers": {
-              "X-Window-Defaulted": {
-                "schema": {
-                  "description": "true when the server supplied a bound the request did not (no since/until: the last 24 hours)",
-                  "type": "string"
-                }
-              },
-              "X-Window-From": {
-                "schema": {
-                  "description": "Start of the created_at window the list was held to (RFC3339, UTC)",
-                  "type": "string"
-                }
-              },
-              "X-Window-To": {
-                "schema": {
-                  "description": "End of the window (RFC3339, UTC); now when the request gave no until",
-                  "type": "string"
-                }
-              }
-            }
+            "description": "OK"
           },
           "default": {
             "content": {
@@ -17079,58 +17352,6 @@
           }
         },
         "summary": "Mark a FAILED dispatch job COMPLETED (delivered out of band)",
-        "tags": [
-          "dispatch-jobs"
-        ],
-        "x-sdk": "admin"
-      }
-    },
-    "/api/dispatch-jobs/{id}/payload": {
-      "put": {
-        "operationId": "editDispatchJobPayload",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EditPayloadRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DispatchJobResponse"
-                }
-              }
-            },
-            "description": "OK"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorModel"
-                }
-              }
-            },
-            "description": "Error"
-          }
-        },
-        "summary": "Replace the payload of a PENDING or FAILED dispatch job (status and attempts are unchanged)",
         "tags": [
           "dispatch-jobs"
         ],
@@ -27138,6 +27359,58 @@
           "oauth"
         ],
         "x-sdk": "app"
+      }
+    },
+    "/api/dispatch-jobs/{id}/payload": {
+      "put": {
+        "operationId": "editDispatchJobPayload",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditPayloadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DispatchJobResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Replace the payload of a PENDING or FAILED dispatch job (status and attempts are unchanged)",
+        "tags": [
+          "dispatch-jobs"
+        ],
+        "x-sdk": "admin"
       }
     }
   }

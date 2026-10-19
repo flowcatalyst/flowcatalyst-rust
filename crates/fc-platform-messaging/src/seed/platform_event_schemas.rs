@@ -694,18 +694,9 @@ fn emitted_beyond_go_catalogue(m: &mut HashMap<&'static str, Value>) {
             ],
         ),
     );
-    // Go `ad37de21`: the rollup also says whether the run redrove COMPLETED
-    // jobs and how many the status guard skipped.
     m.insert(
         "platform:messaging:dispatch-jobs:resent",
-        obj(&[
-            req_str_array("ids"),
-            req_bool("redrive"),
-            req_u32("redrivenCount"),
-            opt_str_array("redrivenIds"),
-            req_u32("skippedInFlight"),
-            req_u32("skippedCompleted"),
-        ]),
+        obj(&[req_str_array("ids")]),
     );
     for code in [
         "platform:portal:app:created",
