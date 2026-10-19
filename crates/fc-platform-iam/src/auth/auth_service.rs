@@ -32,6 +32,12 @@ struct CachedClaims {
 /// Cache TTL for validated tokens (30 seconds — short enough to respect expiry changes)
 const TOKEN_CACHE_TTL_SECS: u64 = 30;
 
+/// Most entries the bearer cache holds. Entries are swept once they are older
+/// than the TTL; if distinct tokens arrive faster than that and the cache
+/// still reaches this size, it is emptied (the cost is one RSA verification
+/// per token afterwards, the same as a cold cache).
+const TOKEN_CACHE_MAX_ENTRIES: usize = 10_000;
+
 /// `token_use` of an access token that carries the principal's authority
 /// and may be presented as a platform API bearer (Go
 /// `authservice.TokenUseAPI`, authservice.go:49).
@@ -780,6 +786,8 @@ pub struct AuthService {
     previous_keys: Vec<KeyEntry>,
     /// Cache of validated tokens: token string → claims (avoids repeated RSA verification)
     token_cache: DashMap<String, CachedClaims>,
+    /// When the cache was last swept of stale entries.
+    token_cache_swept: std::sync::Mutex<Instant>,
 }
 
 impl AuthService {
@@ -818,6 +826,7 @@ impl AuthService {
             rsa_components: Some(rsa_components),
             previous_keys: Vec::new(),
             token_cache: DashMap::new(),
+            token_cache_swept: std::sync::Mutex::new(Instant::now()),
         })
     }
 
@@ -873,6 +882,7 @@ impl AuthService {
             rsa_components: None,
             previous_keys: Vec::new(),
             token_cache: DashMap::new(),
+            token_cache_swept: std::sync::Mutex::new(Instant::now()),
         }
     }
 
@@ -1368,7 +1378,9 @@ impl AuthService {
         // Cache miss — do full validation
         let claims = self.validate_token_uncached(token)?;
 
-        // Store in cache
+        // Store in cache, after bounding it: tokens that are never presented
+        // again would otherwise stay forever (identity review R5).
+        self.sweep_token_cache(Duration::seconds(TOKEN_CACHE_TTL_SECS as i64));
         self.token_cache.insert(
             token.to_string(),
             CachedClaims {
@@ -1378,6 +1390,28 @@ impl AuthService {
         );
 
         Ok(claims)
+    }
+
+    /// Drop cache entries older than `ttl`, at most once per `ttl`, and empty
+    /// the cache outright if it has reached [`TOKEN_CACHE_MAX_ENTRIES`] with
+    /// nothing stale (a flood of distinct tokens inside one TTL).
+    fn sweep_token_cache(&self, ttl: Duration) {
+        let ttl_std = ttl.to_std().unwrap_or_default();
+        let over_cap = self.token_cache.len() >= TOKEN_CACHE_MAX_ENTRIES;
+        {
+            let Ok(mut swept) = self.token_cache_swept.lock() else {
+                return;
+            };
+            if !over_cap && swept.elapsed() < ttl_std {
+                return;
+            }
+            *swept = Instant::now();
+        }
+        self.token_cache
+            .retain(|_, entry| entry.cached_at.elapsed() < ttl_std);
+        if self.token_cache.len() >= TOKEN_CACHE_MAX_ENTRIES {
+            self.token_cache.clear();
+        }
     }
 
     /// Perform full JWT validation without cache
@@ -1921,6 +1955,40 @@ mod tests {
     }
 
     /// When both are present `tier` wins and `scope` is permissions.
+    /// R5: tokens that are never presented again do not accumulate. The
+    /// sweep drops entries older than the TTL; a flood of distinct tokens
+    /// inside one TTL is capped.
+    #[test]
+    fn the_bearer_cache_is_bounded() {
+        let s = service();
+        let p = Principal::new_user("cache@example.com", UserScope::Anchor);
+        for _ in 0..(TOKEN_CACHE_MAX_ENTRIES + 50) {
+            let t = s.generate_access_token(&p).unwrap();
+            s.validate_token(&t).unwrap();
+            assert!(s.token_cache.len() <= TOKEN_CACHE_MAX_ENTRIES);
+        }
+        assert!(s.token_cache.len() < TOKEN_CACHE_MAX_ENTRIES);
+
+        // Stale entries are swept on the next insert past the TTL.
+        for _ in 0..5 {
+            let t = s.generate_access_token(&p).unwrap();
+            s.validate_token(&t).unwrap();
+        }
+        let before = s.token_cache.len();
+        assert!(before > 0);
+        s.sweep_token_cache(Duration::zero());
+        assert_eq!(
+            s.token_cache.len(),
+            0,
+            "all entries are older than a zero TTL"
+        );
+        // The cache still works afterwards.
+        let t = s.generate_access_token(&p).unwrap();
+        assert!(s.validate_token(&t).is_ok());
+        assert!(s.validate_token(&t).is_ok());
+        assert_eq!(s.token_cache.len(), 1);
+    }
+
     #[test]
     fn leeway_setting_parses_to_zero_by_default() {
         assert_eq!(parse_leeway(None), 0);
