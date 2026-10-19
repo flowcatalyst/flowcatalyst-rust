@@ -117,6 +117,26 @@ See [high-availability.md](high-availability.md).
 | `FLOWCATALYST_APP_KEY` | — | — | AES-256 key for encrypting OIDC client secrets at rest. **Required in prod.** |
 | `FC_SESSION_COOKIE_SAME_SITE` | — | `Lax` | `Lax` or `Strict` |
 
+### Identity hardening switches (2026-10-19)
+
+The identity review's fixes. Defaults keep what callers get today unless stated. The names are Go's where Go has the
+switch, so one environment drives both implementations. Details and the reasons each default is what it is:
+[go-mirror/2026-10-19-identity-fixes-and-catch-up.md](../go-mirror/2026-10-19-identity-fixes-and-catch-up.md).
+
+| Variable | Default | Description |
+|---|---|---|
+| `FC_JWT_LEEWAY_SECS` | `0` | Clock leeway (0 to 600) when a platform-signed token's `exp` is checked, and an upstream IdP's id_token. It was the library's 60 s, which honoured a one-hour token for 61 minutes. `60` restores it |
+| `FC_OAUTH_REVOKE_ENFORCE_CLIENT` | `true` | `/oauth/revoke`: a client revokes only refresh tokens issued to it (RFC 7009 section 2.1); a mismatch answers 200 and revokes nothing. A Bearer caller and a token with no client binding are not checked. `false` restores any-caller revoke |
+| `FC_OAUTH_INTROSPECT_CLIENT_AUTH_ONLY` | `false` | `true` makes `/oauth/introspect` refuse Bearer authentication (client credentials only) |
+| `FC_OIDC_REJECT_UNVERIFIED_EMAIL` | `false` | `true` refuses an SSO login (employee and portal) when the upstream id_token carries `email_verified` = `false` (bool or the string `"false"`). An absent claim is always accepted |
+| `FC_OIDC_ISSUER_PATTERN_STRICT` | `false` | `true` makes a multi-tenant IdP's issuer pattern a full match (`^(?:pattern)$`). Off, it is searched for inside the issuer and an unanchored pattern logs a warning once |
+| `FC_SERVICE_ACCOUNT_SCOPE_REACH_STRICT` | `false` | `true` refuses (400 `SCOPE_REACH_MISMATCH`) a service account `scope` that disagrees with its client links (none = ANCHOR, one = CLIENT, several = PARTNER). Turn on after the SPA is rebuilt from this tree (its drawer carries Go's fix) |
+| `FC_IDP_MAPPING_REQUIRE_ROLE` | `false` | `true` refuses (400 `ROLE_NOT_FOUND`) an IdP role mapping to a platform role that does not exist. Either way the login skips a mapping whose role is missing, with a warning |
+
+Not switches: token_use is an allowlist (`api` or no marker) on every bearer; the redirect-URI matcher is URL-aware;
+the bearer cache is bounded; the main password login spends an Argon2id verification on an unknown email; the upstream
+JWKS is refetched (at most every 30 s per issuer) on an unknown `kid`.
+
 If neither file nor inline-env key is set, fc-server auto-generates a pair on first boot and persists to `.jwt-keys/`. **Acceptable in dev only.** Production must provide keys explicitly because auto-gen means every restart rotates the key, invalidating every issued token.
 
 Generate keys:
@@ -200,7 +220,7 @@ The complete contract, Go vs Rust, is [../parity/router-env-vs-go.md](../parity/
 | Variable | Default | Description |
 |---|---|---|
 | `FLOWCATALYST_CONFIG_URL` | — | Pool/queue config URL(s), comma-separated. **Required** unless dev mode. |
-| `FLOWCATALYST_CONFIG_INTERVAL` | `300` | Config sync interval (seconds) |
+| `FLOWCATALYST_CONFIG_INTERVAL` (alias `FC_ROUTER_CONFIG_INTERVAL_SECONDS`) | `30` | Config sync interval (seconds). Was 300; the fetch is conditional (`If-None-Match`, the platform answers 304) so an unchanged document is cheap. A router in the platform's process (fc-server) is also nudged when a client, dispatch pool or subscription is written. A deployment that sets this explicitly keeps its value |
 | `FLOWCATALYST_DEV_MODE` | `false` | Use LocalStack SQS + built-in dev config |
 | `LOCALSTACK_ENDPOINT` | `http://localhost:4566` | LocalStack endpoint (dev only) |
 | `LOCALSTACK_SQS_HOST` | `http://sqs.eu-west-1.localhost.localstack.cloud:4566` | LocalStack SQS host (dev only) |

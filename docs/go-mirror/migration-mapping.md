@@ -6,7 +6,7 @@ directives and the Down section removed, comments ASCII-folded). Every mirrored 
 Go migrated and a database Rust created end in the same schema. The runner is `crates/fc-migrations`; the tracker is
 `_schema_migrations`, keyed `NNN_name`. A new Go migration needs a row here and a row in `PENDING.md` within the week.
 
-State: Go at 086 (`bbbb4bb3`; Go 083/084, the function service account, are not mirrored). Rust at 096.
+State: Go at 086 (`bbbb4bb3`; Go 083/084, the function service account, are not mirrored). Rust at 096. Rechecked 2026-10-19 after the identity and F28-F34 batch (Go `e64ac802`): Go added no migration and this batch added none here; its schema change is none (the new `.sqlx` entry is a query, not a table).
 
 ## Mapping
 
