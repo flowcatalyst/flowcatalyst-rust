@@ -100,6 +100,12 @@ pub struct RouterEnv {
     pub synth_pool_idle_secs: Option<i64>,
     /// `FC_ROUTER_DEFERRAL_BUDGET`; 0 keeps the default.
     pub deferral_budget: usize,
+    /// `FC_ROUTER_HTTP2_READ_IDLE_TIMEOUT_SECONDS`: HTTP/2 PING after this
+    /// much read silence; 0 keeps the default (30s).
+    pub http2_read_idle: Duration,
+    /// `FC_ROUTER_HTTP2_PING_TIMEOUT_SECONDS`: close the connection when the
+    /// PING is not acked in this time; 0 keeps the default (15s).
+    pub http2_ping_timeout: Duration,
     /// `FC_ROUTER_FLIGHT_RECORDER_EVENTS`: events the flight recorder keeps
     /// (default 16384, `0` turns it off; see [`crate::flight_recorder`]).
     pub flight_recorder_events: usize,
@@ -183,6 +189,14 @@ impl RouterEnv {
             .filter(|&n| n > 0)
             .map_or(0, |n| n as usize);
 
+        let secs = |key: &str| {
+            env.int(key)
+                .filter(|&n| n > 0)
+                .map_or(Duration::ZERO, |n| Duration::from_secs(n as u64))
+        };
+        let http2_read_idle = secs("FC_ROUTER_HTTP2_READ_IDLE_TIMEOUT_SECONDS");
+        let http2_ping_timeout = secs("FC_ROUTER_HTTP2_PING_TIMEOUT_SECONDS");
+
         let flight_recorder_events = env
             .int("FC_ROUTER_FLIGHT_RECORDER_EVENTS")
             .filter(|&n| n >= 0)
@@ -204,6 +218,8 @@ impl RouterEnv {
             drain_timeout,
             synth_pool_idle_secs,
             deferral_budget,
+            http2_read_idle,
+            http2_ping_timeout,
             flight_recorder_events,
             http_prefix: env.first(&["FC_ROUTER_HTTP_PREFIX"]),
             standby: standby_config(&env),
@@ -392,6 +408,19 @@ mod tests {
             ("FC_ROUTER_CLIENT_ID", "oac_fake"),
             ("FC_ROUTER_CLIENT_SECRET", "fake-secret"),
         ]
+    }
+
+    #[test]
+    fn http2_health_check_vars_read_seconds_and_zero_means_default() {
+        let e = env(&production()).unwrap();
+        assert_eq!(e.http2_read_idle, Duration::ZERO);
+        assert_eq!(e.http2_ping_timeout, Duration::ZERO);
+        let mut vars = production();
+        vars.push(("FC_ROUTER_HTTP2_READ_IDLE_TIMEOUT_SECONDS", "20"));
+        vars.push(("FC_ROUTER_HTTP2_PING_TIMEOUT_SECONDS", "0"));
+        let e = env(&vars).unwrap();
+        assert_eq!(e.http2_read_idle, Duration::from_secs(20));
+        assert_eq!(e.http2_ping_timeout, Duration::ZERO);
     }
 
     #[test]

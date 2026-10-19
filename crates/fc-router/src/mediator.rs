@@ -87,7 +87,27 @@ pub struct HttpMediatorConfig {
     /// connections to a host are opened to stay under AWS ALB's
     /// 128-stream cap, and when idle connections are reaped.
     pub host_pool_sizing: HostPoolSizing,
+    /// HTTP/2 connection health check (Go: `HTTP2ReadIdleTimeout`): after
+    /// this long with no frame received, the client PINGs the connection.
+    /// Without it a half-open connection (NAT or load-balancer idle drop, a
+    /// peer gone without a FIN) is noticed only when each request's own
+    /// deadline expires (`timeout`, 15 minutes), and all of a host's
+    /// deliveries share a handful of connections, so they stall together.
+    /// The PING is answered by the peer's HTTP/2 layer, so a healthy
+    /// connection carrying a long request is never closed. Idle connections
+    /// are pinged too.
+    pub http2_ping_interval: Duration,
+    /// How long to wait for the PING's ack before closing the connection
+    /// (Go: `HTTP2PingTimeout`); the requests on it fail with a retryable
+    /// connection error.
+    pub http2_ping_timeout: Duration,
 }
+
+/// Defaults for the HTTP/2 health check, as Go's: 30 s of read silence, 15 s
+/// for the ack, so a dead connection is found within about 45 s.
+pub const DEFAULT_HTTP2_PING_INTERVAL: Duration = Duration::from_secs(30);
+/// See [`DEFAULT_HTTP2_PING_INTERVAL`].
+pub const DEFAULT_HTTP2_PING_TIMEOUT: Duration = Duration::from_secs(15);
 
 impl Default for HttpMediatorConfig {
     fn default() -> Self {
@@ -102,6 +122,8 @@ impl Default for HttpMediatorConfig {
             ],
             connect_timeout: Duration::from_secs(30),
             host_pool_sizing: HostPoolSizing::default(),
+            http2_ping_interval: DEFAULT_HTTP2_PING_INTERVAL,
+            http2_ping_timeout: DEFAULT_HTTP2_PING_TIMEOUT,
         }
     }
 }
@@ -123,7 +145,22 @@ impl HttpMediatorConfig {
             // a single reqwest::Client whose own connection pool handles
             // concurrent TCP connections.
             host_pool_sizing: HostPoolSizing::http1(),
+            http2_ping_interval: DEFAULT_HTTP2_PING_INTERVAL,
+            http2_ping_timeout: DEFAULT_HTTP2_PING_TIMEOUT,
         }
+    }
+
+    /// Override the HTTP/2 health check; a zero keeps the default (Go:
+    /// `FC_ROUTER_HTTP2_READ_IDLE_TIMEOUT_SECONDS` /
+    /// `FC_ROUTER_HTTP2_PING_TIMEOUT_SECONDS`, 0 = default).
+    pub fn with_http2_health_check(mut self, interval: Duration, timeout: Duration) -> Self {
+        if !interval.is_zero() {
+            self.http2_ping_interval = interval;
+        }
+        if !timeout.is_zero() {
+            self.http2_ping_timeout = timeout;
+        }
+        self
     }
 
     /// Config for production: HTTP/2, long timeout.

@@ -57,6 +57,13 @@ pub struct NatsConfig {
     /// with existing queue configs that set it — an operator's config
     /// naming a value that's now a no-op should not fail to parse.
     pub poll_timeout_ms: u64,
+    /// How long one outstanding pull request lives server-side, in
+    /// milliseconds (`pull-expiry-ms`; Go: `PullExpiry`). The subscription's
+    /// recovery from a lost or idled request takes about this long, so it
+    /// bounds how long a stalled pull can freeze delivery. The default is
+    /// [`DEFAULT_PULL_EXPIRY`] (3 s), not the client library's 30 s; see
+    /// [`pull_timing`]. Below 1000 the library's own 30 s applies.
+    pub pull_expiry_ms: u64,
     /// Ack wait time in seconds before redelivery
     pub ack_wait_secs: u64,
     /// Maximum number of delivery attempts before the server gives up on a
@@ -78,7 +85,7 @@ impl NatsConfig {
     /// Parse a `nats://` queue URI into a [`NatsConfig`], per
     /// `docs/spec/router.md` §7.4:
     ///
-    /// `nats://host:port[,host2…]?stream=&consumer=&subject=&max-messages=&poll-timeout-ms=&ack-wait-secs=&max-deliver=&max-ack-pending=&storage=file|memory&replicas=&max-age-days=`
+    /// `nats://host:port[,host2…]?stream=&consumer=&subject=&max-messages=&poll-timeout-ms=&pull-expiry-ms=&ack-wait-secs=&max-deliver=&max-ack-pending=&storage=file|memory&replicas=&max-age-days=`
     ///
     /// Everything before the first `?` (including the `nats://` scheme) is
     /// passed straight through as `servers` — `async_nats`'s connector
@@ -126,6 +133,11 @@ impl NatsConfig {
                 "poll-timeout-ms" => {
                     if let Ok(v) = value.parse::<u64>() {
                         config.poll_timeout_ms = v;
+                    }
+                }
+                "pull-expiry-ms" => {
+                    if let Ok(v) = value.parse::<u64>() {
+                        config.pull_expiry_ms = v;
                     }
                 }
                 "ack-wait-secs" => {
@@ -187,9 +199,10 @@ impl Default for NatsConfig {
             subject: "flowcatalyst.>".to_string(),
             max_messages_per_poll: 10,
             poll_timeout_ms: 20_000, // Java default: 20 seconds
-            ack_wait_secs: 120,      // Java default: 120 seconds
-            max_deliver: -1,         // unlimited (Go; owner ruling 2026-09-22)
-            max_ack_pending: -1,     // unlimited (Go; owner ruling 2026-09-22)
+            pull_expiry_ms: DEFAULT_PULL_EXPIRY.as_millis() as u64,
+            ack_wait_secs: 120,  // Java default: 120 seconds
+            max_deliver: -1,     // unlimited (Go; owner ruling 2026-09-22)
+            max_ack_pending: -1, // unlimited (Go; owner ruling 2026-09-22)
             storage: "file".to_string(),
             replicas: 1,
             max_age_days: 7,
@@ -265,6 +278,31 @@ pub struct NatsQueueConsumer {
     rejected: Arc<RejectedLog>,
 }
 
+/// The pull-request lifetime used unless the URI sets `pull-expiry-ms`
+/// (Go: `defaultPullExpiry`). The client library's own default is 30 s, and
+/// with the permit-gated loop (the standing subscription only pulls as its
+/// channel has room) a request that goes idle while the pool is full can
+/// leave the next delivery blocked for the whole 30 s once the pool drains:
+/// 26-28 s of zero deliveries with messages waiting on the server. A short
+/// expiry bounds that to seconds; the cost is one small re-issued pull
+/// request per idle expiry per queue. A mitigation, not a fix: freezes still
+/// recur at that interval.
+pub const DEFAULT_PULL_EXPIRY: Duration = Duration::from_secs(3);
+
+/// The `(expires, idle heartbeat)` for a pull subscription of this expiry
+/// (Go: `pullOptions`). From 1 s up the expiry is used with a heartbeat of a
+/// third of it, which stays under the server's half-the-expiry limit; below
+/// that (including 0) the library's own 30 s expiry and a 15 s heartbeat
+/// apply, as before the setting existed. One function for the initial
+/// subscribe and every resubscribe, so the two cannot drift.
+pub(crate) fn pull_timing(expiry: Duration) -> (Duration, Duration) {
+    if expiry >= Duration::from_secs(1) {
+        (expiry, expiry / 3)
+    } else {
+        (Duration::from_secs(30), Duration::from_secs(15))
+    }
+}
+
 /// Open the standing pull subscription with the options every
 /// (re)subscribe uses, so the initial subscribe and a later resubscribe can
 /// never drift apart (Go: the shared `resubscribe` closure).
@@ -275,11 +313,14 @@ pub struct NatsQueueConsumer {
 async fn open_subscription(
     consumer: &PullConsumer,
     batch_size: usize,
+    pull_expiry: Duration,
 ) -> result::Result<Stream, StreamError> {
+    let (expires, heartbeat) = pull_timing(pull_expiry);
     consumer
         .stream()
         .max_messages_per_batch(batch_size)
-        .heartbeat(Duration::from_secs(15))
+        .expires(expires)
+        .heartbeat(heartbeat)
         .messages()
         .await
 }
@@ -292,13 +333,14 @@ async fn open_subscription(
 async fn resubscribe(
     consumer: &PullConsumer,
     batch_size: usize,
+    pull_expiry: Duration,
 ) -> result::Result<Stream, QueueError> {
     let mut probe = consumer.clone();
     probe
         .info()
         .await
         .map_err(|e| QueueError::nats("consumer info", e))?;
-    open_subscription(consumer, batch_size)
+    open_subscription(consumer, batch_size, pull_expiry)
         .await
         .map_err(|e| QueueError::nats("open subscription", e))
 }
@@ -308,6 +350,7 @@ struct Forwarder {
     stream: Stream,
     consumer: PullConsumer,
     batch_size: usize,
+    pull_expiry: Duration,
     stream_name: String,
     consumer_name: String,
     queue_id: String,
@@ -378,7 +421,7 @@ async fn forward(mut f: Forwarder) {
                     if f.cancel.is_cancelled() {
                         return;
                     }
-                    match resubscribe(&f.consumer, f.batch_size).await {
+                    match resubscribe(&f.consumer, f.batch_size, f.pull_expiry).await {
                         Ok(stream) => {
                             f.stream = stream;
                             f.healthy.store(true, Ordering::SeqCst);
@@ -609,11 +652,12 @@ impl NatsQueueConsumer {
         // matches `.messages()`'s own convenience-method default (15s) so
         // an idle stream doesn't silently look dead.
         let batch_size = (config.max_messages_per_poll.max(1)) as usize;
+        let pull_expiry = Duration::from_millis(config.pull_expiry_ms);
         let (tx, rx) = mpsc::channel::<QueuedMessage>(batch_size);
         let stream_cancel = CancellationToken::new();
         let last_delivery = Arc::new(Mutex::new(Instant::now()));
 
-        let jetstream_stream = open_subscription(&consumer, batch_size)
+        let jetstream_stream = open_subscription(&consumer, batch_size, pull_expiry)
             .await
             .map_err(|e| {
                 QueueError::nats(
@@ -631,6 +675,7 @@ impl NatsQueueConsumer {
             stream: jetstream_stream,
             consumer: consumer.clone(),
             batch_size,
+            pull_expiry,
             stream_name: config.stream_name.clone(),
             consumer_name: config.consumer_name.clone(),
             queue_id: queue_id.clone(),
@@ -1040,6 +1085,48 @@ mod tests {
         assert_eq!(config.storage, defaults.storage);
         assert_eq!(config.replicas, defaults.replicas);
         assert_eq!(config.max_age_days, defaults.max_age_days);
+    }
+
+    /// Go `TestPullExpiryDefaultsShortAndIsConfigurable`: the pull-request
+    /// lifetime defaults to a few seconds, not the library's 30 s.
+    #[test]
+    fn pull_expiry_defaults_short_and_is_configurable() {
+        let config =
+            NatsConfig::from_uri("nats://localhost:4222?stream=S&consumer=C&subject=s.>").unwrap();
+        assert_eq!(
+            Duration::from_millis(config.pull_expiry_ms),
+            DEFAULT_PULL_EXPIRY
+        );
+        assert!(DEFAULT_PULL_EXPIRY < Duration::from_secs(10));
+
+        let config = NatsConfig::from_uri(
+            "nats://localhost:4222?stream=S&consumer=C&subject=s.>&pull-expiry-ms=7000",
+        )
+        .unwrap();
+        assert_eq!(config.pull_expiry_ms, 7000);
+    }
+
+    /// Go `TestPullOptionsAreAlwaysAcceptedByTheClient`: every expiry yields a
+    /// heartbeat under half the expiry (the server's limit), or the library's
+    /// own pair.
+    #[test]
+    fn pull_timing_is_always_accepted_by_the_server() {
+        for ms in [0u64, 500, 1000, 1500, 2000, 3000, 5000, 30_000] {
+            let (expires, heartbeat) = pull_timing(Duration::from_millis(ms));
+            assert!(!heartbeat.is_zero(), "expiry {ms}ms: heartbeat set");
+            assert!(
+                heartbeat <= expires / 2,
+                "expiry {ms}ms: {heartbeat:?} vs {expires:?}"
+            );
+        }
+        assert_eq!(
+            pull_timing(Duration::from_secs(3)),
+            (Duration::from_secs(3), Duration::from_secs(1))
+        );
+        assert_eq!(
+            pull_timing(Duration::ZERO),
+            (Duration::from_secs(30), Duration::from_secs(15))
+        );
     }
 
     #[test]

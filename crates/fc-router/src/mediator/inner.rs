@@ -72,6 +72,8 @@ pub(super) fn make_client_builder(
     let timeout = config.timeout;
     let connect_timeout = config.connect_timeout;
     let http_version = config.http_version;
+    let ping_interval = config.http2_ping_interval;
+    let ping_timeout = config.http2_ping_timeout;
     Arc::new(move |host_key: &HostKey| {
         // No delivery policy here (owner decision #56): router targets are
         // first-party (queue config, our own apps' pointers). The endpoint
@@ -92,6 +94,14 @@ pub(super) fn make_client_builder(
                 builder = builder.http1_only();
             }
             HttpVersion::Http2 => {
+                // Connection health check (Go: ReadIdleTimeout/PingTimeout):
+                // PING after `ping_interval` without a received frame, close
+                // the connection if the ack misses `ping_timeout`. Idle
+                // connections are pinged too, as Go's are.
+                builder = builder
+                    .http2_keep_alive_interval(ping_interval)
+                    .http2_keep_alive_timeout(ping_timeout)
+                    .http2_keep_alive_while_idle(true);
                 if host_key.scheme.eq_ignore_ascii_case("http") {
                     // Cleartext target, deployed mode: prior-knowledge h2c
                     // — see this function's doc comment.
@@ -139,4 +149,136 @@ pub(super) fn spawn_sweep_task(inner: &Arc<MediatorInner>) {
             inner.host_pools.sweep_all();
         }
     });
+}
+
+/// Go `TestHTTP2HealthCheckClosesAStalledConnection` (h2c half; the TLS half
+/// is not ported, see docs/go-mirror): against a peer that completes the
+/// HTTP/2 handshake and then goes silent, a delivery fails promptly after an
+/// unanswered PING instead of running to its own deadline.
+#[cfg(test)]
+mod h2_ping_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    const PREFACE_LEN: usize = 24;
+    const FRAME_SETTINGS: u8 = 4;
+    const FRAME_PING: u8 = 6;
+    const FLAG_ACK: u8 = 1;
+
+    /// Completes the connection preface and SETTINGS exchange, then swallows
+    /// every frame: never answers a request, never acks a PING.
+    async fn stalled_h2c_peer(pings: Arc<AtomicUsize>) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                let pings = Arc::clone(&pings);
+                tokio::spawn(async move {
+                    let mut preface = [0u8; PREFACE_LEN];
+                    if sock.read_exact(&mut preface).await.is_err() {
+                        return;
+                    }
+                    // Our (empty) SETTINGS.
+                    if sock
+                        .write_all(&[0, 0, 0, FRAME_SETTINGS, 0, 0, 0, 0, 0])
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                    loop {
+                        let mut head = [0u8; 9];
+                        if sock.read_exact(&mut head).await.is_err() {
+                            return;
+                        }
+                        let len = u32::from_be_bytes([0, head[0], head[1], head[2]]) as usize;
+                        let mut payload = vec![0u8; len];
+                        if sock.read_exact(&mut payload).await.is_err() {
+                            return;
+                        }
+                        match (head[3], head[4] & FLAG_ACK != 0) {
+                            (FRAME_SETTINGS, false) => {
+                                if sock
+                                    .write_all(&[0, 0, 0, FRAME_SETTINGS, FLAG_ACK, 0, 0, 0, 0])
+                                    .await
+                                    .is_err()
+                                {
+                                    return;
+                                }
+                            }
+                            (FRAME_PING, false) => {
+                                pings.fetch_add(1, Ordering::SeqCst); // seen, never acked
+                            }
+                            _ => {} // HEADERS/DATA for the request: swallowed.
+                        }
+                    }
+                });
+            }
+        });
+        port
+    }
+
+    async fn deliver(
+        config: &HttpMediatorConfig,
+        port: u16,
+        deadline: Duration,
+    ) -> (Duration, bool) {
+        let host = HostKey {
+            scheme: "http".to_string(),
+            host: "127.0.0.1".to_string(),
+            port,
+        };
+        let client = make_client_builder(config)(&host);
+        let start = Instant::now();
+        let res = client
+            .post(format!("http://127.0.0.1:{port}/deliver"))
+            .timeout(deadline)
+            .body(r#"{"messageId":"m"}"#)
+            .send()
+            .await;
+        let err = res.expect_err("nothing answers; the request must fail");
+        (start.elapsed(), err.is_timeout())
+    }
+
+    #[tokio::test]
+    async fn health_check_closes_a_stalled_connection() {
+        let pings = Arc::new(AtomicUsize::new(0));
+        let port = stalled_h2c_peer(Arc::clone(&pings)).await;
+        let config = HttpMediatorConfig::production()
+            .with_http2_health_check(Duration::from_millis(200), Duration::from_millis(300));
+
+        // (hyper reports the keep-alive expiry as a timed-out I/O error, so
+        // `is_timeout` cannot tell it from the deadline; the elapsed time
+        // against the 10 s deadline does.)
+        let (took, _) = deliver(&config, port, Duration::from_secs(10)).await;
+        assert!(
+            took < Duration::from_secs(5),
+            "the health check, not the 10 s request deadline, must end it; took {took:?}"
+        );
+        assert!(
+            pings.load(Ordering::SeqCst) > 0,
+            "the client must have pinged the silent connection"
+        );
+    }
+
+    /// Control: with the default 30 s health check the same stalled peer runs
+    /// the request to its own deadline, so the test above measures the health
+    /// check and nothing else.
+    #[tokio::test]
+    async fn default_health_check_waits_for_the_request_deadline() {
+        let pings = Arc::new(AtomicUsize::new(0));
+        let port = stalled_h2c_peer(Arc::clone(&pings)).await;
+        let config = HttpMediatorConfig::production();
+
+        let (took, timed_out) = deliver(&config, port, Duration::from_millis(1500)).await;
+        assert!(timed_out, "ran to its own deadline");
+        assert!(took >= Duration::from_millis(1400), "{took:?}");
+        assert_eq!(pings.load(Ordering::SeqCst), 0, "no ping inside 30 s");
+    }
 }

@@ -664,6 +664,10 @@ impl ConfigSyncService {
         let new_hash = Self::compute_config_hash(&new_config);
         if *self.last_config_hash.lock() == Some(new_hash) {
             debug!("Configuration unchanged, skipping reload");
+            // An unchanged config is not re-applied, but a queue it names
+            // may have been created since (the platform makes each on its
+            // first publish). Start consumers for any that have appeared.
+            self.queue_manager.recheck_missing_queues().await;
             return Ok(false);
         }
 

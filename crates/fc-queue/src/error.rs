@@ -65,6 +65,16 @@ pub enum QueueError {
 
     #[error("Configuration error: {0}")]
     Config(String),
+
+    /// The broker has no such queue (yet). Not a failure: the platform
+    /// creates a dispatch queue on the first message published to it, so a
+    /// queue the router is configured to consume can legitimately not exist.
+    /// A consumer factory returns it instead of a consumer; a poll returns
+    /// it when the queue disappears under a running consumer. The router
+    /// then runs no consumer for the queue, raises no warning, and builds
+    /// one once the queue appears (Go: `queue.ErrQueueMissing`).
+    #[error("Queue does not exist")]
+    QueueMissing,
 }
 
 impl QueueError {

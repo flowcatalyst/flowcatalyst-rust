@@ -75,6 +75,13 @@ impl ConsumerFactory for SchemeConsumerFactory {
                     config.visibility_timeout as i32,
                 )
                 .await;
+                // The platform creates a dispatch queue on its first
+                // publish, so a queue the router is told to consume may not
+                // exist yet: not a failure, and nothing to poll.
+                if consumer.queue_is_missing().await {
+                    fc_queue::QueueConsumer::stop(&consumer).await;
+                    return Err(RouterError::QueueMissing(config.name.clone()));
+                }
                 Ok(Arc::new(consumer))
             }
             QueueScheme::Nats => build_nats_consumer(config).await,

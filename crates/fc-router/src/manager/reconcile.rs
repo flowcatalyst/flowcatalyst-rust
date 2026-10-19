@@ -405,8 +405,14 @@ impl QueueManager {
             }
         }
 
-        let mut queues_created = 0;
-        let mut failures: Vec<String> = Vec::new();
+        // A queue that left the config, or whose config changed, is no longer
+        // "missing" as it was; the build below re-judges it against the broker.
+        self.missing_queues.lock().retain(|name, have| {
+            wanted
+                .get(name)
+                .is_some_and(|want| same_queue_config(have, want))
+        });
+
         let Some(factory) = self.consumer_factory.clone() else {
             for name in wanted.keys() {
                 if self.consumers.get(name).is_none() {
@@ -422,16 +428,36 @@ impl QueueManager {
         // Build the missing consumers concurrently (each build is a broker
         // round-trip; 16 queues built one at a time used to take 16x the
         // latency), then register them one at a time in `wanted` order so
-        // logs and behaviour stay deterministic. `buffered` yields results
-        // in input order.
-        // Owned inputs (not references into `wanted`) keep the stream's
-        // futures `Send` for the spawned reload task.
+        // logs and behaviour stay deterministic.
         let missing: Vec<(String, fc_common::QueueConfig)> = wanted
             .iter()
             .filter(|(name, _)| self.consumers.get(name.as_str()).is_none())
             .map(|(name, cfg)| (name.clone(), cfg.clone()))
             .collect();
-        let mut built = stream::iter(missing.into_iter().map(|(name, queue_config)| {
+        let (queues_created, failures) = self.start_consumers(factory, missing).await;
+
+        if !failures.is_empty() {
+            return Err(RouterError::ConsumerBuild(failures.join("; ")));
+        }
+        Ok((queues_created, queues_removed))
+    }
+
+    /// Build and start a consumer for each of `queues` (name, config).
+    /// Returns how many started and the failures; the rest are still started
+    /// when one fails. A queue the broker has no queue for yet
+    /// ([`RouterError::is_queue_missing`]) is not a failure: it goes in
+    /// `missing_queues`, is logged once per streak, and is left alone until
+    /// [`Self::recheck_missing_queues`] (or the next reload) finds it.
+    async fn start_consumers(
+        self: &Arc<Self>,
+        factory: Arc<dyn super::ConsumerFactory>,
+        queues: Vec<(String, fc_common::QueueConfig)>,
+    ) -> (usize, Vec<String>) {
+        let mut queues_created = 0;
+        let mut failures: Vec<String> = Vec::new();
+        // Owned inputs (not references) keep the stream's futures `Send` for
+        // the spawned reload task. `buffered` yields results in input order.
+        let mut built = stream::iter(queues.into_iter().map(|(name, queue_config)| {
             let factory = factory.clone();
             async move {
                 info!(queue_id = %name, "Creating queue consumer");
@@ -455,10 +481,15 @@ impl QueueManager {
                         // detach theirs.
                         self.detach_consumer(prev).await;
                     }
+                    let was_missing = self.missing_queues.lock().remove(&name).is_some();
                     self.spawn_consumer_poll_task(rc);
                     queues_created += 1;
+                    if was_missing {
+                        info!(queue_id = %name, "Queue now exists; consuming it");
+                    }
                     info!(queue_id = %name, "Queue consumer created and polling");
                 }
+                Err(e) if e.is_queue_missing() => self.note_queue_missing(&name, queue_config),
                 Err(e) => {
                     error!(queue_id = %name, error = %e, "Failed to create queue consumer");
                     self.warning_service.add_warning(
@@ -471,11 +502,61 @@ impl QueueManager {
                 }
             }
         }
+        (queues_created, failures)
+    }
 
-        if !failures.is_empty() {
-            return Err(RouterError::ConsumerBuild(failures.join("; ")));
+    /// Record `queue_config` as configured-but-absent and log the one INFO
+    /// line for the transition into that state; a recheck that still finds
+    /// it missing is silent.
+    pub(super) fn note_queue_missing(&self, name: &str, queue_config: fc_common::QueueConfig) {
+        let already = self
+            .missing_queues
+            .lock()
+            .insert(name.to_string(), queue_config)
+            .is_some();
+        if !already {
+            info!(
+                queue_id = %name,
+                "Queue does not exist yet; not consuming it (rechecked periodically)"
+            );
         }
-        Ok((queues_created, queues_removed))
+    }
+
+    /// Queues currently configured but absent from the broker.
+    pub fn missing_queue_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.missing_queues.lock().keys().cloned().collect();
+        names.sort();
+        names
+    }
+
+    /// Start a consumer for every configured queue that was missing at the
+    /// last look and has appeared since (Go: `RecheckMissingQueues`). The
+    /// platform creates a dispatch queue on the first message published to
+    /// it, which can happen long after the config naming it was applied, and
+    /// an unchanged config is never re-applied, so without this a queue
+    /// created later would not be consumed until the next config change.
+    /// With nothing missing it does no work at all. Failures other than
+    /// "missing" are logged and retried by the next recheck or reload.
+    pub async fn recheck_missing_queues(self: &Arc<Self>) {
+        if !self.running.load(Ordering::SeqCst) || self.polling_stopped.load(Ordering::SeqCst) {
+            return;
+        }
+        let Some(factory) = self.consumer_factory.clone() else {
+            return;
+        };
+        // One build at a time against a reload (which holds the write lock).
+        let _reload_guard = self.pool_configs.read().await;
+        let queues: Vec<(String, fc_common::QueueConfig)> = self
+            .missing_queues
+            .lock()
+            .iter()
+            .filter(|(name, _)| self.consumers.get(name.as_str()).is_none())
+            .map(|(name, cfg)| (name.clone(), cfg.clone()))
+            .collect();
+        if queues.is_empty() {
+            return;
+        }
+        self.start_consumers(factory, queues).await;
     }
 
     /// Cleanup draining pools that have finished (see `draining_pools`).
@@ -702,5 +783,209 @@ mod pool_creation_tests {
         }
         assert!(pools.iter().all(|p| Arc::ptr_eq(p, &pools[0])));
         assert!(manager.draining_pools.lock().is_empty());
+    }
+}
+
+/// Go `manager_missing_queue_test.go`: a queue the platform has not created
+/// yet is neither a failure nor a warning, and is picked up when it appears.
+#[cfg(test)]
+mod missing_queue_tests {
+    use super::*;
+    use crate::mediator::HttpMediatorConfig;
+    use crate::warning::WarningService;
+    use async_trait::async_trait;
+    use fc_common::{QueueConfig, QueuedMessage};
+    use fc_queue::{QueueConsumer, QueueError};
+    use std::sync::atomic::{AtomicBool, AtomicU32};
+    use std::time::{Duration, Instant};
+    use tokio::time::sleep;
+
+    /// Polls empty, or fails with `err` when one is set.
+    struct Consumer {
+        id: String,
+        polls: AtomicU32,
+        missing: bool,
+    }
+
+    #[async_trait]
+    impl QueueConsumer for Consumer {
+        fn identifier(&self) -> &str {
+            &self.id
+        }
+        async fn poll(&self, _: u32) -> fc_queue::Result<Vec<QueuedMessage>> {
+            self.polls.fetch_add(1, Ordering::SeqCst);
+            sleep(Duration::from_millis(5)).await;
+            if self.missing {
+                return Err(QueueError::QueueMissing);
+            }
+            Ok(vec![])
+        }
+        async fn ack(&self, _: &str) -> fc_queue::Result<()> {
+            Ok(())
+        }
+        async fn nack(&self, _: &str, _: Option<u32>) -> fc_queue::Result<()> {
+            Ok(())
+        }
+        async fn extend_visibility(&self, _: &str, _: u32) -> fc_queue::Result<()> {
+            Ok(())
+        }
+        fn is_healthy(&self) -> bool {
+            true
+        }
+        async fn stop(&self) {}
+    }
+
+    /// `q-new` does not exist until `exists` is set; every other queue does.
+    struct Factory {
+        exists: AtomicBool,
+    }
+
+    #[async_trait]
+    impl super::super::ConsumerFactory for Factory {
+        async fn create_consumer(
+            &self,
+            config: &QueueConfig,
+        ) -> crate::Result<Arc<dyn QueueConsumer>> {
+            if config.name == "q-new" && !self.exists.load(Ordering::SeqCst) {
+                return Err(RouterError::QueueMissing(config.name.clone()));
+            }
+            Ok(Arc::new(Consumer {
+                id: config.name.clone(),
+                polls: AtomicU32::new(0),
+                missing: false,
+            }))
+        }
+    }
+
+    fn queue(name: &str) -> QueueConfig {
+        QueueConfig {
+            name: name.to_string(),
+            uri: format!("test://{name}"),
+            connections: 1,
+            visibility_timeout: 30,
+        }
+    }
+
+    fn manager(factory: Arc<Factory>, warnings: Arc<WarningService>) -> Arc<QueueManager> {
+        Arc::new(
+            QueueManager::builder(HttpMediatorConfig::dev())
+                .warning_service(warnings)
+                .consumer_factory(factory)
+                .build(),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_missing_queue_is_neither_a_failure_nor_a_warning_and_is_picked_up_when_it_appears() {
+        let factory = Arc::new(Factory {
+            exists: AtomicBool::new(false),
+        });
+        let warnings = Arc::new(WarningService::default());
+        let m = manager(factory.clone(), warnings.clone());
+        let config = RouterConfig {
+            processing_pools: vec![],
+            queues: vec![queue("q-live"), queue("q-new")],
+        };
+
+        assert!(
+            m.reload_config(config.clone()).await.unwrap(),
+            "a queue nobody has published to yet must not fail the apply"
+        );
+        assert!(
+            m.consumers.get("q-live").is_some(),
+            "the other queues are consumed"
+        );
+        assert!(
+            m.consumers.get("q-new").is_none(),
+            "no consumer for a queue that does not exist"
+        );
+        assert_eq!(m.missing_queue_names(), vec!["q-new".to_string()]);
+        assert_eq!(
+            warnings.warning_count(),
+            0,
+            "a missing queue raises no warning"
+        );
+
+        // Still absent: a recheck changes nothing, and stays silent.
+        m.recheck_missing_queues().await;
+        assert!(m.consumers.get("q-new").is_none());
+        assert_eq!(warnings.warning_count(), 0);
+
+        // The first publish creates the queue; an unchanged config is never
+        // re-applied, so the recheck is what starts the consumer.
+        factory.exists.store(true, Ordering::SeqCst);
+        m.recheck_missing_queues().await;
+        assert!(
+            m.consumers.get("q-new").is_some(),
+            "the consumer starts once the queue exists"
+        );
+        assert!(
+            m.missing_queue_names().is_empty(),
+            "and it is no longer tracked as missing"
+        );
+        assert_eq!(warnings.warning_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_queue_leaving_the_config_is_forgotten_as_missing() {
+        let factory = Arc::new(Factory {
+            exists: AtomicBool::new(false),
+        });
+        let m = manager(factory, Arc::new(WarningService::default()));
+        let both = RouterConfig {
+            processing_pools: vec![],
+            queues: vec![queue("q-new")],
+        };
+        m.reload_config(both).await.unwrap();
+        assert_eq!(m.missing_queue_names().len(), 1);
+        m.reload_config(RouterConfig {
+            processing_pools: vec![],
+            queues: vec![],
+        })
+        .await
+        .unwrap();
+        assert!(m.missing_queue_names().is_empty());
+    }
+
+    /// A queue that disappears under a running consumer is retired, not
+    /// reported as an erroring or stalled consumer, and comes back through
+    /// the recheck.
+    #[tokio::test]
+    async fn a_queue_deleted_under_a_running_consumer_is_retired_quietly() {
+        let warnings = Arc::new(WarningService::default());
+        let m = manager(
+            Arc::new(Factory {
+                exists: AtomicBool::new(true),
+            }),
+            warnings.clone(),
+        );
+        let gone = Arc::new(Consumer {
+            id: "q-gone".to_string(),
+            polls: AtomicU32::new(0),
+            missing: true,
+        });
+        let rc = m.new_running_consumer(gone.clone(), "q-gone".to_string(), Some(queue("q-gone")));
+        m.consumers.insert(rc.clone());
+        m.spawn_consumer_poll_task(rc);
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while m.consumers.get("q-gone").is_some() {
+            assert!(
+                Instant::now() < deadline,
+                "the consumer of a vanished queue is detached"
+            );
+            sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(
+            gone.polls.load(Ordering::SeqCst),
+            1,
+            "and it stops polling at once"
+        );
+        assert_eq!(warnings.warning_count(), 0, "no warning");
+        assert_eq!(m.missing_queue_names(), vec!["q-gone".to_string()]);
+
+        // The recheck brings it back when it exists again.
+        m.recheck_missing_queues().await;
+        assert!(m.consumers.get("q-gone").is_some());
     }
 }

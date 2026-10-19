@@ -149,6 +149,13 @@ pub struct QueueManager {
     /// run first: `shutdown()` on a pool is idempotent.
     draining_pools: Mutex<Vec<Arc<ProcessPool>>>,
 
+    /// Configured queues the broker has no queue for yet
+    /// ([`fc_queue::QueueError::QueueMissing`]): no consumer, no poll loop,
+    /// no warning (Go: `missingQueues`). An entry is how the INFO line is
+    /// logged once per streak rather than on every recheck, and what
+    /// [`Self::recheck_missing_queues`] walks. Keyed by queue name.
+    missing_queues: Mutex<HashMap<String, fc_common::QueueConfig>>,
+
     /// Per-queue poll counters for the Prometheus surface, keyed by queue
     /// name so a rebuilt consumer keeps counting instead of resetting the
     /// series.
@@ -533,6 +540,7 @@ impl QueueManagerBuilder {
             app_message_to_pipeline_key: Arc::new(DashMap::new()),
             pools: DashMap::new(),
             draining_pools: Mutex::new(Vec::new()),
+            missing_queues: Mutex::new(HashMap::new()),
             consumer_events: DashMap::new(),
             capacity_notify: Arc::new(Notify::new()),
             synth_pools: DashMap::new(),

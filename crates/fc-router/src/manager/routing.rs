@@ -147,6 +147,25 @@ pub(super) async fn ack_bounded(
     }
 }
 
+/// [`ack_bounded`] for an ack the router issues itself on the consumer's poll
+/// loop, before the message reaches a pool (a requeued duplicate, a strict
+/// routing reject). The poll loop blocks on it, and a batching broker (SQS)
+/// would hold a plain ack for its delete linger waiting for a full batch, so a
+/// storm of such acks would throttle the queue's intake to about one message
+/// per linger. Urgent cuts the pending batch at once (Go: `pollLoopAck`).
+pub(super) async fn poll_loop_ack(
+    consumer: &dyn QueueConsumer,
+    handle: &str,
+) -> StdResult<(), BrokerOpError> {
+    match time::timeout(BROKER_OP_TIMEOUT, consumer.ack_urgent(handle)).await {
+        Ok(r) => Ok(r?),
+        Err(_) => Err(BrokerOpError::TimedOut {
+            op: "ack",
+            after: BROKER_OP_TIMEOUT,
+        }),
+    }
+}
+
 /// Callback that the pool worker calls directly when processing completes.
 /// Reads the latest receipt handle from in_pipeline (may have been swapped by
 /// redelivery), performs the broker operation, then cleans up tracking.
@@ -693,7 +712,7 @@ impl QueueManager {
                 let ctx = EventContext::new(msg_id.as_str()).queue(req.message.queue_identifier.as_str());
                 async move {
                     debug!(message_id = %msg_id, pipeline_key = %key, "Requeued duplicate, ACKing");
-                    match ack_bounded(consumer.as_ref(), &handle).await {
+                    match poll_loop_ack(consumer.as_ref(), &handle).await {
                         Ok(()) => recorder.record(EventKind::DuplicateAcked, &ctx, Facts::text("a new copy of a message already in the pipeline; acked".to_string())),
                         // The broker redelivers this copy and it is filtered again.
                         Err(e) => recorder.record(EventKind::AckFailed, &ctx, Facts::text(e.to_string())),
@@ -748,7 +767,7 @@ impl QueueManager {
                     let app_id = msg.message.id.clone();
                     let broker_id = msg.broker_message_id.clone();
                     malformed_futs.push(async move {
-                        if let Err(e) = consumer.ack(&handle).await {
+                        if let Err(e) = poll_loop_ack(consumer.as_ref(), &handle).await {
                             warn!(
                                 message_id = %app_id,
                                 broker_message_id = ?broker_id,
@@ -2176,6 +2195,127 @@ mod g11_broker_scoping_tests {
             "B's entry must be untouched by A's redelivery — a bare-broker-id \
              key would route A's redelivery onto whichever queue's entry \
              happened to be at key \"9\" (the G11 cross-wiring bug)"
+        );
+    }
+}
+
+/// Go `TestPollLoopAcksAreUrgent`: the acks `route_batch` issues itself on the
+/// consumer's poll loop (an external-requeue duplicate, a strict-routing
+/// reject) must go out as urgent, or a batching broker holds each for its
+/// delete linger and throttles the queue's intake.
+#[cfg(test)]
+mod poll_loop_ack_tests {
+    use super::*;
+    use crate::mediator::HttpMediatorConfig;
+    use fc_common::{DispatchMode, MediationType, Message, QueuedMessage};
+    use parking_lot::Mutex as PlMutex;
+
+    /// Records, per receipt handle, whether it was acked urgently.
+    #[derive(Default)]
+    struct AckUrgencyRecorder {
+        acks: PlMutex<Vec<(String, bool)>>,
+    }
+
+    #[async_trait::async_trait]
+    impl QueueConsumer for AckUrgencyRecorder {
+        fn identifier(&self) -> &str {
+            "q"
+        }
+        async fn poll(&self, _: u32) -> fc_queue::Result<Vec<QueuedMessage>> {
+            Ok(vec![])
+        }
+        async fn ack(&self, h: &str) -> fc_queue::Result<()> {
+            self.acks.lock().push((h.to_string(), false));
+            Ok(())
+        }
+        async fn ack_urgent(&self, h: &str) -> fc_queue::Result<()> {
+            self.acks.lock().push((h.to_string(), true));
+            Ok(())
+        }
+        async fn nack(&self, _: &str, _: Option<u32>) -> fc_queue::Result<()> {
+            Ok(())
+        }
+        async fn extend_visibility(&self, _: &str, _: u32) -> fc_queue::Result<()> {
+            Ok(())
+        }
+        fn is_healthy(&self) -> bool {
+            true
+        }
+        async fn stop(&self) {}
+    }
+
+    fn queued(id: &str, pool: &str, mode_specified: bool, broker: &str, rh: &str) -> QueuedMessage {
+        QueuedMessage {
+            message: Message {
+                id: id.to_string(),
+                pool_code: pool.to_string(),
+                auth_token: None,
+                signing_secret: None,
+                mediation_type: MediationType::HTTP,
+                mediation_target: "http://localhost/x".to_string(),
+                message_group_id: None,
+                high_priority: false,
+                dispatch_mode: DispatchMode::Immediate,
+                dispatch_mode_specified: mode_specified,
+            },
+            receipt_handle: rh.to_string(),
+            broker_message_id: Some(broker.to_string()),
+            queue_identifier: "q".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn external_requeue_duplicate_is_acked_urgently() {
+        let manager = QueueManager::new(HttpMediatorConfig::dev());
+        let first = queued("app1", "POOL", true, "broker1", "rh-orig");
+        let key = broker_scope_key("q", "broker1");
+        manager.in_pipeline.insert(
+            key.as_str().into(),
+            InFlightMessage::new(
+                &first.message,
+                first.broker_message_id.clone(),
+                "q".to_string(),
+                None,
+                first.receipt_handle.clone(),
+            )
+            .into(),
+        );
+        manager
+            .app_message_to_pipeline_key
+            .insert("app1".into(), key.as_str().into());
+
+        let consumer = Arc::new(AckUrgencyRecorder::default());
+        manager
+            .route_batch(
+                vec![queued("app1", "POOL", true, "broker2", "rh-requeue")],
+                consumer.clone(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            *consumer.acks.lock(),
+            vec![("rh-requeue".to_string(), true)],
+            "the requeued duplicate is acked on the poll loop, urgently"
+        );
+    }
+
+    #[tokio::test]
+    async fn strict_routing_reject_is_acked_urgently() {
+        let manager = QueueManager::builder(HttpMediatorConfig::dev())
+            .strict_routing(true)
+            .build();
+        let consumer = Arc::new(AckUrgencyRecorder::default());
+        manager
+            .route_batch(
+                vec![queued("app2", "", true, "broker3", "rh-malformed")],
+                consumer.clone(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            *consumer.acks.lock(),
+            vec![("rh-malformed".to_string(), true)],
+            "the strictly-rejected message is acked on the poll loop, urgently"
         );
     }
 }

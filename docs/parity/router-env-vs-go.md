@@ -85,6 +85,8 @@ Values are omitted; the task holds a webhook URL with a secret in it.
 | `FC_ROUTER_STRICT_ROUTING` | R-13/R-16 gate | Same |
 | `FC_ROUTER_SYNTH_POOL_IDLE_SECS` | Synthesised-pool idle TTL; `0` means 1h | Same (a negative value disables the sweep) |
 | `FC_ROUTER_DEFERRAL_BUDGET` | Deferral budget; `0` means 5000 | Same |
+| `FC_ROUTER_HTTP2_READ_IDLE_TIMEOUT_SECONDS` | HTTP/2 PING after this much read silence; `0` or unset means 30 | Same (2026-10-19, `docs/go-mirror/2026-10-19-router-s-items.md`) |
+| `FC_ROUTER_HTTP2_PING_TIMEOUT_SECONDS` | Close the connection when the PING is not acked in this time; `0` or unset means 15 | Same |
 | `FC_ROUTER_DEFERRAL_MAX_DELAY_SECONDS` | Longest capacity deferral, default 1h | **Not honoured.** Rust has no configurable deferral horizon. Not set in production. |
 | `FLOWCATALYST_DEV_MODE` | Go: an HTTP/1.1 mediator, nothing else | **Differs:** Rust's dev mode swaps in a built-in LocalStack config, and (owner ruling 2) it alone mounts the mock, benchmark and seed routes and allows Basic auth. Not set in production. |
 | `FC_ALB_*` | ALB self-registration | `fc-server` (feature `alb`): `FC_ALB_ENABLED`, `_TARGET_GROUP_ARN`, `_TARGET_ID`, `_TARGET_PORT`. It lacks Go's `FC_ALB_INSTANCE_IP`, `FC_ALB_REGION` and `FC_ALB_DEREGISTRATION_DELAY_SECONDS`. Not used in production (the ECS service registers targets). |

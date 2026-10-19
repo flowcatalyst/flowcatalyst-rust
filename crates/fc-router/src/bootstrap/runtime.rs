@@ -161,7 +161,9 @@ impl RouterRuntime {
             strict_routing = env.strict_routing,
             "Strict routing gate set"
         );
-        let mut builder = QueueManager::builder(HttpMediatorConfig::production())
+        let mediator_config = HttpMediatorConfig::production()
+            .with_http2_health_check(env.http2_read_idle, env.http2_ping_timeout);
+        let mut builder = QueueManager::builder(mediator_config)
             // Go's DefaultStallConfig: derived from the mediation timeout,
             // force-NACK off.
             .stall_config(stall_config_for_mediation_timeout(

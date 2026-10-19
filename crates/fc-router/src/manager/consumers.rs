@@ -137,6 +137,16 @@ impl CapacityPause {
 /// Bound on one hand-back nack (see [`QueueManager::hand_back`]).
 const HAND_BACK_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Why a replacement consumer could not be built.
+#[derive(Debug, thiserror::Error)]
+enum ReplacementError {
+    /// The broker has no such queue any more.
+    #[error("queue does not exist")]
+    QueueMissing,
+    #[error("{0}")]
+    Failed(String),
+}
+
 /// What one bounded poll produced.
 enum PollOutcome {
     Messages(Vec<fc_common::QueuedMessage>),
@@ -147,6 +157,10 @@ enum PollOutcome {
         waited: bool,
     },
     Stopped,
+    /// The queue vanished under the running consumer. Not a fault: the
+    /// consumer is retired and [`QueueManager::recheck_missing_queues`]
+    /// brings it back if the queue returns.
+    QueueMissing,
     Error(String),
     Cancelled,
 }
@@ -198,6 +212,7 @@ impl QueueManager {
             Ok(Ok(messages)) if messages.is_empty() => PollOutcome::Empty { waited: false },
             Ok(Ok(messages)) => PollOutcome::Messages(messages),
             Ok(Err(fc_queue::QueueError::Stopped)) => PollOutcome::Stopped,
+            Ok(Err(fc_queue::QueueError::QueueMissing)) => PollOutcome::QueueMissing,
             Ok(Err(e)) => PollOutcome::Error(e.to_string()),
             Err(_) => {
                 let vouched = rc
@@ -404,6 +419,10 @@ impl QueueManager {
                         warn!(consumer = %id, "Consumer stopped; poll loop exiting for rebuild");
                         break;
                     }
+                    PollOutcome::QueueMissing => {
+                        manager.detach_missing_consumer(&rc).await;
+                        break;
+                    }
                     PollOutcome::Error(e) => {
                         warn!(consumer = %id, error = %e, "Consumer poll error");
                         if sleep_or_cancel(&token, Duration::from_secs(1)).await {
@@ -496,23 +515,50 @@ impl QueueManager {
     async fn build_replacement(
         &self,
         old: &RunningConsumer,
-    ) -> Result<Arc<RunningConsumer>, String> {
+    ) -> Result<Arc<RunningConsumer>, ReplacementError> {
         let (Some(factory), Some(cfg)) = (self.consumer_factory.as_ref(), old.queue_config.clone())
         else {
-            return Err(
+            return Err(ReplacementError::Failed(
                 "no consumer factory and/or queue config to build a replacement".to_string(),
-            );
+            ));
         };
         match time::timeout(self.rebuild_timeout, factory.create_consumer(&cfg)).await {
             Ok(Ok(consumer)) => {
                 Ok(self.new_running_consumer(consumer, old.name.clone(), Some(cfg)))
             }
-            Ok(Err(e)) => Err(e.to_string()),
-            Err(_) => Err(format!(
+            Ok(Err(e)) if e.is_queue_missing() => Err(ReplacementError::QueueMissing),
+            Ok(Err(e)) => Err(ReplacementError::Failed(e.to_string())),
+            Err(_) => Err(ReplacementError::Failed(format!(
                 "build did not finish within {:?}",
                 self.rebuild_timeout
-            )),
+            ))),
         }
+    }
+
+    /// Retire a consumer whose queue disappeared from under it (Go:
+    /// `detachMissingConsumer`): it leaves the registry and stops polling
+    /// exactly as a queue removed by a reload does (messages already in
+    /// flight finish and can still ack or nack through the detaching list),
+    /// and the queue goes back to the missing set so
+    /// [`Self::recheck_missing_queues`] brings it back when it exists again.
+    pub(super) async fn detach_missing_consumer(&self, rc: &Arc<RunningConsumer>) {
+        match self.consumers.remove(&rc.name) {
+            Some(cur) if cur.generation == rc.generation => {}
+            Some(newer) => {
+                // Replaced concurrently; the newer one stays.
+                self.consumers.insert(newer);
+                return;
+            }
+            None => return,
+        }
+        if let Some(cfg) = rc.queue_config.clone() {
+            self.missing_queues.lock().insert(rc.name.clone(), cfg);
+        }
+        self.detach_consumer(rc.clone()).await;
+        info!(
+            queue = %rc.name,
+            "Queue no longer exists; stopped consuming it (rechecked periodically)"
+        );
     }
 
     /// Swap `new` in for `old` and detach `old` (Go: build-then-swap in
@@ -566,6 +612,10 @@ impl QueueManager {
                     info!(consumer_id = %consumer_id, "Consumer restarted with a fresh instance");
                 }
                 swapped
+            }
+            Err(ReplacementError::QueueMissing) => {
+                self.detach_missing_consumer(&old).await;
+                false
             }
             Err(e) => {
                 warn!(
@@ -676,6 +726,12 @@ impl QueueManager {
 
             let new = match self.build_replacement(old).await {
                 Ok(new) => new,
+                Err(ReplacementError::QueueMissing) => {
+                    // The queue is gone, not the consumer wedged: retire it
+                    // quietly.
+                    self.detach_missing_consumer(old).await;
+                    continue;
+                }
                 Err(e) => {
                     let n = self.bump_restart(&old.name);
                     error!(

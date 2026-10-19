@@ -47,6 +47,13 @@ pub enum RouterError {
         source: fc_queue::QueueError,
     },
 
+    /// The broker has no queue of this name (yet); see
+    /// [`fc_queue::QueueError::QueueMissing`]. Not a failure: the manager
+    /// starts no consumer, raises no warning and builds one once the queue
+    /// appears.
+    #[error("Queue [{0}] does not exist")]
+    QueueMissing(String),
+
     /// A reconcile could not build the consumer for one or more queues
     /// (`queue: reason; ...`). The reload is reported failed so the caller
     /// does not record the config as applied and retries it.
@@ -62,6 +69,18 @@ pub enum RouterError {
 }
 
 impl RouterError {
+    /// Whether this is the "queue does not exist yet" outcome, not a fault.
+    pub fn is_queue_missing(&self) -> bool {
+        matches!(
+            self,
+            RouterError::QueueMissing(_)
+                | RouterError::Consumer {
+                    source: fc_queue::QueueError::QueueMissing,
+                    ..
+                }
+        )
+    }
+
     /// `map_err` adapter for a consumer factory step:
     /// `.map_err(RouterError::consumer(&config.name, "invalid NATS URI"))`.
     pub fn consumer<E: Into<fc_queue::QueueError>>(

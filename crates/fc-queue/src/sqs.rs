@@ -14,7 +14,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::{QueueConsumer, QueueError, QueueMetrics, RejectedLog, RejectedMessage, Result};
 use aws_sdk_sqs::config::timeout::TimeoutConfig;
-use aws_sdk_sqs::error::DisplayErrorContext;
+use aws_sdk_sqs::error::{DisplayErrorContext, ProvideErrorMetadata};
 use aws_sdk_sqs::operation::receive_message::builders::ReceiveMessageFluentBuilder;
 use fc_common::{Message, QueuedMessage};
 use std::result::Result as StdResult;
@@ -790,7 +790,37 @@ pub struct SqsQueueConsumer {
     rejected: RejectedLog,
 }
 
+/// Whether `err` is SQS saying the queue does not exist. The code is
+/// `AWS.SimpleQueueService.NonExistentQueue` on the query-compatible wire and
+/// `QueueDoesNotExist` as the JSON type; either is accepted.
+pub fn is_queue_missing<E: ProvideErrorMetadata>(err: &E) -> bool {
+    matches!(
+        err.code(),
+        Some("AWS.SimpleQueueService.NonExistentQueue" | "QueueDoesNotExist")
+    )
+}
+
 impl SqsQueueConsumer {
+    /// Whether the broker reports this consumer's queue as nonexistent
+    /// (Go: the consumer factory's `GetQueueAttributes` check). Any other
+    /// failure of the check (network, throttling, auth) is deliberately read
+    /// as "not missing": the consumer is built as if no check had been made,
+    /// so a transient AWS error can never silently stop consumption; the
+    /// ordinary poll-error path covers a real outage.
+    pub async fn queue_is_missing(&self) -> bool {
+        match self
+            .timeout_client
+            .get_queue_attributes()
+            .queue_url(&self.queue_url)
+            .attribute_names(QueueAttributeName::QueueArn)
+            .send()
+            .await
+        {
+            Ok(_) => false,
+            Err(e) => is_queue_missing(&e),
+        }
+    }
+
     /// Default long poll wait time in seconds.
     /// 20 seconds matches TS version and minimises SQS API calls.
     /// AWS SQS max is 20 seconds.
@@ -985,7 +1015,13 @@ impl QueueConsumer for SqsQueueConsumer {
             .receive_request(max_per_poll)
             .send()
             .await
-            .map_err(QueueError::sqs)?;
+            .map_err(|e| {
+                if is_queue_missing(&e) {
+                    QueueError::QueueMissing
+                } else {
+                    QueueError::sqs(e)
+                }
+            })?;
 
         let sqs_messages = result.messages.unwrap_or_default();
         let sqs_messages_count = sqs_messages.len();
@@ -1053,7 +1089,7 @@ impl QueueConsumer for SqsQueueConsumer {
                         .record(sqs_msg.message_id().map(str::to_string), e.to_string());
                     // ACK the malformed message to prevent infinite retries
                     if let Some(handle) = sqs_msg.receipt_handle() {
-                        if let Err(e) = self.ack(handle).await {
+                        if let Err(e) = self.ack_urgent(handle).await {
                             warn!(queue = %self.queue_name, error = %e, "could not ack the malformed SQS message");
                         }
                     }
@@ -2039,5 +2075,237 @@ mod receipt_map_tests {
         let t = c.timeout_client.config().timeout_config().cloned().unwrap();
         assert_eq!(t.operation_timeout(), Some(SQS_CALL_TIMEOUT));
         assert_eq!(SQS_CALL_TIMEOUT, Duration::from_secs(25));
+    }
+}
+
+/// Go `TestPollAcksMalformedMessageWithoutWaitingOutTheLinger`: the ack of a
+/// malformed message runs inside `poll`, so it must not wait out the delete
+/// batcher's linger (5 s) for a full batch.
+#[cfg(test)]
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "test code: a discarded Result is a deliberate no-op in a test (socket teardown)"
+)]
+mod poll_ack_urgent_tests {
+    use super::*;
+    use aws_sdk_sqs::config::retry::RetryConfig;
+    use aws_sdk_sqs::config::{BehaviorVersion, Credentials, Region};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    /// A one-queue fake SQS speaking awsJson1.0: `ReceiveMessage` returns one
+    /// body that is not a platform message; `DeleteMessageBatch` echoes every
+    /// entry as successful and records its receipt handle.
+    async fn fake_sqs(deleted: Arc<Mutex<Vec<String>>>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                let deleted = Arc::clone(&deleted);
+                tokio::spawn(async move {
+                    let mut buf = Vec::new();
+                    let mut chunk = [0u8; 8192];
+                    // Read headers, then the declared body.
+                    let (head_end, content_len) = loop {
+                        let n = sock.read(&mut chunk).await.unwrap_or(0);
+                        if n == 0 {
+                            return;
+                        }
+                        buf.extend_from_slice(&chunk[..n]);
+                        if let Some(p) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                            let head = String::from_utf8_lossy(&buf[..p]).to_lowercase();
+                            let len = head
+                                .lines()
+                                .find_map(|l| l.strip_prefix("content-length:"))
+                                .and_then(|v| v.trim().parse::<usize>().ok())
+                                .unwrap_or(0);
+                            break (p + 4, len);
+                        }
+                    };
+                    while buf.len() < head_end + content_len {
+                        let n = sock.read(&mut chunk).await.unwrap_or(0);
+                        if n == 0 {
+                            return;
+                        }
+                        buf.extend_from_slice(&chunk[..n]);
+                    }
+                    let head = String::from_utf8_lossy(&buf[..head_end]).to_string();
+                    let body: serde_json::Value =
+                        serde_json::from_slice(&buf[head_end..head_end + content_len])
+                            .unwrap_or_default();
+                    let reply = if head.contains("ReceiveMessage") {
+                        let text = "this is not json";
+                        serde_json::json!({"Messages": [{
+                            "MessageId": "broker-1",
+                            "ReceiptHandle": "rh-malformed",
+                            "Body": text,
+                            "MD5OfBody": format!("{:x}", md5_of(text)),
+                        }]})
+                    } else if head.contains("DeleteMessageBatch") {
+                        let entries = body["Entries"].as_array().cloned().unwrap_or_default();
+                        let mut ok = Vec::new();
+                        for e in &entries {
+                            deleted
+                                .lock()
+                                .push(e["ReceiptHandle"].as_str().unwrap_or("").to_string());
+                            ok.push(serde_json::json!({"Id": e["Id"]}));
+                        }
+                        serde_json::json!({"Successful": ok, "Failed": []})
+                    } else {
+                        serde_json::json!({})
+                    };
+                    let payload = reply.to_string();
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/x-amz-json-1.0\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{payload}",
+                        payload.len()
+                    );
+                    let _ = sock.write_all(resp.as_bytes()).await;
+                    let _ = sock.shutdown().await;
+                });
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    /// MD5 as the SDK verifies it (`MD5OfBody`); tiny RFC 1321 implementation
+    /// so the test needs no extra dependency.
+    fn md5_of(s: &str) -> u128 {
+        const S: [u32; 64] = [
+            7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20,
+            5, 9, 14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+            6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
+        ];
+        let k: Vec<u32> = (0..64)
+            .map(|i| ((i as f64 + 1.0).sin().abs() * 4_294_967_296.0) as u32)
+            .collect();
+        let mut msg = s.as_bytes().to_vec();
+        let bit_len = (msg.len() as u64) * 8;
+        msg.push(0x80);
+        while msg.len() % 64 != 56 {
+            msg.push(0);
+        }
+        msg.extend_from_slice(&bit_len.to_le_bytes());
+        let (mut a0, mut b0, mut c0, mut d0) = (
+            0x6745_2301u32,
+            0xefcd_ab89u32,
+            0x98ba_dcfeu32,
+            0x1032_5476u32,
+        );
+        for chunk in msg.chunks(64) {
+            let m: Vec<u32> = chunk
+                .chunks(4)
+                .map(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]))
+                .collect();
+            let (mut a, mut b, mut c, mut d) = (a0, b0, c0, d0);
+            for i in 0..64 {
+                let (f, g) = match i / 16 {
+                    0 => ((b & c) | (!b & d), i),
+                    1 => ((d & b) | (!d & c), (5 * i + 1) % 16),
+                    2 => (b ^ c ^ d, (3 * i + 5) % 16),
+                    _ => (c ^ (b | !d), (7 * i) % 16),
+                };
+                let f2 = f.wrapping_add(a).wrapping_add(k[i]).wrapping_add(m[g]);
+                a = d;
+                d = c;
+                c = b;
+                b = b.wrapping_add(f2.rotate_left(S[i]));
+            }
+            a0 = a0.wrapping_add(a);
+            b0 = b0.wrapping_add(b);
+            c0 = c0.wrapping_add(c);
+            d0 = d0.wrapping_add(d);
+        }
+        let mut out = [0u8; 16];
+        out[0..4].copy_from_slice(&a0.to_le_bytes());
+        out[4..8].copy_from_slice(&b0.to_le_bytes());
+        out[8..12].copy_from_slice(&c0.to_le_bytes());
+        out[12..16].copy_from_slice(&d0.to_le_bytes());
+        u128::from_be_bytes(out)
+    }
+
+    /// SQS answering every call with "that queue does not exist", as the
+    /// query-compatible JSON protocol does.
+    async fn fake_missing_queue_sqs() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 16384];
+                    let _ = sock.read(&mut buf).await;
+                    let payload = r#"{"__type":"com.amazonaws.sqs#QueueDoesNotExist","message":"The specified queue does not exist."}"#;
+                    let resp = format!(
+                        "HTTP/1.1 400 Bad Request\r\ncontent-type: application/x-amz-json-1.0\r\nx-amzn-query-error: AWS.SimpleQueueService.NonExistentQueue;Sender\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{payload}",
+                        payload.len()
+                    );
+                    let _ = sock.write_all(resp.as_bytes()).await;
+                    let _ = sock.shutdown().await;
+                });
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    /// Go `TestPollReportsAMissingQueueAsErrQueueMissing`: a missing queue is
+    /// its own outcome, not a poll failure; the factory's existence check
+    /// reads the same answer.
+    #[tokio::test]
+    async fn a_missing_queue_is_its_own_poll_outcome() {
+        let endpoint = fake_missing_queue_sqs().await;
+        let conf = aws_sdk_sqs::Config::builder()
+            .behavior_version(BehaviorVersion::latest())
+            .region(Region::new("us-east-1"))
+            .credentials_provider(Credentials::new("k", "s", None, None, "test"))
+            .endpoint_url(endpoint.clone())
+            .retry_config(RetryConfig::disabled())
+            .build();
+        let consumer = SqsQueueConsumer::new(
+            Client::from_conf(conf),
+            format!("{endpoint}/000000000000/q"),
+            "q".to_string(),
+            30,
+        );
+        assert!(matches!(
+            consumer.poll(10).await,
+            Err(QueueError::QueueMissing)
+        ));
+        assert!(consumer.queue_is_missing().await);
+    }
+
+    #[tokio::test]
+    async fn malformed_message_ack_inside_poll_does_not_wait_out_the_linger() {
+        let deleted = Arc::new(Mutex::new(Vec::new()));
+        let endpoint = fake_sqs(Arc::clone(&deleted)).await;
+        let conf = aws_sdk_sqs::Config::builder()
+            .behavior_version(BehaviorVersion::latest())
+            .region(Region::new("us-east-1"))
+            .credentials_provider(Credentials::new("k", "s", None, None, "test"))
+            .endpoint_url(endpoint.clone())
+            .build();
+        let consumer = SqsQueueConsumer::new(
+            Client::from_conf(conf),
+            format!("{endpoint}/000000000000/q"),
+            "q".to_string(),
+            30,
+        );
+
+        let start = Instant::now();
+        let msgs = consumer.poll(10).await.unwrap();
+        let took = start.elapsed();
+        assert!(
+            msgs.is_empty(),
+            "a malformed message is acked, not returned"
+        );
+        assert!(
+            took < DELETE_LINGER / 2,
+            "the malformed ack waited out the delete linger inside poll: {took:?}"
+        );
+        assert_eq!(*deleted.lock(), vec!["rh-malformed".to_string()]);
     }
 }
