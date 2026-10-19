@@ -307,8 +307,8 @@ async fn a_callback_without_the_jobs_token_is_refused() {
 // ── Outcomes ────────────────────────────────────────────────────────────
 
 /// A 2xx completes the job; the delivery is Go's envelope with the client
-/// code, and the attempt records what was sent. Like Go, a success does not
-/// bump `attempt_count` (it counts retries scheduled).
+/// code, and the attempt records what was sent. The delivery counts as an
+/// attempt (Go F31: `attempt_count` is the number of attempts made).
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn a_delivered_job_completes_and_records_its_attempt() {
@@ -332,7 +332,7 @@ async fn a_delivered_job_completes_and_records_its_attempt() {
     assert_eq!((status, resp), (StatusCode::OK, json!({"ack": true})));
     let row = f.row(&j.id).await;
     assert_eq!(row.status, "COMPLETED");
-    assert_eq!(row.attempt_count, 0);
+    assert_eq!(row.attempt_count, 1, "a first-try success is one attempt");
     assert!(row.completed_at.is_some());
 
     let (headers, body) = f.subscriber.received.lock().unwrap()[0].clone();
@@ -428,6 +428,51 @@ async fn the_last_attempt_fails_the_job() {
     let row = f.row(&j.id).await;
     assert_eq!(row.status, "FAILED");
     assert!(row.completed_at.is_some());
+    assert_eq!(row.attempt_count, 1, "the terminal failure is the attempt");
+}
+
+/// F31: attempt_count equals the attempt rows however the job ends: first
+/// try 1, one retry then delivered 2, retries exhausted 3 of 3.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn attempt_count_equals_the_attempts_made() {
+    let f = fixture().await;
+    // One retry, then delivered.
+    let ok = job(11);
+    f.insert(&ok).await;
+    f.respond(Canned::status(500));
+    f.process(&ok.id).await;
+    sqlx::query("UPDATE msg_dispatch_jobs SET status = 'QUEUED' WHERE id = $1")
+        .bind(&ok.id)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    f.respond(Canned::status(200));
+    f.process(&ok.id).await;
+    let row = f.row(&ok.id).await;
+    assert_eq!(row.status, "COMPLETED");
+    assert_eq!(row.attempt_count, 2);
+    assert_eq!(f.attempts(&ok.id).await.len() as i32, row.attempt_count);
+
+    // Three tries, then failed.
+    let mut bad = job(12);
+    bad.max_retries = 3;
+    f.insert(&bad).await;
+    for _ in 0..3 {
+        f.respond(Canned::status(503));
+        sqlx::query(
+            "UPDATE msg_dispatch_jobs SET status = 'QUEUED' WHERE id = $1 AND status = 'PENDING'",
+        )
+        .bind(&bad.id)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+        f.process(&bad.id).await;
+    }
+    let row = f.row(&bad.id).await;
+    assert_eq!(row.status, "FAILED");
+    assert_eq!(row.attempt_count, 3);
+    assert_eq!(f.attempts(&bad.id).await.len() as i32, row.attempt_count);
 }
 
 /// 401/403 from the subscriber is terminal at once: a retry sends the same

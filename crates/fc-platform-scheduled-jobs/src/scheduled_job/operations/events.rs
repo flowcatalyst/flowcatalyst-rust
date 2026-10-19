@@ -125,7 +125,9 @@ impl ScheduledJobFiredManually {
 
 /// The rollup of a scheduled-job sync: `{applicationCode, created, updated,
 /// archived}`, each list the affected job ids (`null` when empty: Go appends
-/// to nil slices). Subject `platform.scheduledjobs.synced.{applicationCode}`,
+/// to nil slices). Subject `platform.scheduledjobs.{applicationCode}` (Go F31: the
+/// `.synced.` segment made the audit row's entity id the literal `synced`
+/// instead of the application code, as every other sync's rollup has it),
 /// group `platform:scheduledjobs:{applicationCode}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -164,7 +166,7 @@ impl ScheduledJobsSynced {
                 Self::EVENT_TYPE,
                 SPEC,
                 SOURCE,
-                format!("platform.scheduledjobs.synced.{}", application_code),
+                format!("platform.scheduledjobs.{}", application_code),
                 group,
             ),
             application_code: application_code.into(),
@@ -199,7 +201,7 @@ mod tests {
         );
 
         let s = ScheduledJobsSynced::new(&ctx, "orders", vec!["sjb_1".into()], vec![], vec![]);
-        assert_eq!(s.metadata.subject, "platform.scheduledjobs.synced.orders");
+        assert_eq!(s.metadata.subject, "platform.scheduledjobs.orders");
         assert_eq!(s.metadata.message_group, "platform:scheduledjobs:orders");
         assert_eq!(
             serde_json::to_value(&s).unwrap(),

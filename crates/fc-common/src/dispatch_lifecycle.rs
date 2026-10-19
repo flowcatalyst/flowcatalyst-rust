@@ -1176,7 +1176,9 @@ where
 }
 
 /// Delivery succeeded: COMPLETED, stamping `completed_at` and the attempt's
-/// duration. From a live status only: a settled job is never overwritten.
+/// duration, and counting the delivery as an attempt (`attempt_count` is the
+/// number of attempts made: Go F31). From a live status only: a settled job is
+/// never overwritten.
 pub async fn complete<'e, E>(
     ex: E,
     id: &str,
@@ -1193,6 +1195,7 @@ where
         &[
             Change::StampCompletedAt,
             Change::DurationMillis(duration_millis),
+            Change::BumpAttemptCount,
         ],
     )
     .await?;
@@ -1200,7 +1203,8 @@ where
 }
 
 /// Delivery failed terminally: FAILED, stamping `last_error`,
-/// `completed_at` and the duration. From a live status only.
+/// `completed_at` and the duration, and counting the failed delivery as an
+/// attempt (Go F31). From a live status only.
 pub async fn fail<'e, E>(
     ex: E,
     id: &str,
@@ -1219,6 +1223,7 @@ where
             Change::StampCompletedAt,
             Change::DurationMillis(duration_millis),
             Change::LastError(Some(last_error)),
+            Change::BumpAttemptCount,
         ],
     )
     .await?;

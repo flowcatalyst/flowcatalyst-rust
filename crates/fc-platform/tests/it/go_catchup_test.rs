@@ -272,3 +272,57 @@ async fn unchanged_connections_and_subscriptions_are_not_rewritten() {
         "a changed binding set is a change"
     );
 }
+
+// ── F31: the scheduled-job sync rollup is keyed by the application code ─────
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn scheduled_job_sync_rollup_is_audited_under_the_application_code() {
+    let app = setup().await;
+    let admin = app.anchor_admin_token_all_applications().await;
+    app.repos
+        .application_repo
+        .insert(&Application::new("f31sj", "F31"))
+        .await
+        .unwrap();
+    let body = json!({ "jobs": [{
+        "code": "f31-a", "name": "A", "crons": ["*/5 * * * *"], "timezone": "UTC",
+        "deliveryMaxAttempts": 3
+    }]});
+    for name in ["A", "A2"] {
+        let mut b = body.clone();
+        b["jobs"][0]["name"] = json!(name);
+        sync_post(
+            &app,
+            &admin,
+            "/api/applications/f31sj/scheduled-jobs/sync",
+            b,
+        )
+        .await;
+    }
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT entity_type, entity_id FROM aud_logs
+         WHERE operation_json::text LIKE '%f31sj%' ORDER BY performed_at, id",
+    )
+    .fetch_all(&app.pool)
+    .await
+    .unwrap();
+    let rollups: Vec<&(String, String)> = rows
+        .iter()
+        .filter(|(t, _)| t.eq_ignore_ascii_case("scheduledjobs"))
+        .collect();
+    assert_eq!(rollups.len(), 2, "one rollup per sync: {rows:?}");
+    for (_, id) in rollups {
+        assert_eq!(
+            id, "f31sj",
+            "the rollup is keyed by the application code, not 'synced'"
+        );
+    }
+    let subject: String = sqlx::query_scalar(
+        "SELECT subject FROM msg_events WHERE type = 'platform:admin:scheduledjobs:synced' LIMIT 1",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(subject, "platform.scheduledjobs.f31sj");
+}

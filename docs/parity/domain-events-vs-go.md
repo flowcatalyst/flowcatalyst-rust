@@ -96,7 +96,7 @@ Unchanged type codes (already Go's): `platform:iam:user:*` (except as above), `p
 | `dispatch-pools:synced` | `platform.application.{app}` | `platform.dispatchpools.{app}` / `platform:dispatchpools:{app}` |
 | `processes:synced` | `platform.application.{app}` | `platform.processes.{app}` / `platform:processes:{app}` |
 | `subscription:synced` | `platform.application.{app}` | `platform.subscriptions.{app}` / `platform:subscriptions:{app}` |
-| `scheduledjobs:synced` | `platform.scheduledjobs.synced.sync:{scope}:{client}` | `platform.scheduledjobs.synced.{app}` / `platform:scheduledjobs:{app}` |
+| `scheduledjobs:synced` | `platform.scheduledjobs.{app}` (Go F31; was `.synced.sync:{scope}:{client}`) | `platform.scheduledjobs.{app}` / `platform:scheduledjobs:{app}` (was `.synced.{app}`, mirrored 2026-10-19) |
 
 ## 4. `data` payload changes (beyond dropping the envelope)
 
