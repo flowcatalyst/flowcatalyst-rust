@@ -5,10 +5,16 @@ use async_trait::async_trait;
 use fc_platform_core::shared::id::ClientId;
 use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use super::repository::{DispatchJobActionsRepository, JobPayloadEdit, JobStatusFlip, JobsRequeue};
+use super::repository::{
+    DispatchJobActionsRepository, JobHead, JobPayloadEdit, JobStatusFlip, JobsRequeue,
+};
 use crate::dispatch_job::entity::DispatchStatus;
+use crate::dispatch_job::requeue_rules::{
+    classify_for_requeue, redrive_confirmed, Verdict, SKIP_COMPLETED_NOT_CONFIRMED, SKIP_IN_FLIGHT,
+};
 use fc_common::dispatch_lifecycle::EDITABLE_STATUSES;
 use fc_platform_core::impl_domain_event;
 use fc_platform_core::permissions;
@@ -21,12 +27,37 @@ use std::slice;
 
 const SOURCE: &str = "platform:messaging";
 
-/// Go `DispatchJobsResent`.
+/// A job a requeue found and did not reset, with the reason (Go `SkippedJob`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SkippedJob {
+    pub id: String,
+    pub status: String,
+    /// [`SKIP_IN_FLIGHT`] or [`SKIP_COMPLETED_NOT_CONFIRMED`].
+    pub reason: String,
+}
+
+/// Go `DispatchJobsResent`: the rollup of a bulk requeue. Its data carries the
+/// ids reset, whether the run re-delivered COMPLETED jobs (the dangerous case
+/// an audit reader filters on) and the counts the status guard skipped.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DispatchJobsResent {
     #[serde(skip)]
     pub metadata: EventMetadata,
+    /// Every job reset (the redriven ones included).
     pub ids: Vec<String>,
+    /// True when the run re-delivered COMPLETED jobs.
+    pub redrive: bool,
+    pub redriven_count: usize,
+    /// The COMPLETED jobs re-delivered; absent when none.
+    #[serde(skip_serializing_if = "Vec::is_empty", rename = "redrivenIds")]
+    pub redriven_ids: Vec<String>,
+    pub skipped_in_flight: usize,
+    pub skipped_completed: usize,
+    /// The jobs found and left alone by the status guard, with the reason.
+    /// Not part of the event data (only their counts are).
+    #[serde(skip)]
+    pub skipped: Vec<SkippedJob>,
 }
 
 impl_domain_event!(DispatchJobsResent);
@@ -71,12 +102,27 @@ pub fn scope_forbidden(client_id: Option<&str>) -> UseCaseError {
     )
 }
 
-/// Go `ResendCommand`: the jobs the caller may reach, already resolved.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Go `ResendCommand`: a bulk requeue of the jobs the caller may reach.
+///
+/// `redrive_completed` and `confirm_redrive_completed` together authorise
+/// re-delivering COMPLETED jobs ([`redrive_confirmed`]); without both, COMPLETED
+/// jobs are skipped and reported. The command is the audit row's operation
+/// JSON, so the flags a caller sent are on the record.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct ResendCommand {
     pub ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub redrive_completed: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub confirm_redrive_completed: String,
+    /// The reachable jobs as read (status as stored), resolved by the caller.
     #[serde(skip)]
-    pub jobs: Vec<(String, chrono::DateTime<chrono::Utc>)>,
+    pub jobs: Vec<JobHead>,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 impl AuditMasked for ResendCommand {}
@@ -118,11 +164,51 @@ impl<U: UnitOfWork> UseCase for RequeueDispatchJobsUseCase<U> {
         Ok(())
     }
 
+    /// The status guard (Go `ResendDispatchJobs`): QUEUED and PROCESSING jobs
+    /// are never reset (skipped, `IN_FLIGHT`); COMPLETED jobs are reset only
+    /// when the command carries both redrive fields (a redrive; the event says
+    /// so), otherwise skipped (`COMPLETED_REDRIVE_NOT_CONFIRMED`). A skipped job
+    /// is reported on the event, never an error for the batch. The lifecycle
+    /// checks the status again in SQL, so a job that moved after it was read is
+    /// refused too.
     async fn execute(
         &self,
         command: ResendCommand,
         ctx: ExecutionContext,
     ) -> Result<Committed<DispatchJobsResent>, UseCaseError> {
+        let redrive = redrive_confirmed(
+            command.redrive_completed,
+            &command.confirm_redrive_completed,
+        );
+        let mut reset: Vec<(String, chrono::DateTime<chrono::Utc>)> = Vec::new();
+        let mut redriven: BTreeSet<String> = BTreeSet::new();
+        let mut skipped: Vec<SkippedJob> = Vec::new();
+        for job in &command.jobs {
+            let skip = |reason: &str| SkippedJob {
+                id: job.id.clone(),
+                status: job.status.clone(),
+                reason: reason.to_string(),
+            };
+            match classify_for_requeue(&job.status) {
+                Verdict::InFlight => {
+                    skipped.push(skip(SKIP_IN_FLIGHT));
+                    continue;
+                }
+                Verdict::Completed if !redrive => {
+                    skipped.push(skip(SKIP_COMPLETED_NOT_CONFIRMED));
+                    continue;
+                }
+                Verdict::Completed => {
+                    redriven.insert(job.id.clone());
+                }
+                Verdict::Requeue => {}
+            }
+            reset.push((job.id.clone(), job.created_at));
+        }
+        let skipped_in_flight = skipped
+            .iter()
+            .filter(|s| s.reason == SKIP_IN_FLIGHT)
+            .count();
         let event = DispatchJobsResent {
             metadata: EventMetadata::from_ctx(
                 &ctx,
@@ -132,10 +218,17 @@ impl<U: UnitOfWork> UseCase for RequeueDispatchJobsUseCase<U> {
                 "platform.dispatchjobs.resent".to_string(),
                 "platform:dispatchjobs:resent".to_string(),
             ),
-            ids: command.ids.clone(),
+            ids: reset.iter().map(|(id, _)| id.clone()).collect(),
+            redrive: !redriven.is_empty(),
+            redriven_count: redriven.len(),
+            redriven_ids: redriven.iter().cloned().collect(),
+            skipped_in_flight,
+            skipped_completed: skipped.len() - skipped_in_flight,
+            skipped,
         };
         let requeue = JobsRequeue {
-            jobs: command.jobs.clone(),
+            jobs: reset,
+            redrive: redriven,
         };
         self.unit_of_work
             .commit(&requeue, &*self.repo, event, &command)

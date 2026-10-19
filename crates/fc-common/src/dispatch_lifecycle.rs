@@ -86,8 +86,12 @@ const LIVE: &[DispatchStatus] = &[
 pub struct Transition {
     /// The `transition` label on the refusal counter.
     pub name: &'static str,
-    /// Allowed "from" statuses; empty = any (operator requeue only).
+    /// Allowed "from" statuses; empty = any.
     pub from: &'static [DispatchStatus],
+    /// Stored spellings the guard also admits that [`DispatchStatus`] folds
+    /// into one of `from` (a legacy `ERROR` row is `FAILED`). Only the SQL
+    /// guard reads it.
+    pub legacy_from: &'static [&'static str],
     pub to: DispatchStatus,
 }
 
@@ -105,9 +109,14 @@ impl Transition {
         let col = if opaque { "j.status || ''" } else { "j.status" };
         match self.from {
             [] => None,
-            [one] => Some(format!("{col} = '{}'", one.as_str())),
+            [one] if self.legacy_from.is_empty() => Some(format!("{col} = '{}'", one.as_str())),
             many => {
-                let list: Vec<String> = many.iter().map(|s| format!("'{}'", s.as_str())).collect();
+                let list: Vec<String> = many
+                    .iter()
+                    .map(|s| s.as_str())
+                    .chain(self.legacy_from.iter().copied())
+                    .map(|s| format!("'{s}'"))
+                    .collect();
                 Some(format!("{col} IN ({})", list.join(", ")))
             }
         }
@@ -118,90 +127,122 @@ impl Transition {
 pub const RETRY: Transition = Transition {
     name: "retry",
     from: LIVE,
+    legacy_from: &[],
     to: DispatchStatus::Pending,
 };
 /// A subscriber's cooperative deferral (`ack:false`, 429).
 pub const DEFER: Transition = Transition {
     name: "defer",
     from: LIVE,
+    legacy_from: &[],
     to: DispatchStatus::Pending,
 };
 /// A job held behind its group at delivery time.
 pub const HOLD: Transition = Transition {
     name: "hold",
     from: LIVE,
+    legacy_from: &[],
     to: DispatchStatus::Pending,
 };
 /// The router's settled-message hook returning a job to PENDING.
 pub const SETTLE_RETURN: Transition = Transition {
     name: "settle_return",
     from: &[DispatchStatus::Queued, DispatchStatus::Processing],
+    legacy_from: &[],
     to: DispatchStatus::Pending,
 };
 /// The stranded-sibling reaper.
 pub const REAP: Transition = Transition {
     name: "reap",
     from: &[DispatchStatus::Queued, DispatchStatus::Processing],
+    legacy_from: &[],
     to: DispatchStatus::Pending,
 };
 /// Stale-recovery sweep of long-QUEUED jobs.
 pub const STALE_QUEUED: Transition = Transition {
     name: "stale_queued",
     from: &[DispatchStatus::Queued],
+    legacy_from: &[],
     to: DispatchStatus::Pending,
 };
 /// Stale-recovery sweep of long-PROCESSING jobs.
 pub const STALE_PROCESSING: Transition = Transition {
     name: "stale_processing",
     from: &[DispatchStatus::Processing],
+    legacy_from: &[],
     to: DispatchStatus::Pending,
 };
-/// Operator requeue: the one transition allowed from any status.
+/// Operator requeue: a job that is not in flight and not delivered goes back
+/// to PENDING (PENDING itself too: a job sitting out a retry backoff becomes
+/// due now). QUEUED and PROCESSING are never reset (a delivery is under way)
+/// and COMPLETED only by [`REDRIVE`]. The legacy `ERROR` spelling of FAILED
+/// is admitted by the SQL guard.
 pub const REQUEUE: Transition = Transition {
     name: "requeue",
-    from: &[],
+    from: &[
+        DispatchStatus::Pending,
+        DispatchStatus::Failed,
+        DispatchStatus::Cancelled,
+        DispatchStatus::Expired,
+    ],
+    legacy_from: &["ERROR"],
+    to: DispatchStatus::Pending,
+};
+/// Operator redrive: a COMPLETED job re-delivered. A transition of its own so
+/// the COMPLETED guard sits in SQL and an ordinary requeue can never reach it.
+pub const REDRIVE: Transition = Transition {
+    name: "redrive_completed",
+    from: &[DispatchStatus::Completed],
+    legacy_from: &[],
     to: DispatchStatus::Pending,
 };
 /// The scheduler marks a published job QUEUED.
 pub const MARK_QUEUED: Transition = Transition {
     name: "mark_queued",
     from: &[DispatchStatus::Pending],
+    legacy_from: &[],
     to: DispatchStatus::Queued,
 };
 /// The delivery callback claims a job.
 pub const CLAIM: Transition = Transition {
     name: "claim",
     from: &[DispatchStatus::Pending, DispatchStatus::Queued],
+    legacy_from: &[],
     to: DispatchStatus::Processing,
 };
 /// A successful delivery.
 pub const COMPLETE: Transition = Transition {
     name: "complete",
     from: LIVE,
+    legacy_from: &[],
     to: DispatchStatus::Completed,
 };
 /// A terminal delivery failure.
 pub const FAIL: Transition = Transition {
     name: "fail",
     from: LIVE,
+    legacy_from: &[],
     to: DispatchStatus::Failed,
 };
 /// A dead delivery's lease taken over.
 pub const RECLAIM: Transition = Transition {
     name: "reclaim",
     from: &[DispatchStatus::Processing],
+    legacy_from: &[],
     to: DispatchStatus::Processing,
 };
 /// An operator cancels a FAILED job.
 pub const OPERATOR_CANCEL: Transition = Transition {
     name: "operator_cancel",
     from: &[DispatchStatus::Failed],
+    legacy_from: &[],
     to: DispatchStatus::Cancelled,
 };
 /// An operator completes a FAILED job by hand.
 pub const OPERATOR_COMPLETE: Transition = Transition {
     name: "operator_complete",
     from: &[DispatchStatus::Failed],
+    legacy_from: &[],
     to: DispatchStatus::Completed,
 };
 
@@ -215,6 +256,7 @@ pub const TRANSITIONS: &[Transition] = &[
     STALE_QUEUED,
     STALE_PROCESSING,
     REQUEUE,
+    REDRIVE,
     MARK_QUEUED,
     CLAIM,
     COMPLETE,
@@ -1013,8 +1055,21 @@ where
     .await
 }
 
-/// Operator requeue: the jobs back to PENDING with a fresh attempt budget,
-/// from ANY status. Run inside the use case's unit of work.
+/// What a retry-from-scratch resets: immediate eligibility, a fresh attempt
+/// budget, the terminal stamps and the last error.
+const RESET_FOR_RETRY: [Change<'static>; 5] = [
+    Change::ScheduledFor(None),
+    Change::ResetAttemptCount,
+    Change::ClearCompletion,
+    Change::LastError(None),
+    Change::ClearQueuedAt,
+];
+
+/// Operator requeue: the jobs back to PENDING with a fresh attempt budget.
+/// Only from [`REQUEUE`]'s statuses (PENDING, FAILED/ERROR, CANCELLED,
+/// EXPIRED), checked in the statement: a job that is in flight or COMPLETED
+/// (or moved there after it was read) is left alone and counted as refused.
+/// Run inside the use case's unit of work.
 pub async fn requeue<'e, E>(
     ex: E,
     jobs: &[(String, DateTime<Utc>)],
@@ -1022,19 +1077,19 @@ pub async fn requeue<'e, E>(
 where
     E: Executor<'e, Database = Postgres>,
 {
-    enter_pending(
-        ex,
-        &REQUEUE,
-        Selector::Keys(jobs),
-        &[
-            Change::ScheduledFor(None),
-            Change::ResetAttemptCount,
-            Change::ClearCompletion,
-            Change::LastError(None),
-            Change::ClearQueuedAt,
-        ],
-    )
-    .await
+    enter_pending(ex, &REQUEUE, Selector::Keys(jobs), &RESET_FOR_RETRY).await
+}
+
+/// Operator redrive: COMPLETED jobs back to PENDING with the same reset as
+/// [`requeue`]. The COMPLETED guard is in the statement.
+pub async fn redrive_completed<'e, E>(
+    ex: E,
+    jobs: &[(String, DateTime<Utc>)],
+) -> Result<Vec<Transitioned>, Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    enter_pending(ex, &REDRIVE, Selector::Keys(jobs), &RESET_FOR_RETRY).await
 }
 
 /// The statuses an operator may rewrite a job's payload in: not being
@@ -1617,18 +1672,18 @@ mod tests {
             ("reap", &[(Queued, Pending), (Processing, Pending)]),
             ("stale_queued", &[(Queued, Pending)]),
             ("stale_processing", &[(Processing, Pending)]),
+            // An operator requeue never resets a delivery under way (QUEUED,
+            // PROCESSING) or a delivered job (COMPLETED: that is the redrive).
             (
                 "requeue",
                 &[
                     (Pending, Pending),
-                    (Queued, Pending),
-                    (Processing, Pending),
-                    (Completed, Pending),
                     (Failed, Pending),
                     (Cancelled, Pending),
                     (Expired, Pending),
                 ],
             ),
+            ("redrive_completed", &[(Completed, Pending)]),
             ("mark_queued", &[(Pending, Queued)]),
             ("claim", &[(Pending, Processing), (Queued, Processing)]),
             (
@@ -1664,12 +1719,12 @@ mod tests {
         }
     }
 
-    /// No transition other than the operator requeue may resurrect a
-    /// settled job.
+    /// No transition other than the operator requeue and redrive may
+    /// resurrect a settled job.
     #[test]
     fn only_requeue_touches_a_settled_job_into_pending() {
         for t in TRANSITIONS {
-            if t.name == "requeue" {
+            if t.name == "requeue" || t.name == "redrive_completed" {
                 continue;
             }
             for settled in [Completed, Cancelled, Expired] {
@@ -1707,7 +1762,16 @@ mod tests {
             CLAIM.guard_sql(true).as_deref(),
             Some("j.status || '' IN ('PENDING', 'QUEUED')")
         );
-        assert_eq!(REQUEUE.guard_sql(false), None);
+        // The legacy ERROR spelling of FAILED is admitted by the requeue
+        // guard, and a job in flight or COMPLETED is not.
+        assert_eq!(
+            REQUEUE.guard_sql(true).as_deref(),
+            Some("j.status || '' IN ('PENDING', 'FAILED', 'CANCELLED', 'EXPIRED', 'ERROR')")
+        );
+        assert_eq!(
+            REDRIVE.guard_sql(true).as_deref(),
+            Some("j.status || '' = 'COMPLETED'")
+        );
     }
 
     /// Statement text for each transition: one UPDATE, a guard on the
@@ -1769,6 +1833,11 @@ mod tests {
                 vec![Change::ResetAttemptCount],
             ),
             (
+                &REDRIVE,
+                Selector::Keys(&key),
+                vec![Change::ResetAttemptCount],
+            ),
+            (
                 &MARK_QUEUED,
                 Selector::Versioned(&ver),
                 vec![Change::StampQueuedAt],
@@ -1815,10 +1884,10 @@ mod tests {
                 "{}: {sql}",
                 t.name
             );
-            match t.guard_sql(sel.pins_by_key()) {
-                Some(g) => assert!(sql.contains(&g), "{}: {sql}", t.name),
-                None => assert_eq!(t.name, "requeue"),
-            }
+            let g = t
+                .guard_sql(sel.pins_by_key())
+                .unwrap_or_else(|| panic!("{} has a guard", t.name));
+            assert!(sql.contains(&g), "{}: {sql}", t.name);
         }
     }
 

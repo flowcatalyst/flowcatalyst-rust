@@ -1903,33 +1903,49 @@ async fn dispatch_jobs_are_requeued_settled_and_signed_as_go() {
     .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
 
-    // requeue: any status, unknown ids dropped.
+    // requeue: unknown ids dropped; the COMPLETED job (settled above) is
+    // skipped and reported, the PENDING one is reset.
     let body = assert_status(
         app.post(
             "/api/dispatch-jobs/requeue",
             &admin,
-            json!({ "ids": [fid, "djb_nope"] }),
+            json!({ "ids": [pid, fid, "djb_nope"] }),
         )
         .await,
         StatusCode::OK,
     )
     .await;
-    assert_eq!(body, json!({ "requeued": 1 }));
+    assert_eq!(
+        body,
+        json!({
+            "requeued": 1, "redriven": 0, "skippedInFlight": 0, "skippedCompleted": 1,
+            "skipped": [{ "id": fid, "status": "COMPLETED", "reason": "COMPLETED_REDRIVE_NOT_CONFIRMED" }]
+        })
+    );
     let row: (String, i32, Option<String>) = sqlx::query_as(
         "SELECT status, attempt_count, last_error FROM msg_dispatch_jobs WHERE id = $1",
     )
-    .bind(&fid)
+    .bind(&pid)
     .fetch_one(&app.pool)
     .await
     .unwrap();
     assert_eq!(row, ("PENDING".to_string(), 0, None));
+    let completed: (String,) = sqlx::query_as("SELECT status FROM msg_dispatch_jobs WHERE id = $1")
+        .bind(&fid)
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(completed.0, "COMPLETED");
     let body = assert_status(
         app.post("/api/dispatch-jobs/requeue", &admin, json!({ "ids": [] }))
             .await,
         StatusCode::OK,
     )
     .await;
-    assert_eq!(body, json!({ "requeued": 0 }));
+    assert_eq!(
+        body,
+        json!({ "requeued": 0, "redriven": 0, "skippedInFlight": 0, "skippedCompleted": 0, "skipped": [] })
+    );
 
     // sign: a dry run, unsigned here (no credentials).
     let plan = assert_status(

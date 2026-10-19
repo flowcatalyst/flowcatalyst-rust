@@ -139,6 +139,17 @@ fn take_window(status: StatusCode, mut body: Value) -> (StatusCode, Value) {
     (status, body)
 }
 
+/// The run's tally without the status-guard members (those are covered by
+/// `dispatch_job_requeue_guard_test`): `{requeued, truncated, remaining}`.
+fn core_run(res: &Value) -> Value {
+    json!({ "requeued": res["requeued"], "truncated": res["truncated"], "remaining": res["remaining"] })
+}
+
+/// The preview's counts without the guard members: `{count, byStatus, eligibleCount}`.
+fn core_preview(pv: &Value) -> Value {
+    json!({ "count": pv["count"], "byStatus": pv["byStatus"], "eligibleCount": pv["eligibleCount"] })
+}
+
 async fn preview(app: &TestApp, token: &str, body: Value) -> (StatusCode, Value) {
     let (status, body) = read_json(
         app.post("/api/dispatch-jobs/requeue-by-filter/preview", token, body)
@@ -170,9 +181,14 @@ async fn preview_counts_and_breaks_down_by_status() {
 
     let (status, got) = preview(&app, &admin, json!({ "codes": code })).await;
     assert_eq!(status, StatusCode::OK, "{got}");
+    // COMPLETED jobs are not eligible (a requeue never touches them without a
+    // confirmed redrive): 6 FAILED + 1 PENDING.
     assert_eq!(
         got,
-        json!({ "count": 9, "byStatus": { "FAILED": 6, "COMPLETED": 2, "PENDING": 1 }, "eligibleCount": 9 })
+        json!({
+            "count": 9, "byStatus": { "FAILED": 6, "COMPLETED": 2, "PENDING": 1 }, "eligibleCount": 7,
+            "completedCount": 2, "inFlightCount": 0, "redriveEligibleCount": 9
+        })
     );
 
     let (_, got) = preview(&app, &admin, json!({ "codes": code, "statuses": "FAILED" })).await;
@@ -191,7 +207,11 @@ async fn preview_counts_and_breaks_down_by_status() {
         got["byStatus"],
         json!({ "FAILED": 5, "COMPLETED": 2, "PENDING": 1 })
     );
-    assert_eq!(got["eligibleCount"], 6);
+    assert_eq!(
+        got["eligibleCount"], 4,
+        "its FAILED 3 + PENDING 1; COMPLETED is not eligible"
+    );
+    assert_eq!(got["completedCount"], 2);
 
     // Asking for another tenant's jobs finds none.
     let (_, got) = preview(
@@ -201,7 +221,7 @@ async fn preview_counts_and_breaks_down_by_status() {
     )
     .await;
     assert_eq!(
-        got,
+        core_preview(&got),
         json!({ "count": 0, "byStatus": {}, "eligibleCount": 0 })
     );
 }
@@ -221,7 +241,10 @@ async fn a_confirm_count_below_the_eligible_count_is_a_409_that_resets_nothing()
     assert_eq!(err["error"], "FILTER_MATCH_CHANGED", "{err}");
     assert_eq!(
         err["details"],
-        json!({ "count": 5, "eligibleCount": 5, "byStatus": { "FAILED": 5 } })
+        json!({
+            "count": 5, "eligibleCount": 5, "completedCount": 0, "inFlightCount": 0,
+            "redriveEligibleCount": 5, "byStatus": { "FAILED": 5 }
+        })
     );
     assert_eq!(
         statuses_of(&app, &ids).await,
@@ -235,7 +258,7 @@ async fn a_confirm_count_below_the_eligible_count_is_a_409_that_resets_nothing()
     let (status, res) = run(&app, &admin, body).await;
     assert_eq!(status, StatusCode::OK, "{res}");
     assert_eq!(
-        res,
+        core_run(&res),
         json!({ "requeued": 5, "truncated": false, "remaining": 0 })
     );
 }
@@ -258,7 +281,7 @@ async fn it_walks_in_id_order_in_batches_and_truncates_at_the_limit() {
     let (status, res) = run(&app, &admin, body).await;
     assert_eq!(status, StatusCode::OK, "{res}");
     assert_eq!(
-        res,
+        core_run(&res),
         json!({ "requeued": 1000, "truncated": true, "remaining": 250 })
     );
     // The walk is in id order: the first 1,000 ids were reset, the rest not.
@@ -303,7 +326,7 @@ async fn it_walks_in_id_order_in_batches_and_truncates_at_the_limit() {
     body["limit"] = json!(1000);
     let (_, res) = run(&app, &admin, body).await;
     assert_eq!(
-        res,
+        core_run(&res),
         json!({ "requeued": 250, "truncated": false, "remaining": 0 })
     );
     assert_eq!(statuses_of(&app, &ids).await, map(&[("PENDING", 1250)]));
@@ -326,7 +349,7 @@ async fn only_the_matching_rows_are_reset_and_fully() {
     .await;
     assert_eq!(status, StatusCode::OK, "{res}");
     assert_eq!(
-        res,
+        core_run(&res),
         json!({ "requeued": 4, "truncated": false, "remaining": 0 })
     );
     assert_eq!(statuses_of(&app, &failed).await, map(&[("PENDING", 4)]));
@@ -357,7 +380,15 @@ async fn a_tenant_caller_resets_only_its_own_jobs() {
     let own = seed_jobs(&app, "rbtna", code, "FAILED", Some(CLIENT_A), 3).await;
     let theirs = seed_jobs(&app, "rbtnb", code, "FAILED", Some(CLIENT_B), 3).await;
     let platform = seed_jobs(&app, "rbtnp", code, "FAILED", None, 3).await;
-    let viewer = client_viewer(&app, CLIENT_A, &[permissions::admin::DISPATCH_JOB_READ]).await;
+    let viewer = client_viewer(
+        &app,
+        CLIENT_A,
+        &[
+            permissions::admin::DISPATCH_JOB_READ,
+            permissions::admin::DISPATCH_JOB_REQUEUE,
+        ],
+    )
+    .await;
 
     let (_, pv) = preview(&app, &viewer, json!({ "codes": code })).await;
     assert_eq!(
@@ -372,7 +403,7 @@ async fn a_tenant_caller_resets_only_its_own_jobs() {
     .await;
     assert_eq!(status, StatusCode::OK, "{res}");
     assert_eq!(
-        res,
+        core_run(&res),
         json!({ "requeued": 3, "truncated": false, "remaining": 0 })
     );
     assert_eq!(statuses_of(&app, &own).await, map(&[("PENDING", 3)]));
@@ -387,7 +418,7 @@ async fn a_tenant_caller_resets_only_its_own_jobs() {
     )
     .await;
     assert_eq!(
-        res,
+        core_run(&res),
         json!({ "requeued": 0, "truncated": false, "remaining": 0 })
     );
     assert_eq!(statuses_of(&app, &theirs).await, map(&[("FAILED", 3)]));
@@ -452,7 +483,7 @@ async fn the_wire_on_both_tiers() {
     let (status, body) = take_window(status, body);
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
-        body,
+        core_preview(&body),
         json!({ "count": 3, "byStatus": { "FAILED": 3 }, "eligibleCount": 3 })
     );
 
@@ -468,7 +499,10 @@ async fn the_wire_on_both_tiers() {
     assert_eq!(body["error"], "FILTER_MATCH_CHANGED");
     assert_eq!(
         body["details"],
-        json!({ "count": 3, "eligibleCount": 3, "byStatus": { "FAILED": 3 } })
+        json!({
+            "count": 3, "eligibleCount": 3, "completedCount": 0, "inFlightCount": 0,
+            "redriveEligibleCount": 3, "byStatus": { "FAILED": 3 }
+        })
     );
 
     let (status, body) = read_json(
@@ -483,7 +517,7 @@ async fn the_wire_on_both_tiers() {
     let (status, body) = take_window(status, body);
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
-        body,
+        core_run(&body),
         json!({ "requeued": 3, "truncated": false, "remaining": 0 })
     );
     assert_eq!(statuses_of(&app, &ids).await, map(&[("PENDING", 3)]));
@@ -509,15 +543,22 @@ async fn an_empty_filter_means_every_job() {
     let (_, pv) = preview(&app, &admin, json!({})).await;
     assert_eq!(
         pv,
-        json!({ "count": 30, "byStatus": { "FAILED": 20, "COMPLETED": 10 }, "eligibleCount": 30 })
+        json!({
+            "count": 30, "byStatus": { "FAILED": 20, "COMPLETED": 10 }, "eligibleCount": 20,
+            "completedCount": 10, "inFlightCount": 0, "redriveEligibleCount": 30
+        })
     );
-    let (status, _) = run(&app, &admin, json!({ "confirmCount": 29 })).await;
+    let (status, _) = run(&app, &admin, json!({ "confirmCount": 19 })).await;
     assert_eq!(status, StatusCode::CONFLICT);
-    let (_, res) = run(&app, &admin, json!({ "confirmCount": 30 })).await;
+    let (_, res) = run(&app, &admin, json!({ "confirmCount": 20 })).await;
     assert_eq!(
-        res,
-        json!({ "requeued": 30, "truncated": false, "remaining": 0 })
+        core_run(&res),
+        json!({ "requeued": 20, "truncated": false, "remaining": 0 })
     );
-    let all: Vec<String> = failed.into_iter().chain(done).collect();
-    assert_eq!(statuses_of(&app, &all).await, map(&[("PENDING", 30)]));
+    assert_eq!(
+        res["skippedCompleted"], 10,
+        "COMPLETED jobs are reported, not reset"
+    );
+    assert_eq!(statuses_of(&app, &failed).await, map(&[("PENDING", 20)]));
+    assert_eq!(statuses_of(&app, &done).await, map(&[("COMPLETED", 10)]));
 }

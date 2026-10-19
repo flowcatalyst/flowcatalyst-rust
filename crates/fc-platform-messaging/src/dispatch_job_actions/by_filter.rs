@@ -3,7 +3,7 @@
 //! just the ids a caller has in hand, on the `/api` and `/bff` tiers.
 //!
 //! - `POST …/dispatch-jobs/requeue-by-filter/preview` → `{count, byStatus,
-//!   eligibleCount}`
+//!   eligibleCount, completedCount, inFlightCount, redriveEligibleCount, window}`
 //! - `POST …/dispatch-jobs/requeue-by-filter` → `{requeued, truncated,
 //!   remaining}`, or 409 `FILTER_MATCH_CHANGED` with the new counts in `details`
 //!
@@ -20,7 +20,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use axum::{extract::State, http::StatusCode, Json};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::caller_reach;
 use fc_platform_core::shared::error::PlatformError;
@@ -29,9 +29,12 @@ use fc_platform_core::usecase::{ExecutionContext, UseCase};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::api::DispatchJobActionsState;
-use super::operations::{reaches, ResendCommand};
+use super::api::{can_requeue_dispatch_jobs_with, resend_command, DispatchJobActionsState};
+use super::operations::reaches;
 use super::repository::MatchFilter;
+use crate::dispatch_job::requeue_rules::{
+    classify_for_requeue, redrive_confirmed, resettable_statuses, Verdict, REDRIVE_CONFIRMATION,
+};
 use crate::dispatch_job::window::{enforce_window, parse_timestamp, Window, WindowResponse};
 
 /// How many ids go to one requeue run.
@@ -128,7 +131,9 @@ impl DispatchJobFilter {
     }
 }
 
-/// Body of `POST …/requeue-by-filter/preview`: the list's filter.
+/// Body of `POST …/requeue-by-filter/preview`: the list's filter. With no
+/// since/until the last 24 hours are counted; a window beyond
+/// `FC_DISPATCH_JOB_MAX_WINDOW_DAYS` (default 31) is 400 `WINDOW_TOO_LARGE`.
 #[derive(Debug, Default, Deserialize, ToSchema)]
 pub struct RequeueByFilterPreviewRequest {
     #[serde(flatten)]
@@ -139,42 +144,66 @@ pub struct RequeueByFilterPreviewRequest {
 #[derive(Debug, Serialize, ToSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RequeueByFilterPreviewResponse {
-    /// Jobs the filter matches that the caller can see
+    /// Jobs the filter matches in the window that the caller can see
     #[schema(value_type = i64)]
     pub count: i64,
     /// count broken down by status
     #[schema(value_type = HashMap<String, i64>)]
     pub by_status: BTreeMap<String, i64>,
-    /// How many of them a requeue would reset for this caller; send it back as confirmCount
+    /// How many of them a requeue would reset for this caller (not COMPLETED, not in flight); send it back as confirmCount
     #[schema(value_type = i64)]
     pub eligible_count: i64,
+    /// COMPLETED jobs the filter matches that the caller can see. A requeue skips them; they are redriven only with redriveCompleted and confirmRedriveCompleted
+    #[schema(value_type = i64)]
+    pub completed_count: i64,
+    /// QUEUED or PROCESSING jobs the filter matches; a requeue never resets them
+    #[schema(value_type = i64)]
+    pub in_flight_count: i64,
+    /// eligibleCount + completedCount: the confirmCount of a request that also redrives COMPLETED jobs
+    #[schema(value_type = i64)]
+    pub redrive_eligible_count: i64,
     /// The created_at window the counts cover
     pub window: WindowResponse,
 }
 
 /// Body of `POST …/requeue-by-filter`: the list's filter, the eligible count
-/// the caller confirmed, and a cap.
+/// the caller confirmed, and a cap. The same window rules as the preview apply.
 #[derive(Debug, Default, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RequeueByFilterRequest {
     #[serde(flatten)]
     pub filter: DispatchJobFilter,
-    /// The eligibleCount the caller was shown. If more jobs are eligible now, nothing is reset and the response is 409 FILTER_MATCH_CHANGED.
+    /// The eligibleCount the caller was shown (redriveEligibleCount when redriveCompleted). If more jobs would be reset now, nothing is reset and the response is 409 FILTER_MATCH_CHANGED.
     #[schema(value_type = i64, minimum = 0)]
     pub confirm_count: i64,
     /// Most jobs to reset in this request (default and maximum 10000)
     #[serde(default)]
     #[schema(value_type = Option<i64>, minimum = 0, maximum = 10000)]
     pub limit: Option<i64>,
+    /// Also re-deliver the COMPLETED jobs the filter matches. Needs confirmRedriveCompleted=REDRIVE and the dispatch-job:redrive-completed permission (403 without it). Without both fields COMPLETED jobs are skipped and counted in skippedCompleted.
+    #[serde(default)]
+    pub redrive_completed: bool,
+    /// The literal REDRIVE, confirming redriveCompleted.
+    #[serde(default)]
+    pub confirm_redrive_completed: String,
 }
 
 /// A requeue-by-filter run.
 #[derive(Debug, Serialize, ToSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RequeueByFilterResponse {
-    /// Jobs reset to PENDING
+    /// Jobs reset to PENDING (redriven COMPLETED jobs included)
     #[schema(value_type = i64)]
     pub requeued: i64,
+    /// How many of them were COMPLETED jobs re-delivered
+    #[schema(value_type = i64)]
+    pub redriven: i64,
+    /// QUEUED or PROCESSING matches left alone (never reset)
+    #[schema(value_type = i64)]
+    pub skipped_in_flight: i64,
+    /// COMPLETED matches left alone because the redrive was not requested and confirmed
+    #[schema(value_type = i64)]
+    pub skipped_completed: i64,
     /// The run stopped at its limit (or at confirmCount) with eligible jobs left
     pub truncated: bool,
     /// Eligible jobs still matching after the run; run again to continue
@@ -187,9 +216,35 @@ pub struct RequeueByFilterResponse {
 /// A caller's view of what a filter matches (Go `MatchSummary`).
 #[derive(Debug, Default)]
 struct MatchSummary {
+    /// Every job the filter matches that the caller can see.
     count: i64,
     by_status: BTreeMap<String, i64>,
+    /// How many a requeue would reset for this caller: its tenant rule
+    /// ([`reaches`]) applied to each job's client and the status guard (jobs in
+    /// flight and COMPLETED jobs are not eligible). Sent back as confirmCount.
     eligible: i64,
+    /// COMPLETED jobs the caller can see in the match. They are redriven only
+    /// with the two redrive fields.
+    completed: i64,
+    /// QUEUED or PROCESSING jobs the caller can see in the match. A requeue
+    /// never resets them.
+    in_flight: i64,
+}
+
+impl MatchSummary {
+    /// The count a confirmed redrive must confirm: eligible plus COMPLETED.
+    fn redrive_eligible(&self) -> i64 {
+        self.eligible + self.completed
+    }
+
+    /// The count a run must have been confirmed for.
+    fn to_reset(&self, redrive: bool) -> i64 {
+        if redrive {
+            self.redrive_eligible()
+        } else {
+            self.eligible
+        }
+    }
 }
 
 /// Go `VisibleTo`: anchors see every job; anyone else sees platform-scoped jobs
@@ -200,8 +255,9 @@ fn visible_to(auth: &Authenticated, mut f: MatchFilter) -> MatchFilter {
     f
 }
 
-/// Go `SummarizeMatches`: `eligible` counts the jobs the requeue use case would
-/// reset for this caller (its tenant rule applied to each job's client).
+/// Go `SummarizeMatches`: counts the jobs `f` matches for the caller. `f` must
+/// already carry its time window: the count scans the window's partitions and
+/// nothing more.
 async fn summarize(
     state: &DispatchJobActionsState,
     auth: &Authenticated,
@@ -211,9 +267,14 @@ async fn summarize(
     let mut s = MatchSummary::default();
     for b in buckets {
         s.count += b.count;
-        *s.by_status.entry(b.status).or_insert(0) += b.count;
-        if reaches(&auth.0, b.client_id.as_deref()) {
-            s.eligible += b.count;
+        *s.by_status.entry(b.status.clone()).or_insert(0) += b.count;
+        if !reaches(&auth.0, b.client_id.as_deref()) {
+            continue;
+        }
+        match classify_for_requeue(&b.status) {
+            Verdict::Requeue => s.eligible += b.count,
+            Verdict::Completed => s.completed += b.count,
+            Verdict::InFlight => s.in_flight += b.count,
         }
     }
     Ok(s)
@@ -239,10 +300,14 @@ async fn preview(
 ) -> Result<Json<RequeueByFilterPreviewResponse>, PlatformError> {
     let (f, window) = windowed(state, filter)?;
     let s = summarize(state, auth, f).await?;
+    let redrive_eligible_count = s.redrive_eligible();
     Ok(Json(RequeueByFilterPreviewResponse {
         count: s.count,
         by_status: s.by_status,
         eligible_count: s.eligible,
+        completed_count: s.completed,
+        in_flight_count: s.in_flight,
+        redrive_eligible_count,
         window: window.into(),
     }))
 }
@@ -264,6 +329,13 @@ fn interrupted(requeued: i64, err: PlatformError) -> PlatformError {
     }
 }
 
+/// Go `ResendByFilter`: resets the jobs the filter matches, at most
+/// `min(limit, confirmCount)` of them.
+///
+/// Status guard: jobs QUEUED or PROCESSING are never reset; COMPLETED jobs are
+/// reset only when the request confirms a redrive (both fields), in which case
+/// confirmCount covers eligible + completed. Without a confirmed redrive the
+/// COMPLETED matches are skipped and counted in the result.
 async fn requeue_by_filter(
     state: &DispatchJobActionsState,
     auth: &Authenticated,
@@ -287,21 +359,31 @@ async fn requeue_by_filter(
         0 => RESEND_BY_FILTER_MAX_LIMIT,
         l => l,
     };
+    let redrive = redrive_confirmed(req.redrive_completed, &req.confirm_redrive_completed);
 
-    // Re-count now: if more jobs are eligible than the caller confirmed,
+    // Re-count now: if more jobs would be reset than the caller confirmed,
     // nothing is reset and the caller is told the new counts.
     let now = summarize(state, auth, f.clone()).await?;
-    if now.eligible > confirm {
+    let to_reset = now.to_reset(redrive);
+    if to_reset > confirm {
         return Err(PlatformError::Coded {
             status: StatusCode::CONFLICT,
             code: "FILTER_MATCH_CHANGED".to_string(),
             message: format!(
-                "{} jobs now match this filter and can be requeued, not the {} confirmed; review the new count and confirm again",
-                now.eligible, confirm
+                "{to_reset} jobs now match this filter and can be requeued, not the {confirm} confirmed; review the new count and confirm again"
             ),
             details: HashMap::from([
                 ("count".to_string(), serde_json::json!(now.count)),
                 ("eligibleCount".to_string(), serde_json::json!(now.eligible)),
+                (
+                    "completedCount".to_string(),
+                    serde_json::json!(now.completed),
+                ),
+                ("inFlightCount".to_string(), serde_json::json!(now.in_flight)),
+                (
+                    "redriveEligibleCount".to_string(),
+                    serde_json::json!(now.redrive_eligible()),
+                ),
                 ("byStatus".to_string(), serde_json::json!(now.by_status)),
             ]),
         });
@@ -311,9 +393,14 @@ async fn requeue_by_filter(
     // towards the cap. Its tenant rule is still applied to each batch.
     let mut walk = visible_to(auth, f.clone());
     walk.exclude_platform_scoped = !reaches(&auth.0, None);
+    walk.status_in = resettable_statuses(redrive);
 
     let budget = limit.min(confirm);
-    let mut requeued: i64 = 0;
+    let mut res = RunTally {
+        skipped_in_flight: now.in_flight,
+        skipped_completed: if redrive { 0 } else { now.completed },
+        ..RunTally::default()
+    };
     let mut handed: i64 = 0;
     let mut exhausted = false;
     while handed < budget {
@@ -322,32 +409,31 @@ async fn requeue_by_filter(
             .repo
             .matching_ids(&walk, page)
             .await
-            .map_err(|e| interrupted(requeued, e))?;
+            .map_err(|e| interrupted(res.requeued, e))?;
         if ids.is_empty() {
             exhausted = true;
             break;
         }
         // Unknown and unreachable ids are dropped, as the plain requeue does.
-        let jobs: Vec<(String, DateTime<Utc>)> = state
-            .repo
-            .heads(&ids)
-            .await
-            .map_err(|e| interrupted(requeued, e))?
-            .into_iter()
-            .filter(|j| reaches(&auth.0, j.client_id.as_deref()))
-            .map(|j| (j.id, j.created_at))
-            .collect();
-        let command = ResendCommand {
-            ids: jobs.iter().map(|(id, _)| id.clone()).collect(),
-            jobs,
-        };
+        let command = resend_command(
+            state,
+            auth,
+            &ids,
+            redrive,
+            if redrive { REDRIVE_CONFIRMATION } else { "" },
+        )
+        .await
+        .map_err(|e| interrupted(res.requeued, e))?;
         let event = state
             .requeue_use_case
             .run(command, ExecutionContext::from_auth(&auth.0))
             .await
             .into_result()
-            .map_err(|e| interrupted(requeued, e.into()))?;
-        requeued += event.ids.len() as i64;
+            .map_err(|e| interrupted(res.requeued, e.into()))?;
+        res.requeued += event.ids.len() as i64;
+        res.redriven += event.redriven_count as i64;
+        res.skipped_in_flight += event.skipped_in_flight as i64;
+        res.skipped_completed += event.skipped_completed as i64;
         handed += ids.len() as i64;
         let full_page = ids.len() as i64 == page;
         walk.after_id = ids.last().cloned();
@@ -356,24 +442,31 @@ async fn requeue_by_filter(
             break;
         }
     }
-    if exhausted || handed == 0 {
-        return Ok(Json(RequeueByFilterResponse {
-            requeued,
-            truncated: false,
-            remaining: 0,
-            window: window.into(),
-        }));
+    let mut remaining = 0;
+    if !(exhausted || handed == 0) {
+        // Stopped at the budget: count what is left after the last id handed out.
+        let mut rest = f;
+        rest.after_id = walk.after_id;
+        remaining = summarize(state, auth, rest).await?.to_reset(redrive);
     }
-    // Stopped at the budget: count what is left after the last id handed out.
-    let mut rest = f;
-    rest.after_id = walk.after_id;
-    let left = summarize(state, auth, rest).await?;
     Ok(Json(RequeueByFilterResponse {
-        requeued,
-        truncated: left.eligible > 0,
-        remaining: left.eligible,
+        requeued: res.requeued,
+        redriven: res.redriven,
+        skipped_in_flight: res.skipped_in_flight,
+        skipped_completed: res.skipped_completed,
+        truncated: remaining > 0,
+        remaining,
         window: window.into(),
     }))
+}
+
+/// What a run has done so far.
+#[derive(Debug, Default)]
+struct RunTally {
+    requeued: i64,
+    redriven: i64,
+    skipped_in_flight: i64,
+    skipped_completed: i64,
 }
 
 // ── /api ─────────────────────────────────────────────────────────────────
@@ -388,7 +481,7 @@ pub async fn api_preview_requeue_by_filter(
     auth: Authenticated,
     Json(req): Json<RequeueByFilterPreviewRequest>,
 ) -> Result<Json<RequeueByFilterPreviewResponse>, PlatformError> {
-    checks::can_read_dispatch_jobs(&auth.0)?;
+    checks::can_requeue_or_read_dispatch_jobs(&auth.0)?;
     preview(&state, &auth, &req.filter).await
 }
 
@@ -403,7 +496,7 @@ pub async fn api_requeue_by_filter(
     auth: Authenticated,
     Json(req): Json<RequeueByFilterRequest>,
 ) -> Result<Json<RequeueByFilterResponse>, PlatformError> {
-    checks::can_read_dispatch_jobs(&auth.0)?;
+    can_requeue_dispatch_jobs_with(&auth, req.redrive_completed)?;
     requeue_by_filter(&state, &auth, req).await
 }
 
@@ -418,7 +511,7 @@ pub async fn bff_preview_requeue_by_filter(
     auth: Authenticated,
     Json(req): Json<RequeueByFilterPreviewRequest>,
 ) -> Result<Json<RequeueByFilterPreviewResponse>, PlatformError> {
-    checks::can_read_dispatch_jobs(&auth.0)?;
+    checks::can_requeue_or_read_dispatch_jobs(&auth.0)?;
     preview(&state, &auth, &req.filter).await
 }
 
@@ -432,6 +525,6 @@ pub async fn bff_requeue_by_filter(
     auth: Authenticated,
     Json(req): Json<RequeueByFilterRequest>,
 ) -> Result<Json<RequeueByFilterResponse>, PlatformError> {
-    checks::can_read_dispatch_jobs(&auth.0)?;
+    can_requeue_dispatch_jobs_with(&auth, req.redrive_completed)?;
     requeue_by_filter(&state, &auth, req).await
 }

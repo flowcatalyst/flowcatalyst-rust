@@ -984,6 +984,37 @@ pub mod checks {
         context.has_permission(permissions::admin::DISPATCH_JOB_READ)
     }
 
+    /// Requeue by ids, requeue by filter (Go `DispatchJobRequeuePerm` through
+    /// `CanWritePermission`): its own permission, not `dispatch-job:view`.
+    pub fn can_requeue_dispatch_jobs(context: &impl Authority) -> Result<()> {
+        require_permission(context, permissions::admin::DISPATCH_JOB_REQUEUE)
+    }
+
+    /// The preview of a requeue-by-filter: the requeue permission, or the
+    /// view permission (the counts are no more than the list shows).
+    pub fn can_requeue_or_read_dispatch_jobs(context: &impl Authority) -> Result<()> {
+        if context.has_permission(permissions::admin::DISPATCH_JOB_REQUEUE) {
+            return Ok(());
+        }
+        require_permission(context, permissions::admin::DISPATCH_JOB_READ)
+    }
+
+    /// A requeue that sets `redriveCompleted` additionally needs this: asking
+    /// without it is a 403, not a quiet skip.
+    pub fn can_redrive_completed_dispatch_jobs(context: &impl Authority) -> Result<()> {
+        require_permission(context, permissions::admin::DISPATCH_JOB_REDRIVE_COMPLETED)
+    }
+
+    /// Cancelling a FAILED dispatch job (Go `DispatchJobCancelPerm`).
+    pub fn can_cancel_dispatch_jobs(context: &impl Authority) -> Result<()> {
+        require_permission(context, permissions::admin::DISPATCH_JOB_CANCEL)
+    }
+
+    /// Marking a FAILED dispatch job COMPLETED (Go `DispatchJobCompletePerm`).
+    pub fn can_complete_dispatch_jobs(context: &impl Authority) -> Result<()> {
+        require_permission(context, permissions::admin::DISPATCH_JOB_COMPLETE)
+    }
+
     /// Editing the payload of a dispatch job (Go `DispatchJobEditPayloadPerm`
     /// through `CanWritePermission`): its own permission, not `dispatch-job:view`.
     pub fn can_edit_dispatch_job_payloads(context: &impl Authority) -> Result<()> {

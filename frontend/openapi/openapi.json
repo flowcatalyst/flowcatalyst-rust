@@ -4189,6 +4189,9 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "window": {
+            "$ref": "#/components/schemas/WindowResponse"
           }
         },
         "required": [
@@ -4197,7 +4200,8 @@
           "clientIds",
           "dispatchPoolIds",
           "subscriptionIds",
-          "kinds"
+          "kinds",
+          "window"
         ],
         "type": "object"
       },
@@ -8317,21 +8321,44 @@
             "description": "count broken down by status",
             "type": "object"
           },
+          "completedCount": {
+            "description": "COMPLETED jobs the filter matches that the caller can see. A requeue skips them; they are redriven only with redriveCompleted and confirmRedriveCompleted",
+            "format": "int64",
+            "type": "integer"
+          },
           "count": {
-            "description": "Jobs the filter matches that the caller can see",
+            "description": "Jobs the filter matches in the window that the caller can see",
             "format": "int64",
             "type": "integer"
           },
           "eligibleCount": {
-            "description": "How many of them a requeue would reset for this caller; send it back as confirmCount",
+            "description": "How many of them a requeue would reset for this caller (not COMPLETED, not in flight); send it back as confirmCount",
             "format": "int64",
             "type": "integer"
+          },
+          "inFlightCount": {
+            "description": "QUEUED or PROCESSING jobs the filter matches; a requeue never resets them",
+            "format": "int64",
+            "type": "integer"
+          },
+          "redriveEligibleCount": {
+            "description": "eligibleCount + completedCount: the confirmCount of a request that also redrives COMPLETED jobs",
+            "format": "int64",
+            "type": "integer"
+          },
+          "window": {
+            "$ref": "#/components/schemas/WindowResponse",
+            "description": "The created_at window the counts cover"
           }
         },
         "required": [
           "count",
           "byStatus",
-          "eligibleCount"
+          "eligibleCount",
+          "completedCount",
+          "inFlightCount",
+          "redriveEligibleCount",
+          "window"
         ],
         "type": "object"
       },
@@ -8370,10 +8397,14 @@
             "type": "string"
           },
           "confirmCount": {
-            "description": "The eligibleCount the caller was shown. If more jobs are eligible now, nothing is reset and the response is 409 FILTER_MATCH_CHANGED.",
+            "description": "The eligibleCount the caller was shown (redriveEligibleCount when redriveCompleted). If more jobs would be reset now, nothing is reset and the response is 409 FILTER_MATCH_CHANGED.",
             "format": "int64",
             "minimum": 0,
             "type": "integer"
+          },
+          "confirmRedriveCompleted": {
+            "description": "The literal REDRIVE, confirming redriveCompleted.",
+            "type": "string"
           },
           "dispatchPoolId": {
             "type": "string"
@@ -8388,6 +8419,10 @@
           "messageGroup": {
             "description": "Exact message group",
             "type": "string"
+          },
+          "redriveCompleted": {
+            "description": "Also re-deliver the COMPLETED jobs the filter matches. Needs confirmRedriveCompleted=REDRIVE and the dispatch-job:redrive-completed permission (403 without it). Without both fields COMPLETED jobs are skipped and counted in skippedCompleted.",
+            "type": "boolean"
           },
           "since": {
             "description": "RFC3339 timestamp",
@@ -8433,25 +8468,48 @@
             "readOnly": true,
             "type": "string"
           },
+          "redriven": {
+            "description": "How many of them were COMPLETED jobs re-delivered",
+            "format": "int64",
+            "type": "integer"
+          },
           "remaining": {
             "description": "Eligible jobs still matching after the run; run again to continue",
             "format": "int64",
             "type": "integer"
           },
           "requeued": {
-            "description": "Jobs reset to PENDING",
+            "description": "Jobs reset to PENDING (redriven COMPLETED jobs included)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "skippedCompleted": {
+            "description": "COMPLETED matches left alone because the redrive was not requested and confirmed",
+            "format": "int64",
+            "type": "integer"
+          },
+          "skippedInFlight": {
+            "description": "QUEUED or PROCESSING matches left alone (never reset)",
             "format": "int64",
             "type": "integer"
           },
           "truncated": {
             "description": "The run stopped at its limit (or at confirmCount) with eligible jobs left",
             "type": "boolean"
+          },
+          "window": {
+            "$ref": "#/components/schemas/WindowResponse",
+            "description": "The created_at window the run was held to"
           }
         },
         "required": [
           "requeued",
+          "redriven",
+          "skippedInFlight",
+          "skippedCompleted",
           "truncated",
-          "remaining"
+          "remaining",
+          "window"
         ],
         "type": "object"
       },
@@ -8467,12 +8525,20 @@
             "readOnly": true,
             "type": "string"
           },
+          "confirmRedriveCompleted": {
+            "description": "The literal REDRIVE, confirming redriveCompleted. Without both fields, COMPLETED jobs are skipped.",
+            "type": "string"
+          },
           "ids": {
-            "description": "Dispatch job ids to reset to PENDING for re-dispatch",
+            "description": "Dispatch job ids to reset to PENDING for re-dispatch. QUEUED and PROCESSING jobs are never reset; COMPLETED jobs only with redriveCompleted and confirmRedriveCompleted. Skipped jobs are reported, not an error.",
             "items": {
               "type": "string"
             },
             "type": "array"
+          },
+          "redriveCompleted": {
+            "description": "Also re-deliver COMPLETED jobs. Needs confirmRedriveCompleted=REDRIVE and the dispatch-job:redrive-completed permission (403 without it).",
+            "type": "boolean"
           }
         },
         "required": [
@@ -8492,13 +8558,40 @@
             "readOnly": true,
             "type": "string"
           },
+          "redriven": {
+            "description": "How many of them were COMPLETED jobs re-delivered (0 unless the request redrove)",
+            "format": "int64",
+            "type": "integer"
+          },
           "requeued": {
+            "description": "Jobs reset to PENDING (redriven COMPLETED jobs included)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "skipped": {
+            "description": "The skipped jobs, with the reason",
+            "items": {
+              "$ref": "#/components/schemas/SkippedJobResponse"
+            },
+            "type": "array"
+          },
+          "skippedCompleted": {
+            "description": "COMPLETED jobs left alone because the redrive was not requested and confirmed",
+            "format": "int64",
+            "type": "integer"
+          },
+          "skippedInFlight": {
+            "description": "QUEUED or PROCESSING jobs left alone",
             "format": "int64",
             "type": "integer"
           }
         },
         "required": [
-          "requeued"
+          "requeued",
+          "redriven",
+          "skippedInFlight",
+          "skippedCompleted",
+          "skipped"
         ],
         "type": "object"
       },
@@ -9530,6 +9623,31 @@
           "kind",
           "key",
           "updatedAt"
+        ],
+        "type": "object"
+      },
+      "SkippedJobResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "reason": {
+            "description": "IN_FLIGHT: QUEUED or PROCESSING, never reset. COMPLETED_REDRIVE_NOT_CONFIRMED: completed jobs are redriven only with redriveCompleted and confirmRedriveCompleted.",
+            "enum": [
+              "IN_FLIGHT",
+              "COMPLETED_REDRIVE_NOT_CONFIRMED"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "reason"
         ],
         "type": "object"
       },
@@ -11853,6 +11971,31 @@
           "accessibleClientIds",
           "accessibleApplicationIds",
           "allApplications"
+        ],
+        "type": "object"
+      },
+      "WindowResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "defaulted": {
+            "description": "true when the server supplied a bound the request did not (no since/until: the last 24 hours)",
+            "type": "boolean"
+          },
+          "from": {
+            "description": "Start of the window (inclusive)",
+            "format": "date-time",
+            "type": "string"
+          },
+          "to": {
+            "description": "End of the window; now when the request gave no until",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "defaulted"
         ],
         "type": "object"
       },
@@ -16037,7 +16180,27 @@
                 }
               }
             },
-            "description": "OK"
+            "description": "OK",
+            "headers": {
+              "X-Window-Defaulted": {
+                "schema": {
+                  "description": "true when the server supplied a bound the request did not (no since/until: the last 24 hours)",
+                  "type": "string"
+                }
+              },
+              "X-Window-From": {
+                "schema": {
+                  "description": "Start of the created_at window the list was held to (RFC3339, UTC)",
+                  "type": "string"
+                }
+              },
+              "X-Window-To": {
+                "schema": {
+                  "description": "End of the window (RFC3339, UTC); now when the request gave no until",
+                  "type": "string"
+                }
+              }
+            }
           },
           "default": {
             "content": {
@@ -16104,6 +16267,28 @@
     "/api/dispatch-jobs/filter-options": {
       "get": {
         "operationId": "dispatchJobFilterOptions",
+        "parameters": [
+          {
+            "description": "RFC3339; start of the created_at window the values are read from (default: 24 hours before until/now)",
+            "explode": false,
+            "in": "query",
+            "name": "since",
+            "schema": {
+              "description": "RFC3339; start of the created_at window the values are read from (default: 24 hours before until/now)",
+              "type": "string"
+            }
+          },
+          {
+            "description": "RFC3339; end of the window (default: now)",
+            "explode": false,
+            "in": "query",
+            "name": "until",
+            "schema": {
+              "description": "RFC3339; end of the window (default: now)",
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -16329,7 +16514,27 @@
                 }
               }
             },
-            "description": "OK"
+            "description": "OK",
+            "headers": {
+              "X-Window-Defaulted": {
+                "schema": {
+                  "description": "true when the server supplied a bound the request did not (no since/until: the last 24 hours)",
+                  "type": "string"
+                }
+              },
+              "X-Window-From": {
+                "schema": {
+                  "description": "Start of the created_at window the list was held to (RFC3339, UTC)",
+                  "type": "string"
+                }
+              },
+              "X-Window-To": {
+                "schema": {
+                  "description": "End of the window (RFC3339, UTC); now when the request gave no until",
+                  "type": "string"
+                }
+              }
+            }
           },
           "default": {
             "content": {
@@ -16669,7 +16874,27 @@
                 }
               }
             },
-            "description": "OK"
+            "description": "OK",
+            "headers": {
+              "X-Window-Defaulted": {
+                "schema": {
+                  "description": "true when the server supplied a bound the request did not (no since/until: the last 24 hours)",
+                  "type": "string"
+                }
+              },
+              "X-Window-From": {
+                "schema": {
+                  "description": "Start of the created_at window the list was held to (RFC3339, UTC)",
+                  "type": "string"
+                }
+              },
+              "X-Window-To": {
+                "schema": {
+                  "description": "End of the window (RFC3339, UTC); now when the request gave no until",
+                  "type": "string"
+                }
+              }
+            }
           },
           "default": {
             "content": {

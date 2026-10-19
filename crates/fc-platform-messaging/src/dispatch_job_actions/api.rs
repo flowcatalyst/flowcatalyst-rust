@@ -1,13 +1,17 @@
 //! Operator routes on dispatch jobs, on the `/api` and `/bff` tiers alike
-//! (Go `dispatchjob/api/api.go:75-78` and `:109-112`):
+//! (Go `dispatchjob/api/api.go`):
 //!
-//! - `POST …/dispatch-jobs/requeue` `{ids}`   → `{requeued}` (view)
-//! - `POST …/dispatch-jobs/{id}/cancel`       → the job (view; FAILED only)
-//! - `POST …/dispatch-jobs/{id}/complete`     → the job (view; FAILED only)
-//! - `POST …/dispatch-jobs/{id}/sign`         → the delivery a send would make now (view-raw)
+//! - `POST …/dispatch-jobs/requeue` `{ids, redriveCompleted?, confirmRedriveCompleted?}`
+//!   → `{requeued, redriven, skippedInFlight, skippedCompleted, skipped[]}`
+//!   (`dispatch-job:requeue`; `dispatch-job:redrive-completed` as well when
+//!   `redriveCompleted`)
+//! - `POST …/dispatch-jobs/{id}/cancel`   → the job (`dispatch-job:cancel`; FAILED only)
+//! - `POST …/dispatch-jobs/{id}/complete` → the job (`dispatch-job:complete`; FAILED only)
+//! - `PUT …/dispatch-jobs/{id}/payload`   → the job (`dispatch-job:edit-payload`)
+//! - `POST …/dispatch-jobs/{id}/sign`     → the delivery a send would make now (view-raw)
 //!
-//! Go gates requeue, cancel and complete on `dispatch-job:view` itself;
-//! Rust keeps Go's permission.
+//! `dispatch-job:view` is read-only since Go's split of the write actions off
+//! it (`ad37de21`).
 
 use axum::{
     extract::{Path, State},
@@ -21,13 +25,14 @@ use utoipa::ToSchema;
 
 use super::operations::{
     EditDispatchJobPayloadUseCase, EditPayloadCommand, RequeueDispatchJobsUseCase, ResendCommand,
-    SettleDispatchJobUseCase, StatusFlipCommand,
+    SettleDispatchJobUseCase, SkippedJob, StatusFlipCommand,
 };
-use super::repository::DispatchJobActionsRepository;
+use super::repository::{DispatchJobActionsRepository, JobHead};
 use crate::dispatch_job::api::DispatchJobResponse;
 use crate::dispatch_job::delivery_credentials::DeliveryCredentials;
 use crate::dispatch_job::entity::{DispatchJob, DispatchStatus};
 use crate::dispatch_job::repository::DispatchJobRepository;
+use crate::dispatch_job::requeue_rules::SKIP_IN_FLIGHT;
 use fc_platform_core::directory::ClientDirectory;
 use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::error::PlatformError;
@@ -50,12 +55,73 @@ pub struct DispatchJobActionsState {
     pub max_window_days: i64,
 }
 
-/// Go `RequeueRequest`.
+/// Go `RequeueRequest`: the body of `POST /dispatch-jobs/requeue`.
 #[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct RequeueRequest {
+    /// Dispatch job ids to reset to PENDING for re-dispatch. QUEUED and PROCESSING jobs are never reset; COMPLETED jobs only with redriveCompleted and confirmRedriveCompleted. Skipped jobs are reported, not an error.
     #[serde(default)]
     #[schema(required = true)]
     pub ids: Vec<String>,
+    /// Also re-deliver COMPLETED jobs. Needs confirmRedriveCompleted=REDRIVE and the dispatch-job:redrive-completed permission (403 without it).
+    #[serde(default)]
+    pub redrive_completed: bool,
+    /// The literal REDRIVE, confirming redriveCompleted. Without both fields, COMPLETED jobs are skipped.
+    #[serde(default)]
+    pub confirm_redrive_completed: String,
+}
+
+/// Go `SkippedJobResponse`: a job a requeue found and left alone.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SkippedJobResponse {
+    pub id: String,
+    pub status: String,
+    /// IN_FLIGHT: QUEUED or PROCESSING, never reset. COMPLETED_REDRIVE_NOT_CONFIRMED: completed jobs are redriven only with redriveCompleted and confirmRedriveCompleted.
+    #[schema(inline, example = "IN_FLIGHT")]
+    pub reason: SkipReason,
+}
+
+/// Why a requeue left a job alone.
+#[derive(Debug, Serialize, ToSchema)]
+pub enum SkipReason {
+    #[serde(rename = "IN_FLIGHT")]
+    InFlight,
+    #[serde(rename = "COMPLETED_REDRIVE_NOT_CONFIRMED")]
+    CompletedRedriveNotConfirmed,
+}
+
+/// Go `RequeueResponse`: how many jobs were reset.
+#[derive(Debug, Default, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RequeueResponse {
+    /// Jobs reset to PENDING (redriven COMPLETED jobs included)
+    #[schema(value_type = i64)]
+    pub requeued: usize,
+    /// How many of them were COMPLETED jobs re-delivered (0 unless the request redrove)
+    #[schema(value_type = i64)]
+    pub redriven: usize,
+    /// QUEUED or PROCESSING jobs left alone
+    #[schema(value_type = i64)]
+    pub skipped_in_flight: usize,
+    /// COMPLETED jobs left alone because the redrive was not requested and confirmed
+    #[schema(value_type = i64)]
+    pub skipped_completed: usize,
+    /// The skipped jobs, with the reason
+    pub skipped: Vec<SkippedJobResponse>,
+}
+
+impl From<SkippedJob> for SkippedJobResponse {
+    fn from(j: SkippedJob) -> Self {
+        Self {
+            id: j.id,
+            status: j.status,
+            reason: if j.reason == SKIP_IN_FLIGHT {
+                SkipReason::InFlight
+            } else {
+                SkipReason::CompletedRedriveNotConfirmed
+            },
+        }
+    }
 }
 
 /// Go `EditPayloadRequest`: the body of `PUT /dispatch-jobs/{id}/payload`.
@@ -68,13 +134,6 @@ pub struct EditPayloadRequest {
     /// New media type; omit to keep the job's
     #[serde(default)]
     pub payload_content_type: Option<String>,
-}
-
-/// Go `RequeueResponse`.
-#[derive(Debug, Serialize, ToSchema)]
-pub struct RequeueResponse {
-    #[schema(value_type = i64)]
-    pub requeued: usize,
 }
 
 /// Go `RequestSummary`.
@@ -103,27 +162,65 @@ pub struct DeliveryPlan {
     pub body: String,
 }
 
-async fn requeue(
+/// Go `requireRequeue`: gates requeue by ids and by filter. A request that
+/// asks to redrive COMPLETED jobs additionally needs
+/// `dispatch-job:redrive-completed`; asking without it is a 403, not a quiet skip.
+pub(crate) fn can_requeue_dispatch_jobs_with(
+    auth: &Authenticated,
+    redrive_completed: bool,
+) -> Result<(), PlatformError> {
+    checks::can_requeue_dispatch_jobs(&auth.0)?;
+    if redrive_completed {
+        checks::can_redrive_completed_dispatch_jobs(&auth.0)?;
+    }
+    Ok(())
+}
+
+/// The reachable ones of `ids`, as a requeue command: unknown and unreachable
+/// ids are dropped silently, as in Go (a bulk contract, and the ids the audit
+/// row records).
+pub(crate) async fn resend_command(
     state: &DispatchJobActionsState,
     auth: &Authenticated,
-    ids: Vec<String>,
-) -> Result<Json<RequeueResponse>, PlatformError> {
-    if ids.is_empty() {
-        return Ok(Json(RequeueResponse { requeued: 0 }));
-    }
-    // Unknown and unreachable ids are dropped silently, as in Go.
-    let jobs: Vec<(String, chrono::DateTime<chrono::Utc>)> = state
+    ids: &[String],
+    redrive_completed: bool,
+    confirm_redrive_completed: &str,
+) -> Result<ResendCommand, PlatformError> {
+    let jobs: Vec<JobHead> = state
         .repo
-        .heads(&ids)
+        .heads(ids)
         .await?
         .into_iter()
         .filter(|j| super::operations::reaches(&auth.0, j.client_id.as_deref()))
-        .map(|j| (j.id, j.created_at))
         .collect();
-    let command = ResendCommand {
-        ids: jobs.iter().map(|(id, _)| id.clone()).collect(),
+    Ok(ResendCommand {
+        ids: jobs.iter().map(|j| j.id.clone()).collect(),
+        redrive_completed,
+        confirm_redrive_completed: confirm_redrive_completed.to_string(),
         jobs,
-    };
+    })
+}
+
+/// Go `requeue`: resets the given jobs to PENDING so the scheduler
+/// re-dispatches them (clears scheduled_for, attempt_count and the terminal
+/// stamps). A job in flight (QUEUED, PROCESSING) is never reset and a COMPLETED
+/// job only by a confirmed redrive; the rest are skipped and reported.
+async fn requeue(
+    state: &DispatchJobActionsState,
+    auth: &Authenticated,
+    req: RequeueRequest,
+) -> Result<Json<RequeueResponse>, PlatformError> {
+    if req.ids.is_empty() {
+        return Ok(Json(RequeueResponse::default()));
+    }
+    let command = resend_command(
+        state,
+        auth,
+        &req.ids,
+        req.redrive_completed,
+        &req.confirm_redrive_completed,
+    )
+    .await?;
     let event = state
         .requeue_use_case
         .run(command, ExecutionContext::from_auth(&auth.0))
@@ -131,6 +228,10 @@ async fn requeue(
         .into_result()?;
     Ok(Json(RequeueResponse {
         requeued: event.ids.len(),
+        redriven: event.redriven_count,
+        skipped_in_flight: event.skipped_in_flight,
+        skipped_completed: event.skipped_completed,
+        skipped: event.skipped.iter().cloned().map(Into::into).collect(),
     }))
 }
 
@@ -305,8 +406,9 @@ async fn sign(
 
 // ── /api ─────────────────────────────────────────────────────────────────
 
-/// Requeue dispatch jobs (Go `requeueDispatchJobs`): any status back to
-/// PENDING with a fresh attempt budget.
+/// Requeue dispatch jobs (Go `requeueDispatchJobs`): a job that is not in
+/// flight goes back to PENDING with a fresh attempt budget; COMPLETED jobs only
+/// with `redriveCompleted` and `confirmRedriveCompleted: "REDRIVE"`.
 #[utoipa::path(post, path = "/api/dispatch-jobs/requeue", tag = "dispatch-jobs",
     operation_id = "requeueDispatchJobs", request_body = RequeueRequest,
     responses((status = 200, description = "How many were requeued", body = RequeueResponse)),
@@ -316,8 +418,8 @@ pub async fn api_requeue_dispatch_jobs(
     auth: Authenticated,
     Json(req): Json<RequeueRequest>,
 ) -> Result<Json<RequeueResponse>, PlatformError> {
-    checks::can_read_dispatch_jobs(&auth.0)?;
-    requeue(&state, &auth, req.ids).await
+    can_requeue_dispatch_jobs_with(&auth, req.redrive_completed)?;
+    requeue(&state, &auth, req).await
 }
 
 /// Cancel a FAILED dispatch job (Go `cancelDispatchJob`).
@@ -332,7 +434,7 @@ pub async fn api_cancel_dispatch_job(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<DispatchJobResponse>, PlatformError> {
-    checks::can_read_dispatch_jobs(&auth.0)?;
+    checks::can_cancel_dispatch_jobs(&auth.0)?;
     settle(&state, &auth, id, DispatchStatus::Cancelled).await
 }
 
@@ -348,7 +450,7 @@ pub async fn api_complete_dispatch_job(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<DispatchJobResponse>, PlatformError> {
-    checks::can_read_dispatch_jobs(&auth.0)?;
+    checks::can_complete_dispatch_jobs(&auth.0)?;
     settle(&state, &auth, id, DispatchStatus::Completed).await
 }
 
@@ -398,8 +500,8 @@ pub async fn bff_requeue_dispatch_jobs(
     auth: Authenticated,
     Json(req): Json<RequeueRequest>,
 ) -> Result<Json<RequeueResponse>, PlatformError> {
-    checks::can_read_dispatch_jobs(&auth.0)?;
-    requeue(&state, &auth, req.ids).await
+    can_requeue_dispatch_jobs_with(&auth, req.redrive_completed)?;
+    requeue(&state, &auth, req).await
 }
 
 /// BFF twin of [`api_cancel_dispatch_job`].
@@ -412,7 +514,7 @@ pub async fn bff_cancel_dispatch_job(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<DispatchJobResponse>, PlatformError> {
-    checks::can_read_dispatch_jobs(&auth.0)?;
+    checks::can_cancel_dispatch_jobs(&auth.0)?;
     settle(&state, &auth, id, DispatchStatus::Cancelled).await
 }
 
@@ -426,7 +528,7 @@ pub async fn bff_complete_dispatch_job(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<DispatchJobResponse>, PlatformError> {
-    checks::can_read_dispatch_jobs(&auth.0)?;
+    checks::can_complete_dispatch_jobs(&auth.0)?;
     settle(&state, &auth, id, DispatchStatus::Completed).await
 }
 

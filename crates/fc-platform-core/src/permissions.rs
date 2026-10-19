@@ -88,9 +88,20 @@ pub mod admin {
     // Dispatch job access (messaging context in DB)
     pub const DISPATCH_JOB_READ: &str = "platform:messaging:dispatch-job:view";
     pub const DISPATCH_JOB_VIEW_RAW: &str = "platform:messaging:dispatch-job:view-raw";
-    /// Edit the payload of a PENDING or FAILED dispatch job. The write actions
-    /// on a dispatch job each have their own permission (they were all
-    /// `dispatch-job:view` before Go's split).
+    // The write actions on a dispatch job each have their own permission (they
+    // were all `dispatch-job:view` before Go's split, `ad37de21`).
+    /// Requeue by ids, requeue by filter and its preview.
+    pub const DISPATCH_JOB_REQUEUE: &str = "platform:messaging:dispatch-job:requeue";
+    /// Additionally required by a requeue that sets `redriveCompleted`
+    /// (re-delivering COMPLETED jobs). Never implied by the others; no
+    /// built-in role but super-admin's wildcard holds it.
+    pub const DISPATCH_JOB_REDRIVE_COMPLETED: &str =
+        "platform:messaging:dispatch-job:redrive-completed";
+    /// Cancel a FAILED dispatch job.
+    pub const DISPATCH_JOB_CANCEL: &str = "platform:messaging:dispatch-job:cancel";
+    /// Mark a FAILED dispatch job COMPLETED (delivered out of band).
+    pub const DISPATCH_JOB_COMPLETE: &str = "platform:messaging:dispatch-job:complete";
+    /// Edit the payload of a PENDING or FAILED dispatch job.
     pub const DISPATCH_JOB_EDIT_PAYLOAD: &str = "platform:messaging:dispatch-job:edit-payload";
 
     // Scheduled job management (messaging context in DB)
@@ -220,6 +231,10 @@ pub mod admin {
         EVENT_VIEW_RAW,
         DISPATCH_JOB_READ,
         DISPATCH_JOB_VIEW_RAW,
+        DISPATCH_JOB_REQUEUE,
+        DISPATCH_JOB_REDRIVE_COMPLETED,
+        DISPATCH_JOB_CANCEL,
+        DISPATCH_JOB_COMPLETE,
         DISPATCH_JOB_EDIT_PAYLOAD,
         SCHEDULED_JOB_READ,
         SCHEDULED_JOB_CREATE,

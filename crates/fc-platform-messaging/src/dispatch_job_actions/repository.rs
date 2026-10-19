@@ -5,6 +5,7 @@
 
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder};
+use std::collections::BTreeSet;
 
 use crate::dispatch_job::entity::DispatchStatus;
 use crate::dispatch_job::lifecycle;
@@ -23,9 +24,13 @@ pub struct JobHead {
 }
 
 /// Jobs back to PENDING with a fresh attempt budget (Go `ResetToPending`).
+/// The ids in `redrive` are COMPLETED jobs re-delivered through the
+/// lifecycle's separate redrive transition; every other job goes through the
+/// ordinary requeue, which refuses a COMPLETED or in-flight one in SQL.
 #[derive(Debug, Clone)]
 pub struct JobsRequeue {
     pub jobs: Vec<(String, DateTime<Utc>)>,
+    pub redrive: BTreeSet<String>,
 }
 
 impl HasId for JobsRequeue {
@@ -86,6 +91,10 @@ pub struct JobEditView {
 pub struct MatchFilter {
     pub status: Option<String>,
     pub statuses: Vec<String>,
+    /// Keep only jobs in one of these statuses, on top of `status`/`statuses`
+    /// (both must hold). The id walk sets it to the statuses a requeue may
+    /// reset, so the walk never hands over a job the status guard would skip.
+    pub status_in: Vec<String>,
     pub client_id: Option<String>,
     pub client_ids: Vec<String>,
     /// Some: only platform-scoped jobs and these clients' (a non-anchor
@@ -134,6 +143,7 @@ fn push_conditions(qb: &mut QueryBuilder<'_, Postgres>, f: &MatchFilter) {
     }
     eq(qb, "status", &f.status);
     any(qb, "status", &f.statuses);
+    any(qb, "status", &f.status_in);
     eq(qb, "client_id", &f.client_id);
     any(qb, "client_id", &f.client_ids);
     if let Some(ids) = &f.accessible {
@@ -241,7 +251,13 @@ impl Persist<JobsRequeue> for DispatchJobActionsRepository {
         if r.jobs.is_empty() {
             return Ok(());
         }
-        lifecycle::requeue(&mut **tx.inner, &r.jobs).await?;
+        let (redrive, requeue): (Vec<_>, Vec<_>) = r
+            .jobs
+            .iter()
+            .cloned()
+            .partition(|(id, _)| r.redrive.contains(id));
+        lifecycle::requeue(&mut **tx.inner, &requeue).await?;
+        lifecycle::redrive_completed(&mut **tx.inner, &redrive).await?;
         Ok(())
     }
 

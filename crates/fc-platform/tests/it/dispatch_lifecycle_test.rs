@@ -143,6 +143,10 @@ async fn run(pool: &PgPool, t: &Transition, id: &str, created_at: DateTime<Utc>)
             .await
             .unwrap()
             .is_empty(),
+        "redrive_completed" => !lifecycle::redrive_completed(pool, &[(id.to_string(), created_at)])
+            .await
+            .unwrap()
+            .is_empty(),
         "mark_queued" => {
             let version = row(pool, id).await.updated_at;
             !lifecycle::mark_queued(pool, &[(id.to_string(), created_at, version)])
@@ -271,19 +275,31 @@ async fn a_late_callback_does_not_overwrite_a_settled_job() {
     }
 }
 
-/// Operator requeue resets the job from every status: PENDING, a fresh
-/// budget, history cleared.
+/// Operator requeue resets a job that is not in flight and not delivered
+/// (PENDING, FAILED, CANCELLED, EXPIRED, and the legacy ERROR spelling of
+/// FAILED) to PENDING with a fresh budget and its history cleared; QUEUED,
+/// PROCESSING and COMPLETED are left untouched (the guard is in the statement).
 #[tokio::test]
 #[ignore = "requires Docker"]
-async fn requeue_from_every_status_ends_pending_with_a_fresh_budget() {
+async fn requeue_resets_what_it_may_and_leaves_in_flight_and_completed_alone() {
     let (pool, _c) = setup_db().await;
     let created_at = Utc::now() - Duration::minutes(5);
-    for (i, from) in STATUSES.into_iter().enumerate() {
+    for (i, from) in STATUSES.into_iter().chain(["ERROR"]).enumerate() {
         let id = format!("r{i:012}");
         insert_job(&pool, &id, from, None, 1, "IMMEDIATE", created_at).await;
+        let before = row(&pool, &id).await;
         let moved = lifecycle::requeue(&pool, &[(id.clone(), created_at)])
             .await
             .unwrap();
+        let resettable = matches!(
+            from,
+            "PENDING" | "FAILED" | "CANCELLED" | "EXPIRED" | "ERROR"
+        );
+        if !resettable {
+            assert!(moved.is_empty(), "{from} must not be requeued");
+            assert_eq!(row(&pool, &id).await, before, "{from} is untouched");
+            continue;
+        }
         assert_eq!(moved.len(), 1, "{from}");
         let after = row(&pool, &id).await;
         assert_eq!(after.status, "PENDING", "{from}");
@@ -293,6 +309,32 @@ async fn requeue_from_every_status_ends_pending_with_a_fresh_budget() {
         assert_eq!(after.queued_at, None);
         assert_eq!(after.completed_at, None);
         assert_eq!(after.duration_millis, None);
+    }
+}
+
+/// The redrive moves COMPLETED jobs only, with the same reset.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn redrive_moves_completed_jobs_only() {
+    let (pool, _c) = setup_db().await;
+    let created_at = Utc::now() - Duration::minutes(5);
+    for (i, from) in STATUSES.into_iter().enumerate() {
+        let id = format!("d{i:012}");
+        insert_job(&pool, &id, from, None, 1, "IMMEDIATE", created_at).await;
+        let before = row(&pool, &id).await;
+        let moved = lifecycle::redrive_completed(&pool, &[(id.clone(), created_at)])
+            .await
+            .unwrap();
+        if from == "COMPLETED" {
+            assert_eq!(moved.len(), 1);
+            let after = row(&pool, &id).await;
+            assert_eq!(after.status, "PENDING");
+            assert_eq!(after.attempt_count, 0);
+            assert_eq!(after.completed_at, None);
+        } else {
+            assert!(moved.is_empty(), "{from}");
+            assert_eq!(row(&pool, &id).await, before, "{from}");
+        }
     }
 }
 
@@ -620,7 +662,7 @@ async fn random_concurrent_operations_leave_every_job_in_a_valid_state() {
                         .map(|_| (ids[rng.below(ids.len())].clone(), created_at))
                         .collect()
                 };
-                let result: Result<(), sqlx::Error> = match rng.below(17) {
+                let result: Result<(), sqlx::Error> = match rng.below(18) {
                     0 => lifecycle::schedule_retry(&pool, &id, created_at, later, "e")
                         .await
                         .map(drop),
@@ -684,6 +726,9 @@ async fn random_concurrent_operations_leave_every_job_in_a_valid_state() {
                         }
                     }
                     15 => lifecycle::reap_stranded_siblings(&pool, far, "reaped")
+                        .await
+                        .map(drop),
+                    16 => lifecycle::redrive_completed(&pool, &some_keys(&mut rng))
                         .await
                         .map(drop),
                     _ => lifecycle::mark_queued(
