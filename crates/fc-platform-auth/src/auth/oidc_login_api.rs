@@ -1271,6 +1271,7 @@ async fn validate_id_token_with_jwks(
 
     // Build validation — checks signature, exp, iss, aud
     let mut validation = Validation::new(algorithm);
+    validation.leeway = fc_platform_iam::auth::auth_service::jwt_leeway_secs();
 
     // Set issuer validation — for multi-tenant, extract actual issuer from token first
     // and validate against pattern; for single-tenant, validate against configured issuer

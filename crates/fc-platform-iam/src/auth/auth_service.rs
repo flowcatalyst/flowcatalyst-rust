@@ -37,6 +37,28 @@ const TOKEN_CACHE_TTL_SECS: u64 = 30;
 /// `authservice.TokenUseAPI`, authservice.go:49).
 pub const TOKEN_USE_API: &str = "api";
 
+/// Env var for the clock leeway, in seconds, applied when a platform-signed
+/// token's `exp` is checked (and an upstream IdP's id_token).
+pub const JWT_LEEWAY_ENV: &str = "FC_JWT_LEEWAY_SECS";
+
+/// Parse the leeway setting: whole seconds, 0 to 600. Unset, junk or out of
+/// range means 0, which is Go's behaviour (`golang-jwt` has no default leeway).
+fn parse_leeway(raw: Option<&str>) -> u64 {
+    raw.and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|v| *v <= 600)
+        .unwrap_or(0)
+}
+
+/// The clock leeway for token expiry checks: `FC_JWT_LEEWAY_SECS`, default 0.
+/// `jsonwebtoken` defaults to 60 s, which honoured a one-hour access token
+/// for 61 minutes (identity review R4); Go checks `exp` exactly. Read once.
+/// A deployment whose token consumers run on skewed clocks can set it back
+/// (60 restores the old behaviour).
+pub fn jwt_leeway_secs() -> u64 {
+    static LEEWAY: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *LEEWAY.get_or_init(|| parse_leeway(std::env::var(JWT_LEEWAY_ENV).ok().as_deref()))
+}
+
 /// The F34 allowlist on a `token_use` marker: `api`, or none (an empty marker
 /// counts as none, as Go's `tokenUse == ""`).
 pub fn is_api_credential_marker(token_use: Option<&str>) -> bool {
@@ -1080,6 +1102,7 @@ impl AuthService {
     /// `token_use`, `type` or `jti` (an access or ID token) is refused.
     pub fn validate_session_token(&self, token: &str) -> Result<SessionIdentity> {
         let mut validation = Validation::new(self.algorithm);
+        validation.leeway = jwt_leeway_secs();
         validation.set_issuer(&[&self.config.issuer]);
         validation.set_audience(&[&self.config.audience]);
         validation.set_required_spec_claims(&["exp", "iss", "sub"]);
@@ -1360,6 +1383,7 @@ impl AuthService {
     /// Perform full JWT validation without cache
     fn validate_token_uncached(&self, token: &str) -> Result<AccessTokenClaims> {
         let mut validation = Validation::new(self.algorithm);
+        validation.leeway = jwt_leeway_secs();
         validation.set_issuer(&[&self.config.issuer]);
         validation.set_audience(&[&self.config.audience]);
 
@@ -1897,6 +1921,45 @@ mod tests {
     }
 
     /// When both are present `tier` wins and `scope` is permissions.
+    #[test]
+    fn leeway_setting_parses_to_zero_by_default() {
+        assert_eq!(parse_leeway(None), 0);
+        assert_eq!(parse_leeway(Some("")), 0);
+        assert_eq!(parse_leeway(Some("junk")), 0);
+        assert_eq!(parse_leeway(Some("-5")), 0);
+        assert_eq!(parse_leeway(Some("601")), 0);
+        assert_eq!(parse_leeway(Some(" 60 ")), 60);
+        assert_eq!(parse_leeway(Some("600")), 600);
+    }
+
+    /// R4: a token 30 s past its `exp` was honoured under the default 60 s
+    /// leeway; the platform's own tokens are now exact, as Go's.
+    #[test]
+    fn a_token_just_past_expiry_is_refused() {
+        assert_eq!(
+            jwt_leeway_secs(),
+            0,
+            "{JWT_LEEWAY_ENV} must be unset in tests"
+        );
+        let s = AuthService::new(AuthConfig {
+            secret_key: "test-secret-key-for-leeway-tests-minimum-32-chars!!".to_string(),
+            access_token_expiry_secs: -30,
+            session_token_expiry_secs: -30,
+            ..AuthConfig::default()
+        });
+        let p = Principal::new_user("leeway@example.com", UserScope::Anchor);
+        let access = s.generate_access_token(&p).unwrap();
+        assert!(matches!(
+            s.validate_token(&access),
+            Err(PlatformError::TokenExpired)
+        ));
+        let session = s.generate_session_token(&p).unwrap();
+        assert!(matches!(
+            s.validate_session_token(&session),
+            Err(PlatformError::TokenExpired)
+        ));
+    }
+
     #[test]
     fn tier_is_preferred_over_scope() {
         let claims: AccessTokenClaims = serde_json::from_value(json!({
