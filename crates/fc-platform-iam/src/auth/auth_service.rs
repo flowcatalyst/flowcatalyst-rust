@@ -37,6 +37,12 @@ const TOKEN_CACHE_TTL_SECS: u64 = 30;
 /// `authservice.TokenUseAPI`, authservice.go:49).
 pub const TOKEN_USE_API: &str = "api";
 
+/// The F34 allowlist on a `token_use` marker: `api`, or none (an empty marker
+/// counts as none, as Go's `tokenUse == ""`).
+pub fn is_api_credential_marker(token_use: Option<&str>) -> bool {
+    matches!(token_use, None | Some("") | Some(TOKEN_USE_API))
+}
+
 /// `token_use` of an interactive-login access token: identity only, no
 /// authority; the API middleware refuses it (Go
 /// `authservice.TokenUseIdentity`, authservice.go:50).
@@ -394,6 +400,15 @@ impl AccessTokenClaims {
     /// which must not authorize API calls.
     pub fn is_identity_only(&self) -> bool {
         self.token_use.as_deref() == Some(TOKEN_USE_IDENTITY)
+    }
+
+    /// Whether the token's `token_use` marker admits it as a platform API
+    /// credential: an ALLOWLIST, `api` or no marker (older tokens), as Go's
+    /// `sessiontoken.IsAPICredential` (F34). Every other value (`identity`,
+    /// a token class added later, anything unknown) is refused, so a new
+    /// class is closed to the API by default.
+    pub fn is_api_credential(&self) -> bool {
+        is_api_credential_marker(self.token_use.as_deref())
     }
 }
 
@@ -1296,7 +1311,7 @@ impl AuthService {
         }
     }
 
-    fn sign_access(&self, claims: AccessTokenClaims) -> Result<String> {
+    pub(crate) fn sign_access(&self, claims: AccessTokenClaims) -> Result<String> {
         let mut header = Header::new(self.algorithm);
         header.kid = self.key_id.clone();
         encode(&header, &claims, &self.encoding_key).map_err(|e| PlatformError::Internal {

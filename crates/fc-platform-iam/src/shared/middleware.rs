@@ -228,6 +228,39 @@ mod tests {
         assert_eq!(auth.0.principal_type, PrincipalType::User);
     }
 
+    /// F34 (Go `IsAPICredential`): the bearer check is an ALLOWLIST, `api` or no
+    /// marker. Every other `token_use`, a class added later included, is a
+    /// 401, however well signed.
+    #[tokio::test]
+    async fn test_token_use_is_an_allowlist() {
+        let auth_service = test_auth_service();
+        let principal = Principal::new_user("test@example.com", UserScope::Anchor);
+        let with_use = |token_use: Option<&str>| {
+            let mut claims = auth_service.access_token_claims(
+                &principal,
+                3600,
+                &[],
+                true,
+                None,
+                chrono::Utc::now(),
+            );
+            claims.token_use = token_use.map(str::to_string);
+            auth_service.sign_access(claims).unwrap()
+        };
+        for refused in ["identity", "field", "foo", "API", "id_token", " api"] {
+            let token = with_use(Some(refused));
+            let mut parts = make_parts_with_app_state(Some(&format!("Bearer {token}")), None);
+            let result = Authenticated::from_request_parts(&mut parts, &()).await;
+            assert!(result.is_err(), "token_use={refused:?} must be refused");
+        }
+        for admitted in [Some("api"), None, Some("")] {
+            let token = with_use(admitted);
+            let mut parts = make_parts_with_app_state(Some(&format!("Bearer {token}")), None);
+            let result = Authenticated::from_request_parts(&mut parts, &()).await;
+            assert!(result.is_ok(), "token_use={admitted:?} must be admitted");
+        }
+    }
+
     #[tokio::test]
     async fn test_authenticated_missing_authorization_header() {
         let mut parts = make_parts_with_app_state(None, None);

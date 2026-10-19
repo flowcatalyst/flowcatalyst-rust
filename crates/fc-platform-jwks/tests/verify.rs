@@ -136,3 +136,27 @@ async fn no_platform_refuses_every_token_and_discovery_backs_off() {
     let token = platform.mint(&Claims::api(&[]));
     assert!(auth.authenticate(Some(&bearer(&token))).await.is_err());
 }
+
+/// F34: the function-endpoint verifier is an allowlist too (`api` or no
+/// marker); an identity token and any class added later are refused.
+#[tokio::test]
+async fn token_use_is_an_allowlist() {
+    let platform = TestPlatform::start().await;
+    let auth = authenticator(&platform.url);
+    let view = ["platform:messaging:router:view"];
+    for refused in ["identity", "field", "foo", "API"] {
+        let token = platform.mint(&Claims::api(&view).token_use(Some(refused)));
+        assert_eq!(
+            auth.authenticate(Some(&bearer(&token))).await.unwrap_err(),
+            "an identity token is not an API credential",
+            "token_use={refused}"
+        );
+    }
+    for admitted in [Some("api"), None] {
+        let token = platform.mint(&Claims::api(&view).token_use(admitted));
+        assert!(
+            auth.authenticate(Some(&bearer(&token))).await.is_ok(),
+            "token_use={admitted:?}"
+        );
+    }
+}

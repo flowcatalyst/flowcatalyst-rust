@@ -155,11 +155,12 @@ impl AuthorizationService {
     /// Resolves all permissions from roles (cached)
     ///
     /// As Go's middleware `introspect` (shared/middleware/middleware.go:185-213):
-    /// an identity-only token (`token_use: identity`) authorizes nothing and
-    /// is refused; a token whose `scope` carries granted permissions uses
+    /// a token whose `token_use` is not `api` or absent (an identity-only
+    /// token, or any other class: F34 allowlist) authorizes nothing and is
+    /// refused; a token whose `scope` carries granted permissions uses
     /// exactly those; one without derives them from its roles.
     pub async fn build_context(&self, claims: &AccessTokenClaims) -> Result<AuthContext> {
-        if claims.is_identity_only() {
+        if !claims.is_api_credential() {
             return Err(PlatformError::InvalidToken {
                 message: IDENTITY_TOKEN_NOT_API_CREDENTIAL.to_string(),
             });

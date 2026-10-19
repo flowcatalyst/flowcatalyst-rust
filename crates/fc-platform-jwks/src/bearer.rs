@@ -17,9 +17,6 @@ use crate::jwks::{JwksKeySource, BASE64_URL};
 use crate::permission;
 use fc_function_model::java;
 
-/// `token_use` of a token that identifies a user but grants no API access.
-const TOKEN_USE_IDENTITY: &str = "identity";
-
 /// `token_use` of an authority-bearing API access token. A caller that must
 /// see an API credential (the router) requires exactly this; a session
 /// cookie's token carries no `token_use` at all.
@@ -227,7 +224,14 @@ fn verify(
     // to portal identities) is not an API credential: the platform refuses
     // it as a bearer, and so must a function endpoint, or a relying party
     // could replay a user's identity token at an `auth: platform` endpoint.
-    if string("token_use").as_deref() == Some(TOKEN_USE_IDENTITY) {
+    // An allowlist (Go F34 `IsAPICredential`): `api` or no marker. A marker
+    // that is not a string cannot be one of those either.
+    let token_use_ok = match claims.get("token_use") {
+        None | Some(Value::Null) => true,
+        Some(Value::String(s)) => s.is_empty() || s == TOKEN_USE_API,
+        Some(_) => false,
+    };
+    if !token_use_ok {
         return Err("an identity token is not an API credential".to_owned());
     }
     let permissions = match string("scope") {
