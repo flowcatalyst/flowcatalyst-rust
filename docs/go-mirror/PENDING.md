@@ -30,6 +30,9 @@ no row here is a protocol failure. Sizes: S under half a day, M about a day, L s
 | Last all-applications admin guard (`LAST_ALL_APPLICATIONS_ADMIN`, `confirmSelfRestriction`) | `9966a2fa`, `01fead7e` | M | API done (`dab7e18e`); SPA confirm pending (P5) |
 | `x-sdk` tagging and spec stubs for plain handlers (13 documented-by-Go-only operations) | `21f9734d` | M | tagging done (`98a2ae89`); the stubs and the per-SDK app/admin split pending (P5) |
 | Router: urgent poll-loop acks, missing-SQS-queue tolerance, h2 PING, NATS pull expiry, dashboard modal | `c34f230a`, `c52d1150`, `8d1abaf3`, `c6b534d6`, `5cbe502e` | 4 x S | done (P3, 2026-10-19); `docs/go-mirror/2026-10-19-router-s-items.md`. Still pending: Go's 09-22 HOL reservation schedule (Rust defers by a fixed `CAPACITY_DEFER_SECONDS`) |
+| Dispatch job payload edit: `PUT /api/dispatch-jobs/{id}/payload` (+ `/bff`), `edit-payload` permission, `payload-edited` event | `29e8cb11` | M | API done (`8ab6c939`); drawer dialog pending (P5) |
+| Dispatch jobs: mandatory 24h window on list reads, requeue/redrive status guard with double confirmation, split write permissions (Go 085 = Rust 095) | `ad37de21` | L | API done (`50b14d05`, `de81a920`, `60f63ae9`); the `resent` event stays `{ids}` by owner ruling; window picker, redrive confirmation and button gating pending (P5) |
+| Dispatch jobs: event type, subscription and connection filters, read-table `connection_id`, index swap (Go 086 = Rust 096), cached filter-options | `bbbb4bb3` | M | API done (`6f43f32f`); filter UI pending (P5). Hand-off for all three: `docs/go-mirror/2026-10-19-dispatch-job-operations.md` |
 | Scheduler: `msg_scheduled_job_instances.not_before` (Go 060, Rust 080) | Go 060 | S | pending (column done) |
 | 5xx logging, S3 startup self-check | `c0d27994` | S | done (`aaf78687`) |
 | SPA: F8/F10 locks, credential confirm, ConfirmDialog width, requeue, F20/F25 pages | `90e41132`, `5a712d75`, `c38933f0`, `77d35c9c` | M | pending |
@@ -43,6 +46,7 @@ prints the gap list. The ratchet baseline is `crates/fc-platform/tests/data/open
 | Date | Go commit | go ops | rust ops | go-only | rust-only | operation-id | request | response | schemas missing |
 |---|---|---|---|---|---|---|---|---|---|
 | 2026-10-18 | `8eb84651` | 309 | 296 | 35 | 22 | 18 | 4 | 9 | 63 |
+| 2026-10-19 | `bbbb4bb3`+ (live lock, after the dispatch-job batch) | 311 | 305 | 28 | 22 | 18 | 4 | 9 | 69 |
 
 ## Migration mapping
 

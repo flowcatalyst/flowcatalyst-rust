@@ -6,7 +6,7 @@ directives and the Down section removed, comments ASCII-folded). Every mirrored 
 Go migrated and a database Rust created end in the same schema. The runner is `crates/fc-migrations`; the tracker is
 `_schema_migrations`, keyed `NNN_name`. A new Go migration needs a row here and a row in `PENDING.md` within the week.
 
-State: Go at 082 (`db12114b`). Rust at 094.
+State: Go at 086 (`bbbb4bb3`; Go 083/084, the function service account, are not mirrored). Rust at 096.
 
 ## Mapping
 
@@ -63,6 +63,9 @@ State: Go at 082 (`db12114b`). Rust at 094.
 | 080 | 092 | F20 grants: six admin-page permissions | role absent, or granted |
 | 081 | 093 | F22: `fng_versions.requeued_at_revision` | column |
 | 082 | 094 | F24: `msg_dispatch_jobs.connection_id` | column |
+| 083, 084 | (none, pending) | function version runtime tag and function service account (`fng_functions.service_account_id`); function model P4, out of scope of the dispatch-job batch | n/a |
+| 085 | 095 | data: grant requeue, cancel, complete, edit-payload to every role holding `dispatch-job:view` except `platform:viewer` | no such role lacks requeue |
+| 086 | 096 | `msg_dispatch_jobs_read.connection_id`; index swap (code, subscription_id to `(col, created_at DESC)`; partial connection index) | partial connection index present |
 
 Rows for Go 031-054 are mapped from file names and the Rust probe comments (`crates/fc-migrations/src/lib.rs`). The
 fingerprint equality proves the end state matches, not that each row pairs the right two files; rows marked "not
