@@ -312,6 +312,14 @@ async fn deactivate_oauth_client_emits_event_and_audit_log() {
 async fn create_idp_role_mapping_emits_event_and_audit_log() {
     let app = TestApp::setup().await;
     let token = app.anchor_admin_token().await;
+    // Go F33: the mapped role has to exist when the mapping is written.
+    app.repos
+        .role_repo
+        .insert(&fc_platform::role::entity::AuthRole::new(
+            "platform", "admin", "Admin",
+        ))
+        .await
+        .unwrap();
 
     let resp = app
         .post(

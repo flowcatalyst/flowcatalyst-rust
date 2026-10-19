@@ -22,6 +22,7 @@ use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::shared::id::ClientId;
 use fc_platform_iam::auth::config_entity::IdpRoleMapping;
 use fc_platform_iam::role::name as role_name;
+use fc_platform_iam::role::repository::RoleRepository;
 use fc_platform_iam::{
     auth::config_repository::IdpRoleMappingRepository, principal::repository::PrincipalRepository,
 };
@@ -57,6 +58,10 @@ pub struct RoleSync<'a> {
 pub struct OidcSyncService {
     principal_repo: Arc<PrincipalRepository>,
     idp_role_mapping_repo: Arc<IdpRoleMappingRepository>,
+    /// Resolves a mapping's platform role at login (Go F33): a mapping whose
+    /// role no longer exists is skipped with a warning. `None` skips the
+    /// existence check.
+    role_repo: Option<Arc<RoleRepository>>,
 }
 
 impl OidcSyncService {
@@ -67,6 +72,23 @@ impl OidcSyncService {
         Self {
             principal_repo,
             idp_role_mapping_repo,
+            role_repo: None,
+        }
+    }
+
+    /// Check at login that a mapped platform role exists (Go F33).
+    #[must_use]
+    pub fn with_role_repo(mut self, role_repo: Arc<RoleRepository>) -> Self {
+        self.role_repo = Some(role_repo);
+        self
+    }
+
+    /// Whether a mapping's platform role exists (always, with no role
+    /// repository). A real storage error is an error, not "missing".
+    async fn platform_role_exists(&self, name: &str) -> Result<bool> {
+        match &self.role_repo {
+            Some(roles) => Ok(roles.find_by_name(name).await?.is_some()),
+            None => Ok(true),
         }
     }
 
@@ -197,6 +219,18 @@ impl OidcSyncService {
                         );
                         continue;
                     }
+                    if !self
+                        .platform_role_exists(&mapping.platform_role_name)
+                        .await?
+                    {
+                        warn!(
+                            principal_id = %principal.id,
+                            idp_role = %idp_role_name,
+                            internal_role = %mapping.platform_role_name,
+                            "Skipped IDP role mapping: its platform role does not exist (stale mapping)"
+                        );
+                        continue;
+                    }
                     // This IDP role is authorized - map to internal role name
                     authorized_role_names.insert(mapping.platform_role_name.clone());
                     debug!(
@@ -289,6 +323,18 @@ impl OidcSyncService {
                             idp_role = %idp_role_name,
                             internal_role = %mapping.platform_role_name,
                             "Skipped IDP role: the mapped platform role name is malformed"
+                        );
+                        continue;
+                    }
+                    if !self
+                        .platform_role_exists(&mapping.platform_role_name)
+                        .await?
+                    {
+                        warn!(
+                            principal_id = %principal.id,
+                            idp_role = %idp_role_name,
+                            internal_role = %mapping.platform_role_name,
+                            "Skipped IDP role mapping: its platform role does not exist (stale mapping)"
                         );
                         continue;
                     }

@@ -190,10 +190,14 @@ pub fn init_auth_services(
             .with_session_principals(repos.principal_repo.clone()),
     );
     let password = Arc::new(PasswordService::default());
-    let oidc_sync = Arc::new(OidcSyncService::new(
-        repos.principal_repo.clone(),
-        repos.idp_role_mapping_repo.clone(),
-    ));
+    let oidc_sync = Arc::new(
+        OidcSyncService::new(
+            repos.principal_repo.clone(),
+            repos.idp_role_mapping_repo.clone(),
+        )
+        // Go F33: a mapping whose platform role was deleted is skipped at login.
+        .with_role_repo(repos.role_repo.clone()),
+    );
 
     Ok(AuthServices {
         auth,

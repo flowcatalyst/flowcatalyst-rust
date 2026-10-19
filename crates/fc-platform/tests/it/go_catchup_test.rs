@@ -6,10 +6,15 @@ use crate::support;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use fc_platform::application::entity::Application;
+use fc_platform::auth::config_entity::IdpRoleMapping;
 use fc_platform::client::entity::Client;
+use fc_platform::domain::{Principal, UserScope};
+use fc_platform::role::entity::AuthRole;
+use fc_platform::service_account::entity::AssignmentSource;
+use fc_platform::OidcSyncService;
 use serde_json::{json, Value};
-use support::assert_status;
 use support::TestApp;
+use support::{assert_status, read_json};
 use tower::ServiceExt;
 
 async fn setup() -> TestApp {
@@ -325,4 +330,140 @@ async fn scheduled_job_sync_rollup_is_audited_under_the_application_code() {
     .await
     .unwrap();
     assert_eq!(subject, "platform.scheduledjobs.f31sj");
+}
+
+// ── F33: IdP role mappings are checked at write; a stale one is skipped at login ──
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn a_mapping_to_an_unknown_role_is_refused_at_write_when_required() {
+    use fc_platform::usecase::UseCase;
+    use fc_platform_iam::auth::operations::create_idp_role_mapping::{
+        CreateIdpRoleMappingCommand, CreateIdpRoleMappingUseCase,
+    };
+    let app = setup().await;
+    let use_case = |required: bool| {
+        CreateIdpRoleMappingUseCase::new(
+            app.repos.idp_role_mapping_repo.clone(),
+            app.repos.role_repo.clone(),
+            app.unit_of_work.clone(),
+        )
+        .with_required_role(required)
+    };
+    let cmd = |idp_role: &str, platform_role: &str| CreateIdpRoleMappingCommand {
+        idp_type: "OIDC".to_string(),
+        idp_role_name: idp_role.to_string(),
+        platform_role_name: platform_role.to_string(),
+    };
+    // Required: an unknown role is a 400 ROLE_NOT_FOUND and nothing is stored.
+    let err = use_case(true)
+        .run(cmd("staff", "f33:ghost"), anchor_caller())
+        .await
+        .into_result()
+        .err()
+        .expect("refused");
+    assert_eq!(err.code(), "ROLE_NOT_FOUND");
+    assert_eq!(
+        app.repos
+            .idp_role_mapping_repo
+            .find_all()
+            .await
+            .unwrap()
+            .len(),
+        0
+    );
+    // A role that exists passes either way.
+    app.repos
+        .role_repo
+        .insert(&AuthRole::new("f33", "clerk", "Clerk"))
+        .await
+        .unwrap();
+    use_case(true)
+        .run(cmd("staff", "f33:clerk"), anchor_caller())
+        .await
+        .into_result()
+        .map_err(|e| e.code().to_string())
+        .expect("a known role");
+    // The default (off) keeps today's behaviour: the unknown role is accepted.
+    use_case(false)
+        .run(cmd("legacy", "f33:ghost"), anchor_caller())
+        .await
+        .into_result()
+        .map_err(|e| e.code().to_string())
+        .expect("accepted while the switch is off");
+}
+
+fn anchor_caller() -> fc_platform::usecase::ExecutionContext {
+    use fc_platform::shared::authorization_service::{AuthContext, Credential};
+    use fc_platform::shared::id::PrincipalId;
+    fc_platform::usecase::ExecutionContext::from_auth(&AuthContext {
+        principal_id: PrincipalId::parse("prn_caller000001").unwrap(),
+        principal_type: fc_platform::PrincipalType::User,
+        scope: UserScope::Anchor,
+        email: Some("anchor@f33.test".to_string()),
+        name: "Anchor".to_string(),
+        accessible_clients: vec![],
+        permissions: std::collections::HashSet::new(),
+        roles: vec![],
+        credential: Credential::BearerToken,
+    })
+}
+
+/// One stale mapping (its role deleted since) is skipped with a warning; the
+/// valid mapped roles are granted and the user's old IdP roles still go.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn a_stale_mapping_is_skipped_not_fatal_at_login() {
+    let app = setup().await;
+    app.repos
+        .role_repo
+        .insert(&AuthRole::new("f33", "clerk", "Clerk"))
+        .await
+        .unwrap();
+    for (idp_role, platform_role) in [("staff", "f33:clerk"), ("legacy", "f33:deleted")] {
+        app.repos
+            .idp_role_mapping_repo
+            .insert(&IdpRoleMapping::new("OIDC", idp_role, platform_role))
+            .await
+            .unwrap();
+    }
+    let mut user = Principal::new_user("f33@example.test", UserScope::Anchor);
+    user.assign_role_with_source("f33:old-idp-role", AssignmentSource::IdpSync);
+    app.repos.principal_repo.insert(&user).await.unwrap();
+
+    let sync = OidcSyncService::new(
+        app.repos.principal_repo.clone(),
+        app.repos.idp_role_mapping_repo.clone(),
+    )
+    .with_role_repo(app.repos.role_repo.clone());
+    let granted = sync
+        .sync_idp_roles(&mut user, &["staff".to_string(), "legacy".to_string()])
+        .await
+        .expect("a stale mapping does not fail the sync");
+    assert_eq!(granted.into_iter().collect::<Vec<_>>(), ["f33:clerk"]);
+    let stored = app
+        .repos
+        .principal_repo
+        .find_by_id(&user.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let names: Vec<&str> = stored.roles.iter().map(|r| r.role.as_str()).collect();
+    assert_eq!(
+        names,
+        ["f33:clerk"],
+        "the valid role is granted, the lost one removed"
+    );
+
+    // The same sync without the existence check (a service built without a
+    // role repository) is today's behaviour: the dangling role is assigned.
+    let lenient = OidcSyncService::new(
+        app.repos.principal_repo.clone(),
+        app.repos.idp_role_mapping_repo.clone(),
+    );
+    let granted = lenient
+        .sync_idp_roles(&mut user, &["legacy".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(granted.into_iter().collect::<Vec<_>>(), ["f33:deleted"]);
 }

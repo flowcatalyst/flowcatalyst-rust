@@ -30,6 +30,24 @@ pub struct CreateIdpRoleMappingUseCase<U: UnitOfWork> {
     /// The mapped role's ceiling (owner ruling 14).
     role_repo: Arc<RoleRepository>,
     unit_of_work: Arc<U>,
+    /// Refuse a mapping whose platform role does not exist (Go F33); see
+    /// [`require_mapped_role_from_env`].
+    require_role: bool,
+}
+
+/// Whether a mapping's platform role must exist when the mapping is written
+/// (`FC_IDP_MAPPING_REQUIRE_ROLE`, default false). Go refuses an unknown role
+/// with `400 ROLE_NOT_FOUND` (F33). It is off by default here because a caller
+/// may create a mapping before the role it names exists (an application's
+/// roles appear when it first syncs); either way the login skips a mapping
+/// whose role is missing, with a warning, and applies the rest.
+pub fn require_mapped_role_from_env() -> bool {
+    std::env::var("FC_IDP_MAPPING_REQUIRE_ROLE").is_ok_and(|v| {
+        matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
 }
 
 impl<U: UnitOfWork> CreateIdpRoleMappingUseCase<U> {
@@ -42,7 +60,16 @@ impl<U: UnitOfWork> CreateIdpRoleMappingUseCase<U> {
             idp_role_mapping_repo,
             role_repo,
             unit_of_work,
+            require_role: require_mapped_role_from_env(),
         }
+    }
+
+    /// Turn the F33 existence check on or off (the default is
+    /// `FC_IDP_MAPPING_REQUIRE_ROLE`, off).
+    #[must_use]
+    pub fn with_required_role(mut self, require: bool) -> Self {
+        self.require_role = require;
+        self
     }
 }
 
@@ -65,8 +92,9 @@ impl<U: UnitOfWork> UseCase for CreateIdpRoleMappingUseCase<U> {
             ));
         }
         // Go F18: the platform role is a canonical role name; a malformed one
-        // is refused, never trimmed (existence is checked when the mapping is
-        // applied at login).
+        // is refused, never trimmed. Existence is checked at write (Go F33,
+        // in `execute`); a mapping whose role is deleted later is skipped at
+        // login with a warning.
         name::validate_name(&command.platform_role_name)?;
         Ok(())
     }
@@ -96,6 +124,21 @@ impl<U: UnitOfWork> UseCase for CreateIdpRoleMappingUseCase<U> {
         command: CreateIdpRoleMappingCommand,
         ctx: ExecutionContext,
     ) -> Result<Committed<IdpRoleMappingCreated>, UseCaseError> {
+        // Go F33 (when switched on): the mapped platform role must exist when
+        // the mapping is written, so a typo is refused here rather than
+        // silently skipped at every login.
+        if self.require_role
+            && self
+                .role_repo
+                .find_by_name(&command.platform_role_name)
+                .await?
+                .is_none()
+        {
+            return Err(UseCaseError::validation(
+                "ROLE_NOT_FOUND",
+                format!("Role not found: {}", command.platform_role_name),
+            ));
+        }
         let existing = self
             .idp_role_mapping_repo
             .find_by_idp_role(&command.idp_type, &command.idp_role_name)
