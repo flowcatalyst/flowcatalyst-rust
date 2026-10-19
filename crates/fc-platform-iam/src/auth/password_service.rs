@@ -212,6 +212,9 @@ pub struct PasswordService {
     argon2: Argon2<'static>,
     config: Argon2Config,
     policy: PasswordPolicy,
+    /// Fixed hash `equalize_timing` verifies against, built on first use at
+    /// this service's own parameters.
+    timing_dummy: std::sync::OnceLock<Option<String>>,
 }
 
 /// A bcrypt hash, as PHP's `password_hash` (`$2y$`) and other bcrypt
@@ -230,6 +233,7 @@ impl PasswordService {
             argon2,
             config,
             policy,
+            timing_dummy: std::sync::OnceLock::new(),
         }
     }
 
@@ -333,6 +337,25 @@ impl PasswordService {
             .map_err(|e| PlatformError::Internal {
                 message: format!("Failed to hash password: {}", e),
             })
+    }
+
+    /// Spend one Argon2id verification against a fixed internal hash and
+    /// discard the result (Go `passwordhash.EqualizeTiming`). The login paths
+    /// call it where an account is missing, inactive or password-less, so a
+    /// refused unknown account costs what a wrong password costs and the
+    /// response time does not enumerate registered emails.
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "a dummy verification to equalise timing: its result is irrelevant by design"
+    )]
+    pub fn equalize_timing(&self, password: &str) {
+        let dummy = self.timing_dummy.get_or_init(|| {
+            self.rehash_password("fc-login-timing-equalization-sentinel")
+                .ok()
+        });
+        if let Some(hash) = dummy {
+            let _ = self.verify_password(password, hash);
+        }
     }
 
     /// Verify a password against a stored hash, as Go's `passwordhash.Verify`
@@ -439,6 +462,34 @@ mod tests {
         bcrypt::hash(password, 4)
             .unwrap()
             .replacen("$2b$", "$2y$", 1)
+    }
+
+    /// `equalize_timing` costs what a real verification costs (same hash
+    /// parameters), so a refused unknown account is not faster than a wrong
+    /// password. Bounds are loose: only "not obviously skipped".
+    #[test]
+    fn equalize_timing_spends_a_real_verification() {
+        let service = PasswordService::new(Argon2Config::default(), PasswordPolicy::lenient());
+        let real = service.rehash_password("a-real-password").unwrap();
+        service.equalize_timing("warm-up");
+        let t = std::time::Instant::now();
+        for _ in 0..3 {
+            assert!(!service.verify_password("wrong", &real).unwrap());
+        }
+        let verify = t.elapsed();
+        let t = std::time::Instant::now();
+        for _ in 0..3 {
+            service.equalize_timing("wrong");
+        }
+        let equalize = t.elapsed();
+        assert!(
+            equalize * 2 > verify,
+            "equalize_timing took {equalize:?}, a verification {verify:?}"
+        );
+        assert!(
+            equalize < verify * 3,
+            "equalize_timing took {equalize:?}, a verification {verify:?}"
+        );
     }
 
     /// Go `passwordhash.Verify` (passwordhash.go:115-133): the three bcrypt

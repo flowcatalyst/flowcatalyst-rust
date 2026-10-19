@@ -352,6 +352,10 @@ pub async fn password_login(
         .and_then(|p| p.user_identity.as_ref())
         .and_then(|id| id.password_hash.clone());
     let (Some(principal), Some(stored_hash)) = (principal, stored_hash) else {
+        // Burn the Argon2id cost a real account would have cost, so response
+        // time does not say whether the email is registered (Go
+        // `passwordhash.EqualizeTiming`, endpoint.go:512-523).
+        state.password_service.equalize_timing(password);
         record_failure(None, "Invalid credentials").await;
         return Err(PlatformError::session_unauthorized("Invalid credentials"));
     };

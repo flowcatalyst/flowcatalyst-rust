@@ -34,7 +34,6 @@ use fc_platform_core::shared::rate_limit_middleware::RateLimitConfig;
 use fc_platform_core::shared::rate_limit_store::{Bucket, RateLimitDecision};
 use std::env;
 use std::num::NonZeroU32;
-use std::sync::OnceLock;
 
 /// Go `ratelimit.BucketPortalLogin`.
 pub const BUCKET_PORTAL_LOGIN: Bucket = Bucket("portal_login");
@@ -393,7 +392,7 @@ pub async fn password_login(State(s): State<PortalLoginState>, raw: Bytes) -> Re
     let Some(ident) = ident.filter(|i| i.can_sign_in_with_password()) else {
         // Unknown, suspended and password-less identities are
         // indistinguishable: burn comparable time and refuse.
-        equalize_timing(portal, &body.password);
+        portal.password_service.equalize_timing(&body.password);
         return invalid_credentials();
     };
     let hash = ident.password_hash.as_deref().unwrap_or_default();
@@ -443,25 +442,6 @@ pub async fn password_login(State(s): State<PortalLoginState>, raw: Bytes) -> Re
         warn!(error = %e, "could not stamp the portal identity's last login");
     }
     Json(json!({ "redirectUrl": redirect_url })).into_response()
-}
-
-/// Verify against a fixed hash so a refused unknown account costs what a
-/// wrong password costs (Go `passwordhash.EqualizeTiming`).
-#[expect(
-    clippy::let_underscore_must_use,
-    reason = "a dummy verification to equalise timing: its result is irrelevant by design"
-)]
-fn equalize_timing(portal: &PortalState, password: &str) {
-    static DUMMY: OnceLock<Option<String>> = OnceLock::new();
-    let dummy = DUMMY.get_or_init(|| {
-        portal
-            .password_service
-            .rehash_password("equalize-timing")
-            .ok()
-    });
-    if let Some(hash) = dummy {
-        let _ = portal.password_service.verify_password(password, hash);
-    }
 }
 
 /// Mint the authorization code for a consumed flow and return the full
