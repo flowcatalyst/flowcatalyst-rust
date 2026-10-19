@@ -51,6 +51,7 @@ use std::time::Instant;
 use utoipa::ToSchema;
 
 pub mod config;
+pub mod delivery_outcome;
 pub mod diagnostics;
 #[cfg(feature = "dispatch-lifecycle")]
 pub mod dispatch_lifecycle;

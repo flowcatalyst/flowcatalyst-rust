@@ -123,6 +123,7 @@ mod route_auth_convention_test;
 mod route_wiring_convention_test;
 mod router_token_contract_test;
 mod scheduled_job_cron_golden_test;
+mod scheduled_job_delivery_test;
 mod scheduled_job_report_scope_test;
 mod schema_fingerprint_test;
 mod sdk_class_test;

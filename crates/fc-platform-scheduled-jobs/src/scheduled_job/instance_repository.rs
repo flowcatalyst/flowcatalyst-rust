@@ -124,6 +124,9 @@ pub struct InstanceListFilters<'a> {
     pub trigger_kind: Option<TriggerKind>,
     pub from: Option<DateTime<Utc>>,
     pub to: Option<DateTime<Utc>>,
+    /// Keep only instances not deferred past this time (`not_before` NULL or
+    /// reached): the dispatcher's view of the queue (Go `DeliverableAt`).
+    pub deliverable_at: Option<DateTime<Utc>>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }
@@ -224,6 +227,32 @@ impl ScheduledJobInstanceRepository {
             created_at,
             status,
             error
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Return an IN_FLIGHT instance to QUEUED, not to be delivered before
+    /// `until`, and give back the attempt `mark_in_flight` counted: the
+    /// target asked to be called later (429 + Retry-After), which is
+    /// back-pressure, not a failed delivery (Go `DeferDelivery`).
+    pub async fn defer_delivery(
+        &self,
+        id: &ScheduledJobInstanceId,
+        created_at: DateTime<Utc>,
+        until: DateTime<Utc>,
+        reason: &str,
+    ) -> Result<()> {
+        sqlx::query!(
+            "UPDATE msg_scheduled_job_instances \
+             SET status = 'QUEUED', not_before = $3, delivery_error = $4, \
+                 delivery_attempts = GREATEST(delivery_attempts - 1, 0) \
+             WHERE id = $1 AND created_at = $2",
+            id as &ScheduledJobInstanceId,
+            created_at,
+            until,
+            reason
         )
         .execute(&self.pool)
         .await?;
@@ -406,6 +435,12 @@ impl ScheduledJobInstanceRepository {
             push_where(&mut qb, &mut has_where);
             qb.push("created_at < ").push_bind(to);
         }
+        if let Some(at) = f.deliverable_at {
+            push_where(&mut qb, &mut has_where);
+            qb.push("(not_before IS NULL OR not_before <= ")
+                .push_bind(at)
+                .push(")");
+        }
 
         qb.push(" ORDER BY created_at DESC");
         if let Some(l) = f.limit {
@@ -453,6 +488,12 @@ impl ScheduledJobInstanceRepository {
         if let Some(to) = f.to {
             push_where(&mut qb, &mut has_where);
             qb.push("created_at < ").push_bind(to);
+        }
+        if let Some(at) = f.deliverable_at {
+            push_where(&mut qb, &mut has_where);
+            qb.push("(not_before IS NULL OR not_before <= ")
+                .push_bind(at)
+                .push(")");
         }
 
         let row: (i64,) = qb.build_query_as().fetch_one(&self.pool).await?;

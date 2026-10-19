@@ -146,6 +146,8 @@ impl ScheduledJobDispatcher {
             .instance_repo
             .list(&InstanceListFilters {
                 status: Some(InstanceStatus::Queued),
+                // A firing deferred by a 429 waits for its `not_before`.
+                deliverable_at: Some(chrono::Utc::now()),
                 limit: Some(self.config.dispatch_batch_size),
                 ..Default::default()
             })
@@ -277,6 +279,57 @@ impl ScheduledJobDispatcher {
                 }
                 DispatchOutcome::Delivered
             }
+            Ok(resp) if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS => {
+                // Back-pressure, not failure: ask again after Retry-After
+                // without spending an attempt (as dispatch-job delivery does).
+                let wait = retry_after(
+                    resp.headers()
+                        .get(header::RETRY_AFTER)
+                        .and_then(|v| v.to_str().ok()),
+                    chrono::Utc::now(),
+                );
+                let until =
+                    chrono::Utc::now() + chrono::Duration::from_std(wait).unwrap_or_default();
+                if let Err(e) = self
+                    .instance_repo
+                    .defer_delivery(
+                        &inst.id,
+                        inst.created_at,
+                        until,
+                        &format!("HTTP 429: deferred {}s", wait.as_secs()),
+                    )
+                    .await
+                {
+                    warn!(instance_id = %inst.id, error = %e, "could not defer the rate-limited firing");
+                    return DispatchOutcome::Failed;
+                }
+                DispatchOutcome::Requeued
+            }
+            Ok(resp)
+                if fc_common::delivery_outcome::is_delivery_rejected(
+                    resp.status().as_u16(),
+                    resp.headers()
+                        .get(fc_common::delivery_outcome::DELIVERY_OUTCOME_HEADER)
+                        .and_then(|v| v.to_str().ok()),
+                ) =>
+            {
+                // The target answered that retrying cannot help: terminal now.
+                let snippet =
+                    capped_body::read_capped(resp, capped_body::SCHEDULED_JOB_ERROR_SNIPPET_CAP)
+                        .await
+                        .text();
+                let err = format!(
+                    "HTTP 422 rejected (FlowCatalyst-Outcome: reject), not retried: {snippet}"
+                );
+                if let Err(e) = self
+                    .instance_repo
+                    .mark_delivery_failed(&inst.id, inst.created_at, &err, true)
+                    .await
+                {
+                    warn!(instance_id = %inst.id, error = %e, "could not record the rejected firing");
+                }
+                DispatchOutcome::Failed
+            }
             Ok(resp) => {
                 let status = resp.status();
                 // Only as far as Go's 500-byte snippet: the rest of a slow or
@@ -363,6 +416,26 @@ impl ScheduledJobDispatcher {
     }
 }
 
+/// How long a 429 asks to wait: `Retry-After` in seconds or as an HTTP date,
+/// default 30 s, at most an hour (Go `retryAfter`).
+pub fn retry_after(value: Option<&str>, now: chrono::DateTime<chrono::Utc>) -> std::time::Duration {
+    const DEFAULT: std::time::Duration = std::time::Duration::from_secs(30);
+    const MAX: std::time::Duration = std::time::Duration::from_secs(3600);
+    let Some(v) = value.map(str::trim).filter(|v| !v.is_empty()) else {
+        return DEFAULT;
+    };
+    if let Ok(secs) = v.parse::<i64>() {
+        return std::time::Duration::from_secs(secs.max(0) as u64).min(MAX);
+    }
+    if let Ok(when) = chrono::DateTime::parse_from_rfc2822(v) {
+        let secs = (when.with_timezone(&chrono::Utc) - now)
+            .num_seconds()
+            .max(0);
+        return std::time::Duration::from_secs(secs as u64).min(MAX);
+    }
+    DEFAULT
+}
+
 /// The delivery request: JSON `body`, the bearer token when there is one,
 /// and the signature headers over `body` at `at` when there is a secret.
 pub fn signed_request(
@@ -395,6 +468,30 @@ enum DispatchOutcome {
 mod tests {
     use super::*;
     use crate::scheduled_job::entity::TriggerKind;
+
+    #[test]
+    fn retry_after_reads_seconds_or_a_date_with_bounds() {
+        use std::time::Duration as D;
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-19T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        assert_eq!(retry_after(None, now), D::from_secs(30));
+        assert_eq!(retry_after(Some(""), now), D::from_secs(30));
+        assert_eq!(retry_after(Some("5"), now), D::from_secs(5));
+        assert_eq!(retry_after(Some("99999"), now), D::from_secs(3600));
+        assert_eq!(retry_after(Some("-4"), now), D::ZERO);
+        assert_eq!(retry_after(Some("soon"), now), D::from_secs(30));
+        assert_eq!(
+            retry_after(Some("Mon, 19 Oct 2026 12:02:00 GMT"), now),
+            D::from_secs(120)
+        );
+        assert_eq!(
+            retry_after(Some("Mon, 19 Oct 2026 11:00:00 GMT"), now),
+            D::ZERO,
+            "a date in the past is no wait"
+        );
+    }
+
     use fc_platform_core::shared::id::ScheduledJobInstanceId;
 
     fn instance(job: &ScheduledJob, kind: TriggerKind) -> ScheduledJobInstance {

@@ -879,6 +879,7 @@ pub async fn list_instances_for_job(
         trigger_kind: trigger,
         from: q.from,
         to: q.to,
+        deliverable_at: None,
         limit: Some(q.pagination.limit()),
         offset: Some(q.pagination.offset() as i64),
     };

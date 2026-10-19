@@ -475,6 +475,39 @@ async fn attempt_count_equals_the_attempts_made() {
     assert_eq!(f.attempts(&bad.id).await.len() as i32, row.attempt_count);
 }
 
+/// Go `common.IsDeliveryRejected` (function-runner plan 13.2): a 422 carrying
+/// `FlowCatalyst-Outcome: reject` (a function's `fn.Reject`) fails the job on
+/// that attempt with retries left; a plain 422 is still retried.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn a_reject_outcome_fails_the_job_at_once_but_a_plain_422_retries() {
+    let f = fixture().await;
+    let mut a = job(21);
+    a.max_retries = 5;
+    let mut b = job(22);
+    b.max_retries = 5;
+    f.insert(&a).await;
+    f.insert(&b).await;
+
+    f.respond(Canned {
+        headers: vec![("flowcatalyst-outcome", "reject".into())],
+        ..Canned::status(422)
+    });
+    f.process(&a.id).await;
+    let row = f.row(&a.id).await;
+    assert_eq!(row.status, "FAILED", "reject is terminal");
+    assert_eq!(row.attempt_count, 1);
+    assert!(row
+        .last_error
+        .as_deref()
+        .is_some_and(|e| e.contains("rejected")));
+
+    f.respond(Canned::status(422));
+    f.process(&b.id).await;
+    let row = f.row(&b.id).await;
+    assert_eq!(row.status, "PENDING", "a plain 422 is retried");
+}
+
 /// 401/403 from the subscriber is terminal at once: a retry sends the same
 /// credentials.
 #[tokio::test]

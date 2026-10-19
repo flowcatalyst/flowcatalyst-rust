@@ -13,8 +13,8 @@ use fc_platform::role::entity::AuthRole;
 use fc_platform::service_account::entity::AssignmentSource;
 use fc_platform::OidcSyncService;
 use serde_json::{json, Value};
+use support::assert_status;
 use support::TestApp;
-use support::{assert_status, read_json};
 use tower::ServiceExt;
 
 async fn setup() -> TestApp {

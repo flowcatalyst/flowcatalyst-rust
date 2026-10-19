@@ -561,6 +561,13 @@ async fn advance(
             "dispatch failed (subscriber refused credentials; not retried)");
         repo.mark_failed(id, job.created_at, &res.err_message, duration_ms)
             .await
+    } else if res.rejected {
+        // The subscriber answered that retrying cannot help: terminal on
+        // this attempt, like refused credentials.
+        warn!(job_id = %id, status = ?res.status, attempt = attempt_number,
+            "dispatch failed (subscriber rejected; not retried)");
+        repo.mark_failed(id, job.created_at, &res.err_message, duration_ms)
+            .await
     } else if attempt_number >= job.max_retries {
         warn!(job_id = %id, attempts = attempt_number, max = job.max_retries, error = %res.err_message,
             "dispatch failed (retries exhausted)");
@@ -604,6 +611,9 @@ struct DeliveryResult {
     success: bool,
     /// Cooperative back-pressure: retry later, no budget spent.
     deferral: bool,
+    /// The target's terminal "do not retry" (422 + `FlowCatalyst-Outcome:
+    /// reject`; a function's `fn.Reject`): fail on this attempt.
+    rejected: bool,
     retry_after: Duration,
     status: Option<u16>,
     body: Option<String>,
@@ -832,6 +842,11 @@ async fn exchange(request: reqwest::RequestBuilder) -> DeliveryResult {
     let status = response.status();
     let code = status.as_u16();
     let retry_after = retry_after_or_default(response.headers());
+    let outcome = response
+        .headers()
+        .get(fc_common::delivery_outcome::DELIVERY_OUTCOME_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
     let capped = read_capped(response, DELIVERY_RESPONSE_CAP).await;
     let body_text = capped.text();
 
@@ -860,6 +875,18 @@ async fn exchange(request: reqwest::RequestBuilder) -> DeliveryResult {
             status: Some(code),
             body: Some(body_text),
             err_message: "rate limited (429)".to_string(),
+            ..DeliveryResult::default()
+        };
+    }
+    if fc_common::delivery_outcome::is_delivery_rejected(code, outcome.as_deref()) {
+        return DeliveryResult {
+            rejected: true,
+            status: Some(code),
+            body: Some(body_text),
+            err_message:
+                "subscriber rejected the delivery (422, FlowCatalyst-Outcome: reject): not retried"
+                    .to_string(),
+            err_type: Some(ErrorType::HttpError),
             ..DeliveryResult::default()
         };
     }
