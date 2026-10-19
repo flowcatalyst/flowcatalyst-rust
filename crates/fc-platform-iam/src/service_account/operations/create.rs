@@ -8,7 +8,10 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use super::client_reach::{dedupe_client_ids, require_clients_exist};
+use super::client_reach::{
+    dedupe_client_ids, require_clients_exist, require_scope_matches_reach,
+    scope_reach_strict_from_env,
+};
 use super::events::ServiceAccountCreated;
 use crate::role::entity::roles;
 use crate::service_account::entity::{AssignmentSource, RoleAssignment};
@@ -162,9 +165,20 @@ pub struct CreateServiceAccountUseCase<U: UnitOfWork> {
     /// Encrypts the generated credential before it is stored. `None` when no
     /// key is configured; the use case then fails rather than store plaintext.
     encryption: Option<Arc<EncryptionService>>,
+    /// Refuse a scope that disagrees with the client links (Go F28); see
+    /// [`scope_reach_strict_from_env`].
+    strict_scope_reach: bool,
 }
 
 impl<U: UnitOfWork> CreateServiceAccountUseCase<U> {
+    /// Turn the F28 scope/reach check on or off (the default is
+    /// `FC_SERVICE_ACCOUNT_SCOPE_REACH_STRICT`, off).
+    #[must_use]
+    pub fn with_strict_scope_reach(mut self, strict: bool) -> Self {
+        self.strict_scope_reach = strict;
+        self
+    }
+
     pub fn new(
         service_account_repo: Arc<ServiceAccountRepository>,
         client_repo: Arc<ClientRepository>,
@@ -176,6 +190,7 @@ impl<U: UnitOfWork> CreateServiceAccountUseCase<U> {
             client_repo,
             unit_of_work,
             encryption,
+            strict_scope_reach: scope_reach_strict_from_env(),
         }
     }
 }
@@ -290,11 +305,19 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
         // As Go does (create_credentials.go:102, 125): the requested scope is
         // stored as sent and the principal's tier follows the client links.
         //
-        // Known Go behaviour, kept on purpose and flagged to the owner as a
-        // risk: a CLIENT (or PARTNER) scope requested with no clients stores
-        // that scope but yields an ANCHOR principal, which reaches every
-        // client. Only an unrecognised scope value is refused (X-06).
+        // Without `FC_SERVICE_ACCOUNT_SCOPE_REACH_STRICT` a CLIENT (or
+        // PARTNER) scope requested with no clients is stored as sent and
+        // yields an ANCHOR principal, which reaches every client (the
+        // earlier Go behaviour, kept as the default). With it on, a scope
+        // that disagrees with the links is a 400 SCOPE_REACH_MISMATCH (Go
+        // F28). Only an unrecognised scope value is refused otherwise (X-06).
         service_account.requested_scope = command.scope.map(|s| s.as_str().to_string());
+        if self.strict_scope_reach {
+            require_scope_matches_reach(
+                service_account.requested_scope.as_deref(),
+                client_ids.len(),
+            )?;
+        }
         service_account.link_clients(client_ids);
         service_account.application_id = command.application_id.clone();
         // No application access unless the account is made for one

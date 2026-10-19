@@ -7,7 +7,10 @@ use fc_platform_core::shared::id::PrincipalId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use super::client_reach::{dedupe_client_ids, require_clients_exist};
+use super::client_reach::{
+    dedupe_client_ids, require_clients_exist, require_scope_matches_reach,
+    scope_reach_strict_from_env,
+};
 use super::events::ServiceAccountUpdated;
 use crate::service_account::entity::WebhookCredentials;
 use crate::{
@@ -85,9 +88,20 @@ pub struct UpdateServiceAccountUseCase<U: UnitOfWork> {
     /// Seals new webhook secrets. `None` when no key is configured; an
     /// update carrying a secret then fails rather than store plaintext.
     encryption: Option<Arc<EncryptionService>>,
+    /// Refuse a scope that disagrees with the client links (Go F28); see
+    /// [`scope_reach_strict_from_env`].
+    strict_scope_reach: bool,
 }
 
 impl<U: UnitOfWork> UpdateServiceAccountUseCase<U> {
+    /// Turn the F28 scope/reach check on or off (the default is
+    /// `FC_SERVICE_ACCOUNT_SCOPE_REACH_STRICT`, off).
+    #[must_use]
+    pub fn with_strict_scope_reach(mut self, strict: bool) -> Self {
+        self.strict_scope_reach = strict;
+        self
+    }
+
     pub fn new(
         service_account_repo: Arc<ServiceAccountRepository>,
         client_repo: Arc<ClientRepository>,
@@ -99,6 +113,7 @@ impl<U: UnitOfWork> UpdateServiceAccountUseCase<U> {
             client_repo,
             unit_of_work,
             encryption,
+            strict_scope_reach: scope_reach_strict_from_env(),
         }
     }
 }
@@ -177,6 +192,15 @@ impl<U: UnitOfWork> UseCase for UpdateServiceAccountUseCase<U> {
             let links = dedupe_client_ids(client_ids.clone());
             require_clients_exist(&self.client_repo, &links).await?;
             service_account.link_clients(links);
+        }
+        // F28: the stored scope and the tier the links give must agree after
+        // this update, checked only when the update touches one of the two so
+        // renaming a legacy account still works.
+        if self.strict_scope_reach && (command.scope.is_some() || command.client_ids.is_some()) {
+            require_scope_matches_reach(
+                service_account.requested_scope.as_deref(),
+                service_account.client_ids.len(),
+            )?;
         }
 
         // Go's update replaces the credentials with the ones sent.

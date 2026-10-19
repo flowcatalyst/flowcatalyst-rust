@@ -10,6 +10,58 @@ use std::collections::HashSet;
 use crate::client::repository::ClientRepository;
 use fc_platform_core::usecase::UseCaseError;
 
+/// Whether a stored `scope` that disagrees with the client links is refused
+/// (`FC_SERVICE_ACCOUNT_SCOPE_REACH_STRICT`, default false). Go refuses it
+/// (F28, `400 SCOPE_REACH_MISMATCH`); here it is off by default because the
+/// vendored SPA's service-account drawer still sends the old links beside
+/// `scope: ANCHOR`, and a client may send `CLIENT` with no links, both of
+/// which are accepted today. Turn it on once the SPA is on Go's fix.
+pub fn scope_reach_strict_from_env() -> bool {
+    std::env::var("FC_SERVICE_ACCOUNT_SCOPE_REACH_STRICT").is_ok_and(|v| {
+        matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
+}
+
+/// The tier a token for an account with `links` client links gets
+/// (`applyClientReach`): none = ANCHOR, one = CLIENT, several = PARTNER.
+fn derived_tier(links: usize) -> &'static str {
+    match links {
+        0 => "ANCHOR",
+        1 => "CLIENT",
+        _ => "PARTNER",
+    }
+}
+
+/// Refuse a stored `scope` that disagrees with the tier the account's client
+/// links give its token (Go F28 `requireScopeMatchesReach`). The scope field
+/// is descriptive: tokens follow the links, so ANCHOR beside links is echoed
+/// by the API while the token stays PARTNER/CLIENT, and CLIENT/PARTNER with
+/// too few links yields a wider (ANCHOR) token than the field claims.
+/// Refusing keeps the stored value and the token one fact and never widens
+/// reach. An unset scope, or one that is not a tier, is left alone.
+pub fn require_scope_matches_reach(scope: Option<&str>, links: usize) -> Result<(), UseCaseError> {
+    let Some(scope) = scope else {
+        return Ok(());
+    };
+    let want = scope.trim().to_ascii_uppercase();
+    if !matches!(want.as_str(), "ANCHOR" | "CLIENT" | "PARTNER") {
+        return Ok(());
+    }
+    let got = derived_tier(links);
+    if got != want {
+        return Err(UseCaseError::validation(
+            "SCOPE_REACH_MISMATCH",
+            format!(
+                "scope {want} does not match the account's client links ({links} linked: tokens are ANCHOR with no clients, CLIENT with one, PARTNER with several, so these links give {got}). Change clientIds and scope together, or omit scope"
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// Drop repeated client ids, keeping the first occurrence's position.
 pub fn dedupe_client_ids(client_ids: Vec<ClientId>) -> Vec<ClientId> {
     let mut seen = HashSet::new();
@@ -43,6 +95,45 @@ pub async fn require_clients_exist(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Go F28 `TestServiceAccountScope_MustMatchReach`, as a table.
+    #[test]
+    fn scope_must_match_the_tier_the_links_give() {
+        let code = |r: Result<(), UseCaseError>| r.err().map(|e| e.code().to_string());
+        // matching or unset or not a tier: accepted
+        for (scope, links) in [
+            (Some("ANCHOR"), 0),
+            (Some("CLIENT"), 1),
+            (Some("PARTNER"), 2),
+            (Some("PARTNER"), 5),
+            (Some("anchor"), 0),
+            (Some(" client "), 1),
+            (None, 0),
+            (None, 3),
+            (Some("WIDGET"), 3),
+        ] {
+            assert_eq!(
+                code(require_scope_matches_reach(scope, links)),
+                None,
+                "{scope:?}/{links}"
+            );
+        }
+        // disagreeing: refused
+        for (scope, links) in [
+            (Some("ANCHOR"), 1),
+            (Some("ANCHOR"), 2),
+            (Some("CLIENT"), 0),
+            (Some("CLIENT"), 2),
+            (Some("PARTNER"), 0),
+            (Some("PARTNER"), 1),
+        ] {
+            assert_eq!(
+                code(require_scope_matches_reach(scope, links)).as_deref(),
+                Some("SCOPE_REACH_MISMATCH"),
+                "{scope:?}/{links}"
+            );
+        }
+    }
 
     #[test]
     fn dedupe_keeps_first_occurrence_order() {

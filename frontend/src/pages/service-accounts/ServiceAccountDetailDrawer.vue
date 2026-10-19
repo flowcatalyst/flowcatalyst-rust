@@ -215,8 +215,15 @@ async function loadServiceAccount() {
 		editDescription.value = serviceAccount.value.description || "";
 		// The wire only ever carries ANCHOR/PARTNER/CLIENT; the generated type
 		// is plain string (spec has no enums).
-		editScope.value = (serviceAccount.value.scope as PrincipalScope) || "ANCHOR";
 		editClientIds.value = serviceAccount.value.clientIds || [];
+		// An account with no stored scope shows the tier its client links give.
+		editScope.value =
+			(serviceAccount.value.scope as PrincipalScope) ||
+			(editClientIds.value.length === 0
+				? "ANCHOR"
+				: editClientIds.value.length === 1
+					? "CLIENT"
+					: "PARTNER");
 	} catch (error) {
 		console.error("Failed to fetch service account:", error);
 		loadError.value = "Service account not found";
@@ -465,12 +472,15 @@ async function saveServiceAccount() {
 			name: editName.value,
 			description: editDescription.value || undefined,
 			scope: editScope.value,
-			clientIds: editClientIds.value,
+			// The platform can refuse a scope that disagrees with the links
+			// (ANCHOR = none, CLIENT = one, PARTNER = several).
+			clientIds: editScope.value === "ANCHOR" ? [] : editClientIds.value,
 		});
 		serviceAccount.value!.name = editName.value;
 		serviceAccount.value!.description = editDescription.value;
 		serviceAccount.value!.scope = editScope.value;
-		serviceAccount.value!.clientIds = editClientIds.value;
+		serviceAccount.value!.clientIds =
+			editScope.value === "ANCHOR" ? [] : editClientIds.value;
 		editMode.value = false;
 		resetDirty();
 		toast.success("Success", "Service account updated successfully");

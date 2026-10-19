@@ -106,3 +106,9 @@ and the role editors offered only to users the BFF admits; the dashboard hunk ap
 this copy has the audit-redaction card), and `18c0c27` (role assignment offered only to holders of
 `user:assign-roles`; `UserDetailBody.vue` by hand, it had no auth store import). Ledger:
 `docs/go-mirror/2026-10-11-platform-bug-fixes-2.md`.
+
+F28 (2026-10-19, flowcatalyst-go `ebb18542`): the service-account detail drawer sends `clientIds: []`
+for an ANCHOR scope and shows the tier the links give for an account with no stored scope. Only the
+`ServiceAccountDetailDrawer.vue` hunk was taken (not the generated-type description comments). It
+makes the platform's `FC_SERVICE_ACCOUNT_SCOPE_REACH_STRICT` safe to turn on. `vue-tsc --noEmit`
+is clean. Ledger: `docs/go-mirror/2026-10-19-identity-fixes-and-catch-up.md`.
