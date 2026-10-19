@@ -169,6 +169,13 @@ impl<U: UnitOfWork> SyncConnectionsUseCase<U> {
             synced_codes.push(code.clone());
             match existing.iter().find(|(c, _)| c.code == code) {
                 Some((_, source)) if !syncable(source) => {}
+                // Go F30: a connection that already matches is left alone: not
+                // saved, not counted.
+                Some((c, _))
+                    if c.name == input.name.trim()
+                        && c.description == input.description
+                        && c.external_id == input.external_id
+                        && c.service_account_id == service_account => {}
                 Some((c, source)) => {
                     let mut c = c.clone();
                     c.name = input.name.trim().to_string();

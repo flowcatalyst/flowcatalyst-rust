@@ -130,6 +130,11 @@ impl RoleSyncService {
             if let Some(mut existing) = existing {
                 // Only update if it's a CODE-sourced role
                 if existing.source == RoleSource::Code {
+                    // Go F30: a catalogue role that already matches is left
+                    // alone: not saved, not counted.
+                    let mut changed_row = existing.display_name != role_def.display_name
+                        || existing.description != role_def.description
+                        || existing.permissions != role_def.permissions;
                     existing.display_name = role_def.display_name.clone();
                     existing.description = role_def.description.clone();
                     existing.permissions = role_def.permissions.clone();
@@ -138,6 +143,12 @@ impl RoleSyncService {
                         existing.application_id = self
                             .owner_application_id(existing.owning_application_code())
                             .await?;
+                        if existing.application_id.is_some() {
+                            changed_row = true;
+                        }
+                    }
+                    if !changed_row {
+                        continue;
                     }
                     existing.updated_at = chrono::Utc::now();
                     self.role_repo.update(&existing).await?;

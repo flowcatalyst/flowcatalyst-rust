@@ -15,6 +15,7 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::events::{RoleCreated, RoleDeleted, RoleUpdated, RolesSynced};
@@ -191,8 +192,10 @@ impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
                         let mut updated = role.clone();
                         // Go F18: a row of this application written without
                         // its id (the admin create used to leave it null) is
-                        // this application's role: adopt it.
-                        if updated.application_id.is_none() {
+                        // this application's role: adopt it. An adopted row
+                        // always needs its application id written.
+                        let adopted = updated.application_id.is_none();
+                        if adopted {
                             updated.application_id = Some(application.id.clone());
                         }
                         updated.display_name = input
@@ -200,9 +203,23 @@ impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
                             .clone()
                             .unwrap_or_else(|| input.name.clone());
                         updated.description = input.description.clone();
+                        updated.client_managed = input.client_managed;
                         // As Go: apps usually declare role names and curate
                         // permissions in the UI, so an empty list keeps the
                         // stored permissions; only a non-empty list replaces them.
+                        let permissions_differ = !input.permissions.is_empty()
+                            && updated.permissions
+                                != input.permissions.iter().cloned().collect::<HashSet<_>>();
+                        // Go F30: a role that already matches the definition is
+                        // left alone: not saved, not counted, no event.
+                        if !adopted
+                            && !permissions_differ
+                            && role.display_name == updated.display_name
+                            && role.description == updated.description
+                            && role.client_managed == updated.client_managed
+                        {
+                            continue;
+                        }
                         if !input.permissions.is_empty() {
                             changed.extend(ceiling::changed(
                                 &sorted_permissions(role),
@@ -210,7 +227,6 @@ impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
                             ));
                             updated.permissions = input.permissions.iter().cloned().collect();
                         }
-                        updated.client_managed = input.client_managed;
                         updated.updated_at = chrono::Utc::now();
                         rows.push(RecordedEvent::of(&RoleUpdated::new(
                             &ctx,

@@ -267,6 +267,12 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
                             updated.dispatch_pool_id = Some(pool.id.clone());
                             updated.dispatch_pool_code = Some(pool.code.clone());
                         }
+                        // Go F30: apply the definition to a copy, and leave the stored
+                        // row alone (not saved, not counted, no event) when nothing
+                        // the sync manages differs.
+                        if !subscription_changed(sub, &updated) {
+                            continue;
+                        }
                         updated.updated_at = chrono::Utc::now();
                         rows.push(RecordedEvent::of(&SubscriptionUpdated::new(
                             &ctx,
@@ -349,6 +355,36 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
             )
             .await
     }
+}
+
+/// Whether applying a definition changed anything the sync manages: a name,
+/// description, endpoint, connection, event-type binding code (as a set: the
+/// stored order is not the sent order), data-only flag, retry or timeout
+/// limit, or dispatch pool link (Go F30 `subscriptionChanged`).
+///
+/// A binding's filter is not compared: `msg_subscription_event_types` has no
+/// filter column, so a stored binding never carries one and comparing it
+/// would call every subscription with a filter changed on every sync.
+fn subscription_changed(cur: &Subscription, next: &Subscription) -> bool {
+    if cur.name != next.name
+        || cur.endpoint != next.endpoint
+        || cur.data_only != next.data_only
+        || cur.max_retries != next.max_retries
+        || cur.timeout_seconds != next.timeout_seconds
+        || cur.description != next.description
+        || cur.connection_id != next.connection_id
+        || cur.dispatch_pool_id != next.dispatch_pool_id
+        || cur.dispatch_pool_code != next.dispatch_pool_code
+    {
+        return true;
+    }
+    let codes = |s: &Subscription| -> std::collections::BTreeSet<String> {
+        s.event_types
+            .iter()
+            .map(|b| b.event_type_code.clone())
+            .collect()
+    };
+    codes(cur) != codes(next)
 }
 
 impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
