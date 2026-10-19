@@ -408,6 +408,17 @@ pub mod application_service {
     pub const APPLICATION_OPENAPI_SYNC: &str =
         "platform:application-service:application-openapi:sync";
 
+    // An application's own admin pages call the platform as its service
+    // account (Go F20): reads of its own events and dispatch jobs, and the
+    // users and invitations of its own enabled clients. Each is confined by
+    // the handler to the applications the account is bound to.
+    pub const EVENT_READ: &str = "platform:application-service:event:view";
+    pub const DISPATCH_JOB_READ: &str = "platform:application-service:dispatch-job:view";
+    pub const USER_READ: &str = "platform:application-service:user:view";
+    pub const USER_CREATE: &str = "platform:application-service:user:create";
+    pub const INVITATION_READ: &str = "platform:application-service:invitation:view";
+    pub const INVITATION_MANAGE: &str = "platform:application-service:invitation:manage";
+
     /// All application service permissions, in Go's order
     /// (seed/permissions.go:200-225).
     pub const ALL: &[&str] = &[
@@ -437,6 +448,11 @@ pub mod application_service {
         PROCESS_SYNC,
         APPLICATION_READ,
         APPLICATION_OPENAPI_SYNC,
+        // Sync its own application's dispatch pools (Go F19). The messaging
+        // permission itself: the sync route has no application-service
+        // variant. The handler confines the caller to its bound
+        // applications and the use case to pools that application owns.
+        super::admin::DISPATCH_POOL_SYNC,
         // Each application delivers its own outbox with its own
         // service-account credentials. The batch endpoints confine an
         // application-scoped caller to items belonging to its own
@@ -444,6 +460,12 @@ pub mod application_service {
         super::admin::BATCH_EVENTS_WRITE,
         super::admin::BATCH_DISPATCH_JOBS_WRITE,
         super::admin::BATCH_AUDIT_LOGS_WRITE,
+        EVENT_READ,
+        DISPATCH_JOB_READ,
+        USER_READ,
+        USER_CREATE,
+        INVITATION_READ,
+        INVITATION_MANAGE,
     ];
 }
 

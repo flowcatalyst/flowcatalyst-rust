@@ -30,6 +30,7 @@ mod auth_purger_test;
 mod auth_security_test;
 mod bff_roles_gate_test;
 mod bff_sync_platform_test;
+mod catalogue_keeps_migration_grants_test;
 mod client_admin_test;
 mod client_event_codes_migration_test;
 mod code_first_sync_identifier_test;

@@ -4,7 +4,9 @@
 //! `GO_ROLES` is transcribed from flowcatalyst-go
 //! `internal/platform/seed/roles.go` (`PlatformRoles`), with each permission
 //! constant resolved through `internal/platform/seed/permissions.go`, at
-//! flowcatalyst-go HEAD 73a6918. Every Go role must exist in Rust with the
+//! flowcatalyst-go HEAD 73a6918; `application-service` (F19, F20) and
+//! `function-deployer` (F26) were refreshed against db12114b on 2026-10-19.
+//! Every Go role must exist in Rust with the
 //! same display name, description and exactly the same permission set.
 //!
 //! Rust additions are listed in `RUST_ADDITIONS` and nothing else may
@@ -307,6 +309,29 @@ const GO_ROLES: &[(&str, &str, &str, &[&str])] = &[
             "platform:messaging:batch:events-write",
             "platform:messaging:batch:dispatch-jobs-write",
             "platform:admin:batch:audit-logs-write",
+            // Go F19 (489f52c3): an application syncs its own dispatch pools.
+            "platform:messaging:dispatch-pool:sync",
+            // Go F20 (8376f6e1): an application's own admin pages.
+            "platform:application-service:event:view",
+            "platform:application-service:dispatch-job:view",
+            "platform:application-service:user:view",
+            "platform:application-service:user:create",
+            "platform:application-service:invitation:view",
+            "platform:application-service:invitation:manage",
+        ],
+    ),
+    // Go F26 (c7ffd7c2): a CI account running `fcdev fn deploy --create`.
+    (
+        "function-deployer",
+        "Function Deployer",
+        "Deploy functions from CI: create a function if absent, publish a version and promote it. Includes function manage, which also permits DELETING functions; use function-publisher to deploy functions that already exist.",
+        &[
+            "platform:function:function:view",
+            "platform:function:function:manage",
+            "platform:function:version:publish",
+            "platform:function:alias:promote",
+            "platform:admin:client:view",
+            "platform:admin:application:view",
         ],
     ),
 ];
@@ -422,4 +447,31 @@ fn built_in_roles_match_go() {
         let actual: BTreeSet<&str> = rust[name].permissions.iter().map(String::as_str).collect();
         assert_eq!(actual, additions[name], "{name}: permissions");
     }
+}
+
+/// Go F26 (`TestFunctionDeployerRole`): the CI deploy role holds exactly what
+/// `fcdev fn deploy --create --client <code>` needs and nothing that widens
+/// it (no secret manage, no invoke, no domain manage, no wildcard), and its
+/// description states the delete caveat and points to `function-publisher`.
+#[test]
+fn function_deployer_holds_exactly_the_six_permissions() {
+    let role = roles::all()
+        .into_iter()
+        .find(|r| r.name == "platform:function-deployer")
+        .expect("platform:function-deployer role not found");
+    let got: BTreeSet<&str> = role.permissions.iter().map(String::as_str).collect();
+    let want: BTreeSet<&str> = [
+        "platform:function:function:view",
+        "platform:function:function:manage",
+        "platform:function:version:publish",
+        "platform:function:alias:promote",
+        "platform:admin:client:view",
+        "platform:admin:application:view",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(got, want);
+    let description = role.description.as_deref().unwrap_or_default();
+    assert!(description.contains("DELETING"), "{description}");
+    assert!(description.contains("function-publisher"), "{description}");
 }

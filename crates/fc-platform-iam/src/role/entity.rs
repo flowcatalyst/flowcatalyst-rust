@@ -206,6 +206,13 @@ impl AuthRole {
         }
     }
 
+    /// Whether this is a platform role: its application is `platform`. Platform
+    /// roles carry that application's id like any other application's roles
+    /// (Go F18), so this, not a missing id, is what makes one a platform role.
+    pub fn is_platform(&self) -> bool {
+        self.owning_application_code() == "platform"
+    }
+
     /// Extract short role name from full name
     pub fn role_name(&self) -> &str {
         self.name.split(':').nth(1).unwrap_or(&self.name)
@@ -610,6 +617,30 @@ pub mod roles {
             ])
     }
 
+    /// platform:function-deployer — a CI account running `fcdev fn deploy
+    /// <addr> . --create --client <code>` (Go F26, `c7ffd7c2`): resolve a
+    /// client code (client view), create the function under its application
+    /// when absent (function manage + application view), publish, wait READY,
+    /// promote `live`. Nothing else. Function manage also permits deleting a
+    /// function; the description says so.
+    pub fn function_deployer() -> AuthRole {
+        AuthRole::new("platform", "function-deployer", "Function Deployer")
+            .with_description(
+                "Deploy functions from CI: create a function if absent, publish a version and promote it. \
+                 Includes function manage, which also permits DELETING functions; \
+                 use function-publisher to deploy functions that already exist.",
+            )
+            .with_source(RoleSource::Code)
+            .with_permissions([
+                permissions::function::FUNCTION_VIEW,
+                permissions::function::FUNCTION_MANAGE,
+                permissions::function::FUNCTION_PUBLISH,
+                permissions::function::FUNCTION_PROMOTE,
+                permissions::admin::CLIENT_READ,
+                permissions::admin::APPLICATION_READ,
+            ])
+    }
+
     /// PLATFORM_FUNCTION_HOST — the one permission the function host's
     /// `/control/functions/*` calls need (Java PlatformRoles.java:219-224).
     pub fn function_host() -> AuthRole {
@@ -653,6 +684,7 @@ pub mod roles {
             developer(),
             application_service(),
             function_publisher(),
+            function_deployer(),
             function_host(),
             router_operator(),
         ]
@@ -763,7 +795,7 @@ mod tests {
         // Bump this number whenever you add a built-in role in `roles::all()`.
         // The test is a tripwire against accidentally orphaning a new role
         // from `role_sync_service::seed_built_in_roles`'s consumption path.
-        assert_eq!(all_roles.len(), 18);
+        assert_eq!(all_roles.len(), 19);
 
         // Super admin has wildcard
         let super_admin = roles::super_admin();

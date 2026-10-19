@@ -101,13 +101,16 @@ fn messaging_admin_function_grants_are_javas() {
 }
 
 /// No other built-in role holds a function permission (super-admin's
-/// wildcard aside), as in Java.
+/// wildcard aside), as in Java; `function-deployer` is Go's CI role (F26).
 #[test]
 fn no_other_role_holds_a_function_permission() {
     for r in roles::all() {
         if matches!(
             r.name.as_str(),
-            "platform:function-publisher" | "platform:function-host" | "platform:messaging-admin"
+            "platform:function-publisher"
+                | "platform:function-deployer"
+                | "platform:function-host"
+                | "platform:messaging-admin"
         ) {
             continue;
         }
