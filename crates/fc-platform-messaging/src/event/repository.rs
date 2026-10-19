@@ -148,6 +148,10 @@ pub struct EventReadFilter<'a> {
     pub client_id: Option<&'a str>,
     pub client_ids: &'a [String],
     pub accessible: Option<&'a [String]>,
+    /// Some: only events whose application (the first segment of the type)
+    /// is one of these codes. Set for a caller confined to its own
+    /// applications (Go F20); applied in SQL, so no caller filter widens it.
+    pub accessible_applications: Option<&'a [String]>,
     pub applications: &'a [String],
     pub subdomains: &'a [String],
     pub aggregates: &'a [String],
@@ -550,6 +554,11 @@ impl EventRepository {
             qb.push(" AND (client_id IS NULL OR client_id = ANY(")
                 .push_bind(ids.to_vec())
                 .push("))");
+        }
+        if let Some(codes) = f.accessible_applications {
+            qb.push(" AND application = ANY(")
+                .push_bind(codes.to_vec())
+                .push(")");
         }
         any(&mut qb, "application", f.applications);
         any(&mut qb, "subdomain", f.subdomains);

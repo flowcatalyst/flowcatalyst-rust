@@ -943,6 +943,99 @@ pub mod checks {
         }
     }
 
+    /// The coarse guard on the event read endpoints an application's service
+    /// account may call (Go F20 `CanReadEvents`): the messaging view
+    /// permission, or the application-service view. A caller admitted only by
+    /// the second is confined to its applications' events
+    /// ([`can_read_all_events`] false). The BFF screens and the server-rendered
+    /// UI keep [`can_read_events`].
+    pub fn can_read_events_or_own(context: &impl Authority) -> Result<()> {
+        require_any_permission(
+            context,
+            &[
+                permissions::admin::EVENT_READ,
+                permissions::application_service::EVENT_READ,
+            ],
+        )
+    }
+
+    /// Whether the caller reads events without the per-application
+    /// confinement: it holds the messaging view permission (Go
+    /// `CanReadAllEvents`).
+    pub fn can_read_all_events(context: &impl Authority) -> bool {
+        context.has_permission(permissions::admin::EVENT_READ)
+    }
+
+    /// [`can_read_events_or_own`] for dispatch jobs (Go F20
+    /// `CanReadDispatchJobs`).
+    pub fn can_read_dispatch_jobs_or_own(context: &impl Authority) -> Result<()> {
+        require_any_permission(
+            context,
+            &[
+                permissions::admin::DISPATCH_JOB_READ,
+                permissions::application_service::DISPATCH_JOB_READ,
+            ],
+        )
+    }
+
+    /// Whether the caller reads dispatch jobs without the per-application
+    /// confinement (Go `CanReadAllDispatchJobs`).
+    pub fn can_read_all_dispatch_jobs(context: &impl Authority) -> bool {
+        context.has_permission(permissions::admin::DISPATCH_JOB_READ)
+    }
+
+    /// Application-scoped user reads (list, get): the application-service
+    /// `user:view` an application's service account holds, or the IAM user
+    /// view; the route confines either to the application in its path (Go F20
+    /// `CanReadApplicationUsers`).
+    pub fn can_read_application_users(context: &impl Authority) -> Result<()> {
+        require_any_permission(
+            context,
+            &[
+                permissions::application_service::USER_READ,
+                permissions::iam::USER_READ,
+            ],
+        )
+    }
+
+    /// Inviting (creating) a user for an application: the application-service
+    /// `user:create` or the IAM user create (Go `CanInviteApplicationUsers`).
+    pub fn can_create_application_users(context: &impl Authority) -> Result<()> {
+        require_any_permission(
+            context,
+            &[
+                permissions::application_service::USER_CREATE,
+                permissions::iam::USER_CREATE,
+            ],
+        )
+    }
+
+    /// Listing an application's pending invitations (Go
+    /// `CanReadApplicationInvitations`).
+    pub fn can_read_application_invitations(context: &impl Authority) -> Result<()> {
+        require_any_permission(
+            context,
+            &[
+                permissions::application_service::INVITATION_READ,
+                permissions::application_service::INVITATION_MANAGE,
+                permissions::iam::USER_READ,
+            ],
+        )
+    }
+
+    /// Resending and revoking an application's invitation: the
+    /// application-service `invitation:manage` or the IAM user create (Go
+    /// `CanManageApplicationInvitations`).
+    pub fn can_update_application_invitations(context: &impl Authority) -> Result<()> {
+        require_any_permission(
+            context,
+            &[
+                permissions::application_service::INVITATION_MANAGE,
+                permissions::iam::USER_CREATE,
+            ],
+        )
+    }
+
     /// Audit logs, read: `platform:admin:audit-log:view`, answering as Go's
     /// `CanWritePermission(ac, viewPerm)` (audit/api/api.go:43).
     pub fn can_read_audit_logs(context: &impl Authority) -> Result<()> {

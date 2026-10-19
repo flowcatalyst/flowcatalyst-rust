@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use fc_platform_core::directory::{ApplicationAccess, ApplicationDirectory};
 use fc_platform_core::shared::authorization_service::{ApplicationScope, AuthContext};
-use fc_platform_core::shared::error::Result;
+use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::shared::id::SubscriptionId;
 
 use crate::subscription::repository::SubscriptionRepository;
@@ -35,6 +35,9 @@ pub const JOB_CODE_APP_REFUSED: &str =
 /// Refusal text for a dispatch job routed through such an application's subscription.
 pub const JOB_SUBSCRIPTION_APP_REFUSED: &str =
     "subscription belongs to an application this credential cannot ingest for";
+
+/// Refusal text for a read by a caller bound to no (resolvable) application.
+pub const READ_SCOPE_REFUSED: &str = "this credential is not bound to an application";
 
 /// The application code of a `{application}:...` code: everything before the
 /// first colon, or the whole string when there is none.
@@ -111,6 +114,34 @@ impl RequestAppScope<'_> {
         };
         self.codes.insert(code.to_string(), reaches);
         Ok(reaches)
+    }
+
+    /// The application codes a read is confined to (Go F20
+    /// `AppScope.ConfinedCodes`): `None` for a caller that reaches every
+    /// application, whose reads are not narrowed; otherwise the codes of the
+    /// applications it is bound to, sorted. A caller bound to none (or to ids
+    /// that resolve to none) is refused with 403 `FORBIDDEN`, never answered
+    /// an empty page: a mis-provisioned credential must be loud.
+    pub async fn confined_codes(&self) -> Result<Option<Vec<String>>> {
+        let ApplicationScope::Only(ids) = &self.scope else {
+            return Ok(None);
+        };
+        let mut codes: Vec<String> = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(application) = self.guard.applications.find_by_id(id).await? {
+                if !application.code.is_empty() && !codes.contains(&application.code) {
+                    codes.push(application.code);
+                }
+            }
+        }
+        if codes.is_empty() {
+            return Err(PlatformError::forbidden_code(
+                "FORBIDDEN",
+                READ_SCOPE_REFUSED,
+            ));
+        }
+        codes.sort();
+        Ok(Some(codes))
     }
 
     /// Why a dispatch job must be refused, `None` when it passes. Both must

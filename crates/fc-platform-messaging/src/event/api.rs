@@ -472,7 +472,8 @@ pub async fn get_event(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<EventDetailResponse>, PlatformError> {
-    checks::can_read_events(&auth.0)?;
+    checks::can_read_events_or_own(&auth.0)?;
+    let confined = read_confinement(&state, &auth).await?;
 
     // Go reads the read projection (`msg_events_read`), as the list does: an
     // event the projector has not reached yet is a 404, and the detail
@@ -482,6 +483,19 @@ pub async fn get_event(
         .find_read_detail_by_id(&id)
         .await?
         .ok_or_else(|| PlatformError::not_found("Event", &id))?;
+
+    // An event of another application answers the same not-found a missing
+    // id would, so the answer cannot be used to learn whether an id is real
+    // (Go F20).
+    if let Some(codes) = &confined {
+        if !event
+            .application
+            .as_deref()
+            .is_some_and(|a| codes.iter().any(|c| c == a))
+        {
+            return Err(PlatformError::not_found("Event", &id));
+        }
+    }
 
     // A client's event needs that client; a platform event is visible to any
     // holder of `event:view` (Go `getByID`).
@@ -637,8 +651,29 @@ pub async fn list_events(
     auth: Authenticated,
     Query(query): Query<EventsQuery>,
 ) -> Result<Json<Vec<EventListItem>>, PlatformError> {
-    checks::can_read_events(&auth.0)?;
-    list_events_unchecked(&state, &auth, query).await
+    checks::can_read_events_or_own(&auth.0)?;
+    let confined = read_confinement(&state, &auth).await?;
+    list_events_unchecked(&state, &auth, query, confined.as_deref()).await
+}
+
+/// The application codes an event read is confined to for `auth` (Go F20
+/// `readConfinement`): none for a caller holding the messaging view permission
+/// (as before) or reaching every application; for a caller admitted only by
+/// the application-service `event:view`, the codes of the applications it is
+/// bound to (403 for a caller bound to none).
+async fn read_confinement(
+    state: &EventsState,
+    auth: &Authenticated,
+) -> Result<Option<Vec<String>>, PlatformError> {
+    if checks::can_read_all_events(&auth.0) {
+        return Ok(None);
+    }
+    state
+        .app_scope
+        .for_request(&auth.0)
+        .await?
+        .confined_codes()
+        .await
 }
 
 /// Go's `list` / `listRaw` body (event/api/api.go) once the permission is
@@ -648,6 +683,7 @@ pub async fn list_events_unchecked(
     state: &EventsState,
     auth: &Authenticated,
     query: EventsQuery,
+    confined: Option<&[String]>,
 ) -> Result<Json<Vec<EventListItem>>, PlatformError> {
     let types = split_csv(query.types.as_deref());
     let applications = split_csv(query.applications.as_deref());
@@ -678,6 +714,7 @@ pub async fn list_events_unchecked(
         client_id: non_empty(&query.client_id),
         client_ids: &client_ids,
         accessible: accessible.as_deref(),
+        accessible_applications: confined,
         applications: &applications,
         subdomains: &subdomains,
         aggregates: &aggregates,
@@ -924,7 +961,7 @@ pub async fn list_events_raw(
     Query(query): Query<EventsQuery>,
 ) -> Result<Json<Vec<EventListItem>>, PlatformError> {
     checks::can_read_events_raw(&auth.0)?;
-    list_events_unchecked(&state, &auth, query).await
+    list_events_unchecked(&state, &auth, query, None).await
 }
 
 /// One `{value, label}` pair of the filter dropdowns (label = value).

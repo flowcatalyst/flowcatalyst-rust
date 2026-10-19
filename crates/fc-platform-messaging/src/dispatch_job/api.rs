@@ -21,7 +21,7 @@ use crate::dispatch_job::repository::DispatchJobRepository;
 use crate::dispatch_job::repository::RecordedAttempt;
 use crate::dispatch_job::signing_guard::SigningGuard;
 use crate::dispatch_job_actions::api::RequestSummary;
-use crate::shared::app_scope::AppScopeGuard;
+use crate::shared::app_scope::{first_segment, AppScopeGuard};
 use crate::shared::batch_api;
 use crate::shared::batch_api::SuppliedJobIds;
 use crate::subscription::operations::create;
@@ -664,6 +664,35 @@ fn check_job_scope(auth: &Authenticated, client_id: Option<&str>) -> Result<(), 
     checks::check_scope_access(&auth.0, client_id.map(ClientId::from_wire).as_ref())
 }
 
+/// The application codes a dispatch-job read is confined to for `auth` (Go
+/// F20 `readConfinement`): none for a caller holding the messaging view
+/// permission (as before) or reaching every application; for a caller
+/// admitted only by the application-service `dispatch-job:view`, the codes of
+/// the applications it is bound to (403 for a caller bound to none).
+async fn read_confinement(
+    state: &DispatchJobsState,
+    auth: &Authenticated,
+) -> Result<Option<Vec<String>>, PlatformError> {
+    if checks::can_read_all_dispatch_jobs(&auth.0) {
+        return Ok(None);
+    }
+    state
+        .app_scope
+        .for_request(&auth.0)
+        .await?
+        .confined_codes()
+        .await
+}
+
+/// Whether a job's application (the first segment of its code) is one of
+/// `apps`; always true when the read is not confined (Go `ownedBy`).
+fn owned_by(apps: Option<&[String]>, code: &str) -> bool {
+    apps.is_none_or(|apps| {
+        let owner = first_segment(code);
+        apps.iter().any(|a| a == owner)
+    })
+}
+
 /// Get dispatch job by ID
 #[utoipa::path(
     get,
@@ -684,12 +713,16 @@ pub async fn get_dispatch_job(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<DispatchJobResponse>, PlatformError> {
-    checks::can_read_dispatch_jobs(&auth.0)?;
+    checks::can_read_dispatch_jobs_or_own(&auth.0)?;
+    let confined = read_confinement(&state, &auth).await?;
 
+    // A job of another application answers the same not-found a missing id
+    // would (Go F20).
     let job = state
         .dispatch_job_repo
         .find_by_id(&id)
         .await?
+        .filter(|j| owned_by(confined.as_deref(), &j.code))
         .ok_or_else(|| PlatformError::not_found("DispatchJob", &id))?;
     check_job_scope(&auth, job.client_id.as_deref())?;
 
@@ -714,8 +747,9 @@ pub async fn list_dispatch_jobs(
     auth: Authenticated,
     Query(query): Query<DispatchJobsQuery>,
 ) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
-    checks::can_read_dispatch_jobs(&auth.0)?;
-    list_dispatch_jobs_unchecked(&state, &auth, query).await
+    checks::can_read_dispatch_jobs_or_own(&auth.0)?;
+    let confined = read_confinement(&state, &auth).await?;
+    list_dispatch_jobs_unchecked(&state, &auth, query, confined.as_deref()).await
 }
 
 /// Go's `list` / `listRaw` body once the permission is checked: the read
@@ -725,6 +759,7 @@ pub async fn list_dispatch_jobs_unchecked(
     state: &DispatchJobsState,
     auth: &Authenticated,
     query: DispatchJobsQuery,
+    confined: Option<&[String]>,
 ) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
     let statuses = split_csv(query.statuses.as_deref());
     let client_ids = split_csv(query.client_ids.as_deref());
@@ -754,6 +789,7 @@ pub async fn list_dispatch_jobs_unchecked(
         client_id: non_empty(&query.client_id),
         client_ids: &client_ids,
         accessible: accessible.as_deref(),
+        accessible_applications: confined,
         dispatch_pool_id: non_empty(&query.dispatch_pool_id),
         subscription_id: non_empty(&query.subscription_id),
         code: non_empty(&query.code),
@@ -824,17 +860,20 @@ pub async fn get_jobs_for_event(
     auth: Authenticated,
     Path(event_id): Path<String>,
 ) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
-    checks::can_read_dispatch_jobs(&auth.0)?;
+    checks::can_read_dispatch_jobs_or_own(&auth.0)?;
+    let confined = read_confinement(&state, &auth).await?;
 
     // Go `byEvent`: the read projection, newest first, keeping only the jobs
     // the caller may reach (`CanAccessScope`: a platform job is an anchor's
-    // or super-admin's).
+    // or super-admin's) and, for an application-scoped caller, its own
+    // applications' (Go F20).
     let jobs = state
         .dispatch_job_repo
         .find_read_by_event_id(&event_id)
         .await?;
     let filtered: Vec<DispatchJobReadResponse> = jobs
         .into_iter()
+        .filter(|j| owned_by(confined.as_deref(), &j.code))
         .filter(|j| {
             checks::check_scope_access(
                 &auth.0,
@@ -1182,12 +1221,14 @@ pub async fn get_dispatch_job_attempts(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<DispatchAttemptResponse>>, PlatformError> {
-    checks::can_read_dispatch_jobs(&auth.0)?;
+    checks::can_read_dispatch_jobs_or_own(&auth.0)?;
+    let confined = read_confinement(&state, &auth).await?;
 
     let job = state
         .dispatch_job_repo
         .find_by_id(&id)
         .await?
+        .filter(|j| owned_by(confined.as_deref(), &j.code))
         .ok_or_else(|| PlatformError::not_found("DispatchJob", &id))?;
     check_job_scope(&auth, job.client_id.as_deref())?;
 
@@ -1330,7 +1371,7 @@ pub async fn list_dispatch_jobs_raw(
     Query(query): Query<DispatchJobsQuery>,
 ) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
     checks::can_read_dispatch_jobs_raw(&auth.0)?;
-    list_dispatch_jobs_unchecked(&state, &auth, query).await
+    list_dispatch_jobs_unchecked(&state, &auth, query, None).await
 }
 
 #[cfg(test)]

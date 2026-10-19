@@ -329,6 +329,10 @@ pub struct DispatchJobReadFilter<'a> {
     pub client_id: Option<&'a str>,
     pub client_ids: &'a [String],
     pub accessible: Option<&'a [String]>,
+    /// Some: only jobs whose application (the first segment of the code) is
+    /// one of these codes. Set for a caller confined to its own applications
+    /// (Go F20); applied in SQL, so no caller filter widens it.
+    pub accessible_applications: Option<&'a [String]>,
     pub dispatch_pool_id: Option<&'a str>,
     pub subscription_id: Option<&'a str>,
     pub code: Option<&'a str>,
@@ -876,6 +880,11 @@ impl DispatchJobRepository {
             qb.push(" AND (client_id IS NULL OR client_id = ANY(")
                 .push_bind(ids.to_vec())
                 .push("))");
+        }
+        if let Some(codes) = f.accessible_applications {
+            qb.push(" AND application = ANY(")
+                .push_bind(codes.to_vec())
+                .push(")");
         }
         eq(&mut qb, "dispatch_pool_id", f.dispatch_pool_id);
         eq(&mut qb, "subscription_id", f.subscription_id);

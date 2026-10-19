@@ -34,7 +34,7 @@ async fn events_list_raw(
     q: EventsQuery,
 ) -> Result<Json<Vec<EventListItem>>, PlatformError> {
     // Go's `listRaw` asks `event:view-raw` only (checked by the callers).
-    api::list_events_unchecked(&state.events, &auth, q).await
+    api::list_events_unchecked(&state.events, &auth, q, None).await
 }
 
 /// The event list, for a caller holding `event:view-raw` (Go `listEventsRaw`).
@@ -77,7 +77,7 @@ pub async fn api_list_dispatch_jobs_raw(
 ) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
     // Go's `listRaw` asks `dispatch-job:view-raw` only.
     checks::can_read_dispatch_jobs_raw(&auth.0)?;
-    list_dispatch_jobs_unchecked(&state.dispatch_jobs, &auth, q).await
+    list_dispatch_jobs_unchecked(&state.dispatch_jobs, &auth, q, None).await
 }
 
 /// BFF twin of [`api_list_dispatch_jobs_raw`].
@@ -91,7 +91,7 @@ pub async fn bff_list_dispatch_jobs_raw(
 ) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
     // Go's `listRaw` asks `dispatch-job:view-raw` only.
     checks::can_read_dispatch_jobs_raw(&auth.0)?;
-    list_dispatch_jobs_unchecked(&state.dispatch_jobs, &auth, q).await
+    list_dispatch_jobs_unchecked(&state.dispatch_jobs, &auth, q, None).await
 }
 
 /// An event's dispatch jobs (Go `dispatchJobsByEvent`).
@@ -105,7 +105,7 @@ pub async fn api_dispatch_jobs_by_event(
     auth: Authenticated,
     Path(event_id): Path<String>,
 ) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
-    checks::can_read_dispatch_jobs(&auth.0)?;
+    checks::can_read_dispatch_jobs_or_own(&auth.0)?;
     get_jobs_for_event(State(state.dispatch_jobs), auth, Path(event_id)).await
 }
 
@@ -119,6 +119,6 @@ pub async fn bff_dispatch_jobs_by_event(
     auth: Authenticated,
     Path(event_id): Path<String>,
 ) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
-    checks::can_read_dispatch_jobs(&auth.0)?;
+    checks::can_read_dispatch_jobs_or_own(&auth.0)?;
     get_jobs_for_event(State(state.dispatch_jobs), auth, Path(event_id)).await
 }
