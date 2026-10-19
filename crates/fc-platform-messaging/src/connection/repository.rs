@@ -95,6 +95,39 @@ impl ConnectionRepository {
         .await?)
     }
 
+    /// The service account id (`iam_service_accounts.id`, `sac_...`) behind a
+    /// SERVICE principal (`iam_principals.id`, `prn_...`), `None` when the
+    /// principal does not exist or carries no service account (Go F17
+    /// `ServiceAccountForPrincipal`).
+    ///
+    /// An application stores its service account as the PRINCIPAL id
+    /// (`app_applications.service_account_id` is foreign-keyed to
+    /// `iam_principals`, migration 028), while a connection's
+    /// `service_account_id`, the account that signs its deliveries, is the
+    /// service account's own id: this is the bridge between the two.
+    pub async fn service_account_for_principal(
+        &self,
+        principal_id: &str,
+    ) -> Result<Option<String>> {
+        let id: Option<Option<String>> =
+            sqlx::query_scalar("SELECT service_account_id FROM iam_principals WHERE id = $1")
+                .bind(principal_id)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(id.flatten().filter(|s| !s.is_empty()))
+    }
+
+    /// Whether a service account with this id exists (Go F17
+    /// `ServiceAccountExists`).
+    pub async fn service_account_exists(&self, id: &str) -> Result<bool> {
+        let exists: bool =
+            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM iam_service_accounts WHERE id = $1)")
+                .bind(id)
+                .fetch_one(&self.pool)
+                .await?;
+        Ok(exists)
+    }
+
     pub async fn insert(&self, conn: &Connection) -> Result<()> {
         let now = Utc::now();
         sqlx::query!(

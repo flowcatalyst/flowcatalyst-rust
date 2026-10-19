@@ -138,8 +138,25 @@ impl<U: UnitOfWork> UseCase for UpdateConnectionUseCase<U> {
                 connection.application_code = Some(app_code.clone());
             }
         }
+        // Go F17: set-if-provided, and it must name an existing service
+        // account (an application's principal id is not one).
         if let Some(ref sa_id) = command.service_account_id {
-            connection.service_account_id = sa_id.clone();
+            let sa_id = sa_id.trim();
+            if sa_id.is_empty() {
+                return Err(UseCaseError::validation(
+                    "SERVICE_ACCOUNT_REQUIRED",
+                    "serviceAccountId cannot be empty",
+                ));
+            }
+            if !self.connection_repo.service_account_exists(sa_id).await? {
+                return Err(UseCaseError::validation(
+                    "SERVICE_ACCOUNT_NOT_FOUND",
+                    format!(
+                        "serviceAccountId '{sa_id}' is not an existing service account (an application's principal id is not one)"
+                    ),
+                ));
+            }
+            connection.service_account_id = sa_id.to_string();
         }
         match command.status {
             Some(ConnectionStatus::Active) => connection.activate(),

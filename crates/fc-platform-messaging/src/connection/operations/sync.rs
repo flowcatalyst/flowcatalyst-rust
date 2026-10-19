@@ -4,7 +4,7 @@
 //! `removeUnlisted` the application's other API/CODE rows are deleted,
 //! unless a subscription still uses one (409 `CONNECTION_REFERENCED`, and
 //! nothing is written). Every connection carries the application's service
-//! account. One transaction, one `platform:admin:connection:synced` event.
+//! account (its own id, `sac_...`, not the application's principal id: Go F17). One transaction, one `platform:admin:connection:synced` event.
 
 use async_trait::async_trait;
 use fc_platform_core::shared::id::ApplicationId;
@@ -116,7 +116,7 @@ impl<U: UnitOfWork> SyncConnectionsUseCase<U> {
                 "APPLICATION_NOT_FOUND",
                 format!("Application not found: {}", command.application_code),
             )?;
-        let service_account = app
+        let principal_id = app
             .service_account_id
             .clone()
             .filter(|s| !s.trim().is_empty())
@@ -126,6 +126,25 @@ impl<U: UnitOfWork> SyncConnectionsUseCase<U> {
                     format!(
                         "Application '{}' has no provisioned service account; connections cannot be synced without one",
                         command.application_code
+                    ),
+                )
+            })?;
+        // Go F17: the application holds its service account's PRINCIPAL id
+        // (`prn_...`); a connection's `service_account_id` is the account's
+        // own id (`sac_...`), which is what the delivery signer looks up.
+        // Storing the principal id left every code-first connection unable to
+        // sign. A principal with no service account behind it fails the whole
+        // sync, nothing persisted.
+        let service_account = self
+            .connection_repo
+            .service_account_for_principal(&principal_id)
+            .await?
+            .ok_or_else(|| {
+                UseCaseError::validation(
+                    "APPLICATION_SERVICE_ACCOUNT_REQUIRED",
+                    format!(
+                        "Application '{}' points at principal '{}', which has no service account; connections cannot be synced without one",
+                        command.application_code, principal_id
                     ),
                 )
             })?;

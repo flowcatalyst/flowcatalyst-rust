@@ -36,6 +36,7 @@ mod catalogue_keeps_migration_grants_test;
 mod client_admin_test;
 mod client_event_codes_migration_test;
 mod code_first_sync_identifier_test;
+mod connection_sync_service_account_test;
 mod cors_layer_test;
 mod delivery_policy_test;
 mod developer_credential_test;

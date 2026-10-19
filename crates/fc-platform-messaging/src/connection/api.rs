@@ -50,6 +50,11 @@ pub struct UpdateConnectionRequest {
     pub description: Option<String>,
     pub external_id: Option<String>,
     pub status: Option<String>,
+    /// The service account (`sac_...`) that signs this connection's
+    /// deliveries; set-if-provided, and it must name an existing service
+    /// account (Go F17).
+    #[serde(default)]
+    pub service_account_id: Option<String>,
 }
 
 /// Go `ConnectionResponse`: optional members are omitted when unset.
@@ -317,7 +322,7 @@ pub async fn update_connection(
         description: req.description,
         external_id: req.external_id,
         status,
-        service_account_id: None,
+        service_account_id: req.service_account_id,
         application_code,
         replace_details: true,
     };
