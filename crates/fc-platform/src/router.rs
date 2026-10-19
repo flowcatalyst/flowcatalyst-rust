@@ -133,6 +133,12 @@ pub fn build(ctx: &PlatformContext) -> (Router, serde_json::Value) {
     //    `{}`), fixed for the process lifetime.
     let mut openapi = serde_json::to_value(&openapi).unwrap_or(serde_json::Value::Null);
     crate::shared::openapi_contract::shape_as_go_contract(&mut openapi);
+    // 3. The SDK class of each operation, as the `x-sdk` vendor extension (an
+    //    operation no list decides stays unstamped, i.e. internal; the tests
+    //    fail on it: `tests/it/sdk_class_test.rs`).
+    for problem in crate::shared::sdk_class::classify(&mut openapi) {
+        tracing::warn!(%problem, "an operation has no SDK class; it is published as internal");
+    }
 
     // Snapshot the platform's own OpenAPI document for the Developer
     // portal. Compile-time-derived from utoipa, so a single capture at

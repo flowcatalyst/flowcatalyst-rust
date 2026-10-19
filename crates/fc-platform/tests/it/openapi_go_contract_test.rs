@@ -48,9 +48,9 @@ use sqlx::postgres::PgPoolOptions;
 use std::env;
 use std::fs;
 
-const METHODS: &[&str] = &["get", "put", "post", "delete", "patch"];
+pub(crate) const METHODS: &[&str] = &["get", "put", "post", "delete", "patch"];
 
-fn rust_document() -> Value {
+pub(crate) fn rust_document() -> Value {
     let pool = PgPoolOptions::new()
         .connect_lazy("postgres://nobody@127.0.0.1:1/none")
         .expect("lazy pool");
@@ -100,7 +100,7 @@ fn rust_document() -> Value {
 }
 
 /// Go's lock: `GO_LOCK_PATH` if set, else the vendored copy.
-fn go_document() -> Value {
+pub(crate) fn go_document() -> Value {
     let path = env::var("GO_LOCK_PATH").unwrap_or_else(|_| {
         concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -130,7 +130,7 @@ fn operations(doc: &Value) -> BTreeMap<(String, String), String> {
 
 /// `/api/x/{id}/y/{otherId}` -> `/api/x/{}/y/{}`: parameter names differ
 /// between the generators without changing the route.
-fn normalise_path(path: &str) -> String {
+pub(crate) fn normalise_path(path: &str) -> String {
     let mut out = String::with_capacity(path.len());
     let mut in_param = false;
     for c in path.chars() {

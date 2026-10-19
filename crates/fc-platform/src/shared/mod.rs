@@ -44,6 +44,7 @@ pub mod public_api;
 pub mod router_config_api;
 pub mod routes;
 pub mod sdk_audit_batch_api;
+pub mod sdk_class;
 pub mod sdk_sync_api;
 pub mod sdk_sync_go_api;
 pub mod server_setup;
