@@ -17,6 +17,7 @@ pub mod session_cookie;
 // OAuth
 pub mod fcdev;
 pub mod oauth_api;
+pub(crate) mod redirect_match;
 
 // OIDC
 pub mod jwks_cache;

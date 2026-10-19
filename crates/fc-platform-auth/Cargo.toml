@@ -64,6 +64,7 @@ openssl = { version = "0.10", features = ["vendored"] }
 # and drag OpenSSL/native-tls back into every binary.
 reqwest = { workspace = true }
 urlencoding = "2.1"
+url = { workspace = true }
 
 # Utilities
 uuid = { workspace = true }
