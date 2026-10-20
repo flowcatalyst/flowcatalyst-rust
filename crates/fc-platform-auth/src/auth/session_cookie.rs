@@ -45,6 +45,13 @@ impl SessionCookieConfig {
         }
     }
 
+    /// `Secure` as the cookie is built. Browsers reject `SameSite=None`
+    /// without `Secure`, so the pair is never built apart (the cookie would
+    /// silently never be stored).
+    fn effective_secure(&self) -> bool {
+        self.secure || self.same_site == SameSite::None
+    }
+
     /// The session cookie carrying `token`, with both `Max-Age` and
     /// `Expires` as Go sets them (auth/login/endpoint.go `completeLogin`).
     pub fn build_cookie(&self, token: String) -> Cookie<'static> {
@@ -55,7 +62,7 @@ impl SessionCookieConfig {
         Cookie::build((self.name.clone(), token))
             .path("/")
             .http_only(true)
-            .secure(self.secure)
+            .secure(self.effective_secure())
             .same_site(self.same_site)
             .max_age(self.ttl)
             .expires(now + self.ttl)
@@ -69,7 +76,7 @@ impl SessionCookieConfig {
         Cookie::build((self.name.clone(), ""))
             .path("/")
             .http_only(true)
-            .secure(self.secure)
+            .secure(self.effective_secure())
             .same_site(self.same_site)
             .max_age(time::Duration::ZERO)
             .build()
@@ -126,6 +133,20 @@ mod tests {
             format!(
                 "fc_session=tok; HttpOnly; SameSite=None; Secure; Path=/; Max-Age=86400; {expires}"
             )
+        );
+    }
+
+    #[test]
+    fn same_site_none_is_always_secure() {
+        let now = time::OffsetDateTime::from_unix_timestamp(1790330400).unwrap();
+        let built = config(false, "None").build_cookie_at("tok".into(), now);
+        assert_eq!(built.secure(), Some(true));
+        assert_eq!(config(false, "None").clear_cookie().secure(), Some(true));
+        assert_eq!(
+            config(false, "Lax")
+                .build_cookie_at("tok".into(), now)
+                .secure(),
+            Some(false)
         );
     }
 

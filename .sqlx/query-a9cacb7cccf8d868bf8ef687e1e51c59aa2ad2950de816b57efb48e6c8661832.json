@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id AS \"id: PrincipalId\", service_account_id AS \"service_account_id!\"\n             FROM iam_principals\n             WHERE id = ANY($1) AND service_account_id IS NOT NULL AND service_account_id <> ''",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: PrincipalId",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "service_account_id!",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "a9cacb7cccf8d868bf8ef687e1e51c59aa2ad2950de816b57efb48e6c8661832"
+}

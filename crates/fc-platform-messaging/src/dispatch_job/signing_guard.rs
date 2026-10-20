@@ -49,6 +49,10 @@ use fc_platform_core::directory::{
 use fc_platform_core::shared::authorization_service::{ApplicationScope, AuthContext};
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::shared::id::OptionIdExt;
+use fc_platform_core::shared::id::PrincipalId;
+
+/// What a principal id starts with.
+const PRINCIPAL_PREFIX: &str = "prn_";
 
 pub struct SigningGuard {
     subscriptions: Arc<SubscriptionRepository>,
@@ -73,6 +77,47 @@ impl SigningGuard {
             applications,
             principals,
         }
+    }
+
+    /// Rewrites each job's `service_account_id` given as a principal id
+    /// (`prn_`, which is what an application's own `serviceAccountId` is) to
+    /// the account that principal fronts, the id a delivery is signed by. A
+    /// `sac_` id (or any other) passes through unchanged. A principal that
+    /// does not exist, or is not a service account, is a 400
+    /// `SERVICE_ACCOUNT_NOT_FOUND`: a job stored under it could never be
+    /// signed. One query for the whole request.
+    pub async fn resolve_service_accounts(&self, jobs: &mut [DispatchJob]) -> Result<()> {
+        let principal_ids = PrincipalId::from_wire_all(distinct(
+            jobs.iter()
+                .filter_map(|j| j.service_account_id.as_deref())
+                .filter(|id| id.starts_with(PRINCIPAL_PREFIX)),
+        ));
+        if principal_ids.is_empty() {
+            return Ok(());
+        }
+        let resolved = self
+            .principals
+            .find_service_account_ids(&principal_ids)
+            .await?;
+        for job in jobs {
+            let Some(id) = job
+                .service_account_id
+                .as_deref()
+                .filter(|id| id.starts_with(PRINCIPAL_PREFIX))
+            else {
+                continue;
+            };
+            match resolved.get(id) {
+                Some(account_id) => job.service_account_id = Some(account_id.clone()),
+                None => {
+                    return Err(PlatformError::bad_request_code(
+                        "SERVICE_ACCOUNT_NOT_FOUND",
+                        format!("serviceAccountId {id} is not a service account principal"),
+                    ))
+                }
+            }
+        }
+        Ok(())
     }
 
     /// `Ok` when `caller` may ingest events of every one of `event_types`;

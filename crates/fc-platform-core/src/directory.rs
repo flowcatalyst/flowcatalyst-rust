@@ -165,6 +165,14 @@ pub trait PrincipalDirectory: Send + Sync {
         &self,
         principal_id: &PrincipalId,
     ) -> Result<Option<PrincipalApplicationBinding>>;
+
+    /// For each principal that exists and fronts a service account, the
+    /// account's id, keyed by the principal's id. A principal that does not
+    /// exist, or fronts no account, is absent.
+    async fn find_service_account_ids(
+        &self,
+        principal_ids: &[PrincipalId],
+    ) -> Result<HashMap<String, String>>;
 }
 
 // ── Outbound credentials ─────────────────────────────────────────────────

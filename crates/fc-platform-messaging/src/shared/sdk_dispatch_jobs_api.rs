@@ -200,6 +200,10 @@ pub async fn sdk_batch_create_dispatch_jobs(
     // use (a subscription of the job's own client; an application's own
     // account only for that application): a whole-request 403 before
     // anything is written.
+    state
+        .signing
+        .resolve_service_accounts(&mut created_jobs)
+        .await?;
     state.signing.check_jobs(&auth.0, &created_jobs).await?;
 
     // Bulk insert. A supplied id that already names a job refuses the whole

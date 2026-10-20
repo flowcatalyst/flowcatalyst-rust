@@ -199,6 +199,8 @@ pub struct DispatchJobReadResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subscription_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_account_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_identifier: Option<String>,
@@ -285,6 +287,7 @@ impl From<DispatchJobRead> for DispatchJobReadResponse {
             id: job.id,
             event_id: job.event_id,
             subscription_id: job.subscription_id,
+            service_account_id: job.service_account_id,
             client_id: job.client_id,
             client_identifier: None,
             application,
@@ -1119,7 +1122,13 @@ pub async fn create_dispatch_job(
     // Created PENDING (the entity's default), as Go inserts it: the
     // scheduler claims and queues it.
 
-    // The identity that would sign it must be the caller's to use.
+    // A principal id (an application's serviceAccountId) names the account
+    // it fronts (F49), then the identity that would sign must be the
+    // caller's to use.
+    state
+        .signing
+        .resolve_service_accounts(slice::from_mut(&mut job))
+        .await?;
     state
         .signing
         .check_jobs(&auth.0, slice::from_ref(&job))
@@ -1253,6 +1262,10 @@ pub async fn batch_create_dispatch_jobs(
 
     // Every job's signer must be the caller's to use, before anything is
     // written.
+    state
+        .signing
+        .resolve_service_accounts(&mut created_jobs)
+        .await?;
     state.signing.check_jobs(&auth.0, &created_jobs).await?;
 
     // Bulk insert; a supplied id that already names a job refuses it all.

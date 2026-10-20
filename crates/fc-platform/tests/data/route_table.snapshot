@@ -380,9 +380,9 @@
 /api/oauth-clients/{id}/rotate-secret PROBE: allow=POST 405 ct=- body=e3b0c44298fc limiter=- buckets=-
 /api/openapi-functions.json GET: 200 ct=application/json body=9706aebaf9cf limiter=- buckets=- doc=-
 /api/openapi-functions.json PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
-/api/openapi.json GET: 200 ct=application/json body=0c880298f4b3 limiter=- buckets=- doc=-
+/api/openapi.json GET: 200 ct=application/json body=a9db82d1cbff limiter=- buckets=- doc=-
 /api/openapi.json PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
-/api/openapi.yaml GET: 200 ct=application/yaml body=e7c698f993a9 limiter=- buckets=- doc=-
+/api/openapi.yaml GET: 200 ct=application/yaml body=eea79a457294 limiter=- buckets=- doc=-
 /api/openapi.yaml PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
 /api/platform-config/access/{id} DELETE: 403 ct=application/json body=850104f5ec67 limiter=- buckets=- doc=published+full
 /api/platform-config/access/{id} PROBE: allow=DELETE 405 ct=- body=e3b0c44298fc limiter=- buckets=-
@@ -857,9 +857,9 @@
 /portal/auth/password-reset PROBE: allow=POST 405 ct=- body=e3b0c44298fc limiter=portal-ip buckets=-
 /portal/authorize GET: 400 ct=application/json body=ba621266571c limiter=portal-ip buckets=- doc=-
 /portal/authorize PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=portal-ip buckets=-
-/q/openapi GET: 200 ct=application/json body=0c880298f4b3 limiter=- buckets=- doc=-
+/q/openapi GET: 200 ct=application/json body=a9db82d1cbff limiter=- buckets=- doc=-
 /q/openapi PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
-/q/openapi-full GET: 200 ct=application/json body=430207b2145b limiter=- buckets=- doc=-
+/q/openapi-full GET: 200 ct=application/json body=256e2ef2517b limiter=- buckets=- doc=-
 /q/openapi-full PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
 /swagger-ui GET: 303 ct=- location=/swagger-ui/ body=e3b0c44298fc limiter=- buckets=- doc=-
 /swagger-ui PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
@@ -869,11 +869,11 @@
 /swagger-ui/{*rest} PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
 /zz-no-route PROBE: allow=- 404 ct=- body=e3b0c44298fc limiter=- buckets=-
 /{*__private__axum_fallback} PROBE: allow=- 404 ct=- body=e3b0c44298fc limiter=- buckets=-
-DOC /api/openapi.json: 0c880298f4b3
-DOC /api/openapi.yaml: e7c698f993a9
-DOC /q/openapi: 0c880298f4b3
-DOC /q/openapi-full: 430207b2145b
-DOC developer-portal (build's returned document): 0c880298f4b3
+DOC /api/openapi.json: a9db82d1cbff
+DOC /api/openapi.yaml: eea79a457294
+DOC /q/openapi: a9db82d1cbff
+DOC /q/openapi-full: 256e2ef2517b
+DOC developer-portal (build's returned document): a9db82d1cbff
 
 == full: app key (mounts /api/dispatch/*), SPA directory
 / GET: 200 ct=text/html; charset=utf-8 body=691f5a3987e4 limiter=- buckets=- doc=-
@@ -1259,9 +1259,9 @@ DOC developer-portal (build's returned document): 0c880298f4b3
 /api/oauth-clients/{id}/rotate-secret PROBE: allow=POST 405 ct=- body=e3b0c44298fc limiter=- buckets=-
 /api/openapi-functions.json GET: 200 ct=application/json body=9706aebaf9cf limiter=- buckets=- doc=-
 /api/openapi-functions.json PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
-/api/openapi.json GET: 200 ct=application/json body=0c880298f4b3 limiter=- buckets=- doc=-
+/api/openapi.json GET: 200 ct=application/json body=a9db82d1cbff limiter=- buckets=- doc=-
 /api/openapi.json PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
-/api/openapi.yaml GET: 200 ct=application/yaml body=e7c698f993a9 limiter=- buckets=- doc=-
+/api/openapi.yaml GET: 200 ct=application/yaml body=eea79a457294 limiter=- buckets=- doc=-
 /api/openapi.yaml PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
 /api/platform-config/access/{id} DELETE: 403 ct=application/json body=850104f5ec67 limiter=- buckets=- doc=published+full
 /api/platform-config/access/{id} PROBE: allow=DELETE 405 ct=- body=e3b0c44298fc limiter=- buckets=-
@@ -1743,9 +1743,9 @@ DOC developer-portal (build's returned document): 0c880298f4b3
 /portal/auth/password-reset PROBE: allow=POST 405 ct=- body=e3b0c44298fc limiter=portal-ip buckets=-
 /portal/authorize GET: 400 ct=application/json body=ba621266571c limiter=portal-ip buckets=- doc=-
 /portal/authorize PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=portal-ip buckets=-
-/q/openapi GET: 200 ct=application/json body=0c880298f4b3 limiter=- buckets=- doc=-
+/q/openapi GET: 200 ct=application/json body=a9db82d1cbff limiter=- buckets=- doc=-
 /q/openapi PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
-/q/openapi-full GET: 200 ct=application/json body=430207b2145b limiter=- buckets=- doc=-
+/q/openapi-full GET: 200 ct=application/json body=256e2ef2517b limiter=- buckets=- doc=-
 /q/openapi-full PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
 /swagger-ui GET: 303 ct=- location=/swagger-ui/ body=e3b0c44298fc limiter=- buckets=- doc=-
 /swagger-ui PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
@@ -1757,8 +1757,8 @@ DOC developer-portal (build's returned document): 0c880298f4b3
 /zz-no-route PROBE: allow=GET, HEAD 405 ct=text/plain; charset=utf-8 body=c40aa69f0b30 limiter=- buckets=-
 /{*__private__axum_fallback} GET: 200 ct=text/html; charset=utf-8 body=691f5a3987e4 limiter=- buckets=- doc=-
 /{*__private__axum_fallback} PROBE: allow=GET, HEAD 405 ct=text/plain; charset=utf-8 body=c40aa69f0b30 limiter=- buckets=-
-DOC /api/openapi.json: 0c880298f4b3
-DOC /api/openapi.yaml: e7c698f993a9
-DOC /q/openapi: 0c880298f4b3
-DOC /q/openapi-full: 430207b2145b
-DOC developer-portal (build's returned document): 0c880298f4b3
+DOC /api/openapi.json: a9db82d1cbff
+DOC /api/openapi.yaml: eea79a457294
+DOC /q/openapi: a9db82d1cbff
+DOC /q/openapi-full: 256e2ef2517b
+DOC developer-portal (build's returned document): a9db82d1cbff

@@ -1636,4 +1636,23 @@ impl PrincipalDirectory for PrincipalRepository {
     ) -> Result<Option<PrincipalApplicationBinding>> {
         PrincipalRepository::find_application_binding(self, principal_id).await
     }
+
+    async fn find_service_account_ids(
+        &self,
+        principal_ids: &[PrincipalId],
+    ) -> Result<HashMap<String, String>> {
+        // `service_account_id!`: the predicate excludes NULL.
+        let rows = sqlx::query!(
+            "SELECT id AS \"id: PrincipalId\", service_account_id AS \"service_account_id!\"
+             FROM iam_principals
+             WHERE id = ANY($1) AND service_account_id IS NOT NULL AND service_account_id <> ''",
+            principal_ids as &[PrincipalId]
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| (r.id.into_string(), r.service_account_id))
+            .collect())
+    }
 }
