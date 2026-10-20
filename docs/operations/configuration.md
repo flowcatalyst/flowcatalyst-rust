@@ -126,6 +126,7 @@ switch, so one environment drives both implementations. Details and the reasons 
 | Variable | Default | Description |
 |---|---|---|
 | `FC_JWT_LEEWAY_SECS` | `0` | Clock leeway (0 to 600) when a platform-signed token's `exp` is checked, and an upstream IdP's id_token. It was the library's 60 s, which honoured a one-hour token for 61 minutes. `60` restores it |
+| `FC_REFRESH_REPLAY_LEEWAY_SECS` | `10` | Seconds after a refresh token is rotated out during which presenting it again (a client racing itself, a retry after a lost response) rotates into a sibling instead of revoking the family. `0` or negative turns it off, so every replay revokes the family; unparseable means `10`. Read on each refresh, as Go does |
 | `FC_OAUTH_REVOKE_ENFORCE_CLIENT` | `true` | `/oauth/revoke`: a client revokes only refresh tokens issued to it (RFC 7009 section 2.1); a mismatch answers 200 and revokes nothing. A Bearer caller and a token with no client binding are not checked. `false` restores any-caller revoke |
 | `FC_OAUTH_INTROSPECT_CLIENT_AUTH_ONLY` | `false` | `true` makes `/oauth/introspect` refuse Bearer authentication (client credentials only) |
 | `FC_OIDC_REJECT_UNVERIFIED_EMAIL` | `false` | `true` refuses an SSO login (employee and portal) when the upstream id_token carries `email_verified` = `false` (bool or the string `"false"`). An absent claim is always accepted |

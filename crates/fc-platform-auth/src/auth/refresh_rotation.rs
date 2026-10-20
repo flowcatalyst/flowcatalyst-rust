@@ -10,7 +10,7 @@
 //! - **Reuse detection** (OAuth 2.0 Security BCP §4.14.2): a presented
 //!   token that is no longer valid but was rotated out means the family is
 //!   presumed stolen — every token in it is revoked, logged at WARN.
-//! - **Replay leeway** ([`REPLAY_LEEWAY`]): a token rotated out moments ago
+//! - **Replay leeway** ([`replay_leeway`]): a token rotated out moments ago
 //!   is far more often its own client racing itself (the Laravel and
 //!   TypeScript SDKs refresh per request with no lock) or retrying a lost
 //!   response than a thief. Within the leeway, and only while the family is
@@ -31,11 +31,30 @@ use tracing::warn;
 
 use crate::auth::{refresh_token::RefreshToken, refresh_token_repository::RefreshTokenRepository};
 use fc_platform_core::shared::error::Result;
+use std::env;
 use std::result;
 
+/// Env var for the replay leeway, in seconds (Go `FC_REFRESH_REPLAY_LEEWAY_SECS`).
+/// `0` (or a negative value, as Go) turns the leeway off: every replay of a
+/// rotated-out token revokes its family. Unparseable means the default.
+pub const REPLAY_LEEWAY_ENV: &str = "FC_REFRESH_REPLAY_LEEWAY_SECS";
+
+/// The leeway when the variable is unset or unparseable.
+pub const DEFAULT_REPLAY_LEEWAY: Duration = Duration::seconds(10);
+
+fn parse_replay_leeway(raw: Option<&str>) -> Duration {
+    match raw.and_then(|v| v.trim().parse::<i64>().ok()) {
+        Some(secs) => Duration::seconds(secs.max(0)),
+        None => DEFAULT_REPLAY_LEEWAY,
+    }
+}
+
 /// How long after a token is rotated out a second presentation of it is
-/// still its own client racing or retrying, not a replay.
-pub const REPLAY_LEEWAY: Duration = Duration::seconds(10);
+/// still its own client racing or retrying, not a replay
+/// (`FC_REFRESH_REPLAY_LEEWAY_SECS`, default 10, read per call as Go does).
+pub fn replay_leeway() -> Duration {
+    parse_replay_leeway(env::var(REPLAY_LEEWAY_ENV).ok().as_deref())
+}
 
 /// A completed rotation.
 #[derive(Debug)]
@@ -109,9 +128,19 @@ pub async fn rotate(
     raw: &str,
     requesting_client_id: Option<&str>,
 ) -> Result<result::Result<Rotated, Rejection>> {
+    rotate_with_leeway(store, raw, requesting_client_id, replay_leeway()).await
+}
+
+/// [`rotate`] with the replay leeway given (tests pass it; callers use `rotate`).
+async fn rotate_with_leeway(
+    store: &dyn RefreshTokenStore,
+    raw: &str,
+    requesting_client_id: Option<&str>,
+    leeway: Duration,
+) -> Result<result::Result<Rotated, Rejection>> {
     let hash = RefreshToken::hash_token(raw);
     let Some(stored) = store.find_valid_by_hash(&hash).await? else {
-        return not_valid(store, &hash, requesting_client_id).await;
+        return not_valid(store, &hash, requesting_client_id, leeway).await;
     };
     if let Some(refused) = refused(&stored, requesting_client_id) {
         return Ok(Err(refused));
@@ -124,7 +153,7 @@ pub async fn rotate(
         // Someone else consumed it between our read and our UPDATE (which
         // waited on their row lock): it now reads as rotated out moments
         // ago — the leeway case, handled like any second presentation.
-        return not_valid(store, &hash, requesting_client_id).await;
+        return not_valid(store, &hash, requesting_client_id, leeway).await;
     }
     Ok(Ok(Rotated {
         stored,
@@ -150,13 +179,14 @@ async fn not_valid(
     store: &dyn RefreshTokenStore,
     hash: &str,
     requesting_client_id: Option<&str>,
+    leeway: Duration,
 ) -> Result<result::Result<Rotated, Rejection>> {
     let Some(prior) = store.find_by_hash(hash).await?.filter(|t| t.was_replaced()) else {
         return Ok(Err(Rejection::Unknown));
     };
     let within_leeway = prior
         .revoked_at
-        .is_some_and(|at| at >= Utc::now() - REPLAY_LEEWAY);
+        .is_some_and(|at| !leeway.is_zero() && at >= Utc::now() - leeway);
     let family_intact = match prior.replaced_by.as_deref() {
         Some(next) => store.find_valid_by_hash(next).await?.is_some(),
         None => false,
@@ -384,6 +414,37 @@ mod tests {
         assert_eq!(store.live(), 2);
     }
 
+    /// Leeway 0 turns the leeway off: a second presentation, however soon,
+    /// revokes the family (`FC_REFRESH_REPLAY_LEEWAY_SECS=0`).
+    #[tokio::test]
+    async fn leeway_zero_makes_every_replay_reuse() {
+        let (raw, token) = issued(None);
+        let store = Memory::with(token.clone());
+        let rotated = rotate_with_leeway(&store, &raw, None, Duration::zero())
+            .await
+            .unwrap()
+            .unwrap();
+        let err = rotate_with_leeway(&store, &raw, None, Duration::zero())
+            .await
+            .unwrap()
+            .unwrap_err();
+        assert!(matches!(err, Rejection::ReuseDetected { .. }));
+        assert!(!store.get(&rotated.replacement.token_hash).is_valid());
+        assert_eq!(store.live(), 0);
+    }
+
+    /// The setting: unset or unparseable is the default 10 s, 0 and negative
+    /// are off (as Go), otherwise whole seconds.
+    #[test]
+    fn the_leeway_setting_parses_as_go_reads_it() {
+        assert_eq!(parse_replay_leeway(None), Duration::seconds(10));
+        assert_eq!(parse_replay_leeway(Some("junk")), Duration::seconds(10));
+        assert_eq!(parse_replay_leeway(Some("")), Duration::seconds(10));
+        assert_eq!(parse_replay_leeway(Some("0")), Duration::zero());
+        assert_eq!(parse_replay_leeway(Some("-5")), Duration::zero());
+        assert_eq!(parse_replay_leeway(Some(" 30 ")), Duration::seconds(30));
+    }
+
     /// A replay after the leeway is reuse: the whole family — the
     /// legitimate replacement too — is revoked.
     #[tokio::test]
@@ -391,7 +452,10 @@ mod tests {
         let (raw, token) = issued(None);
         let store = Memory::with(token.clone());
         let rotated = rotate(&store, &raw, None).await.unwrap().unwrap();
-        store.backdate(&token.token_hash, REPLAY_LEEWAY + Duration::seconds(1));
+        store.backdate(
+            &token.token_hash,
+            DEFAULT_REPLAY_LEEWAY + Duration::seconds(1),
+        );
 
         let err = rotate(&store, &raw, None).await.unwrap().unwrap_err();
         assert_eq!(
