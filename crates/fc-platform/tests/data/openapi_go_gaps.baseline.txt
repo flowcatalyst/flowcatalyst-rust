@@ -22,6 +22,8 @@ go-only: GET /oauth/userinfo
 go-only: PATCH /api/functions/{}
 go-only: POST /api/audit-logs/batch
 go-only: POST /api/dispatch-jobs/batch
+# Rust has not built the function-runner features (version prune, runner capabilities).
+go-only: POST /api/functions/{}/versions/prune
 go-only: POST /control/functions/dispatch-jobs
 go-only: POST /control/functions/events
 go-only: POST /control/functions/heartbeat
@@ -118,6 +120,9 @@ schema-missing: MyClientsListResponse
 schema-missing: OAuthErrorBody
 schema-missing: OIDCDiscoveryDocument
 schema-missing: OffsetPageFunctionResponse
+schema-missing: PruneVersionsRequest
+schema-missing: PruneVersionsResponse
+schema-missing: PrunedVersionResponse
 schema-missing: PublishVersionRequest
 schema-missing: PutAliasRequest
 schema-missing: PutAliasResponse
@@ -125,6 +130,7 @@ schema-missing: PutRouteRequest
 schema-missing: PutSettingRequest
 schema-missing: Route
 schema-missing: RouteResponse
+schema-missing: RunnerCapabilities
 schema-missing: SettingResponse
 schema-missing: TokenAuth
 schema-missing: TokenForm

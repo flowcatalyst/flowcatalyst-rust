@@ -69,6 +69,14 @@ export type AddSchemaRequest = {
     [key: string]: unknown;
 };
 
+export type AliasResponse = {
+    functionId: string;
+    name: string;
+    updatedAt: string;
+    updatedBy?: string;
+    version: number;
+};
+
 export type AllowedOriginResponse = {
     /**
      * A URL to the JSON Schema for this object.
@@ -125,6 +133,28 @@ export type ApplicationFilterListResponse = {
      */
     readonly $schema?: string;
     applicationCodes: Array<string>;
+};
+
+export type ApplicationInvitation = {
+    clientId: string;
+    createdAt: string;
+    email: string;
+    expiresAt?: string;
+    name: string;
+    roles: Array<string>;
+    status: string;
+    userId: string;
+};
+
+export type ApplicationInvitationList = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    invitations: Array<ApplicationInvitation>;
+    page: number;
+    pageSize: number;
+    total: number;
 };
 
 export type ApplicationListResponse = {
@@ -202,6 +232,34 @@ export type ApplicationServiceAccountCredentials = {
     principalId: string;
 };
 
+export type ApplicationUser = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    active: boolean;
+    clientId: string;
+    createdAt: string;
+    email: string;
+    id: string;
+    idpType: string;
+    invitation?: string;
+    lastLoginAt?: string;
+    name: string;
+    roles: Array<string>;
+};
+
+export type ApplicationUserList = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    page: number;
+    pageSize: number;
+    total: number;
+    users: Array<ApplicationUser>;
+};
+
 export type AssignApplicationAccessRequest = {
     /**
      * A URL to the JSON Schema for this object.
@@ -209,6 +267,7 @@ export type AssignApplicationAccessRequest = {
     readonly $schema?: string;
     allApplications?: boolean;
     applicationIds: Array<string>;
+    confirmSelfRestriction?: boolean;
     [key: string]: unknown;
 };
 
@@ -269,6 +328,40 @@ export type AttemptDto = {
     responseBody?: string;
     responseCode?: number;
     success: boolean;
+};
+
+export type AuditBatchItem = {
+    applicationCode?: string;
+    clientCode?: string;
+    entityId: string;
+    entityType: string;
+    operation: string;
+    operationData?: unknown;
+    performedAt?: string;
+    principalId: string;
+};
+
+export type AuditBatchRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    items: Array<AuditBatchItem>;
+    [key: string]: unknown;
+};
+
+export type AuditBatchResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    results: Array<AuditBatchResult>;
+};
+
+export type AuditBatchResult = {
+    error?: string;
+    id: string;
+    status: string;
 };
 
 export type AuditLogApplicationIdsResponse = {
@@ -402,6 +495,34 @@ export type BatchEventItem = {
     type?: string;
 };
 
+export type BatchItem = {
+    clientCode?: string;
+    clientId?: string;
+    code: string;
+    correlationId?: string;
+    dataOnly?: boolean;
+    descriptor?: string;
+    dispatchPoolId?: string;
+    eventId?: string;
+    externalId?: string;
+    id?: string;
+    kind?: string;
+    maxRetries?: number;
+    messageGroup?: string;
+    metadata?: Array<Metadata>;
+    mode?: string;
+    payload?: string;
+    payloadContentType?: string;
+    queue?: string;
+    sequence?: number;
+    serviceAccountId?: string;
+    source?: string;
+    subject?: string;
+    subscriptionId?: string;
+    targetUrl: string;
+    timeoutSeconds?: number;
+};
+
 export type BatchRequest = {
     /**
      * A URL to the JSON Schema for this object.
@@ -423,6 +544,18 @@ export type BatchResultItem = {
     error?: string;
     id: string;
     status: string;
+};
+
+export type BudgetReport = {
+    budgetBytes: number;
+    compiledBytes: number;
+    evictions: number;
+    limitBytes: number;
+    linearBytes: number;
+    loaded: number;
+    refused: number;
+    reserveBytes: number;
+    rssBytes?: number;
 };
 
 export type BulkImportRequest = {
@@ -770,6 +903,42 @@ export type CreateConnectionRequest = {
     [key: string]: unknown;
 };
 
+export type CreateDispatchJobRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    clientCode?: string;
+    clientId?: string;
+    code: string;
+    correlationId?: string;
+    dataOnly?: boolean;
+    descriptor?: string;
+    dispatchPoolId?: string;
+    eventId?: string;
+    externalId?: string;
+    idempotencyKey?: string;
+    kind?: string;
+    maxRetries?: number;
+    messageGroup?: string;
+    metadata?: {
+        [key: string]: string;
+    };
+    mode?: string;
+    payload: string;
+    payloadContentType?: string;
+    queue?: string;
+    retryStrategy?: string;
+    sequence?: number;
+    serviceAccountId: string;
+    source?: string;
+    subject?: string;
+    subscriptionId?: string;
+    targetUrl: string;
+    timeoutSeconds?: number;
+    [key: string]: unknown;
+};
+
 export type CreateDispatchPoolRequest = {
     /**
      * A URL to the JSON Schema for this object.
@@ -790,6 +959,22 @@ export type CreateDispatchPoolRequest = {
      * Messages per minute (nil = no rate limit)
      */
     rateLimit?: number;
+    [key: string]: unknown;
+};
+
+export type CreateDomainRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * Omitted claims a platform-owned zone (anchor only)
+     */
+    clientId?: string;
+    /**
+     * The claimed hostname zone (e.g. "acme.example.com")
+     */
+    zone: string;
     [key: string]: unknown;
 };
 
@@ -883,6 +1068,34 @@ export type CreateEventTypeRequest = {
      * Optional JSON Schema for the initial spec version
      */
     schema?: unknown;
+    [key: string]: unknown;
+};
+
+export type CreateFunctionRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * Owning application id
+     */
+    applicationId: string;
+    clientId?: string;
+    description?: string;
+    limits?: LimitsDto;
+    /**
+     * Function name (lowercase, alphanumeric, hyphens; matches ^[a-z][a-z0-9-]{0,62}$)
+     */
+    name: string;
+    /**
+     * The runner pool that hosts the function (FC_FUNCTIONS_POOL on its runners); omitted means the default pool. Not the dispatch pool, which is always the function's own.
+     */
+    pool?: string;
+    /**
+     * Optional webhook verifier identity: a service account id OR code. Its signing secret is what this function's webhook endpoints verify deliveries with. Omitted means the application's service account.
+     */
+    serviceAccountId?: string;
+    warm?: boolean;
     [key: string]: unknown;
 };
 
@@ -1142,6 +1355,9 @@ export type CreateServiceAccountRequest = {
     code: string;
     description?: string;
     name: string;
+    /**
+     * Descriptive tier: ANCHOR (no clientIds), CLIENT (one) or PARTNER (several). Tokens follow the client links, so a scope that disagrees with them is refused 400 SCOPE_REACH_MISMATCH; change both together, or omit it.
+     */
     scope?: string;
     webhookCredentials?: WebhookCredentialsDto;
     [key: string]: unknown;
@@ -1254,6 +1470,18 @@ export type DeliveryPlan = {
     request: RequestSummary;
 };
 
+export type Desired = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    auth: TokenAuth;
+    functions: Array<Function>;
+    pool: string;
+    revision: number;
+    routes?: Array<Route>;
+};
+
 export type DeveloperUserListResponse = {
     /**
      * A URL to the JSON Schema for this object.
@@ -1261,6 +1489,54 @@ export type DeveloperUserListResponse = {
     readonly $schema?: string;
     principals: Array<PrincipalResponse>;
     total: number;
+};
+
+export type Dispatch = {
+    causationId?: string;
+    code?: string;
+    contentType?: string;
+    correlationId?: string;
+    dataOnly?: boolean;
+    descriptor?: string;
+    maxRetries?: number;
+    messageGroup?: string;
+    metadata?: Array<Kv>;
+    mode?: string;
+    path: string;
+    subject?: string;
+    target: string;
+    timeoutSeconds?: number;
+};
+
+export type DispatchJobBatchRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    items: Array<BatchItem>;
+    [key: string]: unknown;
+};
+
+export type DispatchJobBatchResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    results: Array<DispatchJobBatchResult>;
+};
+
+export type DispatchJobBatchResult = {
+    error?: string;
+    id: string;
+    status: string;
+};
+
+export type DispatchJobCreatedResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    id: string;
 };
 
 export type DispatchJobFilterOptionsResponse = {
@@ -1271,14 +1547,19 @@ export type DispatchJobFilterOptionsResponse = {
     clientIds: Array<string>;
     codes: Array<string>;
     dispatchPoolIds: Array<string>;
+    eventTypes: Array<string>;
     kinds: Array<string>;
     statuses: Array<string>;
     subscriptionIds: Array<string>;
+    window: WindowResponse;
 };
 
 export type DispatchJobRead = {
     aggregate?: string;
     application?: string;
+    /**
+     * Delivery attempts made, the final one included; deferrals (ack=false, 429) are not attempts
+     */
     attemptCount: number;
     clientId?: string;
     clientIdentifier?: string;
@@ -1297,6 +1578,7 @@ export type DispatchJobRead = {
     mode: string;
     priority?: number;
     scheduledFor?: string;
+    serviceAccountId?: string;
     source?: string;
     status: string;
     subdomain?: string;
@@ -1311,6 +1593,9 @@ export type DispatchJobResponse = {
      * A URL to the JSON Schema for this object.
      */
     readonly $schema?: string;
+    /**
+     * Delivery attempts made, the final one included; deferrals (ack=false, 429) are not attempts
+     */
     attemptCount: number;
     attempts?: Array<AttemptDto>;
     clientId?: string;
@@ -1378,6 +1663,28 @@ export type DispatchPoolResponse = {
     updatedAt: string;
 };
 
+export type DispatchRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    dispatch: Dispatch;
+    functionId: string;
+    invocationId?: string;
+    payload: string;
+    requestCorrelationId?: string;
+    version: number;
+    [key: string]: unknown;
+};
+
+export type DispatchResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    jobId: string;
+};
+
 export type DocListResponse = {
     /**
      * A URL to the JSON Schema for this object.
@@ -1402,6 +1709,51 @@ export type DocSummary = {
     title: string;
 };
 
+export type DomainResponse = {
+    clientId?: string;
+    createdAt: string;
+    createdBy?: string;
+    id: string;
+    updatedAt: string;
+    zone: string;
+};
+
+export type EditPayloadRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * The new payload text (UTF-8, at most 256 KiB; valid JSON when the content type is JSON)
+     */
+    payload: string;
+    /**
+     * New media type; omit to keep the job's
+     */
+    payloadContentType?: string;
+    [key: string]: unknown;
+};
+
+export type EmitRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    data: string;
+    event: Event;
+    functionId: string;
+    version: number;
+    [key: string]: unknown;
+};
+
+export type EmitResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    eventId: string;
+};
+
 export type ErrorModel = {
     /**
      * A URL to the JSON Schema for this object.
@@ -1412,6 +1764,17 @@ export type ErrorModel = {
     };
     error: string;
     message: string;
+};
+
+export type Event = {
+    causationId?: string;
+    contentType?: string;
+    correlationId?: string;
+    dedupId: string;
+    messageGroup?: string;
+    source?: string;
+    subject?: string;
+    type: string;
 };
 
 export type EventFilterOption = {
@@ -1525,6 +1888,48 @@ export type FireNowResponse = {
     scheduledJobId: string;
 };
 
+export type Function = {
+    address: string;
+    applicationId: string;
+    clientId?: string;
+    config?: {
+        [key: string]: string;
+    };
+    db?: {
+        [key: string]: string;
+    };
+    id: string;
+    limits: Limits;
+    secrets?: {
+        [key: string]: string;
+    };
+    versions: Array<Version>;
+    warm: boolean;
+    webhookSecret?: string;
+};
+
+export type FunctionResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    address: string;
+    applicationCode: string;
+    applicationId: string;
+    clientId?: string;
+    createdAt: string;
+    createdBy?: string;
+    description?: string;
+    id: string;
+    limits: LimitsDto;
+    name: string;
+    pool?: string;
+    serviceAccountCode?: string;
+    serviceAccountId?: string;
+    updatedAt: string;
+    warm: boolean;
+};
+
 export type GrantAccessRequest = {
     /**
      * A URL to the JSON Schema for this object.
@@ -1550,6 +1955,21 @@ export type GrantPermissionRequest = {
      */
     readonly $schema?: string;
     permission: string;
+    [key: string]: unknown;
+};
+
+export type Heartbeat = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    budget: BudgetReport;
+    capabilities?: RunnerCapabilities;
+    pool: string;
+    revision: number;
+    runnerId: string;
+    startedAt: string;
+    versions: Array<VersionReport>;
     [key: string]: unknown;
 };
 
@@ -1601,6 +2021,86 @@ export type IdpRoleMappingResponse = {
     idpType: string;
     platformRoleName: string;
     updatedAt: string;
+};
+
+export type IntrospectResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    active: boolean;
+    client_id?: string;
+    email?: string;
+    exp?: number;
+    iat?: number;
+    iss?: string;
+    name?: string;
+    scope?: string;
+    sub?: string;
+    tier?: string;
+    token_type?: string;
+    type?: string;
+};
+
+export type InviteApplicationUserRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    clientId: string;
+    email: string;
+    inviteRedirectUri?: string;
+    name: string;
+    returnInviteLink?: boolean;
+    roles: Array<string>;
+    sendInvitation?: boolean;
+    [key: string]: unknown;
+};
+
+export type InviteApplicationUserResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    id: string;
+    invitationSent: boolean;
+    inviteLink?: string;
+};
+
+export type Jwk = {
+    alg: string;
+    e?: string;
+    kid?: string;
+    kty: string;
+    n?: string;
+    use: string;
+};
+
+export type JwksResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    keys: Array<Jwk>;
+};
+
+export type Kv = {
+    key: string;
+    value: string;
+};
+
+export type Limits = {
+    maxBodyBytes: number;
+    maxConcurrency: number;
+    memoryMb: number;
+    timeoutMs: number;
+};
+
+export type LimitsDto = {
+    maxBodyBytes?: number;
+    maxConcurrency?: number;
+    memoryMb?: number;
+    timeoutMs?: number;
 };
 
 export type LinkedOAuthClient = {
@@ -1670,6 +2170,11 @@ export type MappingResponse = {
     updatedAt: string;
 };
 
+export type Metadata = {
+    key: string;
+    value: string;
+};
+
 export type MetadataDto = {
     key: string;
     value: string;
@@ -1700,6 +2205,49 @@ export type MoveProviderResponse = {
      * OIDC-provisioned users converted back to internal auth (0 when moving to an OIDC provider)
      */
     usersReset: number;
+};
+
+export type MyApplicationResponse = {
+    baseUrl?: string;
+    code: string;
+    description?: string;
+    iconUrl?: string;
+    id: string;
+    logoMimeType?: string;
+    name: string;
+    website?: string;
+};
+
+export type MyApplicationsListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    applications: Array<MyApplicationResponse>;
+    clientId: string;
+    total: number;
+};
+
+export type MyClientResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    createdAt: string;
+    id: string;
+    identifier: string;
+    name: string;
+    status?: string;
+    updatedAt: string;
+};
+
+export type MyClientsListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    clients: Array<MyClientResponse>;
+    total: number;
 };
 
 export type NoteResponse = {
@@ -1748,6 +2296,52 @@ export type OAuthClientResponse = {
     redirectUris: Array<string>;
     serviceAccountPrincipalId?: string;
     updatedAt: string;
+};
+
+export type OAuthErrorBody = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    error: string;
+    error_description?: string;
+};
+
+export type OidcDiscoveryDocument = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    authorization_endpoint: string;
+    claims_supported: Array<string>;
+    code_challenge_methods_supported: Array<string>;
+    end_session_endpoint?: string;
+    grant_types_supported: Array<string>;
+    id_token_signing_alg_values_supported: Array<string>;
+    introspection_endpoint?: string;
+    issuer: string;
+    jwks_uri: string;
+    request_parameter_supported: boolean;
+    request_uri_parameter_supported: boolean;
+    response_types_supported: Array<string>;
+    revocation_endpoint?: string;
+    scopes_supported: Array<string>;
+    subject_types_supported: Array<string>;
+    token_endpoint: string;
+    token_endpoint_auth_methods_supported: Array<string>;
+    userinfo_endpoint?: string;
+};
+
+export type OffsetPageFunctionResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    data: Array<FunctionResponse>;
+    page: number;
+    size: number;
+    total: number;
+    total_pages: number;
 };
 
 export type OffsetPageScheduledJobInstanceResponse = {
@@ -2024,12 +2618,121 @@ export type ProvisionLoginClientRequest = {
     [key: string]: unknown;
 };
 
+export type PruneVersionsRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * Report what would be pruned and change nothing
+     */
+    dryRun?: boolean;
+    /**
+     * Untagged versions to keep (>= 1); omitted uses the platform setting FC_FUNCTIONS_KEEP_VERSIONS (default 20)
+     */
+    keep?: number;
+    [key: string]: unknown;
+};
+
+export type PruneVersionsResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * Stored artifacts removed because no remaining version references them
+     */
+    artifactsDeleted: number;
+    dryRun: boolean;
+    keep: number;
+    /**
+     * Versions deleted (would be deleted, on a dry run), oldest first
+     */
+    pruned: Array<PrunedVersionResponse>;
+    /**
+     * Untagged versions before pruning
+     */
+    untagged: number;
+};
+
+export type PrunedVersionResponse = {
+    digest: string;
+    number: number;
+};
+
 export type PublicAllowedResponse = {
     /**
      * A URL to the JSON Schema for this object.
      */
     readonly $schema?: string;
     origins: Array<string>;
+};
+
+export type PublishVersionRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * Lowercase hex sha256 of a previously-uploaded artifact
+     */
+    digest: string;
+    /**
+     * "wasm" (default) or "js"
+     */
+    runtime?: string;
+    [key: string]: unknown;
+};
+
+export type PutAliasRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    version: number;
+    [key: string]: unknown;
+};
+
+export type PutAliasResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    alias: AliasResponse;
+    wiring?: WiringResponse;
+};
+
+export type PutRouteRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * An existing alias name to route to; omitted routes to live
+     */
+    alias?: string;
+    /**
+     * Opt-in alias prefixes: for each prefix p, "p-<hostname>" serves alias p (live routes only; no hyphens)
+     */
+    aliasPrefixes?: Array<string>;
+    /**
+     * A lowercase DNS hostname covered by a claimed zone (no port, no wildcard)
+     */
+    hostname: string;
+    /**
+     * The path prefix routed to this function, e.g. "/" or "/webhooks"
+     */
+    pathPrefix: string;
+    [key: string]: unknown;
+};
+
+export type PutSettingRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    value: string;
+    [key: string]: unknown;
 };
 
 export type QueueConfig = {
@@ -2040,6 +2743,9 @@ export type QueueConfig = {
 };
 
 export type RawDispatchJobResponse = {
+    /**
+     * Delivery attempts made, the final one included; deferrals (ack=false, 429) are not attempts
+     */
     attemptCount: number;
     attemptHistoryCount: number;
     clientId?: string;
@@ -2168,15 +2874,273 @@ export type RequestSummary = {
     unsignedReason?: string;
 };
 
+export type RequeueByFilterPreviewRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * CSV of aggregates
+     */
+    aggregates?: string;
+    /**
+     * CSV of application codes
+     */
+    applications?: string;
+    clientId?: string;
+    /**
+     * CSV of client ids
+     */
+    clientIds?: string;
+    code?: string;
+    /**
+     * CSV of codes
+     */
+    codes?: string;
+    /**
+     * Connection code, exact; a trailing * makes it a prefix. Resolved to connection ids first (400 TOO_MANY_MATCHES past 50); a code that matches nothing lists no jobs.
+     */
+    connectionCode?: string;
+    /**
+     * Jobs delivered through this connection: the jobs of its subscriptions and the jobs that name the connection themselves (function dispatch).
+     */
+    connectionId?: string;
+    dispatchPoolId?: string;
+    /**
+     * Exact event type. A job's code is its event type for a job raised by an event (and the caller's own job code for an SDK or function-dispatched job), so this filters the same column as code, by an index that also orders by createdAt. Combines with eventTypes and codes (all must hold).
+     */
+    eventType?: string;
+    /**
+     * CSV of event types (at most 10; more is 400 TOO_MANY_EVENT_TYPES)
+     */
+    eventTypes?: string;
+    /**
+     * Exact message group
+     */
+    messageGroup?: string;
+    /**
+     * RFC3339 timestamp
+     */
+    since?: string;
+    /**
+     * Free-text source filter
+     */
+    source?: string;
+    status?: string;
+    /**
+     * CSV of statuses
+     */
+    statuses?: string;
+    /**
+     * CSV of subdomains
+     */
+    subdomains?: string;
+    /**
+     * Subscription code, exact; a trailing * makes it a prefix. Resolved to subscription ids first (400 TOO_MANY_MATCHES past 200); a code that matches nothing lists no jobs.
+     */
+    subscriptionCode?: string;
+    subscriptionId?: string;
+    /**
+     * CSV of subscription ids (at most 50; more is 400 TOO_MANY_SUBSCRIPTION_IDS). Combines with subscriptionId.
+     */
+    subscriptionIds?: string;
+    /**
+     * Subscription name, exact and case-insensitive; a trailing * makes it a prefix. Resolved like subscriptionCode.
+     */
+    subscriptionName?: string;
+    /**
+     * RFC3339 timestamp
+     */
+    until?: string;
+    [key: string]: unknown;
+};
+
+export type RequeueByFilterPreviewResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * count broken down by status
+     */
+    byStatus: {
+        [key: string]: number;
+    };
+    /**
+     * COMPLETED jobs the filter matches that the caller can see. A requeue skips them; they are redriven only with redriveCompleted and confirmRedriveCompleted
+     */
+    completedCount: number;
+    /**
+     * Jobs the filter matches in the window that the caller can see
+     */
+    count: number;
+    /**
+     * How many of them a requeue would reset for this caller (not COMPLETED, not in flight); send it back as confirmCount
+     */
+    eligibleCount: number;
+    /**
+     * QUEUED or PROCESSING jobs the filter matches; a requeue never resets them
+     */
+    inFlightCount: number;
+    /**
+     * eligibleCount + completedCount: the confirmCount of a request that also redrives COMPLETED jobs
+     */
+    redriveEligibleCount: number;
+    /**
+     * The created_at window the counts cover
+     */
+    window: WindowResponse;
+};
+
+export type RequeueByFilterRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * CSV of aggregates
+     */
+    aggregates?: string;
+    /**
+     * CSV of application codes
+     */
+    applications?: string;
+    clientId?: string;
+    /**
+     * CSV of client ids
+     */
+    clientIds?: string;
+    code?: string;
+    /**
+     * CSV of codes
+     */
+    codes?: string;
+    /**
+     * The eligibleCount the caller was shown (redriveEligibleCount when redriveCompleted). If more jobs would be reset now, nothing is reset and the response is 409 FILTER_MATCH_CHANGED.
+     */
+    confirmCount: number;
+    /**
+     * The literal REDRIVE, confirming redriveCompleted.
+     */
+    confirmRedriveCompleted?: string;
+    /**
+     * Connection code, exact; a trailing * makes it a prefix. Resolved to connection ids first (400 TOO_MANY_MATCHES past 50); a code that matches nothing lists no jobs.
+     */
+    connectionCode?: string;
+    /**
+     * Jobs delivered through this connection: the jobs of its subscriptions and the jobs that name the connection themselves (function dispatch).
+     */
+    connectionId?: string;
+    dispatchPoolId?: string;
+    /**
+     * Exact event type. A job's code is its event type for a job raised by an event (and the caller's own job code for an SDK or function-dispatched job), so this filters the same column as code, by an index that also orders by createdAt. Combines with eventTypes and codes (all must hold).
+     */
+    eventType?: string;
+    /**
+     * CSV of event types (at most 10; more is 400 TOO_MANY_EVENT_TYPES)
+     */
+    eventTypes?: string;
+    /**
+     * Most jobs to reset in this request (default and maximum 10000)
+     */
+    limit?: number;
+    /**
+     * Exact message group
+     */
+    messageGroup?: string;
+    /**
+     * Also re-deliver the COMPLETED jobs the filter matches. Needs confirmRedriveCompleted=REDRIVE and the dispatch-job:redrive-completed permission (403 without it). Without both fields COMPLETED jobs are skipped and counted in skippedCompleted.
+     */
+    redriveCompleted?: boolean;
+    /**
+     * RFC3339 timestamp
+     */
+    since?: string;
+    /**
+     * Free-text source filter
+     */
+    source?: string;
+    status?: string;
+    /**
+     * CSV of statuses
+     */
+    statuses?: string;
+    /**
+     * CSV of subdomains
+     */
+    subdomains?: string;
+    /**
+     * Subscription code, exact; a trailing * makes it a prefix. Resolved to subscription ids first (400 TOO_MANY_MATCHES past 200); a code that matches nothing lists no jobs.
+     */
+    subscriptionCode?: string;
+    subscriptionId?: string;
+    /**
+     * CSV of subscription ids (at most 50; more is 400 TOO_MANY_SUBSCRIPTION_IDS). Combines with subscriptionId.
+     */
+    subscriptionIds?: string;
+    /**
+     * Subscription name, exact and case-insensitive; a trailing * makes it a prefix. Resolved like subscriptionCode.
+     */
+    subscriptionName?: string;
+    /**
+     * RFC3339 timestamp
+     */
+    until?: string;
+    [key: string]: unknown;
+};
+
+export type RequeueByFilterResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * How many of them were COMPLETED jobs re-delivered
+     */
+    redriven: number;
+    /**
+     * Eligible jobs still matching after the run; run again to continue
+     */
+    remaining: number;
+    /**
+     * Jobs reset to PENDING (redriven COMPLETED jobs included)
+     */
+    requeued: number;
+    /**
+     * COMPLETED matches left alone because the redrive was not requested and confirmed
+     */
+    skippedCompleted: number;
+    /**
+     * QUEUED or PROCESSING matches left alone (never reset)
+     */
+    skippedInFlight: number;
+    /**
+     * The run stopped at its limit (or at confirmCount) with eligible jobs left
+     */
+    truncated: boolean;
+    /**
+     * The created_at window the run was held to
+     */
+    window: WindowResponse;
+};
+
 export type RequeueRequest = {
     /**
      * A URL to the JSON Schema for this object.
      */
     readonly $schema?: string;
     /**
-     * Dispatch job ids to reset to PENDING for re-dispatch
+     * The literal REDRIVE, confirming redriveCompleted. Without both fields, COMPLETED jobs are skipped.
+     */
+    confirmRedriveCompleted?: string;
+    /**
+     * Dispatch job ids to reset to PENDING for re-dispatch. QUEUED and PROCESSING jobs are never reset; COMPLETED jobs only with redriveCompleted and confirmRedriveCompleted. Skipped jobs are reported, not an error.
      */
     ids: Array<string>;
+    /**
+     * Also re-deliver COMPLETED jobs. Needs confirmRedriveCompleted=REDRIVE and the dispatch-job:redrive-completed permission (403 without it).
+     */
+    redriveCompleted?: boolean;
     [key: string]: unknown;
 };
 
@@ -2185,7 +3149,46 @@ export type RequeueResponse = {
      * A URL to the JSON Schema for this object.
      */
     readonly $schema?: string;
+    /**
+     * How many of them were COMPLETED jobs re-delivered (0 unless the request redrove)
+     */
+    redriven: number;
+    /**
+     * Jobs reset to PENDING (redriven COMPLETED jobs included)
+     */
     requeued: number;
+    /**
+     * The skipped jobs, with the reason
+     */
+    skipped: Array<SkippedJobResponse>;
+    /**
+     * COMPLETED jobs left alone because the redrive was not requested and confirmed
+     */
+    skippedCompleted: number;
+    /**
+     * QUEUED or PROCESSING jobs left alone
+     */
+    skippedInFlight: number;
+};
+
+export type ResendInvitationRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    inviteRedirectUri?: string;
+    returnInviteLink?: boolean;
+    sendInvitation?: boolean;
+    [key: string]: unknown;
+};
+
+export type ResendInvitationResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    expiresAt?: string;
+    inviteLink?: string;
 };
 
 export type ResetPasswordRequest = {
@@ -2270,6 +3273,30 @@ export type RotateOAuthClientSecretResponse = {
     previousSecretExpiresAt?: string;
 };
 
+export type Route = {
+    address: string;
+    alias?: string;
+    aliasPrefixes?: Array<string>;
+    hostname: string;
+    pathPrefix: string;
+};
+
+export type RouteResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    alias?: string;
+    aliasPrefixes: Array<string>;
+    createdAt: string;
+    createdBy?: string;
+    functionId: string;
+    hostname: string;
+    id: string;
+    pathPrefix: string;
+    updatedAt: string;
+};
+
 export type RouterConfig = {
     /**
      * A URL to the JSON Schema for this object.
@@ -2277,6 +3304,16 @@ export type RouterConfig = {
     readonly $schema?: string;
     processingPools: Array<PoolConfig>;
     queues: Array<QueueConfig>;
+};
+
+export type RunnerCapabilities = {
+    extra?: {
+        [key: string]: unknown;
+    };
+    protocol: number;
+    runnerKind?: string;
+    runtimes: Array<string>;
+    version?: string;
 };
 
 export type ScheduledJobInstanceLogResponse = {
@@ -2463,6 +3500,26 @@ export type SetPropertyRequest = {
      */
     valueType?: string;
     [key: string]: unknown;
+};
+
+export type SettingResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    key: string;
+    kind: string;
+    updatedAt: string;
+    value?: string;
+};
+
+export type SkippedJobResponse = {
+    id: string;
+    /**
+     * IN_FLIGHT: QUEUED or PROCESSING, never reset. COMPLETED_REDRIVE_NOT_CONFIRMED: completed jobs are redriven only with redriveCompleted and confirmRedriveCompleted.
+     */
+    reason: 'IN_FLIGHT' | 'COMPLETED_REDRIVE_NOT_CONFIRMED';
+    status: string;
 };
 
 export type SpecVersionResponse = {
@@ -2664,7 +3721,7 @@ export type SyncPrincipalInputRequest = {
     email: string;
     name: string;
     /**
-     * Pre-hashed password (bcrypt/argon2i/argon2id), stored verbatim; migrated on first login
+     * Pre-hashed password (bcrypt/argon2i/argon2id), stored verbatim on a user the sync creates; migrated on first login. Never applied to an existing user (reported in passwordHashIgnored).
      */
     passwordHash?: string;
     /**
@@ -2727,6 +3784,10 @@ export type SyncResultResponse = {
     applicationCode: string;
     created: number;
     deleted: number;
+    /**
+     * Principal sync only: emails whose passwordHash was ignored because the user already exists (omitted when none)
+     */
+    passwordHashIgnored?: Array<string>;
     /**
      * Principal sync only: role names that are not roles and so were not assigned to anyone (lower-cased, each once, in payload order; omitted when none). The rest of the sync applied.
      */
@@ -2845,7 +3906,7 @@ export type SyncUserInput = {
      */
     name: string;
     /**
-     * Pre-hashed password (bcrypt/argon2i/argon2id), stored verbatim; migrated on first login. Omit to leave any existing password untouched.
+     * Pre-hashed password (bcrypt/argon2i/argon2id), stored verbatim on a user the sync creates; migrated on first login. Never applied to an existing user (reported in passwordHashIgnored).
      */
     passwordHash?: string;
     /**
@@ -2870,8 +3931,82 @@ export type SyncUsersResponse = {
     readonly $schema?: string;
     created: number;
     deleted: number;
+    /**
+     * Emails whose passwordHash was ignored because the user already exists (omitted when none)
+     */
+    passwordHashIgnored?: Array<string>;
     syncedEmails: Array<string>;
     updated: number;
+};
+
+export type TokenAuth = {
+    audience: string;
+    issuer: string;
+};
+
+export type TokenForm = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * Client id (omit when using HTTP Basic)
+     */
+    client_id?: string;
+    /**
+     * Client secret (omit when using HTTP Basic)
+     */
+    client_secret?: string;
+    /**
+     * authorization_code grant: the authorization code
+     */
+    code?: string;
+    /**
+     * authorization_code grant: PKCE verifier
+     */
+    code_verifier?: string;
+    /**
+     * OAuth grant type
+     */
+    grant_type: 'authorization_code' | 'refresh_token' | 'client_credentials';
+    /**
+     * authorization_code grant: the redirect URI used at /oauth/authorize
+     */
+    redirect_uri?: string;
+    /**
+     * refresh_token grant: the refresh token
+     */
+    refresh_token?: string;
+    scope?: string;
+    [key: string]: unknown;
+};
+
+export type TokenIntrospectForm = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    client_id?: string;
+    client_secret?: string;
+    token: string;
+    [key: string]: unknown;
+};
+
+export type TokenResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    access_token: string;
+    expires_in: number;
+    id_token?: string;
+    /**
+     * Seconds until the refresh token family's absolute deadline (present with refresh_token)
+     */
+    refresh_expires_in?: number;
+    refresh_token?: string;
+    scope?: string;
+    token_type: string;
 };
 
 export type UpdateAnchorDomainRequest = {
@@ -2942,6 +4077,7 @@ export type UpdateConnectionRequest = {
     description?: string;
     externalId?: string;
     name: string;
+    serviceAccountId?: string;
     status?: string;
     [key: string]: unknown;
 };
@@ -2975,6 +4111,30 @@ export type UpdateEventTypeRequest = {
     clientScoped?: boolean;
     description?: string;
     name: string;
+    [key: string]: unknown;
+};
+
+export type UpdateFunctionRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * Set true to move the function back to the default runner pool
+     */
+    clearPool?: boolean;
+    /**
+     * Set true to return the function to its application's service account
+     */
+    clearServiceAccount?: boolean;
+    description?: string;
+    limits?: LimitsDto;
+    pool?: string;
+    /**
+     * Set the webhook verifier service account (id or code); must exist, be active and be reachable by the caller
+     */
+    serviceAccountId?: string;
+    warm?: boolean;
     [key: string]: unknown;
 };
 
@@ -3115,9 +4275,15 @@ export type UpdateServiceAccountRequest = {
      * A URL to the JSON Schema for this object.
      */
     readonly $schema?: string;
+    /**
+     * Client links; replaces the set when present (an empty array clears it). Their count decides the token tier.
+     */
     clientIds?: Array<string>;
     description?: string;
     name?: string;
+    /**
+     * Descriptive tier: ANCHOR (no clientIds), CLIENT (one) or PARTNER (several). Tokens follow the client links, so a scope that disagrees with them is refused 400 SCOPE_REACH_MISMATCH; change both together, or omit it.
+     */
     scope?: string;
     webhookCredentials?: WebhookCredentialsDto;
     [key: string]: unknown;
@@ -3149,6 +4315,59 @@ export type UpdateSubscriptionRequest = {
     [key: string]: unknown;
 };
 
+export type UserInfoResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    applications: Array<string>;
+    client_id?: string;
+    clients: Array<string>;
+    email?: string;
+    name: string;
+    roles: Array<string>;
+    scope: string;
+    sub: string;
+    tier: string;
+    type: string;
+};
+
+export type Version = {
+    abi: number;
+    describe: unknown;
+    digest: string;
+    number: number;
+    roles: Array<string>;
+    runtime?: string;
+};
+
+export type VersionReport = {
+    functionId: string;
+    number: number;
+    reason?: string;
+    state: string;
+};
+
+export type VersionResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    abi: number;
+    createdAt: string;
+    describe: unknown;
+    digest: string;
+    failure?: unknown;
+    functionId: string;
+    id: string;
+    number: number;
+    publishedBy?: string;
+    readyAt?: string;
+    runtime: string;
+    sizeBytes: number;
+    status: string;
+};
+
 export type WebauthnAuthenticateCompleteResponse = {
     /**
      * A URL to the JSON Schema for this object.
@@ -3176,6 +4395,53 @@ export type WebhookCredentialsDto = {
     signingSecret?: string;
     token?: string;
     username?: string;
+};
+
+export type WhoamiResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    accessibleApplicationIds: Array<string>;
+    accessibleClientIds: Array<string>;
+    active: boolean;
+    allApplications: boolean;
+    email?: string;
+    name: string;
+    permissions: Array<string>;
+    principalId: string;
+    principalType: string;
+    roles: Array<string>;
+    scope: string;
+};
+
+export type WindowResponse = {
+    /**
+     * true when the server supplied a bound the request did not (no since/until: the last 24 hours)
+     */
+    defaulted: boolean;
+    /**
+     * Start of the window (inclusive)
+     */
+    from: string;
+    /**
+     * End of the window; now when the request gave no until
+     */
+    to: string;
+};
+
+export type WiringResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    dispatchPoolCode?: string;
+    schedulesCreated?: number;
+    schedulesDeleted?: number;
+    schedulesUpdated?: number;
+    subscriptionsCreated?: number;
+    subscriptionsDeleted?: number;
+    subscriptionsUpdated?: number;
 };
 
 export type WriteInstanceLogRequest = {
@@ -3251,6 +4517,13 @@ export type ApplicationFilterListResponseWritable = {
     applicationCodes: Array<string>;
 };
 
+export type ApplicationInvitationListWritable = {
+    invitations: Array<ApplicationInvitation>;
+    page: number;
+    pageSize: number;
+    total: number;
+};
+
 export type ApplicationListResponseWritable = {
     applications: Array<ApplicationResponseWritable>;
     total: number;
@@ -3288,9 +4561,30 @@ export type ApplicationRolesResponseWritable = {
     roles: Array<string>;
 };
 
+export type ApplicationUserWritable = {
+    active: boolean;
+    clientId: string;
+    createdAt: string;
+    email: string;
+    id: string;
+    idpType: string;
+    invitation?: string;
+    lastLoginAt?: string;
+    name: string;
+    roles: Array<string>;
+};
+
+export type ApplicationUserListWritable = {
+    page: number;
+    pageSize: number;
+    total: number;
+    users: Array<ApplicationUserWritable>;
+};
+
 export type AssignApplicationAccessRequestWritable = {
     allApplications?: boolean;
     applicationIds: Array<string>;
+    confirmSelfRestriction?: boolean;
     [key: string]: unknown;
 };
 
@@ -3318,6 +4612,15 @@ export type AttachServiceAccountRequestWritable = {
     serviceAccountCode: string;
     serviceAccountId: string;
     [key: string]: unknown;
+};
+
+export type AuditBatchRequestWritable = {
+    items: Array<AuditBatchItem>;
+    [key: string]: unknown;
+};
+
+export type AuditBatchResponseWritable = {
+    results: Array<AuditBatchResult>;
 };
 
 export type AuditLogApplicationIdsResponseWritable = {
@@ -3602,6 +4905,38 @@ export type CreateConnectionRequestWritable = {
     [key: string]: unknown;
 };
 
+export type CreateDispatchJobRequestWritable = {
+    clientCode?: string;
+    clientId?: string;
+    code: string;
+    correlationId?: string;
+    dataOnly?: boolean;
+    descriptor?: string;
+    dispatchPoolId?: string;
+    eventId?: string;
+    externalId?: string;
+    idempotencyKey?: string;
+    kind?: string;
+    maxRetries?: number;
+    messageGroup?: string;
+    metadata?: {
+        [key: string]: string;
+    };
+    mode?: string;
+    payload: string;
+    payloadContentType?: string;
+    queue?: string;
+    retryStrategy?: string;
+    sequence?: number;
+    serviceAccountId: string;
+    source?: string;
+    subject?: string;
+    subscriptionId?: string;
+    targetUrl: string;
+    timeoutSeconds?: number;
+    [key: string]: unknown;
+};
+
 export type CreateDispatchPoolRequestWritable = {
     clientId?: string;
     /**
@@ -3618,6 +4953,18 @@ export type CreateDispatchPoolRequestWritable = {
      * Messages per minute (nil = no rate limit)
      */
     rateLimit?: number;
+    [key: string]: unknown;
+};
+
+export type CreateDomainRequestWritable = {
+    /**
+     * Omitted claims a platform-owned zone (anchor only)
+     */
+    clientId?: string;
+    /**
+     * The claimed hostname zone (e.g. "acme.example.com")
+     */
+    zone: string;
     [key: string]: unknown;
 };
 
@@ -3699,6 +5046,30 @@ export type CreateEventTypeRequestWritable = {
      * Optional JSON Schema for the initial spec version
      */
     schema?: unknown;
+    [key: string]: unknown;
+};
+
+export type CreateFunctionRequestWritable = {
+    /**
+     * Owning application id
+     */
+    applicationId: string;
+    clientId?: string;
+    description?: string;
+    limits?: LimitsDto;
+    /**
+     * Function name (lowercase, alphanumeric, hyphens; matches ^[a-z][a-z0-9-]{0,62}$)
+     */
+    name: string;
+    /**
+     * The runner pool that hosts the function (FC_FUNCTIONS_POOL on its runners); omitted means the default pool. Not the dispatch pool, which is always the function's own.
+     */
+    pool?: string;
+    /**
+     * Optional webhook verifier identity: a service account id OR code. Its signing secret is what this function's webhook endpoints verify deliveries with. Omitted means the application's service account.
+     */
+    serviceAccountId?: string;
+    warm?: boolean;
     [key: string]: unknown;
 };
 
@@ -3906,6 +5277,9 @@ export type CreateServiceAccountRequestWritable = {
     code: string;
     description?: string;
     name: string;
+    /**
+     * Descriptive tier: ANCHOR (no clientIds), CLIENT (one) or PARTNER (several). Tokens follow the client links, so a scope that disagrees with them is refused 400 SCOPE_REACH_MISMATCH; change both together, or omit it.
+     */
     scope?: string;
     webhookCredentials?: WebhookCredentialsDto;
     [key: string]: unknown;
@@ -3981,21 +5355,47 @@ export type DeliveryPlanWritable = {
     request: RequestSummary;
 };
 
+export type DesiredWritable = {
+    auth: TokenAuth;
+    functions: Array<Function>;
+    pool: string;
+    revision: number;
+    routes?: Array<Route>;
+};
+
 export type DeveloperUserListResponseWritable = {
     principals: Array<PrincipalResponseWritable>;
     total: number;
+};
+
+export type DispatchJobBatchRequestWritable = {
+    items: Array<BatchItem>;
+    [key: string]: unknown;
+};
+
+export type DispatchJobBatchResponseWritable = {
+    results: Array<DispatchJobBatchResult>;
+};
+
+export type DispatchJobCreatedResponseWritable = {
+    id: string;
 };
 
 export type DispatchJobFilterOptionsResponseWritable = {
     clientIds: Array<string>;
     codes: Array<string>;
     dispatchPoolIds: Array<string>;
+    eventTypes: Array<string>;
     kinds: Array<string>;
     statuses: Array<string>;
     subscriptionIds: Array<string>;
+    window: WindowResponse;
 };
 
 export type DispatchJobResponseWritable = {
+    /**
+     * Delivery attempts made, the final one included; deferrals (ack=false, 429) are not attempts
+     */
     attemptCount: number;
     attempts?: Array<AttemptDto>;
     clientId?: string;
@@ -4055,6 +5455,20 @@ export type DispatchPoolResponseWritable = {
     updatedAt: string;
 };
 
+export type DispatchRequestWritable = {
+    dispatch: Dispatch;
+    functionId: string;
+    invocationId?: string;
+    payload: string;
+    requestCorrelationId?: string;
+    version: number;
+    [key: string]: unknown;
+};
+
+export type DispatchResponseWritable = {
+    jobId: string;
+};
+
 export type DocListResponseWritable = {
     applications: Array<AppDocsGroup>;
     platform: Array<DocSummary>;
@@ -4064,6 +5478,30 @@ export type DocResponseWritable = {
     content: string;
     slug: string;
     title: string;
+};
+
+export type EditPayloadRequestWritable = {
+    /**
+     * The new payload text (UTF-8, at most 256 KiB; valid JSON when the content type is JSON)
+     */
+    payload: string;
+    /**
+     * New media type; omit to keep the job's
+     */
+    payloadContentType?: string;
+    [key: string]: unknown;
+};
+
+export type EmitRequestWritable = {
+    data: string;
+    event: Event;
+    functionId: string;
+    version: number;
+    [key: string]: unknown;
+};
+
+export type EmitResponseWritable = {
+    eventId: string;
 };
 
 export type ErrorModelWritable = {
@@ -4134,6 +5572,24 @@ export type FireNowResponseWritable = {
     scheduledJobId: string;
 };
 
+export type FunctionResponseWritable = {
+    address: string;
+    applicationCode: string;
+    applicationId: string;
+    clientId?: string;
+    createdAt: string;
+    createdBy?: string;
+    description?: string;
+    id: string;
+    limits: LimitsDto;
+    name: string;
+    pool?: string;
+    serviceAccountCode?: string;
+    serviceAccountId?: string;
+    updatedAt: string;
+    warm: boolean;
+};
+
 export type GrantAccessRequestWritable = {
     canWrite: boolean;
     roleCode: string;
@@ -4147,6 +5603,17 @@ export type GrantClientAccessRequestWritable = {
 
 export type GrantPermissionRequestWritable = {
     permission: string;
+    [key: string]: unknown;
+};
+
+export type HeartbeatWritable = {
+    budget: BudgetReport;
+    capabilities?: RunnerCapabilities;
+    pool: string;
+    revision: number;
+    runnerId: string;
+    startedAt: string;
+    versions: Array<VersionReport>;
     [key: string]: unknown;
 };
 
@@ -4177,6 +5644,42 @@ export type IdentityProviderResponseWritable = {
 
 export type IdpRoleMappingListResponseWritable = {
     items: Array<IdpRoleMappingResponse>;
+};
+
+export type IntrospectResponseWritable = {
+    active: boolean;
+    client_id?: string;
+    email?: string;
+    exp?: number;
+    iat?: number;
+    iss?: string;
+    name?: string;
+    scope?: string;
+    sub?: string;
+    tier?: string;
+    token_type?: string;
+    type?: string;
+};
+
+export type InviteApplicationUserRequestWritable = {
+    clientId: string;
+    email: string;
+    inviteRedirectUri?: string;
+    name: string;
+    returnInviteLink?: boolean;
+    roles: Array<string>;
+    sendInvitation?: boolean;
+    [key: string]: unknown;
+};
+
+export type InviteApplicationUserResponseWritable = {
+    id: string;
+    invitationSent: boolean;
+    inviteLink?: string;
+};
+
+export type JwksResponseWritable = {
+    keys: Array<Jwk>;
 };
 
 export type ListOutputBodyWritable = {
@@ -4231,6 +5734,26 @@ export type MoveProviderResponseWritable = {
     usersReset: number;
 };
 
+export type MyApplicationsListResponseWritable = {
+    applications: Array<MyApplicationResponse>;
+    clientId: string;
+    total: number;
+};
+
+export type MyClientResponseWritable = {
+    createdAt: string;
+    id: string;
+    identifier: string;
+    name: string;
+    status?: string;
+    updatedAt: string;
+};
+
+export type MyClientsListResponseWritable = {
+    clients: Array<MyClientResponseWritable>;
+    total: number;
+};
+
 export type OAuthClientListResponseWritable = {
     clients: Array<OAuthClientResponseWritable>;
 };
@@ -4257,6 +5780,40 @@ export type OAuthClientResponseWritable = {
     redirectUris: Array<string>;
     serviceAccountPrincipalId?: string;
     updatedAt: string;
+};
+
+export type OAuthErrorBodyWritable = {
+    error: string;
+    error_description?: string;
+};
+
+export type OidcDiscoveryDocumentWritable = {
+    authorization_endpoint: string;
+    claims_supported: Array<string>;
+    code_challenge_methods_supported: Array<string>;
+    end_session_endpoint?: string;
+    grant_types_supported: Array<string>;
+    id_token_signing_alg_values_supported: Array<string>;
+    introspection_endpoint?: string;
+    issuer: string;
+    jwks_uri: string;
+    request_parameter_supported: boolean;
+    request_uri_parameter_supported: boolean;
+    response_types_supported: Array<string>;
+    revocation_endpoint?: string;
+    scopes_supported: Array<string>;
+    subject_types_supported: Array<string>;
+    token_endpoint: string;
+    token_endpoint_auth_methods_supported: Array<string>;
+    userinfo_endpoint?: string;
+};
+
+export type OffsetPageFunctionResponseWritable = {
+    data: Array<FunctionResponseWritable>;
+    page: number;
+    size: number;
+    total: number;
+    total_pages: number;
 };
 
 export type OffsetPageScheduledJobInstanceResponseWritable = {
@@ -4414,8 +5971,84 @@ export type ProvisionLoginClientRequestWritable = {
     [key: string]: unknown;
 };
 
+export type PruneVersionsRequestWritable = {
+    /**
+     * Report what would be pruned and change nothing
+     */
+    dryRun?: boolean;
+    /**
+     * Untagged versions to keep (>= 1); omitted uses the platform setting FC_FUNCTIONS_KEEP_VERSIONS (default 20)
+     */
+    keep?: number;
+    [key: string]: unknown;
+};
+
+export type PruneVersionsResponseWritable = {
+    /**
+     * Stored artifacts removed because no remaining version references them
+     */
+    artifactsDeleted: number;
+    dryRun: boolean;
+    keep: number;
+    /**
+     * Versions deleted (would be deleted, on a dry run), oldest first
+     */
+    pruned: Array<PrunedVersionResponse>;
+    /**
+     * Untagged versions before pruning
+     */
+    untagged: number;
+};
+
 export type PublicAllowedResponseWritable = {
     origins: Array<string>;
+};
+
+export type PublishVersionRequestWritable = {
+    /**
+     * Lowercase hex sha256 of a previously-uploaded artifact
+     */
+    digest: string;
+    /**
+     * "wasm" (default) or "js"
+     */
+    runtime?: string;
+    [key: string]: unknown;
+};
+
+export type PutAliasRequestWritable = {
+    version: number;
+    [key: string]: unknown;
+};
+
+export type PutAliasResponseWritable = {
+    alias: AliasResponse;
+    wiring?: WiringResponseWritable;
+};
+
+export type PutRouteRequestWritable = {
+    /**
+     * An existing alias name to route to; omitted routes to live
+     */
+    alias?: string;
+    /**
+     * Opt-in alias prefixes: for each prefix p, "p-<hostname>" serves alias p (live routes only; no hyphens)
+     */
+    aliasPrefixes?: Array<string>;
+    /**
+     * A lowercase DNS hostname covered by a claimed zone (no port, no wildcard)
+     */
+    hostname: string;
+    /**
+     * The path prefix routed to this function, e.g. "/" or "/webhooks"
+     */
+    pathPrefix: string;
+    [key: string]: unknown;
+};
+
+export type PutSettingRequestWritable = {
+    value: string;
+    [key: string]: unknown;
 };
 
 export type RawEventResponseWritable = {
@@ -4465,16 +6098,289 @@ export type RegisterCompleteResponseWritable = {
     credentialId: string;
 };
 
+export type RequeueByFilterPreviewRequestWritable = {
+    /**
+     * CSV of aggregates
+     */
+    aggregates?: string;
+    /**
+     * CSV of application codes
+     */
+    applications?: string;
+    clientId?: string;
+    /**
+     * CSV of client ids
+     */
+    clientIds?: string;
+    code?: string;
+    /**
+     * CSV of codes
+     */
+    codes?: string;
+    /**
+     * Connection code, exact; a trailing * makes it a prefix. Resolved to connection ids first (400 TOO_MANY_MATCHES past 50); a code that matches nothing lists no jobs.
+     */
+    connectionCode?: string;
+    /**
+     * Jobs delivered through this connection: the jobs of its subscriptions and the jobs that name the connection themselves (function dispatch).
+     */
+    connectionId?: string;
+    dispatchPoolId?: string;
+    /**
+     * Exact event type. A job's code is its event type for a job raised by an event (and the caller's own job code for an SDK or function-dispatched job), so this filters the same column as code, by an index that also orders by createdAt. Combines with eventTypes and codes (all must hold).
+     */
+    eventType?: string;
+    /**
+     * CSV of event types (at most 10; more is 400 TOO_MANY_EVENT_TYPES)
+     */
+    eventTypes?: string;
+    /**
+     * Exact message group
+     */
+    messageGroup?: string;
+    /**
+     * RFC3339 timestamp
+     */
+    since?: string;
+    /**
+     * Free-text source filter
+     */
+    source?: string;
+    status?: string;
+    /**
+     * CSV of statuses
+     */
+    statuses?: string;
+    /**
+     * CSV of subdomains
+     */
+    subdomains?: string;
+    /**
+     * Subscription code, exact; a trailing * makes it a prefix. Resolved to subscription ids first (400 TOO_MANY_MATCHES past 200); a code that matches nothing lists no jobs.
+     */
+    subscriptionCode?: string;
+    subscriptionId?: string;
+    /**
+     * CSV of subscription ids (at most 50; more is 400 TOO_MANY_SUBSCRIPTION_IDS). Combines with subscriptionId.
+     */
+    subscriptionIds?: string;
+    /**
+     * Subscription name, exact and case-insensitive; a trailing * makes it a prefix. Resolved like subscriptionCode.
+     */
+    subscriptionName?: string;
+    /**
+     * RFC3339 timestamp
+     */
+    until?: string;
+    [key: string]: unknown;
+};
+
+export type RequeueByFilterPreviewResponseWritable = {
+    /**
+     * count broken down by status
+     */
+    byStatus: {
+        [key: string]: number;
+    };
+    /**
+     * COMPLETED jobs the filter matches that the caller can see. A requeue skips them; they are redriven only with redriveCompleted and confirmRedriveCompleted
+     */
+    completedCount: number;
+    /**
+     * Jobs the filter matches in the window that the caller can see
+     */
+    count: number;
+    /**
+     * How many of them a requeue would reset for this caller (not COMPLETED, not in flight); send it back as confirmCount
+     */
+    eligibleCount: number;
+    /**
+     * QUEUED or PROCESSING jobs the filter matches; a requeue never resets them
+     */
+    inFlightCount: number;
+    /**
+     * eligibleCount + completedCount: the confirmCount of a request that also redrives COMPLETED jobs
+     */
+    redriveEligibleCount: number;
+    /**
+     * The created_at window the counts cover
+     */
+    window: WindowResponse;
+};
+
+export type RequeueByFilterRequestWritable = {
+    /**
+     * CSV of aggregates
+     */
+    aggregates?: string;
+    /**
+     * CSV of application codes
+     */
+    applications?: string;
+    clientId?: string;
+    /**
+     * CSV of client ids
+     */
+    clientIds?: string;
+    code?: string;
+    /**
+     * CSV of codes
+     */
+    codes?: string;
+    /**
+     * The eligibleCount the caller was shown (redriveEligibleCount when redriveCompleted). If more jobs would be reset now, nothing is reset and the response is 409 FILTER_MATCH_CHANGED.
+     */
+    confirmCount: number;
+    /**
+     * The literal REDRIVE, confirming redriveCompleted.
+     */
+    confirmRedriveCompleted?: string;
+    /**
+     * Connection code, exact; a trailing * makes it a prefix. Resolved to connection ids first (400 TOO_MANY_MATCHES past 50); a code that matches nothing lists no jobs.
+     */
+    connectionCode?: string;
+    /**
+     * Jobs delivered through this connection: the jobs of its subscriptions and the jobs that name the connection themselves (function dispatch).
+     */
+    connectionId?: string;
+    dispatchPoolId?: string;
+    /**
+     * Exact event type. A job's code is its event type for a job raised by an event (and the caller's own job code for an SDK or function-dispatched job), so this filters the same column as code, by an index that also orders by createdAt. Combines with eventTypes and codes (all must hold).
+     */
+    eventType?: string;
+    /**
+     * CSV of event types (at most 10; more is 400 TOO_MANY_EVENT_TYPES)
+     */
+    eventTypes?: string;
+    /**
+     * Most jobs to reset in this request (default and maximum 10000)
+     */
+    limit?: number;
+    /**
+     * Exact message group
+     */
+    messageGroup?: string;
+    /**
+     * Also re-deliver the COMPLETED jobs the filter matches. Needs confirmRedriveCompleted=REDRIVE and the dispatch-job:redrive-completed permission (403 without it). Without both fields COMPLETED jobs are skipped and counted in skippedCompleted.
+     */
+    redriveCompleted?: boolean;
+    /**
+     * RFC3339 timestamp
+     */
+    since?: string;
+    /**
+     * Free-text source filter
+     */
+    source?: string;
+    status?: string;
+    /**
+     * CSV of statuses
+     */
+    statuses?: string;
+    /**
+     * CSV of subdomains
+     */
+    subdomains?: string;
+    /**
+     * Subscription code, exact; a trailing * makes it a prefix. Resolved to subscription ids first (400 TOO_MANY_MATCHES past 200); a code that matches nothing lists no jobs.
+     */
+    subscriptionCode?: string;
+    subscriptionId?: string;
+    /**
+     * CSV of subscription ids (at most 50; more is 400 TOO_MANY_SUBSCRIPTION_IDS). Combines with subscriptionId.
+     */
+    subscriptionIds?: string;
+    /**
+     * Subscription name, exact and case-insensitive; a trailing * makes it a prefix. Resolved like subscriptionCode.
+     */
+    subscriptionName?: string;
+    /**
+     * RFC3339 timestamp
+     */
+    until?: string;
+    [key: string]: unknown;
+};
+
+export type RequeueByFilterResponseWritable = {
+    /**
+     * How many of them were COMPLETED jobs re-delivered
+     */
+    redriven: number;
+    /**
+     * Eligible jobs still matching after the run; run again to continue
+     */
+    remaining: number;
+    /**
+     * Jobs reset to PENDING (redriven COMPLETED jobs included)
+     */
+    requeued: number;
+    /**
+     * COMPLETED matches left alone because the redrive was not requested and confirmed
+     */
+    skippedCompleted: number;
+    /**
+     * QUEUED or PROCESSING matches left alone (never reset)
+     */
+    skippedInFlight: number;
+    /**
+     * The run stopped at its limit (or at confirmCount) with eligible jobs left
+     */
+    truncated: boolean;
+    /**
+     * The created_at window the run was held to
+     */
+    window: WindowResponse;
+};
+
 export type RequeueRequestWritable = {
     /**
-     * Dispatch job ids to reset to PENDING for re-dispatch
+     * The literal REDRIVE, confirming redriveCompleted. Without both fields, COMPLETED jobs are skipped.
+     */
+    confirmRedriveCompleted?: string;
+    /**
+     * Dispatch job ids to reset to PENDING for re-dispatch. QUEUED and PROCESSING jobs are never reset; COMPLETED jobs only with redriveCompleted and confirmRedriveCompleted. Skipped jobs are reported, not an error.
      */
     ids: Array<string>;
+    /**
+     * Also re-deliver COMPLETED jobs. Needs confirmRedriveCompleted=REDRIVE and the dispatch-job:redrive-completed permission (403 without it).
+     */
+    redriveCompleted?: boolean;
     [key: string]: unknown;
 };
 
 export type RequeueResponseWritable = {
+    /**
+     * How many of them were COMPLETED jobs re-delivered (0 unless the request redrove)
+     */
+    redriven: number;
+    /**
+     * Jobs reset to PENDING (redriven COMPLETED jobs included)
+     */
     requeued: number;
+    /**
+     * The skipped jobs, with the reason
+     */
+    skipped: Array<SkippedJobResponse>;
+    /**
+     * COMPLETED jobs left alone because the redrive was not requested and confirmed
+     */
+    skippedCompleted: number;
+    /**
+     * QUEUED or PROCESSING jobs left alone
+     */
+    skippedInFlight: number;
+};
+
+export type ResendInvitationRequestWritable = {
+    inviteRedirectUri?: string;
+    returnInviteLink?: boolean;
+    sendInvitation?: boolean;
+    [key: string]: unknown;
+};
+
+export type ResendInvitationResponseWritable = {
+    expiresAt?: string;
+    inviteLink?: string;
 };
 
 export type ResetPasswordRequestWritable = {
@@ -4521,6 +6427,18 @@ export type RotateOAuthClientSecretResponseWritable = {
     clientId: string;
     clientSecret?: string;
     previousSecretExpiresAt?: string;
+};
+
+export type RouteResponseWritable = {
+    alias?: string;
+    aliasPrefixes: Array<string>;
+    createdAt: string;
+    createdBy?: string;
+    functionId: string;
+    hostname: string;
+    id: string;
+    pathPrefix: string;
+    updatedAt: string;
 };
 
 export type RouterConfigWritable = {
@@ -4645,6 +6563,13 @@ export type SetPropertyRequestWritable = {
     [key: string]: unknown;
 };
 
+export type SettingResponseWritable = {
+    key: string;
+    kind: string;
+    updatedAt: string;
+    value?: string;
+};
+
 export type StatusChangeRequestWritable = {
     reason: string;
     [key: string]: unknown;
@@ -4763,6 +6688,10 @@ export type SyncResultResponseWritable = {
     created: number;
     deleted: number;
     /**
+     * Principal sync only: emails whose passwordHash was ignored because the user already exists (omitted when none)
+     */
+    passwordHashIgnored?: Array<string>;
+    /**
      * Principal sync only: role names that are not roles and so were not assigned to anyone (lower-cased, each once, in payload order; omitted when none). The rest of the sync applied.
      */
     skippedRoles?: Array<string>;
@@ -4803,8 +6732,65 @@ export type SyncUsersRequestWritable = {
 export type SyncUsersResponseWritable = {
     created: number;
     deleted: number;
+    /**
+     * Emails whose passwordHash was ignored because the user already exists (omitted when none)
+     */
+    passwordHashIgnored?: Array<string>;
     syncedEmails: Array<string>;
     updated: number;
+};
+
+export type TokenFormWritable = {
+    /**
+     * Client id (omit when using HTTP Basic)
+     */
+    client_id?: string;
+    /**
+     * Client secret (omit when using HTTP Basic)
+     */
+    client_secret?: string;
+    /**
+     * authorization_code grant: the authorization code
+     */
+    code?: string;
+    /**
+     * authorization_code grant: PKCE verifier
+     */
+    code_verifier?: string;
+    /**
+     * OAuth grant type
+     */
+    grant_type: 'authorization_code' | 'refresh_token' | 'client_credentials';
+    /**
+     * authorization_code grant: the redirect URI used at /oauth/authorize
+     */
+    redirect_uri?: string;
+    /**
+     * refresh_token grant: the refresh token
+     */
+    refresh_token?: string;
+    scope?: string;
+    [key: string]: unknown;
+};
+
+export type TokenIntrospectFormWritable = {
+    client_id?: string;
+    client_secret?: string;
+    token: string;
+    [key: string]: unknown;
+};
+
+export type TokenResponseWritable = {
+    access_token: string;
+    expires_in: number;
+    id_token?: string;
+    /**
+     * Seconds until the refresh token family's absolute deadline (present with refresh_token)
+     */
+    refresh_expires_in?: number;
+    refresh_token?: string;
+    scope?: string;
+    token_type: string;
 };
 
 export type UpdateAnchorDomainRequestWritable = {
@@ -4851,6 +6837,7 @@ export type UpdateConnectionRequestWritable = {
     description?: string;
     externalId?: string;
     name: string;
+    serviceAccountId?: string;
     status?: string;
     [key: string]: unknown;
 };
@@ -4876,6 +6863,26 @@ export type UpdateEventTypeRequestWritable = {
     clientScoped?: boolean;
     description?: string;
     name: string;
+    [key: string]: unknown;
+};
+
+export type UpdateFunctionRequestWritable = {
+    /**
+     * Set true to move the function back to the default runner pool
+     */
+    clearPool?: boolean;
+    /**
+     * Set true to return the function to its application's service account
+     */
+    clearServiceAccount?: boolean;
+    description?: string;
+    limits?: LimitsDto;
+    pool?: string;
+    /**
+     * Set the webhook verifier service account (id or code); must exist, be active and be reachable by the caller
+     */
+    serviceAccountId?: string;
+    warm?: boolean;
     [key: string]: unknown;
 };
 
@@ -4980,9 +6987,15 @@ export type UpdateScheduledJobRequestWritable = {
 };
 
 export type UpdateServiceAccountRequestWritable = {
+    /**
+     * Client links; replaces the set when present (an empty array clears it). Their count decides the token tier.
+     */
     clientIds?: Array<string>;
     description?: string;
     name?: string;
+    /**
+     * Descriptive tier: ANCHOR (no clientIds), CLIENT (one) or PARTNER (several). Tokens follow the client links, so a scope that disagrees with them is refused 400 SCOPE_REACH_MISMATCH; change both together, or omit it.
+     */
     scope?: string;
     webhookCredentials?: WebhookCredentialsDto;
     [key: string]: unknown;
@@ -5010,11 +7023,64 @@ export type UpdateSubscriptionRequestWritable = {
     [key: string]: unknown;
 };
 
+export type UserInfoResponseWritable = {
+    applications: Array<string>;
+    client_id?: string;
+    clients: Array<string>;
+    email?: string;
+    name: string;
+    roles: Array<string>;
+    scope: string;
+    sub: string;
+    tier: string;
+    type: string;
+};
+
+export type VersionResponseWritable = {
+    abi: number;
+    createdAt: string;
+    describe: unknown;
+    digest: string;
+    failure?: unknown;
+    functionId: string;
+    id: string;
+    number: number;
+    publishedBy?: string;
+    readyAt?: string;
+    runtime: string;
+    sizeBytes: number;
+    status: string;
+};
+
 export type WebauthnAuthenticateCompleteResponseWritable = {
     email: string | null;
     name: string;
     principalId: string;
     roles: Array<string>;
+};
+
+export type WhoamiResponseWritable = {
+    accessibleApplicationIds: Array<string>;
+    accessibleClientIds: Array<string>;
+    active: boolean;
+    allApplications: boolean;
+    email?: string;
+    name: string;
+    permissions: Array<string>;
+    principalId: string;
+    principalType: string;
+    roles: Array<string>;
+    scope: string;
+};
+
+export type WiringResponseWritable = {
+    dispatchPoolCode?: string;
+    schedulesCreated?: number;
+    schedulesDeleted?: number;
+    schedulesUpdated?: number;
+    subscriptionsCreated?: number;
+    subscriptionsDeleted?: number;
+    subscriptionsUpdated?: number;
 };
 
 export type WriteInstanceLogRequestWritable = {
@@ -5026,6 +7092,56 @@ export type WriteInstanceLogRequestWritable = {
     metadata?: unknown;
     [key: string]: unknown;
 };
+
+export type JwksData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/.well-known/jwks.json';
+};
+
+export type JwksErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type JwksError = JwksErrors[keyof JwksErrors];
+
+export type JwksResponses = {
+    /**
+     * OK
+     */
+    200: JwksResponse;
+};
+
+export type JwksResponse2 = JwksResponses[keyof JwksResponses];
+
+export type OpenidConfigurationData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/.well-known/openid-configuration';
+};
+
+export type OpenidConfigurationErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type OpenidConfigurationError = OpenidConfigurationErrors[keyof OpenidConfigurationErrors];
+
+export type OpenidConfigurationResponses = {
+    /**
+     * OK
+     */
+    200: OidcDiscoveryDocument;
+};
+
+export type OpenidConfigurationResponse = OpenidConfigurationResponses[keyof OpenidConfigurationResponses];
 
 export type ListAnchorDomainsData = {
     body?: never;
@@ -5373,6 +7489,114 @@ export type SyncEventTypesResponses = {
 
 export type SyncEventTypesResponse = SyncEventTypesResponses[keyof SyncEventTypesResponses];
 
+export type ListApplicationInvitationsData = {
+    body?: never;
+    path: {
+        /**
+         * Application code
+         */
+        appCode: string;
+    };
+    query?: {
+        /**
+         * PENDING | EXPIRED; absent = both
+         */
+        status?: string;
+        /**
+         * 0-based page (default 0)
+         */
+        page?: number;
+        /**
+         * Page size (default 50, max 200)
+         */
+        pageSize?: number;
+    };
+    url: '/api/applications/{appCode}/invitations';
+};
+
+export type ListApplicationInvitationsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListApplicationInvitationsError = ListApplicationInvitationsErrors[keyof ListApplicationInvitationsErrors];
+
+export type ListApplicationInvitationsResponses = {
+    /**
+     * OK
+     */
+    200: ApplicationInvitationList;
+};
+
+export type ListApplicationInvitationsResponse = ListApplicationInvitationsResponses[keyof ListApplicationInvitationsResponses];
+
+export type RevokeApplicationInvitationData = {
+    body?: never;
+    path: {
+        /**
+         * Application code
+         */
+        appCode: string;
+        id: string;
+    };
+    query?: never;
+    url: '/api/applications/{appCode}/invitations/{id}';
+};
+
+export type RevokeApplicationInvitationErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type RevokeApplicationInvitationError = RevokeApplicationInvitationErrors[keyof RevokeApplicationInvitationErrors];
+
+export type RevokeApplicationInvitationResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type RevokeApplicationInvitationResponse = RevokeApplicationInvitationResponses[keyof RevokeApplicationInvitationResponses];
+
+export type ResendApplicationInvitationData = {
+    body: ResendInvitationRequestWritable;
+    path: {
+        /**
+         * Application code
+         */
+        appCode: string;
+        /**
+         * The invited user's id
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/api/applications/{appCode}/invitations/{id}/resend';
+};
+
+export type ResendApplicationInvitationErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ResendApplicationInvitationError = ResendApplicationInvitationErrors[keyof ResendApplicationInvitationErrors];
+
+export type ResendApplicationInvitationResponses = {
+    /**
+     * OK
+     */
+    200: ResendInvitationResponse;
+};
+
+export type ResendApplicationInvitationResponse = ResendApplicationInvitationResponses[keyof ResendApplicationInvitationResponses];
+
 export type SyncOpenapiData = {
     body: SyncOpenapiRequestWritable;
     path: {
@@ -5572,6 +7796,130 @@ export type SyncSubscriptionsResponses = {
 };
 
 export type SyncSubscriptionsResponse = SyncSubscriptionsResponses[keyof SyncSubscriptionsResponses];
+
+export type ListApplicationUsersData = {
+    body?: never;
+    path: {
+        /**
+         * Application code
+         */
+        appCode: string;
+    };
+    query?: {
+        /**
+         * Case-insensitive substring of name or email
+         */
+        q?: string;
+        /**
+         * true | false; absent = both
+         */
+        active?: string;
+        /**
+         * Only users homed at this client
+         */
+        clientId?: string;
+        /**
+         * CSV of the application's roles; users holding any
+         */
+        roles?: string;
+        /**
+         * 0-based page (default 0)
+         */
+        page?: number;
+        /**
+         * Page size (default 50, max 200)
+         */
+        pageSize?: number;
+        /**
+         * name | email | createdAt (default createdAt)
+         */
+        sortField?: string;
+        /**
+         * asc | desc (default asc)
+         */
+        sortOrder?: string;
+    };
+    url: '/api/applications/{appCode}/users';
+};
+
+export type ListApplicationUsersErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListApplicationUsersError = ListApplicationUsersErrors[keyof ListApplicationUsersErrors];
+
+export type ListApplicationUsersResponses = {
+    /**
+     * OK
+     */
+    200: ApplicationUserList;
+};
+
+export type ListApplicationUsersResponse = ListApplicationUsersResponses[keyof ListApplicationUsersResponses];
+
+export type InviteApplicationUserData = {
+    body: InviteApplicationUserRequestWritable;
+    path: {
+        /**
+         * Application code
+         */
+        appCode: string;
+    };
+    query?: never;
+    url: '/api/applications/{appCode}/users';
+};
+
+export type InviteApplicationUserErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type InviteApplicationUserError = InviteApplicationUserErrors[keyof InviteApplicationUserErrors];
+
+export type InviteApplicationUserResponses = {
+    /**
+     * Created
+     */
+    201: InviteApplicationUserResponse;
+};
+
+export type InviteApplicationUserResponse2 = InviteApplicationUserResponses[keyof InviteApplicationUserResponses];
+
+export type GetApplicationUserData = {
+    body?: never;
+    path: {
+        /**
+         * Application code
+         */
+        appCode: string;
+        id: string;
+    };
+    query?: never;
+    url: '/api/applications/{appCode}/users/{id}';
+};
+
+export type GetApplicationUserErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GetApplicationUserError = GetApplicationUserErrors[keyof GetApplicationUserErrors];
+
+export type GetApplicationUserResponses = {
+    /**
+     * OK
+     */
+    200: ApplicationUser;
+};
+
+export type GetApplicationUserResponse = GetApplicationUserResponses[keyof GetApplicationUserResponses];
 
 export type DeleteApplicationData = {
     body?: never;
@@ -5970,6 +8318,31 @@ export type AuditLogApplicationIdsResponses = {
 };
 
 export type AuditLogApplicationIdsResponse2 = AuditLogApplicationIdsResponses[keyof AuditLogApplicationIdsResponses];
+
+export type BatchIngestAuditLogsData = {
+    body: AuditBatchRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/audit-logs/batch';
+};
+
+export type BatchIngestAuditLogsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type BatchIngestAuditLogsError = BatchIngestAuditLogsErrors[keyof BatchIngestAuditLogsErrors];
+
+export type BatchIngestAuditLogsResponses = {
+    /**
+     * OK
+     */
+    200: AuditBatchResponse;
+};
+
+export type BatchIngestAuditLogsResponse = BatchIngestAuditLogsResponses[keyof BatchIngestAuditLogsResponses];
 
 export type AuditLogClientIdsData = {
     body?: never;
@@ -7008,12 +9381,6 @@ export type ListDispatchJobsData = {
          * Exact message group
          */
         messageGroup?: string;
-        limit?: number;
-        offset?: number;
-        /**
-         * Max rows (default 50, max 1000)
-         */
-        size?: number;
         /**
          * CSV of client ids
          */
@@ -7043,6 +9410,40 @@ export type ListDispatchJobsData = {
          */
         source?: string;
         /**
+         * Exact event type. A job's code is its event type for a job raised by an event (and the caller's own job code for an SDK or function-dispatched job), so this filters the same column as code, by an index that also orders by createdAt. Combines with eventTypes and codes (all must hold).
+         */
+        eventType?: string;
+        /**
+         * CSV of event types (at most 10; more is 400 TOO_MANY_EVENT_TYPES)
+         */
+        eventTypes?: string;
+        /**
+         * CSV of subscription ids (at most 50; more is 400 TOO_MANY_SUBSCRIPTION_IDS). Combines with subscriptionId.
+         */
+        subscriptionIds?: string;
+        /**
+         * Subscription code, exact; a trailing * makes it a prefix. Resolved to subscription ids first (400 TOO_MANY_MATCHES past 200); a code that matches nothing lists no jobs.
+         */
+        subscriptionCode?: string;
+        /**
+         * Subscription name, exact and case-insensitive; a trailing * makes it a prefix. Resolved like subscriptionCode.
+         */
+        subscriptionName?: string;
+        /**
+         * Jobs delivered through this connection: the jobs of its subscriptions and the jobs that name the connection themselves (function dispatch).
+         */
+        connectionId?: string;
+        /**
+         * Connection code, exact; a trailing * makes it a prefix. Resolved to connection ids first (400 TOO_MANY_MATCHES past 50); a code that matches nothing lists no jobs.
+         */
+        connectionCode?: string;
+        limit?: number;
+        offset?: number;
+        /**
+         * Max rows (default 50, max 1000)
+         */
+        size?: number;
+        /**
          * createdAt.asc | createdAt.desc (default)
          */
         sort?: string;
@@ -7067,6 +9468,56 @@ export type ListDispatchJobsResponses = {
 };
 
 export type ListDispatchJobsResponse = ListDispatchJobsResponses[keyof ListDispatchJobsResponses];
+
+export type CreateDispatchJobData = {
+    body: CreateDispatchJobRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/dispatch-jobs';
+};
+
+export type CreateDispatchJobErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type CreateDispatchJobError = CreateDispatchJobErrors[keyof CreateDispatchJobErrors];
+
+export type CreateDispatchJobResponses = {
+    /**
+     * Created
+     */
+    201: DispatchJobCreatedResponse;
+};
+
+export type CreateDispatchJobResponse = CreateDispatchJobResponses[keyof CreateDispatchJobResponses];
+
+export type BatchCreateDispatchJobsData = {
+    body: DispatchJobBatchRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/dispatch-jobs/batch';
+};
+
+export type BatchCreateDispatchJobsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type BatchCreateDispatchJobsError = BatchCreateDispatchJobsErrors[keyof BatchCreateDispatchJobsErrors];
+
+export type BatchCreateDispatchJobsResponses = {
+    /**
+     * Created
+     */
+    201: DispatchJobBatchResponse;
+};
+
+export type BatchCreateDispatchJobsResponse = BatchCreateDispatchJobsResponses[keyof BatchCreateDispatchJobsResponses];
 
 export type DispatchJobsByEventAliasData = {
     body?: never;
@@ -7125,7 +9576,16 @@ export type DispatchJobsByEventResponse = DispatchJobsByEventResponses[keyof Dis
 export type DispatchJobFilterOptionsData = {
     body?: never;
     path?: never;
-    query?: never;
+    query?: {
+        /**
+         * RFC3339; start of the created_at window the values are read from (default: 24 hours before until/now)
+         */
+        since?: string;
+        /**
+         * RFC3339; end of the window (default: now)
+         */
+        until?: string;
+    };
     url: '/api/dispatch-jobs/filter-options';
 };
 
@@ -7168,12 +9628,6 @@ export type ListDispatchJobsRawData = {
          * Exact message group
          */
         messageGroup?: string;
-        limit?: number;
-        offset?: number;
-        /**
-         * Max rows (default 50, max 1000)
-         */
-        size?: number;
         /**
          * CSV of client ids
          */
@@ -7202,6 +9656,40 @@ export type ListDispatchJobsRawData = {
          * Free-text source filter
          */
         source?: string;
+        /**
+         * Exact event type. A job's code is its event type for a job raised by an event (and the caller's own job code for an SDK or function-dispatched job), so this filters the same column as code, by an index that also orders by createdAt. Combines with eventTypes and codes (all must hold).
+         */
+        eventType?: string;
+        /**
+         * CSV of event types (at most 10; more is 400 TOO_MANY_EVENT_TYPES)
+         */
+        eventTypes?: string;
+        /**
+         * CSV of subscription ids (at most 50; more is 400 TOO_MANY_SUBSCRIPTION_IDS). Combines with subscriptionId.
+         */
+        subscriptionIds?: string;
+        /**
+         * Subscription code, exact; a trailing * makes it a prefix. Resolved to subscription ids first (400 TOO_MANY_MATCHES past 200); a code that matches nothing lists no jobs.
+         */
+        subscriptionCode?: string;
+        /**
+         * Subscription name, exact and case-insensitive; a trailing * makes it a prefix. Resolved like subscriptionCode.
+         */
+        subscriptionName?: string;
+        /**
+         * Jobs delivered through this connection: the jobs of its subscriptions and the jobs that name the connection themselves (function dispatch).
+         */
+        connectionId?: string;
+        /**
+         * Connection code, exact; a trailing * makes it a prefix. Resolved to connection ids first (400 TOO_MANY_MATCHES past 50); a code that matches nothing lists no jobs.
+         */
+        connectionCode?: string;
+        limit?: number;
+        offset?: number;
+        /**
+         * Max rows (default 50, max 1000)
+         */
+        size?: number;
         /**
          * createdAt.asc | createdAt.desc (default)
          */
@@ -7249,12 +9737,6 @@ export type ListDispatchJobsRawAliasData = {
          * Exact message group
          */
         messageGroup?: string;
-        limit?: number;
-        offset?: number;
-        /**
-         * Max rows (default 50, max 1000)
-         */
-        size?: number;
         /**
          * CSV of client ids
          */
@@ -7283,6 +9765,40 @@ export type ListDispatchJobsRawAliasData = {
          * Free-text source filter
          */
         source?: string;
+        /**
+         * Exact event type. A job's code is its event type for a job raised by an event (and the caller's own job code for an SDK or function-dispatched job), so this filters the same column as code, by an index that also orders by createdAt. Combines with eventTypes and codes (all must hold).
+         */
+        eventType?: string;
+        /**
+         * CSV of event types (at most 10; more is 400 TOO_MANY_EVENT_TYPES)
+         */
+        eventTypes?: string;
+        /**
+         * CSV of subscription ids (at most 50; more is 400 TOO_MANY_SUBSCRIPTION_IDS). Combines with subscriptionId.
+         */
+        subscriptionIds?: string;
+        /**
+         * Subscription code, exact; a trailing * makes it a prefix. Resolved to subscription ids first (400 TOO_MANY_MATCHES past 200); a code that matches nothing lists no jobs.
+         */
+        subscriptionCode?: string;
+        /**
+         * Subscription name, exact and case-insensitive; a trailing * makes it a prefix. Resolved like subscriptionCode.
+         */
+        subscriptionName?: string;
+        /**
+         * Jobs delivered through this connection: the jobs of its subscriptions and the jobs that name the connection themselves (function dispatch).
+         */
+        connectionId?: string;
+        /**
+         * Connection code, exact; a trailing * makes it a prefix. Resolved to connection ids first (400 TOO_MANY_MATCHES past 50); a code that matches nothing lists no jobs.
+         */
+        connectionCode?: string;
+        limit?: number;
+        offset?: number;
+        /**
+         * Max rows (default 50, max 1000)
+         */
+        size?: number;
         /**
          * createdAt.asc | createdAt.desc (default)
          */
@@ -7333,6 +9849,56 @@ export type RequeueDispatchJobsResponses = {
 };
 
 export type RequeueDispatchJobsResponse = RequeueDispatchJobsResponses[keyof RequeueDispatchJobsResponses];
+
+export type RequeueDispatchJobsByFilterData = {
+    body: RequeueByFilterRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/dispatch-jobs/requeue-by-filter';
+};
+
+export type RequeueDispatchJobsByFilterErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type RequeueDispatchJobsByFilterError = RequeueDispatchJobsByFilterErrors[keyof RequeueDispatchJobsByFilterErrors];
+
+export type RequeueDispatchJobsByFilterResponses = {
+    /**
+     * OK
+     */
+    200: RequeueByFilterResponse;
+};
+
+export type RequeueDispatchJobsByFilterResponse = RequeueDispatchJobsByFilterResponses[keyof RequeueDispatchJobsByFilterResponses];
+
+export type PreviewRequeueDispatchJobsByFilterData = {
+    body: RequeueByFilterPreviewRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/dispatch-jobs/requeue-by-filter/preview';
+};
+
+export type PreviewRequeueDispatchJobsByFilterErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type PreviewRequeueDispatchJobsByFilterError = PreviewRequeueDispatchJobsByFilterErrors[keyof PreviewRequeueDispatchJobsByFilterErrors];
+
+export type PreviewRequeueDispatchJobsByFilterResponses = {
+    /**
+     * OK
+     */
+    200: RequeueByFilterPreviewResponse;
+};
+
+export type PreviewRequeueDispatchJobsByFilterResponse = PreviewRequeueDispatchJobsByFilterResponses[keyof PreviewRequeueDispatchJobsByFilterResponses];
 
 export type GetDispatchJobData = {
     body?: never;
@@ -7441,6 +10007,33 @@ export type CompleteDispatchJobResponses = {
 };
 
 export type CompleteDispatchJobResponse = CompleteDispatchJobResponses[keyof CompleteDispatchJobResponses];
+
+export type EditDispatchJobPayloadData = {
+    body: EditPayloadRequestWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/dispatch-jobs/{id}/payload';
+};
+
+export type EditDispatchJobPayloadErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type EditDispatchJobPayloadError = EditDispatchJobPayloadErrors[keyof EditDispatchJobPayloadErrors];
+
+export type EditDispatchJobPayloadResponses = {
+    /**
+     * OK
+     */
+    200: DispatchJobResponse;
+};
+
+export type EditDispatchJobPayloadResponse = EditDispatchJobPayloadResponses[keyof EditDispatchJobPayloadResponses];
 
 export type GetDispatchJobRawData = {
     body?: never;
@@ -7719,6 +10312,12 @@ export type SuspendDispatchPoolResponse = SuspendDispatchPoolResponses[keyof Sus
 
 export type GetRouterConfigData = {
     body?: never;
+    headers?: {
+        /**
+         * An ETag from an earlier answer; 304 when the document is unchanged
+         */
+        'If-None-Match'?: string;
+    };
     path?: never;
     query?: never;
     url: '/api/dispatch/router-config';
@@ -8577,6 +11176,763 @@ export type GetEventResponses = {
 
 export type GetEventResponse = GetEventResponses[keyof GetEventResponses];
 
+export type ListFunctionDomainsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Filter by owning client id
+         */
+        clientId?: string;
+    };
+    url: '/api/function-domains';
+};
+
+export type ListFunctionDomainsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListFunctionDomainsError = ListFunctionDomainsErrors[keyof ListFunctionDomainsErrors];
+
+export type ListFunctionDomainsResponses = {
+    /**
+     * OK
+     */
+    200: Array<DomainResponse>;
+};
+
+export type ListFunctionDomainsResponse = ListFunctionDomainsResponses[keyof ListFunctionDomainsResponses];
+
+export type CreateFunctionDomainData = {
+    body: CreateDomainRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/function-domains';
+};
+
+export type CreateFunctionDomainErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type CreateFunctionDomainError = CreateFunctionDomainErrors[keyof CreateFunctionDomainErrors];
+
+export type CreateFunctionDomainResponses = {
+    /**
+     * Created
+     */
+    201: CreatedResponse;
+};
+
+export type CreateFunctionDomainResponse = CreateFunctionDomainResponses[keyof CreateFunctionDomainResponses];
+
+export type DeleteFunctionDomainData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/function-domains/{id}';
+};
+
+export type DeleteFunctionDomainErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DeleteFunctionDomainError = DeleteFunctionDomainErrors[keyof DeleteFunctionDomainErrors];
+
+export type DeleteFunctionDomainResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type DeleteFunctionDomainResponse = DeleteFunctionDomainResponses[keyof DeleteFunctionDomainResponses];
+
+export type ListFunctionsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Filter by owning application id
+         */
+        applicationId?: string;
+        /**
+         * Filter by client id
+         */
+        clientId?: string;
+        /**
+         * Filter by address prefix (e.g. an application code)
+         */
+        addressPrefix?: string;
+        page?: number;
+        size?: number;
+        limit?: number;
+        pageSize?: number;
+        page_size?: number;
+    };
+    url: '/api/functions';
+};
+
+export type ListFunctionsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListFunctionsError = ListFunctionsErrors[keyof ListFunctionsErrors];
+
+export type ListFunctionsResponses = {
+    /**
+     * OK
+     */
+    200: OffsetPageFunctionResponse;
+};
+
+export type ListFunctionsResponse = ListFunctionsResponses[keyof ListFunctionsResponses];
+
+export type CreateFunctionData = {
+    body: CreateFunctionRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/functions';
+};
+
+export type CreateFunctionErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type CreateFunctionError = CreateFunctionErrors[keyof CreateFunctionErrors];
+
+export type CreateFunctionResponses = {
+    /**
+     * Created
+     */
+    201: CreatedResponse;
+};
+
+export type CreateFunctionResponse = CreateFunctionResponses[keyof CreateFunctionResponses];
+
+export type DeleteFunctionData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/functions/{id}';
+};
+
+export type DeleteFunctionErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DeleteFunctionError = DeleteFunctionErrors[keyof DeleteFunctionErrors];
+
+export type DeleteFunctionResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type DeleteFunctionResponse = DeleteFunctionResponses[keyof DeleteFunctionResponses];
+
+export type GetFunctionData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/functions/{id}';
+};
+
+export type GetFunctionErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GetFunctionError = GetFunctionErrors[keyof GetFunctionErrors];
+
+export type GetFunctionResponses = {
+    /**
+     * OK
+     */
+    200: FunctionResponse;
+};
+
+export type GetFunctionResponse = GetFunctionResponses[keyof GetFunctionResponses];
+
+export type UpdateFunctionData = {
+    body: UpdateFunctionRequestWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/functions/{id}';
+};
+
+export type UpdateFunctionErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type UpdateFunctionError = UpdateFunctionErrors[keyof UpdateFunctionErrors];
+
+export type UpdateFunctionResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type UpdateFunctionResponse = UpdateFunctionResponses[keyof UpdateFunctionResponses];
+
+export type ListFunctionAliasesData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/functions/{id}/aliases';
+};
+
+export type ListFunctionAliasesErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListFunctionAliasesError = ListFunctionAliasesErrors[keyof ListFunctionAliasesErrors];
+
+export type ListFunctionAliasesResponses = {
+    /**
+     * OK
+     */
+    200: Array<AliasResponse>;
+};
+
+export type ListFunctionAliasesResponse = ListFunctionAliasesResponses[keyof ListFunctionAliasesResponses];
+
+export type DeleteFunctionAliasData = {
+    body?: never;
+    path: {
+        id: string;
+        name: string;
+    };
+    query?: never;
+    url: '/api/functions/{id}/aliases/{name}';
+};
+
+export type DeleteFunctionAliasErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DeleteFunctionAliasError = DeleteFunctionAliasErrors[keyof DeleteFunctionAliasErrors];
+
+export type DeleteFunctionAliasResponses = {
+    /**
+     * OK
+     */
+    200: WiringResponse;
+};
+
+export type DeleteFunctionAliasResponse = DeleteFunctionAliasResponses[keyof DeleteFunctionAliasResponses];
+
+export type PutFunctionAliasData = {
+    body: PutAliasRequestWritable;
+    path: {
+        id: string;
+        name: string;
+    };
+    query?: never;
+    url: '/api/functions/{id}/aliases/{name}';
+};
+
+export type PutFunctionAliasErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type PutFunctionAliasError = PutFunctionAliasErrors[keyof PutFunctionAliasErrors];
+
+export type PutFunctionAliasResponses = {
+    /**
+     * OK
+     */
+    200: PutAliasResponse;
+};
+
+export type PutFunctionAliasResponse = PutFunctionAliasResponses[keyof PutFunctionAliasResponses];
+
+export type PutFunctionArtifactData = {
+    body: Blob | File;
+    path: {
+        id: string;
+        /**
+         * Lowercase hex sha256 of the artifact (64 characters)
+         */
+        digest: string;
+    };
+    query?: never;
+    url: '/api/functions/{id}/artifacts/{digest}';
+};
+
+export type PutFunctionArtifactErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type PutFunctionArtifactError = PutFunctionArtifactErrors[keyof PutFunctionArtifactErrors];
+
+export type PutFunctionArtifactResponses = {
+    /**
+     * Created
+     */
+    201: unknown;
+};
+
+export type DeleteFunctionConfigData = {
+    body?: never;
+    path: {
+        id: string;
+        key: string;
+    };
+    query?: never;
+    url: '/api/functions/{id}/config/{key}';
+};
+
+export type DeleteFunctionConfigErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DeleteFunctionConfigError = DeleteFunctionConfigErrors[keyof DeleteFunctionConfigErrors];
+
+export type DeleteFunctionConfigResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type DeleteFunctionConfigResponse = DeleteFunctionConfigResponses[keyof DeleteFunctionConfigResponses];
+
+export type PutFunctionConfigData = {
+    body: PutSettingRequestWritable;
+    path: {
+        id: string;
+        key: string;
+    };
+    query?: never;
+    url: '/api/functions/{id}/config/{key}';
+};
+
+export type PutFunctionConfigErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type PutFunctionConfigError = PutFunctionConfigErrors[keyof PutFunctionConfigErrors];
+
+export type PutFunctionConfigResponses = {
+    /**
+     * OK
+     */
+    200: SettingResponse;
+};
+
+export type PutFunctionConfigResponse = PutFunctionConfigResponses[keyof PutFunctionConfigResponses];
+
+export type DeleteFunctionDbData = {
+    body?: never;
+    path: {
+        id: string;
+        name: string;
+    };
+    query?: never;
+    url: '/api/functions/{id}/db/{name}';
+};
+
+export type DeleteFunctionDbErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DeleteFunctionDbError = DeleteFunctionDbErrors[keyof DeleteFunctionDbErrors];
+
+export type DeleteFunctionDbResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type DeleteFunctionDbResponse = DeleteFunctionDbResponses[keyof DeleteFunctionDbResponses];
+
+export type PutFunctionDbData = {
+    body: PutSettingRequestWritable;
+    path: {
+        id: string;
+        name: string;
+    };
+    query?: never;
+    url: '/api/functions/{id}/db/{name}';
+};
+
+export type PutFunctionDbErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type PutFunctionDbError = PutFunctionDbErrors[keyof PutFunctionDbErrors];
+
+export type PutFunctionDbResponses = {
+    /**
+     * OK
+     */
+    200: SettingResponse;
+};
+
+export type PutFunctionDbResponse = PutFunctionDbResponses[keyof PutFunctionDbResponses];
+
+export type ListFunctionRoutesData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/functions/{id}/routes';
+};
+
+export type ListFunctionRoutesErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListFunctionRoutesError = ListFunctionRoutesErrors[keyof ListFunctionRoutesErrors];
+
+export type ListFunctionRoutesResponses = {
+    /**
+     * OK
+     */
+    200: Array<RouteResponse>;
+};
+
+export type ListFunctionRoutesResponse = ListFunctionRoutesResponses[keyof ListFunctionRoutesResponses];
+
+export type PutFunctionRouteData = {
+    body: PutRouteRequestWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/functions/{id}/routes';
+};
+
+export type PutFunctionRouteErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type PutFunctionRouteError = PutFunctionRouteErrors[keyof PutFunctionRouteErrors];
+
+export type PutFunctionRouteResponses = {
+    /**
+     * OK
+     */
+    200: RouteResponse;
+};
+
+export type PutFunctionRouteResponse = PutFunctionRouteResponses[keyof PutFunctionRouteResponses];
+
+export type DeleteFunctionRouteData = {
+    body?: never;
+    path: {
+        id: string;
+        routeId: string;
+    };
+    query?: never;
+    url: '/api/functions/{id}/routes/{routeId}';
+};
+
+export type DeleteFunctionRouteErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DeleteFunctionRouteError = DeleteFunctionRouteErrors[keyof DeleteFunctionRouteErrors];
+
+export type DeleteFunctionRouteResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type DeleteFunctionRouteResponse = DeleteFunctionRouteResponses[keyof DeleteFunctionRouteResponses];
+
+export type DeleteFunctionSecretData = {
+    body?: never;
+    path: {
+        id: string;
+        key: string;
+    };
+    query?: never;
+    url: '/api/functions/{id}/secrets/{key}';
+};
+
+export type DeleteFunctionSecretErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DeleteFunctionSecretError = DeleteFunctionSecretErrors[keyof DeleteFunctionSecretErrors];
+
+export type DeleteFunctionSecretResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type DeleteFunctionSecretResponse = DeleteFunctionSecretResponses[keyof DeleteFunctionSecretResponses];
+
+export type PutFunctionSecretData = {
+    body: PutSettingRequestWritable;
+    path: {
+        id: string;
+        key: string;
+    };
+    query?: never;
+    url: '/api/functions/{id}/secrets/{key}';
+};
+
+export type PutFunctionSecretErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type PutFunctionSecretError = PutFunctionSecretErrors[keyof PutFunctionSecretErrors];
+
+export type PutFunctionSecretResponses = {
+    /**
+     * OK
+     */
+    200: SettingResponse;
+};
+
+export type PutFunctionSecretResponse = PutFunctionSecretResponses[keyof PutFunctionSecretResponses];
+
+export type ListFunctionSettingsData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/functions/{id}/settings';
+};
+
+export type ListFunctionSettingsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListFunctionSettingsError = ListFunctionSettingsErrors[keyof ListFunctionSettingsErrors];
+
+export type ListFunctionSettingsResponses = {
+    /**
+     * OK
+     */
+    200: Array<SettingResponse>;
+};
+
+export type ListFunctionSettingsResponse = ListFunctionSettingsResponses[keyof ListFunctionSettingsResponses];
+
+export type ListFunctionVersionsData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/functions/{id}/versions';
+};
+
+export type ListFunctionVersionsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListFunctionVersionsError = ListFunctionVersionsErrors[keyof ListFunctionVersionsErrors];
+
+export type ListFunctionVersionsResponses = {
+    /**
+     * OK
+     */
+    200: Array<VersionResponse>;
+};
+
+export type ListFunctionVersionsResponse = ListFunctionVersionsResponses[keyof ListFunctionVersionsResponses];
+
+export type PublishFunctionVersionData = {
+    body: PublishVersionRequestWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/functions/{id}/versions';
+};
+
+export type PublishFunctionVersionErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type PublishFunctionVersionError = PublishFunctionVersionErrors[keyof PublishFunctionVersionErrors];
+
+export type PublishFunctionVersionResponses = {
+    /**
+     * OK
+     */
+    200: VersionResponse;
+};
+
+export type PublishFunctionVersionResponse = PublishFunctionVersionResponses[keyof PublishFunctionVersionResponses];
+
+export type PruneFunctionVersionsData = {
+    body: PruneVersionsRequestWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/functions/{id}/versions/prune';
+};
+
+export type PruneFunctionVersionsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type PruneFunctionVersionsError = PruneFunctionVersionsErrors[keyof PruneFunctionVersionsErrors];
+
+export type PruneFunctionVersionsResponses = {
+    /**
+     * OK
+     */
+    200: PruneVersionsResponse;
+};
+
+export type PruneFunctionVersionsResponse = PruneFunctionVersionsResponses[keyof PruneFunctionVersionsResponses];
+
+export type GetFunctionVersionData = {
+    body?: never;
+    path: {
+        id: string;
+        number: number;
+    };
+    query?: never;
+    url: '/api/functions/{id}/versions/{number}';
+};
+
+export type GetFunctionVersionErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GetFunctionVersionError = GetFunctionVersionErrors[keyof GetFunctionVersionErrors];
+
+export type GetFunctionVersionResponses = {
+    /**
+     * OK
+     */
+    200: VersionResponse;
+};
+
+export type GetFunctionVersionResponse = GetFunctionVersionResponses[keyof GetFunctionVersionResponses];
+
+export type RetireFunctionVersionData = {
+    body?: never;
+    path: {
+        id: string;
+        number: number;
+    };
+    query?: never;
+    url: '/api/functions/{id}/versions/{number}/retire';
+};
+
+export type RetireFunctionVersionErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type RetireFunctionVersionError = RetireFunctionVersionErrors[keyof RetireFunctionVersionErrors];
+
+export type RetireFunctionVersionResponses = {
+    /**
+     * OK
+     */
+    200: VersionResponse;
+};
+
+export type RetireFunctionVersionResponse = RetireFunctionVersionResponses[keyof RetireFunctionVersionResponses];
+
 export type ListIdentityProvidersData = {
     body?: never;
     path?: never;
@@ -8818,6 +12174,135 @@ export type ListLoginAttemptsResponses = {
 };
 
 export type ListLoginAttemptsResponse = ListLoginAttemptsResponses[keyof ListLoginAttemptsResponses];
+
+export type GetMeData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/me';
+};
+
+export type GetMeErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GetMeError = GetMeErrors[keyof GetMeErrors];
+
+export type GetMeResponses = {
+    /**
+     * OK
+     */
+    200: WhoamiResponse;
+};
+
+export type GetMeResponse = GetMeResponses[keyof GetMeResponses];
+
+export type ListMyApplicationsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/me/applications';
+};
+
+export type ListMyApplicationsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListMyApplicationsError = ListMyApplicationsErrors[keyof ListMyApplicationsErrors];
+
+export type ListMyApplicationsResponses = {
+    /**
+     * OK
+     */
+    200: MyApplicationsListResponse;
+};
+
+export type ListMyApplicationsResponse = ListMyApplicationsResponses[keyof ListMyApplicationsResponses];
+
+export type ListMyClientsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/me/clients';
+};
+
+export type ListMyClientsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListMyClientsError = ListMyClientsErrors[keyof ListMyClientsErrors];
+
+export type ListMyClientsResponses = {
+    /**
+     * OK
+     */
+    200: MyClientsListResponse;
+};
+
+export type ListMyClientsResponse = ListMyClientsResponses[keyof ListMyClientsResponses];
+
+export type GetMyClientData = {
+    body?: never;
+    path: {
+        clientId: string;
+    };
+    query?: never;
+    url: '/api/me/clients/{clientId}';
+};
+
+export type GetMyClientErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GetMyClientError = GetMyClientErrors[keyof GetMyClientErrors];
+
+export type GetMyClientResponses = {
+    /**
+     * OK
+     */
+    200: MyClientResponse;
+};
+
+export type GetMyClientResponse = GetMyClientResponses[keyof GetMyClientResponses];
+
+export type ListMyClientApplicationsData = {
+    body?: never;
+    path: {
+        clientId: string;
+    };
+    query?: never;
+    url: '/api/me/clients/{clientId}/applications';
+};
+
+export type ListMyClientApplicationsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListMyClientApplicationsError = ListMyClientApplicationsErrors[keyof ListMyClientApplicationsErrors];
+
+export type ListMyClientApplicationsResponses = {
+    /**
+     * OK
+     */
+    200: MyApplicationsListResponse;
+};
+
+export type ListMyClientApplicationsResponse = ListMyClientApplicationsResponses[keyof ListMyClientApplicationsResponses];
 
 export type ListOAuthClientsData = {
     body?: never;
@@ -12383,3 +15868,261 @@ export type WebauthnRegisterCompleteResponses = {
 };
 
 export type WebauthnRegisterCompleteResponse = WebauthnRegisterCompleteResponses[keyof WebauthnRegisterCompleteResponses];
+
+export type GetFunctionRunnerArtifactData = {
+    body?: never;
+    path: {
+        /**
+         * Lowercase hex sha256 of the artifact (64 characters)
+         */
+        digest: string;
+    };
+    query?: never;
+    url: '/control/functions/artifacts/{digest}';
+};
+
+export type GetFunctionRunnerArtifactErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GetFunctionRunnerArtifactError = GetFunctionRunnerArtifactErrors[keyof GetFunctionRunnerArtifactErrors];
+
+export type GetFunctionRunnerArtifactResponses = {
+    /**
+     * OK
+     */
+    200: unknown;
+};
+
+export type GetFunctionRunnerDesiredData = {
+    body?: never;
+    headers?: {
+        'If-None-Match'?: string;
+    };
+    path?: never;
+    query: {
+        /**
+         * The runner pool to fetch desired state for
+         */
+        pool: string;
+        /**
+         * Seconds to hold the request open for a change, capped at control.MaxWait
+         */
+        wait?: number;
+        /**
+         * Comma-separated runtimes the runner can run (for example wasm,js). Only versions of these runtimes are returned. Absent means wasm,js.
+         */
+        runtimes?: string;
+    };
+    url: '/control/functions/desired';
+};
+
+export type GetFunctionRunnerDesiredErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GetFunctionRunnerDesiredError = GetFunctionRunnerDesiredErrors[keyof GetFunctionRunnerDesiredErrors];
+
+export type GetFunctionRunnerDesiredResponses = {
+    /**
+     * OK
+     */
+    200: Desired;
+};
+
+export type GetFunctionRunnerDesiredResponse = GetFunctionRunnerDesiredResponses[keyof GetFunctionRunnerDesiredResponses];
+
+export type PostFunctionRunnerDispatchJobData = {
+    body: DispatchRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/control/functions/dispatch-jobs';
+};
+
+export type PostFunctionRunnerDispatchJobErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type PostFunctionRunnerDispatchJobError = PostFunctionRunnerDispatchJobErrors[keyof PostFunctionRunnerDispatchJobErrors];
+
+export type PostFunctionRunnerDispatchJobResponses = {
+    /**
+     * Created
+     */
+    201: DispatchResponse;
+};
+
+export type PostFunctionRunnerDispatchJobResponse = PostFunctionRunnerDispatchJobResponses[keyof PostFunctionRunnerDispatchJobResponses];
+
+export type PostFunctionRunnerEventData = {
+    body: EmitRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/control/functions/events';
+};
+
+export type PostFunctionRunnerEventErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type PostFunctionRunnerEventError = PostFunctionRunnerEventErrors[keyof PostFunctionRunnerEventErrors];
+
+export type PostFunctionRunnerEventResponses = {
+    /**
+     * Created
+     */
+    201: EmitResponse;
+};
+
+export type PostFunctionRunnerEventResponse = PostFunctionRunnerEventResponses[keyof PostFunctionRunnerEventResponses];
+
+export type PostFunctionRunnerHeartbeatData = {
+    body: HeartbeatWritable;
+    path?: never;
+    query?: never;
+    url: '/control/functions/heartbeat';
+};
+
+export type PostFunctionRunnerHeartbeatErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type PostFunctionRunnerHeartbeatError = PostFunctionRunnerHeartbeatErrors[keyof PostFunctionRunnerHeartbeatErrors];
+
+export type PostFunctionRunnerHeartbeatResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type PostFunctionRunnerHeartbeatResponse = PostFunctionRunnerHeartbeatResponses[keyof PostFunctionRunnerHeartbeatResponses];
+
+export type OauthIntrospectData = {
+    body: TokenIntrospectFormWritable;
+    path?: never;
+    query?: never;
+    url: '/oauth/introspect';
+};
+
+export type OauthIntrospectErrors = {
+    /**
+     * invalid_request, invalid_grant, unsupported_grant_type or unauthorized_client
+     */
+    400: OAuthErrorBody;
+    /**
+     * invalid_client or invalid_token
+     */
+    401: OAuthErrorBody;
+};
+
+export type OauthIntrospectError = OauthIntrospectErrors[keyof OauthIntrospectErrors];
+
+export type OauthIntrospectResponses = {
+    /**
+     * OK
+     */
+    200: IntrospectResponse;
+};
+
+export type OauthIntrospectResponse = OauthIntrospectResponses[keyof OauthIntrospectResponses];
+
+export type OauthRevokeData = {
+    body: TokenIntrospectFormWritable;
+    path?: never;
+    query?: never;
+    url: '/oauth/revoke';
+};
+
+export type OauthRevokeErrors = {
+    /**
+     * invalid_request, invalid_grant, unsupported_grant_type or unauthorized_client
+     */
+    400: OAuthErrorBody;
+    /**
+     * invalid_client or invalid_token
+     */
+    401: OAuthErrorBody;
+};
+
+export type OauthRevokeError = OauthRevokeErrors[keyof OauthRevokeErrors];
+
+export type OauthRevokeResponses = {
+    /**
+     * OK
+     */
+    200: unknown;
+};
+
+export type OauthTokenData = {
+    body: TokenFormWritable;
+    path?: never;
+    query?: never;
+    url: '/oauth/token';
+};
+
+export type OauthTokenErrors = {
+    /**
+     * invalid_request, invalid_grant, unsupported_grant_type or unauthorized_client
+     */
+    400: OAuthErrorBody;
+    /**
+     * invalid_client or invalid_token
+     */
+    401: OAuthErrorBody;
+};
+
+export type OauthTokenError = OauthTokenErrors[keyof OauthTokenErrors];
+
+export type OauthTokenResponses = {
+    /**
+     * OK
+     */
+    200: TokenResponse;
+};
+
+export type OauthTokenResponse = OauthTokenResponses[keyof OauthTokenResponses];
+
+export type OauthUserinfoData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/oauth/userinfo';
+};
+
+export type OauthUserinfoErrors = {
+    /**
+     * invalid_request, invalid_grant, unsupported_grant_type or unauthorized_client
+     */
+    400: OAuthErrorBody;
+    /**
+     * invalid_client or invalid_token
+     */
+    401: OAuthErrorBody;
+};
+
+export type OauthUserinfoError = OauthUserinfoErrors[keyof OauthUserinfoErrors];
+
+export type OauthUserinfoResponses = {
+    /**
+     * OK
+     */
+    200: UserInfoResponse;
+};
+
+export type OauthUserinfoResponse = OauthUserinfoResponses[keyof OauthUserinfoResponses];
