@@ -24,6 +24,9 @@ on:
 
 jobs:
   split:
+    # RETIRED 2026-11-03: flowcatalyst/flowcatalyst (the Go repo) publishes this SDK's mirror now; two
+    # sources force-pushing the same mirror's main would fight.
+    if: false
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
